@@ -2721,6 +2721,9 @@ class ActivityStarter {
 
         mLaunchParams.reset();
 
+        AohpVirtualDisplayPolicy.applyActivityOptionsIfNeeded(options, sourceRecord,
+                mRootWindowContainer);
+
         // Preferred display id is the only state we need for now and it could be updated again
         // after we located a reusable task (which might be resided in another display).
         mSupervisor.getLaunchParamsController().calculate(inTask, r.info.windowLayout, r,

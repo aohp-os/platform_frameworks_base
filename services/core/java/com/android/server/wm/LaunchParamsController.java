@@ -129,6 +129,9 @@ class LaunchParamsController {
             result.mPreferredTaskDisplayArea = mService.mRootWindowContainer
                     .getDisplayContent(mService.mVr2dDisplayId).getDefaultTaskDisplayArea();
         }
+
+        AohpVirtualDisplayPolicy.applyLaunchParamsIfNeeded(source, result,
+                mService.mRootWindowContainer);
     }
 
     /** @return {@code true} if bounds were set on the task. {@code false} otherwise. */

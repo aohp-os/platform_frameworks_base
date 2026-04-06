@@ -5710,6 +5710,10 @@
     <permission android:name="android.permission.INJECT_EVENTS"
         android:protectionLevel="signature" />
 
+    <!-- @hide AOHP virtual display control (Cuttlefish / research builds). -->
+    <permission android:name="android.permission.MANAGE_AOHP_VIRTUAL_DISPLAY"
+        android:protectionLevel="signature|privileged" />
+
     <!-- @SystemApi Allows privileged applications to inject key events into the event stream by
          creating a virtual keyboard. Key events may be delivered to ANY window. Allows for
          arbitrary keycode injections (e.g. AKEYCODE_BRIGHTNESS_UP) and modifier events

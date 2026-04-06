@@ -125,6 +125,7 @@ import com.android.server.accessibility.AccessibilityManagerService;
 import com.android.server.accounts.AccountManagerService;
 import com.android.server.adb.AdbService;
 import com.android.server.alarm.AlarmManagerService;
+import com.android.server.aohp.AohpVirtualDisplayService;
 import com.android.server.am.ActivityManagerService;
 import com.android.server.ambientcontext.AmbientContextManagerService;
 import com.android.server.app.GameManagerService;
@@ -1762,6 +1763,11 @@ public final class SystemServer implements Dumpable {
             // TODO: Use service dependencies instead.
             t.traceBegin("DisplayManagerWindowManagerAndInputReady");
             mDisplayManagerService.windowManagerAndInputReady();
+            t.traceEnd();
+
+            t.traceBegin("StartAohpVirtualDisplayService");
+            ServiceManager.addService(AohpVirtualDisplayService.SERVICE_NAME,
+                    new AohpVirtualDisplayService(context, inputManager));
             t.traceEnd();
 
             if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {

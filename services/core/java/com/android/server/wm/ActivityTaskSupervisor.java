@@ -437,6 +437,9 @@ public class ActivityTaskSupervisor implements RecentTasks.Callbacks {
             // No restrictions for the default display.
             return true;
         }
+        if (AohpVirtualDisplayPolicy.allowPlacementOnDisplay(mRootWindowContainer, displayId)) {
+            return true;
+        }
         if (!mService.mSupportsMultiDisplay) {
             // Can't launch on secondary displays if feature is not supported.
             return false;
