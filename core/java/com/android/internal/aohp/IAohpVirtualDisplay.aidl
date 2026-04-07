@@ -18,4 +18,6 @@ interface IAohpVirtualDisplay {
     boolean injectText(int displayId, String text);
     boolean injectKeyEvent(int displayId, int keyCode);
     void applyMultiDisplayDeveloperSettings();
+    /** @param extraDisplayIds optional ids to merge (e.g. app-known MediaProjection VD); may be null */
+    String getDisplayRuntimeSnapshotJson(in int[] extraDisplayIds);
 }

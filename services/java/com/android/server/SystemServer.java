@@ -1767,7 +1767,8 @@ public final class SystemServer implements Dumpable {
 
             t.traceBegin("StartAohpVirtualDisplayService");
             ServiceManager.addService(AohpVirtualDisplayService.SERVICE_NAME,
-                    new AohpVirtualDisplayService(context, inputManager));
+                    new AohpVirtualDisplayService(context, inputManager,
+                            mActivityManagerService.mActivityTaskManager));
             t.traceEnd();
 
             if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {

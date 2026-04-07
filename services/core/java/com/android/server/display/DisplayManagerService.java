@@ -5973,6 +5973,13 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override
+        public int[] getAllLogicalDisplayIds() {
+            synchronized (mSyncRoot) {
+                return mLogicalDisplayMapper.getAllDisplayIdsLocked();
+            }
+        }
+
+        @Override
         public Set<DisplayInfo> getPossibleDisplayInfo(int displayId) {
             synchronized (mSyncRoot) {
                 Set<DisplayInfo> possibleInfo = new ArraySet<>();

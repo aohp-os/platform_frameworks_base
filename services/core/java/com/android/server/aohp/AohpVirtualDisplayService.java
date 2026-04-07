@@ -28,6 +28,7 @@ import com.android.internal.aohp.IAohpVirtualDisplay;
 import com.android.server.LocalServices;
 import com.android.server.input.InputManagerService;
 import com.android.server.wm.ActivityTaskManagerInternal;
+import com.android.server.wm.ActivityTaskManagerService;
 import com.android.server.wm.AohpVirtualDisplayPolicy;
 import com.android.server.wm.SafeActivityOptions;
 
@@ -44,10 +45,13 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
 
     private final Context mContext;
     private final InputManagerService mInputManager;
+    private final ActivityTaskManagerService mAtm;
 
-    public AohpVirtualDisplayService(Context context, InputManagerService inputManager) {
+    public AohpVirtualDisplayService(Context context, InputManagerService inputManager,
+            ActivityTaskManagerService atm) {
         mContext = context;
         mInputManager = inputManager;
+        mAtm = atm;
     }
 
     private void enforceAohpPermission() {
@@ -263,6 +267,17 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
             up.setDisplayId(displayId);
             return mInputManager.injectInputEvent(down, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH)
                     && mInputManager.injectInputEvent(up, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
+    public String getDisplayRuntimeSnapshotJson(int[] extraDisplayIds) throws RemoteException {
+        enforceAohpPermission();
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return mAtm.buildAohpDisplayRuntimeSnapshotJson(extraDisplayIds);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }

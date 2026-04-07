@@ -2762,7 +2762,12 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         }, false /* traverseTopToBottom */);
 
         final ActivityRecord top = task.topRunningActivity();
-        info.topActivity = top != null ? top.intent.getComponent() : null;
+        if (top != null) {
+            final ComponentName fromIntent = top.intent.getComponent();
+            info.topActivity = fromIntent != null ? fromIntent : top.mActivityComponent;
+        } else {
+            info.topActivity = null;
+        }
         return info;
     }
 

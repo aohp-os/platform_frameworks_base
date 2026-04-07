@@ -161,6 +161,14 @@ public abstract class DisplayManagerInternal {
     public abstract DisplayInfo getDisplayInfo(int displayId);
 
     /**
+     * Returns the ids of all logical displays known to DisplayManager, without applying
+     * per-uid {@link DisplayInfo#hasAccess} filtering. For system diagnostics (e.g. AOHP)
+     * only.
+     * @hide
+     */
+    public abstract int[] getAllLogicalDisplayIds();
+
+    /**
      * Returns a set of DisplayInfo, for the states that may be assumed by either the given display,
      * or any other display within that display's group.
      *

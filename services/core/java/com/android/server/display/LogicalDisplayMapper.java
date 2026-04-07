@@ -316,6 +316,18 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         return getDisplayLocked(displayId, /* includeDisabled= */ true);
     }
 
+    /**
+     * All logical display ids in the mapper. No caller-uid access checks.
+     */
+    public int[] getAllDisplayIdsLocked() {
+        final int n = mLogicalDisplays.size();
+        final int[] ids = new int[n];
+        for (int i = 0; i < n; i++) {
+            ids[i] = mLogicalDisplays.keyAt(i);
+        }
+        return ids;
+    }
+
     public LogicalDisplay getDisplayLocked(int displayId, boolean includeDisabled) {
         LogicalDisplay display = mLogicalDisplays.get(displayId);
         if (display == null || display.isEnabledLocked() || includeDisabled) {

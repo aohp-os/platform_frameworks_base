@@ -209,6 +209,7 @@ import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.hardware.display.DisplayManagerInternal;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
@@ -245,10 +246,12 @@ import android.util.ArraySet;
 import android.util.IntArray;
 import android.util.Log;
 import android.util.Slog;
+import android.util.JsonWriter;
 import android.util.SparseArray;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 import android.view.Display;
+import android.view.DisplayInfo;
 import android.view.RemoteAnimationAdapter;
 import android.view.RemoteAnimationDefinition;
 import android.view.WindowManager;
@@ -2679,6 +2682,186 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             }
         } finally {
             Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    /**
+     * JSON snapshot of all logical displays and root task stacks (AOHP).
+     * Must only be called from {@link com.android.server.aohp.AohpVirtualDisplayService}
+     * after permission checks; holds {@link #mGlobalLock}.
+     *
+     * @param extraDisplayIds optional ids from the agent (e.g. MediaProjection VD) to merge;
+     *                        may be null.
+     * @hide
+     */
+    public String buildAohpDisplayRuntimeSnapshotJson(int[] extraDisplayIds) {
+        final StringWriter sw = new StringWriter();
+        // Collect logical display ids from DisplayManager *before* taking mGlobalLock to avoid
+        // lock-order inversions with DisplayManagerService.mSyncRoot. Use getAllLogicalDisplayIds
+        // so private / MediaProjection displays are not skipped by getDisplayInfo(uid) filtering.
+        final ArraySet<Integer> displayIdSet = new ArraySet<>();
+        final DisplayManagerInternal dmi = LocalServices.getService(DisplayManagerInternal.class);
+        if (dmi != null) {
+            final int[] allIds = dmi.getAllLogicalDisplayIds();
+            if (allIds != null) {
+                for (int id : allIds) {
+                    displayIdSet.add(id);
+                }
+            }
+        }
+        if (extraDisplayIds != null) {
+            for (int id : extraDisplayIds) {
+                if (id != INVALID_DISPLAY) {
+                    displayIdSet.add(id);
+                }
+            }
+        }
+        synchronized (mGlobalLock) {
+            try {
+                if (mRootWindowContainer != null) {
+                    for (int i = mRootWindowContainer.getChildCount() - 1; i >= 0; --i) {
+                        displayIdSet.add(mRootWindowContainer.getChildAt(i).getDisplayId());
+                    }
+                }
+                final int[] sortedIds = new int[displayIdSet.size()];
+                int si = 0;
+                for (int id : displayIdSet) {
+                    sortedIds[si++] = id;
+                }
+                Arrays.sort(sortedIds);
+
+                // Apply pending WM layout so task stacks / activity records match composited state
+                // (avoids empty rootTasks or null topActivity right after launch or VD creation).
+                if (mWindowManager != null) {
+                    mWindowManager.mWindowPlacerLocked.performSurfacePlacement(true /* force */);
+                }
+
+                final JsonWriter jw = new JsonWriter(sw);
+                jw.setIndent("  ");
+                jw.beginObject();
+                jw.name("timestamp").value(SystemClock.elapsedRealtime());
+                jw.name("displays");
+                jw.beginArray();
+                for (int displayId : sortedIds) {
+                    if (mRootWindowContainer == null) {
+                        break;
+                    }
+                    final DisplayContent dc =
+                            mRootWindowContainer.getDisplayContentOrCreate(displayId);
+                    if (dc == null) {
+                        continue;
+                    }
+                    final DisplayInfo di = dc.getDisplayInfo();
+                    jw.beginObject();
+                    jw.name("displayId").value(displayId);
+                    jw.name("display");
+                    jw.beginObject();
+                    jw.name("name").value(di.name != null ? di.name : "");
+                    jw.name("uniqueId").value(di.uniqueId != null ? di.uniqueId : "");
+                    jw.name("type").value(di.type);
+                    jw.name("layerStack").value(di.layerStack);
+                    jw.name("flags").value(di.flags);
+                    jw.name("logicalWidth").value(di.logicalWidth);
+                    jw.name("logicalHeight").value(di.logicalHeight);
+                    jw.name("appWidth").value(di.appWidth);
+                    jw.name("appHeight").value(di.appHeight);
+                    jw.name("rotation").value(di.rotation);
+                    jw.name("state").value(di.state);
+                    jw.endObject();
+                    jw.name("canHostTasks").value(dc.mDisplay.canHostTasks());
+                    writeAohpActivityRecordComponent(jw, "topRunningActivity",
+                            dc.topRunningActivity());
+                    writeAohpActivityRecordComponent(jw, "focusedActivity", dc.mFocusedApp);
+                    jw.name("rootTasks");
+                    jw.beginArray();
+                    final ArrayList<RootTaskInfo> tasks =
+                            mRootWindowContainer.getAllRootTaskInfos(displayId);
+                    for (int t = 0; t < tasks.size(); t++) {
+                        writeAohpRootTaskInfoJson(jw, tasks.get(t));
+                    }
+                    jw.endArray();
+                    jw.endObject();
+                }
+                jw.endArray();
+                jw.endObject();
+                jw.close();
+            } catch (IOException e) {
+                Slog.w(TAG, "buildAohpDisplayRuntimeSnapshotJson", e);
+                String msg = e.getMessage() != null ? e.getMessage() : "io_error";
+                msg = msg.replace("\\", "\\\\").replace("\"", "\\\"");
+                return "{\"error\":\"" + msg + "\"}";
+            }
+        }
+        return sw.toString();
+    }
+
+    private static void writeAohpRootTaskInfoJson(JsonWriter jw, RootTaskInfo info)
+            throws IOException {
+        jw.beginObject();
+        jw.name("taskId").value(info.taskId);
+        jw.name("userId").value(info.userId);
+        jw.name("displayId").value(info.displayId);
+        jw.name("visible").value(info.visible);
+        jw.name("position").value(info.position);
+        jw.name("bounds").value(info.bounds != null ? info.bounds.toShortString() : "");
+        jw.name("numActivities").value(info.numActivities);
+        jw.name("topActivityType").value(info.topActivityType);
+        writeAohpComponent(jw, "baseActivity", info.baseActivity);
+        writeAohpComponent(jw, "topActivity", info.topActivity);
+        jw.name("childTaskIds");
+        jw.beginArray();
+        if (info.childTaskIds != null) {
+            for (int id : info.childTaskIds) {
+                jw.value(id);
+            }
+        }
+        jw.endArray();
+        jw.name("childTaskNames");
+        jw.beginArray();
+        if (info.childTaskNames != null) {
+            for (String n : info.childTaskNames) {
+                jw.value(n != null ? n : "");
+            }
+        }
+        jw.endArray();
+        jw.name("childTaskBounds");
+        jw.beginArray();
+        if (info.childTaskBounds != null) {
+            for (Rect r : info.childTaskBounds) {
+                jw.value(r != null ? r.toShortString() : "");
+            }
+        }
+        jw.endArray();
+        jw.name("childTaskUserIds");
+        jw.beginArray();
+        if (info.childTaskUserIds != null) {
+            for (int uid : info.childTaskUserIds) {
+                jw.value(uid);
+            }
+        }
+        jw.endArray();
+        jw.endObject();
+    }
+
+    private static void writeAohpComponent(JsonWriter jw, String name, ComponentName c)
+            throws IOException {
+        jw.name(name);
+        if (c == null) {
+            jw.nullValue();
+        } else {
+            jw.value(c.flattenToShortString());
+        }
+    }
+
+    private static void writeAohpActivityRecordComponent(JsonWriter jw, String name,
+            ActivityRecord r) throws IOException {
+        jw.name(name);
+        if (r == null) {
+            jw.nullValue();
+        } else if (r.mActivityComponent != null) {
+            jw.value(r.mActivityComponent.flattenToShortString());
+        } else {
+            jw.nullValue();
         }
     }
 
