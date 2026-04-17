@@ -35,4 +35,27 @@ interface IAohpContainer {
      * @return A ParcelFileDescriptor for bidirectional communication.
      */
     ParcelFileDescriptor openShell(String containerName);
+
+    /** Template name recorded at create time (e.g. "alpine"), or empty if unknown. */
+    String templateInfo(String containerName);
+
+    /**
+     * Start a long-running service inside the container (detached, logs under env/services/).
+     * @return child pid, or -1 on failure.
+     */
+    long startService(String containerName, String serviceId, String command);
+
+    boolean stopService(String containerName, String serviceId);
+
+    /** JSON array of service entries. */
+    String listServices(String containerName);
+
+    /** Last {@code tailBytes} of the service log file (decoded from daemon). */
+    String serviceLog(String containerName, String serviceId, int tailBytes);
+
+    /** JSON: cgroup memory/cpu/pids usage. */
+    String getUsage(String containerName);
+
+    /** JSON: template, bind-mount hints, cgroup summary. */
+    String diagnose(String containerName);
 }
