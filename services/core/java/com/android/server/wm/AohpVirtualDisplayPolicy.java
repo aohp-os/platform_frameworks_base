@@ -9,6 +9,7 @@ package com.android.server.wm;
 
 import android.app.ActivityOptions;
 import android.os.SystemProperties;
+import android.util.ArraySet;
 import android.view.Display;
 
 /**
@@ -18,7 +19,8 @@ public final class AohpVirtualDisplayPolicy {
     private static final String PROP_ENABLED = "ro.aohp.virtual_display_policy";
 
     private static final Object sLock = new Object();
-    private static int sRegisteredDisplayId = Display.INVALID_DISPLAY;
+    /** Displays owned by the current AOHP session (multi-VD capable). */
+    private static final ArraySet<Integer> sRegisteredDisplayIds = new ArraySet<>();
     private static int sOwnerUid = -1;
     private static String sFocusPackage = "";
     private static String sOwnerPackage = "";
@@ -36,16 +38,23 @@ public final class AohpVirtualDisplayPolicy {
 
     public static void registerSession(int displayId, int ownerUid, String ownerPackage) {
         synchronized (sLock) {
-            sRegisteredDisplayId = displayId;
             sOwnerUid = ownerUid;
             sOwnerPackage = ownerPackage != null ? ownerPackage : "";
             sFocusPackage = sOwnerPackage;
+            sRegisteredDisplayIds.add(displayId);
+        }
+    }
+
+    /** Remove one display from the session (e.g. after destroyVirtualDisplay). */
+    public static void unregisterDisplay(int displayId) {
+        synchronized (sLock) {
+            sRegisteredDisplayIds.remove(displayId);
         }
     }
 
     public static void unregisterSession() {
         synchronized (sLock) {
-            sRegisteredDisplayId = Display.INVALID_DISPLAY;
+            sRegisteredDisplayIds.clear();
             sOwnerUid = -1;
             sOwnerPackage = "";
             sFocusPackage = "";
@@ -58,9 +67,14 @@ public final class AohpVirtualDisplayPolicy {
         }
     }
 
+    /** @deprecated Prefer {@link #isDisplayRegisteredForOwner(int, int)} */
+    @Deprecated
     public static int getRegisteredDisplayId() {
         synchronized (sLock) {
-            return sRegisteredDisplayId;
+            for (int id : sRegisteredDisplayIds) {
+                return id;
+            }
+            return Display.INVALID_DISPLAY;
         }
     }
 
@@ -76,16 +90,21 @@ public final class AohpVirtualDisplayPolicy {
         }
     }
 
+    /** True if caller uid matches session owner and display is registered for AOHP inject. */
+    public static boolean isDisplayRegisteredForOwner(int displayId, int ownerUid) {
+        synchronized (sLock) {
+            return ownerUid == sOwnerUid && sRegisteredDisplayIds.contains(displayId);
+        }
+    }
+
     public static boolean allowPlacementOnDisplay(RootWindowContainer root, int displayId) {
         if (!isEnabled()) {
             return false;
         }
-        final int vd;
         synchronized (sLock) {
-            vd = sRegisteredDisplayId;
-        }
-        if (vd < 0 || displayId != vd) {
-            return false;
+            if (!sRegisteredDisplayIds.contains(displayId)) {
+                return false;
+            }
         }
         final DisplayContent dc = root.getDisplayContent(displayId);
         return dc != null;
@@ -96,24 +115,19 @@ public final class AohpVirtualDisplayPolicy {
         if (!isEnabled() || options == null) {
             return;
         }
-        final int virtualDisplayId;
-        synchronized (sLock) {
-            virtualDisplayId = sRegisteredDisplayId;
-        }
-        if (virtualDisplayId < 0) {
-            return;
-        }
         int sourceDisplayId = -1;
         if (sourceRecord != null) {
             sourceDisplayId = sourceRecord.getDisplayId();
         }
-        if (sourceDisplayId != virtualDisplayId) {
+        synchronized (sLock) {
+            if (!sRegisteredDisplayIds.contains(sourceDisplayId)) {
+                return;
+            }
+        }
+        if (root.getDisplayContent(sourceDisplayId) == null) {
             return;
         }
-        if (root.getDisplayContent(virtualDisplayId) == null) {
-            return;
-        }
-        options.setLaunchDisplayId(virtualDisplayId);
+        options.setLaunchDisplayId(sourceDisplayId);
     }
 
     public static void applyLaunchParamsIfNeeded(
@@ -123,21 +137,16 @@ public final class AohpVirtualDisplayPolicy {
         if (!isEnabled() || result == null || root == null) {
             return;
         }
-        final int virtualDisplayId;
-        synchronized (sLock) {
-            virtualDisplayId = sRegisteredDisplayId;
-        }
-        if (virtualDisplayId < 0) {
-            return;
-        }
         int sourceDisplayId = -1;
         if (source != null) {
             sourceDisplayId = source.getDisplayId();
         }
-        if (sourceDisplayId != virtualDisplayId) {
-            return;
+        synchronized (sLock) {
+            if (!sRegisteredDisplayIds.contains(sourceDisplayId)) {
+                return;
+            }
         }
-        final DisplayContent displayContent = root.getDisplayContent(virtualDisplayId);
+        final DisplayContent displayContent = root.getDisplayContent(sourceDisplayId);
         if (displayContent == null) {
             return;
         }

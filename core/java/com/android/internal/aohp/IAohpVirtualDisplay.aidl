@@ -20,4 +20,9 @@ interface IAohpVirtualDisplay {
     void applyMultiDisplayDeveloperSettings();
     /** @param extraDisplayIds optional ids to merge (e.g. app-known MediaProjection VD); may be null */
     String getDisplayRuntimeSnapshotJson(in int[] extraDisplayIds);
+
+    /** Privileged: create a virtual display without MediaProjection. Returns displayId or -1. */
+    int createVirtualDisplay(String name, int width, int height, int densityDpi, int flags);
+    /** Release a display created by {@link #createVirtualDisplay}. */
+    boolean destroyVirtualDisplay(int displayId);
 }

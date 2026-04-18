@@ -14,11 +14,17 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.Context;
 import android.content.Intent;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.DisplayManagerInternal;
+import android.hardware.display.IVirtualDisplayCallback;
+import android.hardware.display.VirtualDisplayConfig;
 import android.hardware.input.InputManager;
 import android.os.Binder;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.SparseArray;
+import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
@@ -47,6 +53,9 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     private final InputManagerService mInputManager;
     private final ActivityTaskManagerService mAtm;
 
+    /** Callback tokens for VD created via {@link #createVirtualDisplay} (needed for release). */
+    private final SparseArray<IVirtualDisplayCallback> mAohpCreatedCallbacks = new SparseArray<>();
+
     public AohpVirtualDisplayService(Context context, InputManagerService inputManager,
             ActivityTaskManagerService atm) {
         mContext = context;
@@ -60,8 +69,7 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     }
 
     private void verifyCallerRegistered(int displayId, int ownerUid) {
-        if (ownerUid != AohpVirtualDisplayPolicy.getOwnerUid()
-                || displayId != AohpVirtualDisplayPolicy.getRegisteredDisplayId()) {
+        if (!AohpVirtualDisplayPolicy.isDisplayRegisteredForOwner(displayId, ownerUid)) {
             throw new SecurityException("displayId/uid not registered for AOHP session");
         }
     }
@@ -302,6 +310,99 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
         } finally {
             Binder.restoreCallingIdentity(ident);
         }
+    }
+
+    @Override
+    public int createVirtualDisplay(String name, int width, int height, int densityDpi, int flags)
+            throws RemoteException {
+        enforceAohpPermission();
+        final int uid = Binder.getCallingUid();
+        if (width <= 0 || height <= 0 || densityDpi <= 0) {
+            return Display.INVALID_DISPLAY;
+        }
+        String pkg = getPrimaryPackageForUid(uid);
+        int effectiveFlags = flags;
+        if (effectiveFlags == 0) {
+            effectiveFlags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED
+                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH;
+        }
+        VirtualDisplayConfig config =
+                new VirtualDisplayConfig.Builder(
+                        name != null && !name.isEmpty() ? name : "aohp-vd",
+                        width, height, densityDpi)
+                        .setFlags(effectiveFlags)
+                        .build();
+        IVirtualDisplayCallback callback = new IVirtualDisplayCallback.Stub() {
+            @Override
+            public void onPaused() {
+            }
+
+            @Override
+            public void onResumed() {
+            }
+
+            @Override
+            public void onStopped() {
+            }
+        };
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            DisplayManagerInternal dmi = LocalServices.getService(DisplayManagerInternal.class);
+            if (dmi == null) {
+                return Display.INVALID_DISPLAY;
+            }
+            int displayId =
+                    dmi.createVirtualDisplay(config, callback, null, null, pkg, uid);
+            if (displayId != Display.INVALID_DISPLAY) {
+                synchronized (this) {
+                    mAohpCreatedCallbacks.put(displayId, callback);
+                }
+                AohpVirtualDisplayPolicy.registerSession(displayId, uid, pkg);
+            }
+            return displayId;
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
+    public boolean destroyVirtualDisplay(int displayId) throws RemoteException {
+        enforceAohpPermission();
+        final int uid = Binder.getCallingUid();
+        if (!AohpVirtualDisplayPolicy.isDisplayRegisteredForOwner(displayId, uid)) {
+            throw new SecurityException("not owner of display");
+        }
+        IVirtualDisplayCallback callback;
+        synchronized (this) {
+            callback = mAohpCreatedCallbacks.get(displayId);
+        }
+        if (callback == null) {
+            return false;
+        }
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            DisplayManagerInternal dmi = LocalServices.getService(DisplayManagerInternal.class);
+            if (dmi != null) {
+                dmi.releaseVirtualDisplay(callback);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+        synchronized (this) {
+            mAohpCreatedCallbacks.remove(displayId);
+        }
+        AohpVirtualDisplayPolicy.unregisterDisplay(displayId);
+        return true;
+    }
+
+    private String getPrimaryPackageForUid(int uid) {
+        String[] pkgs = mContext.getPackageManager().getPackagesForUid(uid);
+        if (pkgs != null && pkgs.length > 0) {
+            return pkgs[0];
+        }
+        return "android";
     }
 
     private boolean injectMotionDownUp(int displayId, int x, int y, long now) {
