@@ -14,21 +14,29 @@ import android.app.ActivityManager;
 import android.app.ActivityOptions;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.PixelFormat;
+import android.hardware.HardwareBuffer;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManagerInternal;
 import android.hardware.display.IVirtualDisplayCallback;
 import android.hardware.display.VirtualDisplayConfig;
 import android.hardware.input.InputManager;
+import android.media.Image;
+import android.media.ImageReader;
 import android.os.Binder;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.Surface;
 
 import com.android.internal.aohp.IAohpVirtualDisplay;
 import com.android.server.LocalServices;
@@ -43,11 +51,28 @@ import com.android.server.wm.SafeActivityOptions;
  */
 public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     public static final String SERVICE_NAME = "aohp_virtual_display";
+    private static final String TAG = "AohpVD";
 
     private static final float DEFAULT_SIZE = 1.0f;
     private static final float DEFAULT_PRESSURE = 1.0f;
     private static final int DEFAULT_META_STATE = 0;
     private static final int DEFAULT_EDGE_FLAGS = 0;
+
+    // Small buffer count is sufficient: we only need to keep the Surface producing frames
+    // so the display stays in STATE_ON. Acquired images are released immediately.
+    private static final int IMAGE_READER_MAX_IMAGES = 3;
+
+    /**
+     * ImageReader-backed Surface for a virtual display must allow the GPU to render into it
+     * and SurfaceFlinger/HWComposer to scan it out. Without GPU_COLOR_OUTPUT the composition
+     * target is rejected (visible as EGL_BAD_MATCH / HWUI "Failed to set EGL_SWAP_BEHAVIOR")
+     * and the display ends up with no frames, which in turn drops injected input as if the
+     * display were off.
+     */
+    private static final long IMAGE_READER_USAGE =
+            HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
+                    | HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
+                    | HardwareBuffer.USAGE_COMPOSER_OVERLAY;
 
     private final Context mContext;
     private final InputManagerService mInputManager;
@@ -56,11 +81,32 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     /** Callback tokens for VD created via {@link #createVirtualDisplay} (needed for release). */
     private final SparseArray<IVirtualDisplayCallback> mAohpCreatedCallbacks = new SparseArray<>();
 
+    /**
+     * ImageReaders that back the Surface of each AOHP-owned virtual display. Without a
+     * producer-attached Surface the VD stays in {@link Display#STATE_OFF}, which makes the
+     * WindowManager attach a sleep token, the hosted activity stops and its window becomes
+     * NOT_VISIBLE, so injected touches fall through as "no touchable window".
+     */
+    private final SparseArray<ImageReader> mAohpImageReaders = new SparseArray<>();
+
+    /** Lazily started background thread used to drain frames from our ImageReaders. */
+    private HandlerThread mReaderThread;
+    private Handler mReaderHandler;
+
     public AohpVirtualDisplayService(Context context, InputManagerService inputManager,
             ActivityTaskManagerService atm) {
         mContext = context;
         mInputManager = inputManager;
         mAtm = atm;
+    }
+
+    private synchronized Handler getReaderHandlerLocked() {
+        if (mReaderThread == null) {
+            mReaderThread = new HandlerThread("AohpVdImageReader");
+            mReaderThread.start();
+            mReaderHandler = new Handler(mReaderThread.getLooper());
+        }
+        return mReaderHandler;
     }
 
     private void enforceAohpPermission() {
@@ -231,7 +277,13 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
                     ev.getKeyCode(), ev.getRepeatCount(), ev.getMetaState(),
                     ev.getDeviceId(), ev.getScanCode(), ev.getFlags(), ev.getSource());
             e.setDisplayId(displayId);
-            if (!mInputManager.injectInputEvent(e, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH)) {
+            final boolean ok = mInputManager.injectInputEvent(
+                    e, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+            Slog.i(TAG, "injectKey: displayId=" + displayId
+                    + " keyCode=" + e.getKeyCode()
+                    + " action=" + KeyEvent.actionToString(e.getAction())
+                    + " eventDisplayId=" + e.getDisplayId() + " result=" + ok);
+            if (!ok) {
                 return false;
             }
         }
@@ -328,11 +380,40 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
                     | DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED
                     | DisplayManager.VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH;
         }
+        // OWN_FOCUS gives the AOHP virtual display its own input focus, so KeyEvents /
+        // text injection routed with displayId=this-vd find a focused window on this display
+        // instead of falling back to the globally focused window (usually on the default
+        // display). OWN_FOCUS requires TRUSTED, which we already include.
+        effectiveFlags |= DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_FOCUS;
+        // Back the VD with an ImageReader-owned Surface. If we pass null, VirtualDisplayAdapter
+        // forces the display into STATE_OFF, which in turn makes WindowManager add a sleep
+        // token (DisplayContent#onDisplayInfoUpdated), pauses activities, marks their windows
+        // NOT_VISIBLE, and finally causes InputDispatcher to drop injected touches as
+        // "no touchable window". A silent producer keeps the display active.
+        ImageReader reader = ImageReader.newInstance(
+                width, height, PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES,
+                IMAGE_READER_USAGE);
+        reader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+            @Override
+            public void onImageAvailable(ImageReader r) {
+                try {
+                    Image img = r.acquireLatestImage();
+                    if (img != null) {
+                        img.close();
+                    }
+                } catch (IllegalStateException ignored) {
+                    // Reader already closed or max images reached; safe to drop.
+                }
+            }
+        }, getReaderHandler());
+
+        Surface surface = reader.getSurface();
         VirtualDisplayConfig config =
                 new VirtualDisplayConfig.Builder(
                         name != null && !name.isEmpty() ? name : "aohp-vd",
                         width, height, densityDpi)
                         .setFlags(effectiveFlags)
+                        .setSurface(surface)
                         .build();
         IVirtualDisplayCallback callback = new IVirtualDisplayCallback.Stub() {
             @Override
@@ -348,22 +429,51 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
             }
         };
         final long ident = Binder.clearCallingIdentity();
+        int displayId = Display.INVALID_DISPLAY;
         try {
             DisplayManagerInternal dmi = LocalServices.getService(DisplayManagerInternal.class);
             if (dmi == null) {
                 return Display.INVALID_DISPLAY;
             }
-            int displayId =
-                    dmi.createVirtualDisplay(config, callback, null, null, pkg, uid);
+            // Surface is attached via VirtualDisplayConfig#setSurface above; DMI signature is
+            // (config, callback, virtualDevice, dwpc, packageName, ownerUid).
+            displayId = dmi.createVirtualDisplay(config, callback, null, null, pkg, uid);
             if (displayId != Display.INVALID_DISPLAY) {
                 synchronized (this) {
                     mAohpCreatedCallbacks.put(displayId, callback);
+                    mAohpImageReaders.put(displayId, reader);
                 }
                 AohpVirtualDisplayPolicy.registerSession(displayId, uid, pkg);
+                // Log the freshly-created display's power state so we can tell from logcat
+                // whether the attached Surface actually brought the display online.
+                DisplayManager dm = mContext.getSystemService(DisplayManager.class);
+                Display created = dm != null ? dm.getDisplay(displayId) : null;
+                Slog.i(TAG, "createVirtualDisplay: displayId=" + displayId
+                        + " size=" + width + "x" + height + " dpi=" + densityDpi
+                        + " flags=0x" + Integer.toHexString(effectiveFlags)
+                        + " surfaceValid=" + (surface != null && surface.isValid())
+                        + " state="
+                        + (created != null ? Display.stateToString(created.getState()) : "null"));
+            } else {
+                Slog.w(TAG, "createVirtualDisplay: DMI returned INVALID_DISPLAY for pkg=" + pkg);
             }
             return displayId;
         } finally {
             Binder.restoreCallingIdentity(ident);
+            if (displayId == Display.INVALID_DISPLAY) {
+                try {
+                    reader.close();
+                } catch (Exception e) {
+                    Slog.w(TAG, "Failed to close ImageReader after VD creation failure", e);
+                }
+            }
+        }
+    }
+
+    /** Public accessor used by the anonymous listener to lazily create the reader thread. */
+    private Handler getReaderHandler() {
+        synchronized (this) {
+            return getReaderHandlerLocked();
         }
     }
 
@@ -375,8 +485,10 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
             throw new SecurityException("not owner of display");
         }
         IVirtualDisplayCallback callback;
+        ImageReader reader;
         synchronized (this) {
             callback = mAohpCreatedCallbacks.get(displayId);
+            reader = mAohpImageReaders.get(displayId);
         }
         if (callback == null) {
             return false;
@@ -392,6 +504,14 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
         }
         synchronized (this) {
             mAohpCreatedCallbacks.remove(displayId);
+            mAohpImageReaders.remove(displayId);
+        }
+        if (reader != null) {
+            try {
+                reader.close();
+            } catch (Exception e) {
+                Slog.w(TAG, "Failed to close ImageReader for displayId=" + displayId, e);
+            }
         }
         AohpVirtualDisplayPolicy.unregisterDisplay(displayId);
         return true;
@@ -415,17 +535,35 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     private boolean injectMotionEvent(
             int displayId, int action, long downTime, long eventTime, float x, float y) {
         final long ident = Binder.clearCallingIdentity();
+        MotionEvent ev = null;
         try {
             // Use synthetic device id 0 so routing follows MotionEvent.getDisplayId().
             // A physical touchscreen id is tied to the default display and can prevent
             // touches from reaching secondary / virtual displays (e.g. Cuttlefish).
             final int syntheticTouchDeviceId = 0;
-            MotionEvent ev = MotionEvent.obtain(downTime, eventTime, action, x, y,
+            ev = MotionEvent.obtain(downTime, eventTime, action, x, y,
                     DEFAULT_PRESSURE, DEFAULT_SIZE, DEFAULT_META_STATE,
                     1.0f, 1.0f, syntheticTouchDeviceId, DEFAULT_EDGE_FLAGS,
                     InputDevice.SOURCE_TOUCHSCREEN, displayId);
-            return mInputManager.injectInputEvent(ev, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+            // Defensive: re-set displayId on the MotionEvent in case MotionEvent.obtain's
+            // overload didn't carry it through (observed on some builds where the ctor
+            // silently drops displayId when deviceId is 0).
+            if (ev.getDisplayId() != displayId) {
+                Slog.w(TAG, "injectMotionEvent: obtained event has displayId="
+                        + ev.getDisplayId() + " expected " + displayId + "; forcing setDisplayId");
+                ev.setDisplayId(displayId);
+            }
+            final boolean ok = mInputManager.injectInputEvent(
+                    ev, InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH);
+            Slog.i(TAG, "injectMotionEvent: displayId=" + displayId
+                    + " action=" + MotionEvent.actionToString(action)
+                    + " xy=(" + x + "," + y + ") eventDisplayId=" + ev.getDisplayId()
+                    + " result=" + ok);
+            return ok;
         } finally {
+            if (ev != null) {
+                ev.recycle();
+            }
             Binder.restoreCallingIdentity(ident);
         }
     }
