@@ -39,6 +39,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 
 import com.android.internal.aohp.IAohpVirtualDisplay;
+import com.android.server.AccessibilityManagerInternal;
 import com.android.server.LocalServices;
 import com.android.server.input.InputManagerService;
 import com.android.server.wm.ActivityTaskManagerInternal;
@@ -338,6 +339,17 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
         final long ident = Binder.clearCallingIdentity();
         try {
             return mAtm.buildAohpDisplayRuntimeSnapshotJson(extraDisplayIds);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
+    public String dumpUiTree(int displayId, int flags) throws RemoteException {
+        enforceAohpPermission();
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return AccessibilityManagerInternal.get().dumpUiTreeForDisplay(displayId, flags);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }

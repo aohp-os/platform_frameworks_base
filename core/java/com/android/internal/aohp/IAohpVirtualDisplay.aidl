@@ -25,4 +25,7 @@ interface IAohpVirtualDisplay {
     int createVirtualDisplay(String name, int width, int height, int densityDpi, int flags);
     /** Release a display created by {@link #createVirtualDisplay}. */
     boolean destroyVirtualDisplay(int displayId);
+
+    /** Privileged UI tree dump for any logical display (JSON). See AohpUiTreeDumper in system_server. */
+    String dumpUiTree(int displayId, int flags);
 }

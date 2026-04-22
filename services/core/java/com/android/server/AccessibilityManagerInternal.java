@@ -62,6 +62,17 @@ public abstract class AccessibilityManagerInternal {
      */
     public abstract boolean isTouchExplorationEnabled(@UserIdInt int userId);
 
+    /**
+     * AOHP: dump full UI tree for any logical display (bypasses accessibility-service filtering).
+     * Called from {@code system_server} only; permission must be enforced by the caller (e.g.
+     * {@code MANAGE_AOHP_VIRTUAL_DISPLAY}).
+     *
+     * @param displayId logical display id (default or virtual)
+     * @param flags AOHP-specific bitmask (see {@code AohpUiTreeDumper} in accessibility service)
+     * @return JSON object string with {@code displayId}, {@code windows}, {@code nodes}, {@code stats}
+     */
+    public abstract String dumpUiTreeForDisplay(int displayId, int flags);
+
     private static final AccessibilityManagerInternal NOP = new AccessibilityManagerInternal() {
         @Override
         public void setImeSessionEnabled(SparseArray<IAccessibilityInputMethodSession> sessions,
@@ -92,6 +103,11 @@ public abstract class AccessibilityManagerInternal {
 
         @Override
         public void performSystemAction(int actionId) {
+        }
+
+        @Override
+        public String dumpUiTreeForDisplay(int displayId, int flags) {
+            return "{}";
         }
     };
 

@@ -506,6 +506,11 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
                 return mService.getUserStateLocked(userId).isTouchExplorationEnabledLocked();
             }
         }
+
+        @Override
+        public String dumpUiTreeForDisplay(int displayId, int flags) {
+            return mService.dumpUiTreeForDisplayInternal(displayId, flags);
+        }
     }
 
     public static final class Lifecycle extends SystemService {
@@ -736,6 +741,43 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
     @Override
     public int getCurrentUserIdLocked() {
         return mCurrentUserId;
+    }
+
+    /**
+     * AOHP: privileged UI tree JSON for {@code displayId}. Caller must enforce permission.
+     */
+    String dumpUiTreeForDisplayInternal(int displayId, int flags) {
+        final ArrayList<AccessibilityWindowInfo> snapshot = new ArrayList<>();
+        final int userId;
+        synchronized (mLock) {
+            mA11yWindowManager.startTrackingWindows(displayId, false);
+            final List<AccessibilityWindowInfo> raw =
+                    mA11yWindowManager.getWindowListLocked(displayId);
+            if (raw != null) {
+                for (int i = 0; i < raw.size(); i++) {
+                    final AccessibilityWindowInfo w = raw.get(i);
+                    if (w != null) {
+                        snapshot.add(AccessibilityWindowInfo.obtain(w));
+                    }
+                }
+            }
+            userId = mCurrentUserId;
+        }
+        try {
+            return AohpUiTreeDumper.buildJsonFromWindows(this, snapshot, userId, displayId, flags);
+        } finally {
+            for (int i = 0; i < snapshot.size(); i++) {
+                snapshot.get(i).recycle();
+            }
+        }
+    }
+
+    /** Resolve interaction connection for AOHP UI dumps (internally synchronized). */
+    AccessibilityWindowManager.RemoteAccessibilityConnection getAccessibilityConnectionForDump(
+            int userId, int windowId) {
+        synchronized (mLock) {
+            return mA11yWindowManager.getConnectionLocked(userId, windowId);
+        }
     }
 
     @GuardedBy("mLock")
