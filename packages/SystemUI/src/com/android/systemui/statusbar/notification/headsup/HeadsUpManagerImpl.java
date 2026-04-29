@@ -24,6 +24,7 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.graphics.Region;
 import android.os.Handler;
+import android.os.ServiceManager;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
@@ -31,6 +32,7 @@ import android.util.Pools;
 import android.view.accessibility.AccessibilityManager;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.aohp.IAohpEventStream;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEvent;
 import com.android.internal.logging.UiEventLogger;
@@ -596,6 +598,7 @@ public class HeadsUpManagerImpl
         PinnedStatus pinnedStatus = getNewPinnedStatusForEntry(headsUpEntry, requestedPinnedStatus);
         setEntryPinned(headsUpEntry, pinnedStatus, "onEntryAdded");
         EventLogTags.writeSysuiHeadsUpStatus(entry.getKey(), 1 /* visible */);
+        recordAohpHeadsUp("heads_up_shown", entry);
         for (OnHeadsUpChangedListener listener : mListeners) {
             // TODO(b/382509804): It's odd that if pinnedStatus == PinnedStatus.NotPinned, then we
             //  still send isHeadsUp=true to listeners. Is this causing bugs?
@@ -603,6 +606,19 @@ public class HeadsUpManagerImpl
         }
         updateTopHeadsUpFlow();
         updateHeadsUpFlow();
+    }
+
+    private void recordAohpHeadsUp(String type, NotificationEntry entry) {
+        try {
+            IAohpEventStream service = IAohpEventStream.Stub.asInterface(
+                    ServiceManager.getService("aohp_event_stream"));
+            if (service == null || entry == null || entry.getSbn() == null) {
+                return;
+            }
+            service.recordHeadsUp(type, entry.getKey(), entry.getSbn().getPackageName());
+        } catch (Exception e) {
+            Log.d(TAG, "AOHP heads-up event skipped: " + e.getMessage());
+        }
     }
 
     private PinnedStatus getNewPinnedStatusForEntry(
@@ -675,6 +691,7 @@ public class HeadsUpManagerImpl
         entry.setHeadsUp(false);
         setEntryPinned(headsUpEntry, PinnedStatus.NotPinned, "onEntryRemoved");
         EventLogTags.writeSysuiHeadsUpStatus(entry.getKey(), 0 /* visible */);
+        recordAohpHeadsUp("heads_up_hidden", entry);
         mLogger.logNotificationActuallyRemoved(entry);
         for (OnHeadsUpChangedListener listener : mListeners) {
             listener.onHeadsUpStateChanged(entry, false);

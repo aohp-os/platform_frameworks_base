@@ -397,6 +397,7 @@ import com.android.server.EventLogTags;
 import com.android.server.IoThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
+import com.android.server.aohp.AohpEventStreamService;
 import com.android.server.bitmapoffload.BitmapOffloadInternal;
 import com.android.server.job.JobSchedulerInternal;
 import com.android.server.lights.LightsManager;
@@ -4255,6 +4256,8 @@ public class NotificationManagerService extends SystemService {
                         }
                         keepProcessAliveForToastIfNeededLocked(callingPid);
                     }
+                    AohpEventStreamService.recordToast("enqueued", callingUid, callingPid, pkg,
+                            text, duration, displayId);
                     // If it's at index 0, it's the current toast.  It doesn't matter if it's
                     // new or just been updated, show it.
                     // If the callback fails, this will remove it from the list, so don't
@@ -10748,6 +10751,10 @@ public class NotificationManagerService extends SystemService {
 
             if (tryShowToast(
                     record, rateLimitingEnabled, isWithinQuota, isPackageInForeground)) {
+                CharSequence shownText = record instanceof TextToastRecord
+                        ? ((TextToastRecord) record).text : null;
+                AohpEventStreamService.recordToast("shown", record.uid, record.pid, record.pkg,
+                        shownText, record.getDuration(), record.displayId);
                 scheduleDurationReachedLocked(record, lastToastWasTextRecord);
                 mIsCurrentToastShown = true;
                 if (rateLimitingEnabled && !isPackageInForeground) {
@@ -11408,6 +11415,7 @@ public class NotificationManagerService extends SystemService {
         if (reason != REASON_CHANNEL_REMOVED) {
             mArchive.record(getSbnForArchive(r, reason), reason);
         }
+        AohpEventStreamService.recordNotificationRemoved(getSbnForArchive(r, reason), reason);
 
         final long now = System.currentTimeMillis();
         final LogMaker logMaker = r.getItemLogMaker()
@@ -13659,6 +13667,7 @@ public class NotificationManagerService extends SystemService {
     private void notifyListenersPostedAndLogLocked(NotificationRecord r, NotificationRecord old,
             @NonNull PostNotificationTracker tracker,
             @Nullable NotificationRecordLogger.NotificationReported report) {
+        AohpEventStreamService.recordNotificationPosted(r.getSbn());
         List<Runnable> listenerCalls = mListeners.prepareNotifyPostedLocked(r, old, true);
         mHandler.post(() -> {
             for (Runnable listenerCall : listenerCalls) {
