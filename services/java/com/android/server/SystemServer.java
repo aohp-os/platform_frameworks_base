@@ -127,6 +127,7 @@ import com.android.server.adb.AdbService;
 import com.android.server.alarm.AlarmManagerService;
 import com.android.server.aohp.AohpAgentViewService;
 import com.android.server.aohp.AohpContainerService;
+import com.android.server.aohp.AohpFileBridgeService;
 import com.android.server.aohp.AohpVirtualDisplayService;
 import com.android.server.am.ActivityManagerService;
 import com.android.server.ambientcontext.AmbientContextManagerService;
@@ -1781,6 +1782,11 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("StartAohpAgentViewService");
             ServiceManager.addService(AohpAgentViewService.SERVICE_NAME,
                     new AohpAgentViewService(context));
+            t.traceEnd();
+
+            t.traceBegin("StartAohpFileBridgeService");
+            ServiceManager.addService(AohpFileBridgeService.SERVICE_NAME,
+                    new AohpFileBridgeService(context));
             t.traceEnd();
 
             if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
