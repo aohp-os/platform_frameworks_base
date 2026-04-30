@@ -428,17 +428,20 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
                 if (!matchesRoots(f, opts) || !matchesMime(mimeIdx >= 0 ? c.getString(mimeIdx) : null, f, opts)) {
                     continue;
                 }
+                String devicePath = toDevicePath(f);
+                long size = sizeFromMediaStore(sizeIdx >= 0 ? c.getLong(sizeIdx) : 0L, f);
+                long lastModified = lastModifiedFromMediaStore(
+                        modIdx >= 0 ? c.getLong(modIdx) : 0L, f);
                 JSONObject o = new JSONObject();
-                o.put("devicePath", toDevicePath(f));
+                o.put("devicePath", devicePath);
                 o.put("displayName", displayNameFromMediaStore(
                         nameIdx >= 0 ? c.getString(nameIdx) : null, f));
                 o.put("mimeType", mimeIdx >= 0 ? c.getString(mimeIdx) : guessMime(f));
-                o.put("size", sizeFromMediaStore(sizeIdx >= 0 ? c.getLong(sizeIdx) : 0L, f));
-                o.put("lastModified", lastModifiedFromMediaStore(
-                        modIdx >= 0 ? c.getLong(modIdx) : 0L, f));
+                o.put("size", size);
+                o.put("lastModified", lastModified);
                 o.put("contentUri", Uri.withAppendedPath(uri, String.valueOf(c.getLong(idIdx))).toString());
                 o.put("source", "mediastore");
-                o.put("confidence", score(f, opts, "mediastore"));
+                o.put("confidence", score(devicePath, lastModified, size, opts, "mediastore"));
                 scan.add(f, o);
             }
         } catch (Exception e) {
@@ -668,11 +671,16 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
     }
 
     private static double score(File f, Options opts, String source) {
+        return score(toDevicePath(f), f.lastModified(), f.length(), opts, source);
+    }
+
+    private static double score(String devicePath, long lastModified, long size, Options opts,
+            String source) {
         double s = "mediastore".equals(source) ? 0.55 : 0.35;
-        long age = Math.max(0L, System.currentTimeMillis() - f.lastModified());
+        long age = Math.max(0L, System.currentTimeMillis() - lastModified);
         if (age <= opts.windowMs) s += 0.3;
-        if (f.length() > 0) s += 0.1;
-        String path = toDevicePath(f).toLowerCase(Locale.US);
+        if (size > 0) s += 0.1;
+        String path = devicePath.toLowerCase(Locale.US);
         if (path.contains("/download") || path.contains("/pictures") || path.contains("/dcim")) s += 0.05;
         return Math.min(0.99, s);
     }
