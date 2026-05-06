@@ -24,11 +24,12 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Build;
-import android.ravenwood.annotation.RavenwoodClassLoadHook;
 import android.ravenwood.annotation.RavenwoodKeepWholeClass;
 import android.util.TypedValue;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.pm.pkg.component.AconfigFlags;
+import com.android.internal.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.internal.util.XmlUtils;
 
 import dalvik.annotation.optimization.CriticalNative;
@@ -42,26 +43,28 @@ import java.io.Reader;
 
 /**
  * Wrapper around a compiled XML file.
- * 
- * {@hide}
+ *
+ * @hide
  */
 @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
 @RavenwoodKeepWholeClass
-@RavenwoodClassLoadHook(RavenwoodClassLoadHook.LIBANDROID_LOADING_HOOK)
 public final class XmlBlock implements AutoCloseable {
     private static final boolean DEBUG=false;
+    public static final String ANDROID_RESOURCES = "http://schemas.android.com/apk/res/android";
 
     @UnsupportedAppUsage
     public XmlBlock(byte[] data) {
         mAssets = null;
         mNative = nativeCreate(data, 0, data.length);
         mStrings = new StringBlock(nativeGetStringBlock(mNative), false);
+        mUsesFeatureFlags = true;
     }
 
     public XmlBlock(byte[] data, int offset, int size) {
         mAssets = null;
         mNative = nativeCreate(data, offset, size);
         mStrings = new StringBlock(nativeGetStringBlock(mNative), false);
+        mUsesFeatureFlags = true;
     }
 
     @Override
@@ -343,6 +346,28 @@ public final class XmlBlock implements AutoCloseable {
             if (ev == ERROR_BAD_DOCUMENT) {
                 throw new XmlPullParserException("Corrupt XML binary file");
             }
+
+            if (Flags.layoutReadwriteFlags() && mUsesFeatureFlags && ev == START_TAG) {
+                FlagInfo flag = nativeGetFlagInfo(mParseState);
+                if (flag != null && flag.mNameIndex > 0) {
+                    AconfigFlags flags = ParsingPackageUtils.getAconfigFlags();
+                    String flagName = getSequenceString(mStrings.getSequence(flag.mNameIndex));
+                    if (flags.skip(/* pkg= */ null, flagName, flag.mNegated)) {
+                        int depth = 1;
+                        while (depth > 0) {
+                            int ev2 = nativeNext(mParseState);
+                            if (ev2 == ERROR_BAD_DOCUMENT) {
+                                throw new XmlPullParserException("Corrupt XML binary file");
+                            } else if (ev2 == START_TAG) {
+                                depth++;
+                            } else if (ev2 == END_TAG) {
+                                depth--;
+                            }
+                        }
+                        return next();
+                    }
+                }
+            }
             if (mDecNextDepth) {
                 mDepth--;
                 mDecNextDepth = false;
@@ -368,6 +393,7 @@ public final class XmlBlock implements AutoCloseable {
             }
             return ev;
         }
+
         public void require(int type, String namespace, String name) throws XmlPullParserException,IOException {
             if (type != getEventType()
                 || (namespace != null && !namespace.equals( getNamespace () ) )
@@ -405,12 +431,12 @@ public final class XmlBlock implements AutoCloseable {
             }
             if (eventType != START_TAG && eventType != END_TAG) {
                throw new XmlPullParserException(
-                   getPositionDescription() 
+                   getPositionDescription()
                    + ": expected start or end tag", this, null);
             }
             return eventType;
         }
-    
+
         public int getAttributeNameResource(int index) {
             final int resourceNameId = nativeGetAttributeResource(mParseState, index);
             if (resourceNameId == ERROR_NULL_DOCUMENT) {
@@ -418,7 +444,7 @@ public final class XmlBlock implements AutoCloseable {
             }
             return resourceNameId;
         }
-    
+
         public int getAttributeListValue(String namespace, String attribute,
                 String[] options, int defaultValue) {
             int idx = nativeGetAttributeIndex(mParseState, namespace, attribute);
@@ -646,10 +672,11 @@ public final class XmlBlock implements AutoCloseable {
      *  are doing!  The given native object must exist for the entire lifetime
      *  of this newly creating XmlBlock.
      */
-    XmlBlock(@Nullable AssetManager assets, long xmlBlock) {
+    XmlBlock(@Nullable AssetManager assets, long xmlBlock, boolean usesFeatureFlags) {
         mAssets = assets;
         mNative = xmlBlock;
         mStrings = new StringBlock(nativeGetStringBlock(xmlBlock), false);
+        mUsesFeatureFlags = usesFeatureFlags;
     }
 
     private @Nullable final AssetManager mAssets;
@@ -657,6 +684,19 @@ public final class XmlBlock implements AutoCloseable {
     /*package*/ final StringBlock mStrings;
     private boolean mOpen = true;
     private int mOpenCount = 1;
+
+    private final boolean mUsesFeatureFlags;
+
+    // This class only exists for JNI communication
+    private static class FlagInfo {
+        private int mNameIndex;
+        private boolean mNegated;
+
+        private FlagInfo(int nameIndex, boolean negated) {
+            mNameIndex = nameIndex;
+            mNegated = negated;
+        }
+    }
 
     private static final native long nativeCreate(byte[] data,
                                                  int offset,
@@ -720,4 +760,7 @@ public final class XmlBlock implements AutoCloseable {
 
     @CriticalNative
     private static final native int nativeGetSourceResId(long state);
+
+    @FastNative
+    private static final native FlagInfo nativeGetFlagInfo(long state);
 }

@@ -21,13 +21,18 @@ import android.content.pm.PackageManager
 import android.content.pm.PermissionGroupInfo
 import android.content.pm.PermissionInfo
 import android.content.pm.SigningDetails
+import android.content.pm.ValidPurposeInfo
+import android.health.connect.HealthPermissions
 import android.os.Build
 import android.os.Bundle
+import android.platform.test.flag.junit.SetFlagsRule
 import android.util.ArrayMap
 import android.util.SparseArray
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.android.internal.pm.pkg.component.ParsedPermission
 import com.android.internal.pm.pkg.component.ParsedPermissionGroup
+import com.android.internal.pm.pkg.component.ParsedUsesPermission
+import com.android.internal.pm.pkg.component.ParsedValidPurpose
 import com.android.modules.utils.testing.ExtendedMockitoRule
 import com.android.server.extendedtestutils.wheneverStatic
 import com.android.server.permission.access.MutableAccessState
@@ -49,32 +54,28 @@ import org.junit.Rule
 import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.anyLong
 
-/**
- * Mocking unit test for AppIdPermissionPolicy.
- */
+/** Mocking unit test for AppIdPermissionPolicy. */
 @RunWith(AndroidJUnit4::class)
 abstract class BasePermissionPolicyTest {
     protected lateinit var oldState: MutableAccessState
     protected lateinit var newState: MutableAccessState
 
-    protected val defaultPermissionGroup = mockParsedPermissionGroup(
-        PERMISSION_GROUP_NAME_0,
-        PACKAGE_NAME_0
-    )
-    protected val defaultPermissionTree = mockParsedPermission(
-        PERMISSION_TREE_NAME,
-        PACKAGE_NAME_0,
-        isTree = true
-    )
+    protected val defaultPermissionGroup =
+        mockParsedPermissionGroup(PERMISSION_GROUP_NAME_0, PACKAGE_NAME_0)
+    protected val defaultPermissionTree =
+        mockParsedPermission(PERMISSION_TREE_NAME, PACKAGE_NAME_0, isTree = true)
     protected val defaultPermission = mockParsedPermission(PERMISSION_NAME_0, PACKAGE_NAME_0)
 
     protected val appIdPermissionPolicy = AppIdPermissionPolicy()
 
     @Rule
     @JvmField
-    val extendedMockitoRule = ExtendedMockitoRule.Builder(this)
-        .spyStatic(PackageInfoUtils::class.java)
-        .build()
+    val extendedMockitoRule =
+        ExtendedMockitoRule.Builder(this).spyStatic(PackageInfoUtils::class.java).build()
+
+    @Rule
+    @JvmField
+    val setFlagsRule: SetFlagsRule = SetFlagsRule()
 
     @Before
     fun baseSetUp() {
@@ -93,65 +94,83 @@ abstract class BasePermissionPolicyTest {
 
     private fun mockPackageInfoUtilsGeneratePermissionInfo() {
         wheneverStatic {
-            PackageInfoUtils.generatePermissionInfo(any(ParsedPermission::class.java), anyLong())
-        }.thenAnswer { invocation ->
-            val parsedPermission = invocation.getArgument<ParsedPermission>(0)
-            val generateFlags = invocation.getArgument<Long>(1)
-            PermissionInfo(parsedPermission.backgroundPermission).apply {
-                name = parsedPermission.name
-                packageName = parsedPermission.packageName
-                metaData = if (generateFlags.toInt().hasBits(PackageManager.GET_META_DATA)) {
-                    parsedPermission.metaData
-                } else {
-                    null
-                }
-                @Suppress("DEPRECATION")
-                protectionLevel = parsedPermission.protectionLevel
-                group = parsedPermission.group
-                flags = parsedPermission.flags
+                PackageInfoUtils.generatePermissionInfo(
+                    any(ParsedPermission::class.java),
+                    anyLong(),
+                )
             }
-        }
+            .thenAnswer { invocation ->
+                val parsedPermission = invocation.getArgument<ParsedPermission>(0)
+                val generateFlags = invocation.getArgument<Long>(1)
+                PermissionInfo(parsedPermission.backgroundPermission).apply {
+                    name = parsedPermission.name
+                    packageName = parsedPermission.packageName
+                    metaData =
+                        if (generateFlags.toInt().hasBits(PackageManager.GET_META_DATA)) {
+                            parsedPermission.metaData
+                        } else {
+                            null
+                        }
+                    @Suppress("DEPRECATION")
+                    protectionLevel = parsedPermission.protectionLevel
+                    group = parsedPermission.group
+                    flags = parsedPermission.flags
+                    requiresPurpose = parsedPermission.isPurposeRequired
+                    requiresPurposeTargetSdkVersion =
+                        parsedPermission.requiresPurposeTargetSdkVersion
+                    validPurposes =
+                        parsedPermission.validPurposes.associate {
+                            it.name to ValidPurposeInfo(it.name, it.maxTargetSdkVersion)
+                        }
+                }
+            }
     }
 
     private fun mockPackageInfoUtilsGeneratePermissionGroupInfo() {
         wheneverStatic {
-            PackageInfoUtils.generatePermissionGroupInfo(
-                any(ParsedPermissionGroup::class.java),
-                anyLong()
-            )
-        }.thenAnswer { invocation ->
-            val parsedPermissionGroup = invocation.getArgument<ParsedPermissionGroup>(0)
-            val generateFlags = invocation.getArgument<Long>(1)
-            @Suppress("DEPRECATION")
-            PermissionGroupInfo().apply {
-                name = parsedPermissionGroup.name
-                packageName = parsedPermissionGroup.packageName
-                metaData = if (generateFlags.toInt().hasBits(PackageManager.GET_META_DATA)) {
-                    parsedPermissionGroup.metaData
-                } else {
-                    null
-                }
-                flags = parsedPermissionGroup.flags
+                PackageInfoUtils.generatePermissionGroupInfo(
+                    any(ParsedPermissionGroup::class.java),
+                    anyLong(),
+                )
             }
-        }
+            .thenAnswer { invocation ->
+                val parsedPermissionGroup = invocation.getArgument<ParsedPermissionGroup>(0)
+                val generateFlags = invocation.getArgument<Long>(1)
+                @Suppress("DEPRECATION")
+                PermissionGroupInfo().apply {
+                    name = parsedPermissionGroup.name
+                    packageName = parsedPermissionGroup.packageName
+                    metaData =
+                        if (generateFlags.toInt().hasBits(PackageManager.GET_META_DATA)) {
+                            parsedPermissionGroup.metaData
+                        } else {
+                            null
+                        }
+                    flags = parsedPermissionGroup.flags
+                }
+            }
     }
 
-    /**
-     * Mock an AndroidPackage with PACKAGE_NAME_0, PERMISSION_NAME_0 and PERMISSION_GROUP_NAME_0
-     */
+    /** Mock an AndroidPackage with PACKAGE_NAME_0, PERMISSION_NAME_0 and PERMISSION_GROUP_NAME_0 */
     protected fun mockSimpleAndroidPackage(): AndroidPackage =
         mockAndroidPackage(
             PACKAGE_NAME_0,
             permissionGroups = listOf(defaultPermissionGroup),
-            permissions = listOf(defaultPermissionTree, defaultPermission)
+            permissions = listOf(defaultPermissionTree, defaultPermission),
         )
 
     protected fun createSimplePermission(isTree: Boolean = false): Permission {
-        val parsedPermission = if (isTree) { defaultPermissionTree } else { defaultPermission }
-        val permissionInfo = PackageInfoUtils.generatePermissionInfo(
-            parsedPermission,
-            PackageManager.GET_META_DATA.toLong()
-        )!!
+        val parsedPermission =
+            if (isTree) {
+                defaultPermissionTree
+            } else {
+                defaultPermission
+            }
+        val permissionInfo =
+            PackageInfoUtils.generatePermissionInfo(
+                parsedPermission,
+                PackageManager.GET_META_DATA.toLong(),
+            )!!
         return Permission(permissionInfo, true, Permission.TYPE_MANIFEST, APP_ID_0)
     }
 
@@ -164,13 +183,12 @@ abstract class BasePermissionPolicyTest {
         appId: Int,
         packageName: String,
         isSystem: Boolean = false,
-    ): PackageState =
-        mock {
-            whenever(this.appId).thenReturn(appId)
-            whenever(this.packageName).thenReturn(packageName)
-            whenever(androidPackage).thenReturn(null)
-            whenever(this.isSystem).thenReturn(isSystem)
-        }
+    ): PackageState = mock {
+        whenever(this.appId).thenReturn(appId)
+        whenever(this.packageName).thenReturn(packageName)
+        whenever(androidPackage).thenReturn(null)
+        whenever(this.isSystem).thenReturn(isSystem)
+    }
 
     protected fun mockPackageState(
         appId: Int,
@@ -179,22 +197,22 @@ abstract class BasePermissionPolicyTest {
         isPrivileged: Boolean = false,
         isProduct: Boolean = false,
         isInstantApp: Boolean = false,
-        isVendor: Boolean = false
-    ): PackageState =
-        mock {
-            whenever(this.appId).thenReturn(appId)
-            whenever(this.androidPackage).thenReturn(androidPackage)
-            val packageName = androidPackage.packageName
-            whenever(this.packageName).thenReturn(packageName)
-            whenever(this.isSystem).thenReturn(isSystem)
-            whenever(this.isPrivileged).thenReturn(isPrivileged)
-            whenever(this.isProduct).thenReturn(isProduct)
-            whenever(this.isVendor).thenReturn(isVendor)
-            val userStates = SparseArray<PackageUserState>().apply {
+        isVendor: Boolean = false,
+    ): PackageState = mock {
+        whenever(this.appId).thenReturn(appId)
+        whenever(this.androidPackage).thenReturn(androidPackage)
+        val packageName = androidPackage.packageName
+        whenever(this.packageName).thenReturn(packageName)
+        whenever(this.isSystem).thenReturn(isSystem)
+        whenever(this.isPrivileged).thenReturn(isPrivileged)
+        whenever(this.isProduct).thenReturn(isProduct)
+        whenever(this.isVendor).thenReturn(isVendor)
+        val userStates =
+            SparseArray<PackageUserState>().apply {
                 put(USER_ID_0, mock { whenever(this.isInstantApp).thenReturn(isInstantApp) })
             }
-            whenever(this.userStates).thenReturn(userStates)
-        }
+        whenever(this.userStates).thenReturn(userStates)
+    }
 
     protected fun mockAndroidPackage(
         packageName: String,
@@ -205,28 +223,28 @@ abstract class BasePermissionPolicyTest {
         requestedPermissions: Set<String> = emptySet(),
         permissionGroups: List<ParsedPermissionGroup> = emptyList(),
         permissions: List<ParsedPermission> = emptyList(),
-        isSignatureMatching: Boolean = false
-    ): AndroidPackage =
-        mock {
-            whenever(this.packageName).thenReturn(packageName)
-            whenever(this.targetSdkVersion).thenReturn(targetSdkVersion)
-            whenever(this.isRequestLegacyExternalStorage).thenReturn(isRequestLegacyExternalStorage)
-            whenever(this.adoptPermissions).thenReturn(adoptPermissions)
-            whenever(this.implicitPermissions).thenReturn(implicitPermissions)
-            whenever(this.requestedPermissions).thenReturn(requestedPermissions)
-            whenever(this.permissionGroups).thenReturn(permissionGroups)
-            whenever(this.permissions).thenReturn(permissions)
-            val signingDetails = mock<SigningDetails> {
-                whenever(
-                    hasCommonSignerWithCapability(any(), any())
-                ).thenReturn(isSignatureMatching)
+        isSignatureMatching: Boolean = false,
+        usesPermissionMapping: Map<String, ParsedUsesPermission> = emptyMap()
+    ): AndroidPackage = mock {
+        whenever(this.packageName).thenReturn(packageName)
+        whenever(this.targetSdkVersion).thenReturn(targetSdkVersion)
+        whenever(this.isRequestLegacyExternalStorage).thenReturn(isRequestLegacyExternalStorage)
+        whenever(this.adoptPermissions).thenReturn(adoptPermissions)
+        whenever(this.implicitPermissions).thenReturn(implicitPermissions)
+        whenever(this.requestedPermissions).thenReturn(requestedPermissions)
+        whenever(this.permissionGroups).thenReturn(permissionGroups)
+        whenever(this.permissions).thenReturn(permissions)
+        val signingDetails =
+            mock<SigningDetails> {
+                whenever(hasCommonSignerWithCapability(any(), any()))
+                    .thenReturn(isSignatureMatching)
                 whenever(hasAncestorOrSelf(any())).thenReturn(isSignatureMatching)
-                whenever(
-                    checkCapability(any<SigningDetails>(), any())
-                ).thenReturn(isSignatureMatching)
+                whenever(checkCapability(any<SigningDetails>(), any()))
+                    .thenReturn(isSignatureMatching)
             }
-            whenever(this.signingDetails).thenReturn(signingDetails)
-        }
+        whenever(this.signingDetails).thenReturn(signingDetails)
+        whenever(this.usesPermissionMapping).thenReturn(usesPermissionMapping)
+    }
 
     protected fun mockParsedPermission(
         permissionName: String,
@@ -235,72 +253,98 @@ abstract class BasePermissionPolicyTest {
         group: String? = null,
         protectionLevel: Int = PermissionInfo.PROTECTION_NORMAL,
         flags: Int = 0,
-        isTree: Boolean = false
-    ): ParsedPermission =
-        mock {
-            whenever(name).thenReturn(permissionName)
-            whenever(this.packageName).thenReturn(packageName)
-            whenever(metaData).thenReturn(Bundle())
-            whenever(this.backgroundPermission).thenReturn(backgroundPermission)
-            whenever(this.group).thenReturn(group)
-            whenever(this.protectionLevel).thenReturn(protectionLevel)
-            whenever(this.flags).thenReturn(flags)
-            whenever(this.isTree).thenReturn(isTree)
-        }
+        isTree: Boolean = false,
+        isPurposeRequired: Boolean = false,
+        requiresPurposeTargetSdkVersion: Int = BUILD_VERSION_CODES_C,
+        validPurposes: List<ParsedValidPurpose> = emptyList(),
+    ): ParsedPermission = mock {
+        whenever(name).thenReturn(permissionName)
+        whenever(this.packageName).thenReturn(packageName)
+        whenever(metaData).thenReturn(Bundle())
+        whenever(this.backgroundPermission).thenReturn(backgroundPermission)
+        whenever(this.group).thenReturn(group)
+        whenever(this.protectionLevel).thenReturn(protectionLevel)
+        whenever(this.flags).thenReturn(flags)
+        whenever(this.isTree).thenReturn(isTree)
+        whenever(this.isPurposeRequired).thenReturn(isPurposeRequired)
+        whenever(this.requiresPurposeTargetSdkVersion).thenReturn(requiresPurposeTargetSdkVersion)
+        whenever(this.validPurposes).thenReturn(validPurposes)
+    }
+
+    protected fun mockParsedUsesPermission(
+        permissionName: String,
+        flags: Int = 0,
+        purposes: Set<String> = emptySet(),
+    ): ParsedUsesPermission = mock {
+        whenever(name).thenReturn(permissionName)
+        whenever(this.usesPermissionFlags).thenReturn(flags)
+        whenever(this.purposes).thenReturn(purposes)
+    }
+
+    protected fun mockParsedValidPurpose(
+        purposeName: String,
+        maxTargetSdkVersion: Int = Int.MAX_VALUE,
+    ): ParsedValidPurpose = mock {
+        whenever(name).thenReturn(purposeName)
+        whenever(this.maxTargetSdkVersion).thenReturn(maxTargetSdkVersion)
+    }
 
     protected fun mockParsedPermissionGroup(
         permissionGroupName: String,
         packageName: String,
-    ): ParsedPermissionGroup =
-        mock {
-            whenever(name).thenReturn(permissionGroupName)
-            whenever(this.packageName).thenReturn(packageName)
-            whenever(metaData).thenReturn(Bundle())
-        }
+    ): ParsedPermissionGroup = mock {
+        whenever(name).thenReturn(permissionGroupName)
+        whenever(this.packageName).thenReturn(packageName)
+        whenever(metaData).thenReturn(Bundle())
+    }
 
     protected fun addPackageState(
         packageState: PackageState,
-        state: MutableAccessState = oldState
+        state: MutableAccessState = oldState,
     ) {
         state.mutateExternalState().apply {
             setPackageStates(
                 packageStates.toMutableMap().apply { put(packageState.packageName, packageState) }
             )
-            mutateAppIdPackageNames().mutateOrPut(packageState.appId) { MutableIndexedListSet() }
+            mutateAppIdPackageNames()
+                .mutateOrPut(packageState.appId) { MutableIndexedListSet() }
                 .add(packageState.packageName)
         }
     }
 
     protected fun removePackageState(
         packageState: PackageState,
-        state: MutableAccessState = oldState
+        state: MutableAccessState = oldState,
     ) {
         state.mutateExternalState().apply {
             setPackageStates(
                 packageStates.toMutableMap().apply { remove(packageState.packageName) }
             )
-            mutateAppIdPackageNames().mutateOrPut(packageState.appId) { MutableIndexedListSet() }
+            mutateAppIdPackageNames()
+                .mutateOrPut(packageState.appId) { MutableIndexedListSet() }
                 .remove(packageState.packageName)
         }
     }
 
     protected fun addDisabledSystemPackageState(
         packageState: PackageState,
-        state: MutableAccessState = oldState
-    ) = state.mutateExternalState().apply {
-        (disabledSystemPackageStates as ArrayMap)[packageState.packageName] = packageState
-    }
+        state: MutableAccessState = oldState,
+    ) =
+        state.mutateExternalState().apply {
+            (disabledSystemPackageStates as ArrayMap)[packageState.packageName] = packageState
+        }
 
     protected fun addPermission(
         parsedPermission: ParsedPermission,
         type: Int = Permission.TYPE_MANIFEST,
         isReconciled: Boolean = true,
-        state: MutableAccessState = oldState
+        state: MutableAccessState = oldState,
     ) {
-        val permissionInfo = PackageInfoUtils.generatePermissionInfo(
-            parsedPermission,
-            PackageManager.GET_META_DATA.toLong()
-        )!!
+        val permissionInfo =
+            PackageInfoUtils.generatePermissionInfo(
+                parsedPermission,
+                PackageManager.GET_META_DATA.toLong(),
+            )!!
         val appId = state.externalState.packageStates[permissionInfo.packageName]!!.appId
         val permission = Permission(permissionInfo, isReconciled, type, appId)
         if (parsedPermission.isTree) {
@@ -312,35 +356,35 @@ abstract class BasePermissionPolicyTest {
 
     protected fun addPermissionGroup(
         parsedPermissionGroup: ParsedPermissionGroup,
-        state: MutableAccessState = oldState
+        state: MutableAccessState = oldState,
     ) {
         state.mutateSystemState().mutatePermissionGroups()[parsedPermissionGroup.name] =
             PackageInfoUtils.generatePermissionGroupInfo(
                 parsedPermissionGroup,
-                PackageManager.GET_META_DATA.toLong()
+                PackageManager.GET_META_DATA.toLong(),
             )!!
     }
 
     protected fun getPermission(
         permissionName: String,
-        state: MutableAccessState = newState
+        state: MutableAccessState = newState,
     ): Permission? = state.systemState.permissions[permissionName]
 
     protected fun getPermissionTree(
         permissionTreeName: String,
-        state: MutableAccessState = newState
+        state: MutableAccessState = newState,
     ): Permission? = state.systemState.permissionTrees[permissionTreeName]
 
     protected fun getPermissionGroup(
         permissionGroupName: String,
-        state: MutableAccessState = newState
+        state: MutableAccessState = newState,
     ): PermissionGroupInfo? = state.systemState.permissionGroups[permissionGroupName]
 
     protected fun getPermissionFlags(
         appId: Int,
         userId: Int,
         permissionName: String,
-        state: MutableAccessState = newState
+        state: MutableAccessState = newState,
     ): Int =
         state.userStates[userId]?.appIdPermissionFlags?.get(appId).getWithDefault(permissionName, 0)
 
@@ -349,11 +393,13 @@ abstract class BasePermissionPolicyTest {
         userId: Int,
         permissionName: String,
         flags: Int,
-        state: MutableAccessState = oldState
+        state: MutableAccessState = oldState,
     ) =
-        state.mutateUserState(userId)!!.mutateAppIdPermissionFlags().mutateOrPut(appId) {
-            MutableIndexedMap()
-        }.put(permissionName, flags)
+        state
+            .mutateUserState(userId)!!
+            .mutateAppIdPermissionFlags()
+            .mutateOrPut(appId) { MutableIndexedMap() }
+            .put(permissionName, flags)
 
     companion object {
         @JvmStatic protected val PACKAGE_NAME_0 = "packageName0"
@@ -371,22 +417,39 @@ abstract class BasePermissionPolicyTest {
 
         @JvmStatic protected val PERMISSION_TREE_NAME = "permissionTree"
 
+        @JvmStatic protected val VALID_PURPOSE_0 = "validPurpose0"
+        @JvmStatic protected val VALID_PURPOSE_1 = "validPurpose1"
+        @JvmStatic protected val INVALID_PURPOSE = "invalidPurpose"
+
         @JvmStatic protected val PERMISSION_NAME_0 = "permissionName0"
         @JvmStatic protected val PERMISSION_NAME_1 = "permissionName1"
         @JvmStatic protected val PERMISSION_NAME_2 = "permissionName2"
         @JvmStatic protected val PERMISSION_BELONGS_TO_A_TREE = "permissionTree.permission"
-        @JvmStatic protected val PERMISSION_READ_EXTERNAL_STORAGE =
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        @JvmStatic protected val PERMISSION_POST_NOTIFICATIONS =
-            Manifest.permission.POST_NOTIFICATIONS
-        @JvmStatic protected val PERMISSION_BLUETOOTH_CONNECT =
-            Manifest.permission.BLUETOOTH_CONNECT
-        @JvmStatic protected val PERMISSION_ACCESS_BACKGROUND_LOCATION =
+        @JvmStatic
+        protected val PERMISSION_READ_EXTERNAL_STORAGE = Manifest.permission.READ_EXTERNAL_STORAGE
+        @JvmStatic
+        protected val PERMISSION_POST_NOTIFICATIONS = Manifest.permission.POST_NOTIFICATIONS
+        @JvmStatic
+        protected val PERMISSION_BLUETOOTH_CONNECT = Manifest.permission.BLUETOOTH_CONNECT
+        @JvmStatic
+        protected val PERMISSION_ACCESS_BACKGROUND_LOCATION =
             Manifest.permission.ACCESS_BACKGROUND_LOCATION
-        @JvmStatic protected val PERMISSION_ACCESS_MEDIA_LOCATION =
-            Manifest.permission.ACCESS_MEDIA_LOCATION
+        @JvmStatic
+        protected val PERMISSION_ACCESS_MEDIA_LOCATION = Manifest.permission.ACCESS_MEDIA_LOCATION
+        @JvmStatic protected val PERMISSION_BODY_SENSORS = Manifest.permission.BODY_SENSORS
+        @JvmStatic
+        protected val PERMISSION_BODY_SENSORS_BACKGROUND =
+            Manifest.permission.BODY_SENSORS_BACKGROUND
+        @JvmStatic protected val PERMISSION_READ_HEART_RATE = HealthPermissions.READ_HEART_RATE
+        @JvmStatic
+        protected val PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND =
+            HealthPermissions.READ_HEALTH_DATA_IN_BACKGROUND
 
         @JvmStatic protected val USER_ID_0 = 0
         @JvmStatic protected val USER_ID_NEW = 1
+
+        // TODO(b/419394842) - Remove and use defined build version codes directly when available.
+        @JvmStatic protected val BUILD_VERSION_CODES_C = Build.VERSION_CODES.BAKLAVA + 1
+        @JvmStatic protected val BUILD_VERSION_CODES_D = Build.VERSION_CODES.BAKLAVA + 2
     }
 }

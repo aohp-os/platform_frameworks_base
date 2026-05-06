@@ -109,7 +109,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.Manifest;
 import android.app.ActivityManager;
@@ -150,7 +150,7 @@ import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.platform.test.flag.util.FlagSetException;
@@ -192,7 +192,9 @@ import org.junit.runner.RunWith;
 import org.mockito.Answers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
+import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
@@ -434,7 +436,7 @@ public final class AlarmManagerServiceTest {
      */
     private void disableFlagsNotSetByAnnotation() {
         try {
-            mSetFlagsRule.disableFlags(Flags.FLAG_START_USER_BEFORE_SCHEDULED_ALARMS);
+            mSetFlagsRule.disableFlags(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND);
         } catch (FlagSetException fse) {
             // Expected if the test about to be run requires this enabled.
         }
@@ -945,6 +947,96 @@ public final class AlarmManagerServiceTest {
         final long expectedTriggerTime = mNowElapsedTest + mService.mConstants.MIN_FUTURITY;
         setTestAlarm(ELAPSED_REALTIME_WAKEUP, triggerTime, getNewMockPendingIntent());
         assertEquals(expectedTriggerTime, mTestTimer.getElapsed());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND)
+    public void testWakelockOrderingFirstAlarm() throws Exception {
+        final long triggerTime = mNowElapsedTest + 5000;
+        final PendingIntent alarmPi = getNewMockPendingIntent();
+        setTestAlarm(ELAPSED_REALTIME_WAKEUP, triggerTime, alarmPi);
+
+        // Pretend that it is the first alarm in this batch, or no other alarms are still processing
+        mService.mBroadcastRefCount = 0;
+        mNowElapsedTest = mTestTimer.getElapsed();
+        mTestTimer.expire();
+
+        final InOrder inOrder = Mockito.inOrder(alarmPi, mWakeLock);
+        inOrder.verify(mWakeLock).acquire();
+
+        final ArgumentCaptor<PendingIntent.OnFinished> onFinishedCaptor =
+                ArgumentCaptor.forClass(PendingIntent.OnFinished.class);
+        inOrder.verify(alarmPi).send(eq(mMockContext), eq(0), any(Intent.class),
+                onFinishedCaptor.capture(), any(Handler.class), isNull(), any());
+        onFinishedCaptor.getValue().onSendFinished(alarmPi, null, 0, null, null);
+
+        inOrder.verify(mWakeLock).release();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND)
+    public void testWakelockOrderingNonFirst() throws Exception {
+        final long triggerTime = mNowElapsedTest + 5000;
+        final PendingIntent alarmPi = getNewMockPendingIntent();
+        setTestAlarm(ELAPSED_REALTIME_WAKEUP, triggerTime, alarmPi);
+
+        // Pretend that some previous alarms are still processing.
+        mService.mBroadcastRefCount = 3;
+        mNowElapsedTest = mTestTimer.getElapsed();
+        mTestTimer.expire();
+
+        final ArgumentCaptor<PendingIntent.OnFinished> onFinishedCaptor =
+                ArgumentCaptor.forClass(PendingIntent.OnFinished.class);
+        verify(alarmPi).send(eq(mMockContext), eq(0), any(Intent.class), onFinishedCaptor.capture(),
+                any(Handler.class), isNull(), any());
+        onFinishedCaptor.getValue().onSendFinished(alarmPi, null, 0, null, null);
+
+        verify(mWakeLock, never()).acquire();
+        verify(mWakeLock, never()).release();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND)
+    public void testWakelockReleasedWhenSendFails() throws Exception {
+        final PendingIntent alarmPi = getNewMockPendingIntent();
+        doThrow(new PendingIntent.CanceledException("test")).when(alarmPi).send(eq(mMockContext),
+                eq(0), any(Intent.class), any(), any(Handler.class), isNull(), any());
+
+        setTestAlarm(ELAPSED_REALTIME_WAKEUP, mNowElapsedTest + 5000, alarmPi);
+
+        // Pretend that it is the first alarm in this batch, or no other alarms are still processing
+        mService.mBroadcastRefCount = 0;
+        mNowElapsedTest = mTestTimer.getElapsed();
+        mTestTimer.expire();
+
+        final InOrder inOrder = Mockito.inOrder(mWakeLock);
+        inOrder.verify(mWakeLock).acquire();
+        inOrder.verify(mWakeLock).release();
+
+        setTestAlarm(ELAPSED_REALTIME_WAKEUP, mNowElapsedTest + 5000, alarmPi);
+
+        // Pretend that some previous alarms are still processing.
+        mService.mBroadcastRefCount = 4;
+        mNowElapsedTest = mTestTimer.getElapsed();
+        mTestTimer.expire();
+        inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND)
+    public void testWakelockReleasedOnListenerException() throws Exception {
+        final long triggerTime = mNowElapsedTest + 5000;
+        final IAlarmListener listener = getNewListener(() -> {
+            throw new RuntimeException("test");
+        });
+        setTestAlarmWithListener(ELAPSED_REALTIME_WAKEUP, triggerTime, listener);
+
+        mNowElapsedTest = mTestTimer.getElapsed();
+        mTestTimer.expire();
+
+        final InOrder inOrder = Mockito.inOrder(mWakeLock);
+        inOrder.verify(mWakeLock).acquire();
+        inOrder.verify(mWakeLock).release();
     }
 
     @Test
@@ -3390,11 +3482,20 @@ public final class AlarmManagerServiceTest {
 
     @Test
     public void alarmScheduledAtomPushed() {
-        for (int i = 0; i < 10; i++) {
-            final PendingIntent pi = getNewMockPendingIntent();
-            setTestAlarm(ELAPSED_REALTIME, mNowElapsedTest + i, pi);
+        for (int i = 0; i < 20; i++) {
+            final PendingIntent pi;
+            final IAlarmListener listener;
+            if (i % 2 == 0) {
+                pi = null;
+                listener = getNewListener(() -> {});
+                setTestAlarmWithListener(ELAPSED_REALTIME, mNowElapsedTest + i, listener);
+            } else {
+                pi = getNewMockPendingIntent();
+                listener = null;
+                setTestAlarm(ELAPSED_REALTIME, mNowElapsedTest + i, pi);
+            }
 
-            verify(() -> MetricsHelper.pushAlarmScheduled(argThat(a -> a.matches(pi, null)),
+            verify(() -> MetricsHelper.pushAlarmScheduled(argThat(a -> a.matches(pi, listener)),
                     anyInt()));
         }
     }
@@ -3630,8 +3731,8 @@ public final class AlarmManagerServiceTest {
         setDeviceConfigInt(KEY_TEMPORARY_QUOTA_BUMP, 0);
 
         mAppStandbyListener.triggerTemporaryQuotaBump(TEST_CALLING_PACKAGE, TEST_CALLING_USER);
-        verifyZeroInteractions(mPackageManagerInternal);
-        verifyZeroInteractions(mService.mHandler);
+        verifyNoMoreInteractions(mPackageManagerInternal);
+        verifyNoMoreInteractions(mService.mHandler);
     }
 
     private void testTemporaryQuota_bumpedAfterDeferral(int standbyBucket) throws Exception {
@@ -3744,7 +3845,6 @@ public final class AlarmManagerServiceTest {
         mUidFrozenStateCallback.onUidFrozenStateChanged(uids, frozenStates);
     }
 
-    @DisableFlags(Flags.FLAG_START_USER_BEFORE_SCHEDULED_ALARMS)
     @Test
     public void exactListenerAlarmsRemovedOnFrozen() {
         mockChangeEnabled(EXACT_LISTENER_ALARMS_DROPPED_ON_CACHED, true);
@@ -3775,7 +3875,6 @@ public final class AlarmManagerServiceTest {
         assertEquals(6, mService.mAlarmStore.size());
     }
 
-    @DisableFlags(Flags.FLAG_START_USER_BEFORE_SCHEDULED_ALARMS)
     @Test
     public void alarmCountOnListenerFrozen() {
         mockChangeEnabled(EXACT_LISTENER_ALARMS_DROPPED_ON_CACHED, true);

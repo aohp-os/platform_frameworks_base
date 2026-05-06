@@ -18,8 +18,10 @@ package com.android.systemui.keyguard.data.repository
 
 import android.content.applicationContext
 import android.os.fakeExecutorHandler
+import com.android.keyguard.keyguardUnlockAnimationController
 import com.android.systemui.keyguard.domain.interactor.keyguardBlueprintInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardClockInteractor
+import com.android.systemui.keyguard.domain.interactor.keyguardSmartspaceInteractor
 import com.android.systemui.keyguard.ui.view.layout.blueprints.DefaultKeyguardBlueprint
 import com.android.systemui.keyguard.ui.view.layout.blueprints.SplitShadeKeyguardBlueprint
 import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
@@ -29,7 +31,9 @@ import com.android.systemui.keyguard.ui.viewmodel.keyguardClockViewModel
 import com.android.systemui.keyguard.ui.viewmodel.keyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.keyguardSmartspaceViewModel
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.shade.LargeScreenHeaderHelper
+import com.android.systemui.statusbar.lockscreen.lockscreenSmartspaceController
 import java.util.Optional
 import org.mockito.Mockito.spy
 import org.mockito.kotlin.mock
@@ -49,7 +53,18 @@ val Kosmos.keyguardClockSection: ClockSection by
     }
 
 val Kosmos.keyguardSmartspaceSection: SmartspaceSection by
-    Kosmos.Fixture { mock<SmartspaceSection>() }
+    Kosmos.Fixture {
+        SmartspaceSection(
+            context = applicationContext,
+            keyguardClockViewModel = keyguardClockViewModel,
+            keyguardSmartspaceViewModel = keyguardSmartspaceViewModel,
+            keyguardSmartspaceInteractor = keyguardSmartspaceInteractor,
+            smartspaceController = lockscreenSmartspaceController,
+            keyguardUnlockAnimationController = keyguardUnlockAnimationController,
+            blueprintInteractor = { keyguardBlueprintInteractor },
+            keyguardRootViewModel = keyguardRootViewModel,
+        )
+    }
 
 val Kosmos.defaultKeyguardBlueprint by
     Kosmos.Fixture {
@@ -59,12 +74,11 @@ val Kosmos.defaultKeyguardBlueprint by
             defaultShortcutsSection = mock(),
             defaultAmbientIndicationAreaSection = Optional.of(mock()),
             defaultSettingsPopupMenuSection = mock(),
-            defaultStatusViewSection = mock(),
             defaultStatusBarSection = mock(),
             defaultNotificationStackScrollLayoutSection = mock(),
+            aodPromotedNotificationSection = mock(),
             aodNotificationIconsSection = mock(),
             aodBurnInSection = mock(),
-            communalTutorialIndicatorSection = mock(),
             clockSection = keyguardClockSection,
             smartspaceSection = keyguardSmartspaceSection,
             keyguardSliceViewSection = mock(),
@@ -81,13 +95,12 @@ val Kosmos.splitShadeBlueprint by
             defaultShortcutsSection = mock(),
             defaultAmbientIndicationAreaSection = Optional.of(mock()),
             defaultSettingsPopupMenuSection = mock(),
-            defaultStatusViewSection = mock(),
             defaultStatusBarSection = mock(),
             splitShadeNotificationStackScrollLayoutSection = mock(),
             splitShadeGuidelines = mock(),
+            aodPromotedNotificationSection = mock(),
             aodNotificationIconsSection = mock(),
             aodBurnInSection = mock(),
-            communalTutorialIndicatorSection = mock(),
             clockSection = keyguardClockSection,
             smartspaceSection = keyguardSmartspaceSection,
             mediaSection = mock(),
@@ -102,6 +115,7 @@ val Kosmos.keyguardBlueprintRepository by
                 blueprints = setOf(defaultKeyguardBlueprint, splitShadeBlueprint),
                 handler = fakeExecutorHandler,
                 assert = mock(),
+                log = logcatLogBuffer("blueprints"),
             )
         )
     }

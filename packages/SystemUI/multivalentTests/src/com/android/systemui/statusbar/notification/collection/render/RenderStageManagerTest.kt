@@ -19,20 +19,23 @@ package com.android.systemui.statusbar.notification.collection.render
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.statusbar.notification.collection.BundleEntry
 import com.android.systemui.statusbar.notification.collection.GroupEntry
 import com.android.systemui.statusbar.notification.collection.GroupEntryBuilder
-import com.android.systemui.statusbar.notification.collection.ListEntry
+import com.android.systemui.statusbar.notification.collection.InternalNotificationsApi
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder
+import com.android.systemui.statusbar.notification.collection.PipelineEntry
 import com.android.systemui.statusbar.notification.collection.ShadeListBuilder
 import com.android.systemui.statusbar.notification.collection.listbuilder.OnAfterRenderEntryListener
 import com.android.systemui.statusbar.notification.collection.listbuilder.OnAfterRenderGroupListener
 import com.android.systemui.statusbar.notification.collection.listbuilder.OnAfterRenderListListener
+import com.android.systemui.statusbar.notification.row.data.repository.TEST_BUNDLE_SPEC
+import com.android.systemui.util.mockito.withArgCaptor
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -59,10 +62,9 @@ class RenderStageManagerTest : SysuiTestCase() {
     fun setUp() {
         renderStageManager = RenderStageManager()
         renderStageManager.attach(shadeListBuilder)
-
-        val captor = argumentCaptor<ShadeListBuilder.OnRenderListListener>()
-        verify(shadeListBuilder).setOnRenderListListener(captor.capture())
-        onRenderListListener = captor.lastValue
+        onRenderListListener = withArgCaptor {
+            verify(shadeListBuilder).setOnRenderListListener(capture())
+        }
     }
 
     private fun setUpRenderer() {
@@ -81,7 +83,7 @@ class RenderStageManagerTest : SysuiTestCase() {
         setUpListeners()
 
         // WHEN a shade list is built
-        onRenderListListener.onRenderList(listWith2Groups8Entries())
+        onRenderListListener.onRenderList(listWith3Groups1Bundle10Entries())
 
         // VERIFY that no listeners are called
         verifyNoMoreInteractions(
@@ -97,12 +99,11 @@ class RenderStageManagerTest : SysuiTestCase() {
         setUpRenderer()
 
         // WHEN a shade list is built
-        onRenderListListener.onRenderList(listWith2Groups8Entries())
+        onRenderListListener.onRenderList(listWith3Groups1Bundle10Entries())
 
         // VERIFY that the renderer is not queried for group or row controllers
         inOrder(spyViewRenderer).apply {
             verify(spyViewRenderer, times(1)).onRenderList(any())
-            verify(spyViewRenderer, times(1)).getStackController()
             verify(spyViewRenderer, never()).getGroupController(any())
             verify(spyViewRenderer, never()).getRowController(any())
             verify(spyViewRenderer, times(1)).onDispatchComplete()
@@ -117,14 +118,13 @@ class RenderStageManagerTest : SysuiTestCase() {
         setUpListeners()
 
         // WHEN a shade list is built
-        onRenderListListener.onRenderList(listWith2Groups8Entries())
+        onRenderListListener.onRenderList(listWith3Groups1Bundle10Entries())
 
         // VERIFY that the renderer is queried once per group/entry
         inOrder(spyViewRenderer).apply {
             verify(spyViewRenderer, times(1)).onRenderList(any())
-            verify(spyViewRenderer, times(1)).getStackController()
-            verify(spyViewRenderer, times(2)).getGroupController(any())
-            verify(spyViewRenderer, times(8)).getRowController(any())
+            verify(spyViewRenderer, times(3)).getGroupController(any())
+            verify(spyViewRenderer, times(10)).getRowController(any())
             verify(spyViewRenderer, times(1)).onDispatchComplete()
             verifyNoMoreInteractions(spyViewRenderer)
         }
@@ -140,14 +140,13 @@ class RenderStageManagerTest : SysuiTestCase() {
         renderStageManager.addOnAfterRenderEntryListener(mock())
 
         // WHEN a shade list is built
-        onRenderListListener.onRenderList(listWith2Groups8Entries())
+        onRenderListListener.onRenderList(listWith3Groups1Bundle10Entries())
 
         // VERIFY that the renderer is queried once per group/entry
         inOrder(spyViewRenderer).apply {
             verify(spyViewRenderer, times(1)).onRenderList(any())
-            verify(spyViewRenderer, times(1)).getStackController()
-            verify(spyViewRenderer, times(2)).getGroupController(any())
-            verify(spyViewRenderer, times(8)).getRowController(any())
+            verify(spyViewRenderer, times(3)).getGroupController(any())
+            verify(spyViewRenderer, times(10)).getRowController(any())
             verify(spyViewRenderer, times(1)).onDispatchComplete()
             verifyNoMoreInteractions(spyViewRenderer)
         }
@@ -160,12 +159,12 @@ class RenderStageManagerTest : SysuiTestCase() {
         setUpListeners()
 
         // WHEN a shade list is built
-        onRenderListListener.onRenderList(listWith2Groups8Entries())
+        onRenderListListener.onRenderList(listWith3Groups1Bundle10Entries())
 
         // VERIFY that the listeners are invoked once per group and once per entry
-        verify(onAfterRenderListListener, times(1)).onAfterRenderList(any(), any())
-        verify(onAfterRenderGroupListener, times(2)).onAfterRenderGroup(any(), any())
-        verify(onAfterRenderEntryListener, times(8)).onAfterRenderEntry(any(), any())
+        verify(onAfterRenderListListener, times(1)).onAfterRenderList(any())
+        verify(onAfterRenderGroupListener, times(3)).onAfterRenderGroup(any(), any())
+        verify(onAfterRenderEntryListener, times(10)).onAfterRenderEntry(any(), any())
         verifyNoMoreInteractions(
             onAfterRenderListListener,
             onAfterRenderGroupListener,
@@ -183,7 +182,7 @@ class RenderStageManagerTest : SysuiTestCase() {
         onRenderListListener.onRenderList(listOf())
 
         // VERIFY that the stack listener is invoked once but other listeners are not
-        verify(onAfterRenderListListener, times(1)).onAfterRenderList(any(), any())
+        verify(onAfterRenderListListener, times(1)).onAfterRenderList(any())
         verify(onAfterRenderGroupListener, never()).onAfterRenderGroup(any(), any())
         verify(onAfterRenderEntryListener, never()).onAfterRenderEntry(any(), any())
         verifyNoMoreInteractions(
@@ -193,22 +192,23 @@ class RenderStageManagerTest : SysuiTestCase() {
         )
     }
 
-    private fun listWith2Groups8Entries() =
+    private fun listWith3Groups1Bundle10Entries() =
         listOf(
             group(notif(1), notif(2), notif(3)),
             notif(4),
             group(notif(5), notif(6), notif(7)),
             notif(8),
+            bundle(group(notif(9)), notif(10)),
         )
 
     private class FakeNotifViewRenderer : NotifViewRenderer {
-        override fun onRenderList(notifList: List<ListEntry>) {}
-
-        override fun getStackController(): NotifStackController = mock()
+        override fun onRenderList(notifList: List<PipelineEntry>) {}
 
         override fun getGroupController(group: GroupEntry): NotifGroupController = mock()
 
         override fun getRowController(entry: NotificationEntry): NotifRowController = mock()
+
+        override fun getBundleController(entry: BundleEntry): NotifRowController = mock()
 
         override fun onDispatchComplete() {}
     }
@@ -217,4 +217,15 @@ class RenderStageManagerTest : SysuiTestCase() {
 
     private fun group(summary: NotificationEntry, vararg children: NotificationEntry): GroupEntry =
         GroupEntryBuilder().setSummary(summary).setChildren(children.toList()).build()
+
+    @OptIn(InternalNotificationsApi::class)
+    private fun bundle(group: GroupEntry, vararg children: NotificationEntry): BundleEntry {
+        var bundle = BundleEntry(TEST_BUNDLE_SPEC)
+        bundle.addChild(group)
+        for (child in children) {
+            bundle.addChild(child)
+        }
+
+        return bundle
+    }
 }

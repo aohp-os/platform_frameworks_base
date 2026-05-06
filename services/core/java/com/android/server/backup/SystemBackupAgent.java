@@ -34,8 +34,9 @@ import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.util.Slog;
+import android.window.DesktopExperienceFlags;
 
-import com.android.server.backup.Flags;
+import com.android.server.display.DisplayBackupHelper;
 import com.android.server.notification.NotificationBackupHelper;
 
 import com.google.android.collect.Sets;
@@ -67,6 +68,10 @@ public class SystemBackupAgent extends BackupAgentHelper {
     private static final String APP_GENDER_HELPER = "app_gender";
     private static final String COMPANION_HELPER = "companion";
     private static final String SYSTEM_GENDER_HELPER = "system_gender";
+    private static final String DISPLAY_HELPER = "display";
+    private static final String INPUT_HELPER = "input";
+    private static final String WEAR_BACKUP_HELPER = "wear";
+    private static final String DISPLAY_WINDOW_HELPER = "display_window";
 
     // These paths must match what the WallpaperManagerService uses.  The leaf *_FILENAME
     // are also used in the full-backup file format, so must not change unless steps are
@@ -104,13 +109,15 @@ public class SystemBackupAgent extends BackupAgentHelper {
                     APP_LOCALES_HELPER,
                     COMPANION_HELPER,
                     APP_GENDER_HELPER,
-                    SYSTEM_GENDER_HELPER);
+                    SYSTEM_GENDER_HELPER,
+                    DISPLAY_HELPER,
+                    DISPLAY_WINDOW_HELPER);
 
     /** Helpers that are enabled for full, non-system users. */
     private static final Set<String> sEligibleHelpersForNonSystemUser =
             SetUtils.union(sEligibleHelpersForProfileUser,
                     Sets.newArraySet(ACCOUNT_MANAGER_HELPER, USAGE_STATS_HELPER, PREFERRED_HELPER,
-                            SHORTCUT_MANAGER_HELPER));
+                            SHORTCUT_MANAGER_HELPER, INPUT_HELPER, WEAR_BACKUP_HELPER));
 
     private int mUserId = UserHandle.USER_SYSTEM;
     private boolean mIsProfileUser = false;
@@ -146,6 +153,18 @@ public class SystemBackupAgent extends BackupAgentHelper {
         addHelperIfEligibleForUser(COMPANION_HELPER, new CompanionBackupHelper(mUserId));
         addHelperIfEligibleForUser(SYSTEM_GENDER_HELPER,
                 new SystemGrammaticalGenderBackupHelper(mUserId));
+        addHelperIfEligibleForUser(DISPLAY_HELPER, new DisplayBackupHelper(mUserId));
+        if (com.android.hardware.input.Flags.enableBackupAndRestoreForInputGestures()) {
+            addHelperIfEligibleForUser(INPUT_HELPER, new InputBackupHelper(mUserId));
+        }
+        if (DesktopExperienceFlags.ENABLE_BACKUP_AND_RESTORE_DISPLAY_WINDOW_SETTINGS.isTrue()) {
+            addHelperIfEligibleForUser(DISPLAY_WINDOW_HELPER,
+                    new DisplayWindowSettingsBackupHelper(mUserId));
+        }
+        // Add Wear helper only if the device is a watch
+        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+            addHelperIfEligibleForUser(WEAR_BACKUP_HELPER, new WearBackupHelper());
+        }
     }
 
     @Override
@@ -174,7 +193,8 @@ public class SystemBackupAgent extends BackupAgentHelper {
      */
     @Override
     public void onRestoreFile(ParcelFileDescriptor data, long size,
-            int type, String domain, String path, long mode, long mtime)
+            int type, String domain, String path, long mode, long mtime,
+            long appVersionCode, int transportFlags, String contentVersion)
             throws IOException {
         Slog.i(TAG, "Restoring file domain=" + domain + " path=" + path);
 

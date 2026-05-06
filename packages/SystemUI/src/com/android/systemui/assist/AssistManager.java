@@ -24,25 +24,28 @@ import android.provider.Settings;
 import android.service.voice.VisualQueryAttentionResult;
 import android.service.voice.VoiceInteractionSession;
 import android.util.Log;
+import android.view.WindowManager;
 
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager;
 import com.android.internal.app.AssistUtils;
 import com.android.internal.app.IVisualQueryDetectionAttentionListener;
 import com.android.internal.app.IVisualQueryRecognitionStatusListener;
 import com.android.internal.app.IVoiceInteractionSessionListener;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
+import com.android.systemui.LauncherProxyService;
 import com.android.systemui.assist.domain.interactor.AssistInteractor;
 import com.android.systemui.assist.ui.DefaultUiController;
 import com.android.systemui.dagger.SysUISingleton;
+import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.model.SysUiState;
-import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shared.Flags;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
+import com.android.systemui.topwindoweffects.data.repository.InvocationEffectEnabler;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.util.settings.SecureSettings;
 
@@ -51,6 +54,7 @@ import dagger.Lazy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import javax.inject.Inject;
 
@@ -108,7 +112,7 @@ public class AssistManager {
 
     private static final String INVOCATION_TIME_MS_KEY = "invocation_time_ms";
     private static final String INVOCATION_PHONE_STATE_KEY = "invocation_phone_state";
-    protected static final String ACTION_KEY = "action";
+    public static final String ACTION_KEY = "action";
     protected static final String SET_ASSIST_GESTURE_CONSTRAINED_ACTION =
             "set_assist_gesture_constrained";
     protected static final String CONSTRAINED_KEY = "should_constrain";
@@ -130,6 +134,10 @@ public class AssistManager {
             AssistUtils.INVOCATION_TYPE_POWER_BUTTON_LONG_PRESS;
     public static final int INVOCATION_TYPE_NAV_HANDLE_LONG_PRESS =
             AssistUtils.INVOCATION_TYPE_NAV_HANDLE_LONG_PRESS;
+    public static final int INVOCATION_TYPE_LAUNCHER_SYSTEM_SHORTCUT =
+            AssistUtils.INVOCATION_TYPE_LAUNCHER_SYSTEM_SHORTCUT;
+    public static final int INVOCATION_TYPE_STATUS_BAR_ICON =
+            AssistUtils.INVOCATION_TYPE_STATUS_BAR_ICON;
 
     public static final int DISMISS_REASON_INVOCATION_CANCELLED = 1;
     public static final int DISMISS_REASON_TAP = 2;
@@ -142,7 +150,7 @@ public class AssistManager {
     protected final Context mContext;
     private final AssistDisclosure mAssistDisclosure;
     private final PhoneStateMonitor mPhoneStateMonitor;
-    private final OverviewProxyService mOverviewProxyService;
+    private final LauncherProxyService mLauncherProxyService;
     private final UiController mUiController;
     protected final Lazy<SysUiState> mSysUiState;
     protected final AssistLogger mAssistLogger;
@@ -152,6 +160,8 @@ public class AssistManager {
     private final SelectedUserInteractor mSelectedUserInteractor;
     private final ActivityManager mActivityManager;
     private final AssistInteractor mInteractor;
+    private final Handler mBgHandler;
+    private final Optional<InvocationEffectEnabler> mOptionalInvocationEffectEnabler;
 
     private final DeviceProvisionedController mDeviceProvisionedController;
 
@@ -176,7 +186,7 @@ public class AssistManager {
     private final CommandQueue mCommandQueue;
     protected final AssistUtils mAssistUtils;
 
-    // Invocation types that should be sent over OverviewProxy instead of handled here.
+    // Invocation types that should be sent over LauncherProxy instead of handled here.
     private int[] mAssistOverrideInvocationTypes;
 
     @Inject
@@ -186,24 +196,26 @@ public class AssistManager {
             AssistUtils assistUtils,
             CommandQueue commandQueue,
             PhoneStateMonitor phoneStateMonitor,
-            OverviewProxyService overviewProxyService,
+            LauncherProxyService launcherProxyService,
             Lazy<SysUiState> sysUiState,
             DefaultUiController defaultUiController,
             AssistLogger assistLogger,
             @Main Handler uiHandler,
+            @Background Handler bgHandler,
             UserTracker userTracker,
             DisplayTracker displayTracker,
             SecureSettings secureSettings,
             SelectedUserInteractor selectedUserInteractor,
             ActivityManager activityManager,
             AssistInteractor interactor,
-            ViewCaptureAwareWindowManager viewCaptureAwareWindowManager) {
+            WindowManager windowManager,
+            Optional<InvocationEffectEnabler> optionalInvocationEffectEnabler) {
         mContext = context;
         mDeviceProvisionedController = controller;
         mCommandQueue = commandQueue;
         mAssistUtils = assistUtils;
-        mAssistDisclosure = new AssistDisclosure(context, uiHandler, viewCaptureAwareWindowManager);
-        mOverviewProxyService = overviewProxyService;
+        mAssistDisclosure = new AssistDisclosure(context, uiHandler, windowManager);
+        mLauncherProxyService = launcherProxyService;
         mPhoneStateMonitor = phoneStateMonitor;
         mAssistLogger = assistLogger;
         mUserTracker = userTracker;
@@ -212,6 +224,8 @@ public class AssistManager {
         mSelectedUserInteractor = selectedUserInteractor;
         mActivityManager = activityManager;
         mInteractor = interactor;
+        mBgHandler = bgHandler;
+        mOptionalInvocationEffectEnabler = optionalInvocationEffectEnabler;
 
         registerVoiceInteractionSessionListener();
         registerVisualQueryRecognitionStatusListener();
@@ -220,7 +234,7 @@ public class AssistManager {
 
         mSysUiState = sysUiState;
 
-        mOverviewProxyService.addCallback(new OverviewProxyService.OverviewProxyListener() {
+        mLauncherProxyService.addCallback(new LauncherProxyService.LauncherProxyListener() {
             @Override
             public void onAssistantProgress(float progress) {
                 // Progress goes from 0 to 1 to indicate how close the assist gesture is to
@@ -279,6 +293,15 @@ public class AssistManager {
                                     .commitUpdate(mDisplayTracker.getDefaultDisplayId());
                         }
                     }
+
+                    @Override
+                    public void onSetInvocationEffectEnabled(boolean enabled) {
+                        if (VERBOSE) {
+                            Log.v(TAG, "Set invocation effect enabled received");
+                        }
+                        mOptionalInvocationEffectEnabler.ifPresent(
+                                effectEnabler -> effectEnabler.setEnabled(enabled));
+                    }
                 });
     }
 
@@ -288,14 +311,14 @@ public class AssistManager {
         }
         if (shouldOverrideAssist(args)) {
             try {
-                if (mOverviewProxyService.getProxy() == null) {
-                    Log.w(TAG, "No OverviewProxyService to invoke assistant override");
+                if (mLauncherProxyService.getProxy() == null) {
+                    Log.w(TAG, "No LauncherProxyService to invoke assistant override");
                     return;
                 }
-                mOverviewProxyService.getProxy().onAssistantOverrideInvoked(
+                mLauncherProxyService.getProxy().onAssistantOverrideInvoked(
                         args.getInt(INVOCATION_TYPE_KEY));
             } catch (RemoteException e) {
-                Log.w(TAG, "Unable to invoke assistant via OverviewProxyService override", e);
+                Log.w(TAG, "Unable to invoke assistant via LauncherProxyService override", e);
             }
             return;
         }
@@ -333,7 +356,7 @@ public class AssistManager {
         return shouldOverrideAssist(invocationType);
     }
 
-    /** @return true if the invocation type should be handled by OverviewProxy instead of SysUI. */
+    /** @return true if the invocation type should be handled by LauncherProxy instead of SysUI. */
     public boolean shouldOverrideAssist(int invocationType) {
         return mAssistOverrideInvocationTypes != null
                 && Arrays.stream(mAssistOverrideInvocationTypes).anyMatch(
@@ -342,7 +365,7 @@ public class AssistManager {
 
     /**
      * @param invocationTypes The invocation types that will henceforth be handled via
-     *                        OverviewProxy (Launcher); other invocation types should be handled by
+     *                        LauncherProxy (Launcher); other invocation types should be handled by
      *                        this class.
      */
     public void setAssistantOverridesRequested(int[] invocationTypes) {
@@ -440,9 +463,16 @@ public class AssistManager {
     }
 
     private void startVoiceInteractor(Bundle args) {
-        mAssistUtils.showSessionForActiveService(args,
-                VoiceInteractionSession.SHOW_SOURCE_ASSIST_GESTURE, mContext.getAttributionTag(),
-                null, null);
+        if (Flags.enableLppAssistInvocationEffect()) {
+            // Use background thread to prevent the binder call from blocking the UI thread
+            mBgHandler.post(() -> mAssistUtils.showSessionForActiveService(args,
+                    VoiceInteractionSession.SHOW_SOURCE_ASSIST_GESTURE,
+                    mContext.getAttributionTag(), null, null));
+        } else {
+            mAssistUtils.showSessionForActiveService(args,
+                    VoiceInteractionSession.SHOW_SOURCE_ASSIST_GESTURE,
+                    mContext.getAttributionTag(), null, null);
+        }
     }
 
     private void registerVisualQueryRecognitionStatusListener() {

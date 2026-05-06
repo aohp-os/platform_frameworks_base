@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -48,11 +49,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.NonRestartableComposable
+import androidx.compose.runtime.ProvidedValue
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -79,9 +84,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.android.settingslib.spa.framework.theme.SettingsDimension
+import com.android.settingslib.spa.framework.theme.SettingsSpace
 import com.android.settingslib.spa.framework.theme.isSpaExpressiveEnabled
 import com.android.settingslib.spa.framework.theme.settingsBackground
-import com.android.settingslib.spa.framework.theme.toSemiBoldWeight
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -108,7 +113,7 @@ internal fun CustomizedTopAppBar(
 }
 
 /** The customized LargeTopAppBar for Settings. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun CustomizedLargeTopAppBar(
     title: String,
@@ -118,15 +123,30 @@ internal fun CustomizedLargeTopAppBar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
 ) {
     TwoRowsTopAppBar(
-        title = { Title(title = title, maxLines = 3) },
+        title = {
+            Title(
+                title = title,
+                maxLines = 3,
+                paddingStart =
+                    if (isSpaExpressiveEnabled) 0.dp else SettingsDimension.itemPaddingAround,
+            )
+        },
         titleTextStyle =
-            if (isSpaExpressiveEnabled) MaterialTheme.typography.displaySmall.toSemiBoldWeight()
+            if (isSpaExpressiveEnabled) MaterialTheme.typography.displaySmallEmphasized
             else MaterialTheme.typography.displaySmall,
         smallTitleTextStyle =
-            if (isSpaExpressiveEnabled) MaterialTheme.typography.titleLarge.toSemiBoldWeight()
+            if (isSpaExpressiveEnabled) MaterialTheme.typography.titleLargeEmphasized
             else MaterialTheme.typography.titleLarge,
         titleBottomPadding = LargeTitleBottomPadding,
-        smallTitle = { Title(title = title, maxLines = 1) },
+        smallTitle = {
+            Title(
+                title = title,
+                maxLines = 1,
+                paddingStart =
+                    if (isSpaExpressiveEnabled) SettingsSpace.extraSmall6
+                    else SettingsDimension.itemPaddingAround,
+            )
+        },
         modifier = modifier,
         navigationIcon = navigationIcon,
         actions = actions,
@@ -138,16 +158,11 @@ internal fun CustomizedLargeTopAppBar(
 }
 
 @Composable
-private fun Title(title: String, maxLines: Int = Int.MAX_VALUE) {
+private fun Title(title: String, maxLines: Int = Int.MAX_VALUE, paddingStart: Dp) {
     Text(
         text = title,
         modifier =
-            Modifier.padding(
-                    start =
-                        if (isSpaExpressiveEnabled) SettingsDimension.paddingExtraSmall
-                        else SettingsDimension.itemPaddingAround,
-                    end = SettingsDimension.itemPaddingEnd,
-                )
+            Modifier.padding(start = paddingStart, end = SettingsDimension.itemPaddingEnd)
                 .semantics { heading() },
         overflow = TextOverflow.Ellipsis,
         maxLines = maxLines,
@@ -156,13 +171,23 @@ private fun Title(title: String, maxLines: Int = Int.MAX_VALUE) {
 
 @Composable
 private fun topAppBarColors() =
-    TopAppBarColors(
-        containerColor = MaterialTheme.colorScheme.settingsBackground,
-        scrolledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-        titleContentColor = MaterialTheme.colorScheme.onSurface,
-        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (isSpaExpressiveEnabled) {
+        TopAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.primary,
+        )
+    } else {
+        TopAppBarColors(
+            containerColor = MaterialTheme.colorScheme.settingsBackground,
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 
 /**
  * Represents the colors used by a top app bar in different states.
@@ -180,7 +205,7 @@ private fun topAppBarColors() =
  *   using the default material3 spec
  */
 @Stable
-private class TopAppBarColors(
+internal class TopAppBarColors(
     val containerColor: Color,
     val scrolledContainerColor: Color,
     val navigationIconContentColor: Color,
@@ -326,9 +351,16 @@ private fun TwoRowsTopAppBar(
 
     // Sets the app bar's height offset limit to hide just the bottom title area and keep top title
     // visible when collapsed.
-    scrollBehavior?.state?.heightOffsetLimit = pinnedHeightPx - maxHeightPx.floatValue
+    val heightOffsetLimit = pinnedHeightPx - maxHeightPx.floatValue
+    scrollBehavior?.state?.heightOffsetLimit = heightOffsetLimit
     if (isSpaExpressiveEnabled) {
-        LaunchedEffect(scrollBehavior?.state?.heightOffsetLimit) { scrollBehavior?.collapse() }
+        var hasCollapsedInitially by rememberSaveable(heightOffsetLimit) { mutableStateOf(false) }
+        LaunchedEffect(heightOffsetLimit) {
+            if (!hasCollapsedInitially) {
+                scrollBehavior?.collapse()
+                hasCollapsedInitially = true
+            }
+        }
     }
 
     // Obtain the container Color from the TopAppBarColors using the `collapsedFraction`, as the
@@ -424,8 +456,7 @@ private fun TwoRowsTopAppBar(
                                 val measuredMaxHeightPx =
                                     density.run {
                                         MaxHeightWithoutTitle.toPx() +
-                                            coordinates.size.height.toFloat() +
-                                            titleBaselineHeight.toPx()
+                                            coordinates.size.height.toFloat()
                                     }
                                 // Allow larger max height for multi-line title, but do not reduce
                                 // max height to prevent flaky.
@@ -495,7 +526,9 @@ private fun TopAppBarLayout(
 ) {
     Layout(
         {
-            Box(Modifier.layoutId("navigationIcon").padding(start = TopAppBarHorizontalPadding)) {
+            val iconPaddingStart =
+                if (isSpaExpressiveEnabled) SettingsSpace.small3 else TopAppBarHorizontalPadding
+            Box(Modifier.layoutId("navigationIcon").padding(start = iconPaddingStart)) {
                 CompositionLocalProvider(
                     LocalContentColor provides navigationIconContentColor,
                     content = navigationIcon,
@@ -510,13 +543,7 @@ private fun TopAppBarLayout(
                 ProvideTextStyle(value = titleTextStyle) {
                     CompositionLocalProvider(
                         LocalContentColor provides titleContentColor,
-                        LocalDensity provides
-                            with(LocalDensity.current) {
-                                Density(
-                                    density = density,
-                                    fontScale = if (titleScaleDisabled) 1f else fontScale,
-                                )
-                            },
+                        localDensityDisableFontScale(),
                         content = title,
                     )
                 }
@@ -604,7 +631,7 @@ private fun TopAppBarLayout(
  * after the fling settles.
  */
 @OptIn(ExperimentalMaterial3Api::class)
-private suspend fun settleAppBar(
+internal suspend fun settleAppBar(
     state: TopAppBarState,
     velocity: Float,
     flingAnimationSpec: DecayAnimationSpec<Float>?,
@@ -654,14 +681,17 @@ private suspend fun settleAppBar(
     return Velocity(0f, remainingVelocity)
 }
 
+@Composable
+internal fun localDensityDisableFontScale(): ProvidedValue<Density> =
+    LocalDensity provides with(LocalDensity.current) { Density(density = density, fontScale = 1f) }
+
 // An easing function used to compute the alpha value that is applied to the top title part of a
 // Medium or Large app bar.
 private val TopTitleAlphaEasing = CubicBezierEasing(.8f, 0f, .8f, .15f)
 
-internal val MaxHeightWithoutTitle = if (isSpaExpressiveEnabled) 84.dp else 124.dp
+internal val MaxHeightWithoutTitle = 124.dp
 internal val DefaultTitleHeight = 52.dp
 internal val ContainerHeight = 56.dp
-private val titleBaselineHeight = if (isSpaExpressiveEnabled) 8.dp else 0.dp
 private val LargeTitleBottomPadding = 28.dp
 private val TopAppBarHorizontalPadding = 4.dp
 

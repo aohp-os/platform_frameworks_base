@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.scene.shared.model
 
 import com.android.compose.animation.scene.OverlayKey
@@ -34,10 +32,9 @@ import kotlinx.coroutines.flow.stateIn
  * Delegates calls to a runtime-provided [SceneDataSource] or to a no-op implementation if a
  * delegate isn't set.
  */
-class SceneDataSourceDelegator(
-    applicationScope: CoroutineScope,
-    config: SceneContainerConfig,
-) : SceneDataSource {
+@OptIn(ExperimentalCoroutinesApi::class)
+class SceneDataSourceDelegator(applicationScope: CoroutineScope, config: SceneContainerConfig) :
+    SceneDataSource {
     private val noOpDelegate = NoOpSceneDataSource(config.initialSceneKey)
     private val delegateMutable = MutableStateFlow<SceneDataSource>(noOpDelegate)
 
@@ -60,38 +57,27 @@ class SceneDataSourceDelegator(
             )
 
     override fun changeScene(toScene: SceneKey, transitionKey: TransitionKey?) {
-        delegateMutable.value.changeScene(
-            toScene = toScene,
-            transitionKey = transitionKey,
-        )
-    }
-
-    override fun snapToScene(toScene: SceneKey) {
-        delegateMutable.value.snapToScene(
-            toScene = toScene,
-        )
+        delegateMutable.value.changeScene(toScene = toScene, transitionKey = transitionKey)
     }
 
     override fun showOverlay(overlay: OverlayKey, transitionKey: TransitionKey?) {
-        delegateMutable.value.showOverlay(
-            overlay = overlay,
-            transitionKey = transitionKey,
-        )
+        delegateMutable.value.showOverlay(overlay = overlay, transitionKey = transitionKey)
     }
 
     override fun hideOverlay(overlay: OverlayKey, transitionKey: TransitionKey?) {
-        delegateMutable.value.hideOverlay(
-            overlay = overlay,
-            transitionKey = transitionKey,
-        )
+        delegateMutable.value.hideOverlay(overlay = overlay, transitionKey = transitionKey)
     }
 
     override fun replaceOverlay(from: OverlayKey, to: OverlayKey, transitionKey: TransitionKey?) {
-        delegateMutable.value.replaceOverlay(
-            from = from,
-            to = to,
-            transitionKey = transitionKey,
-        )
+        delegateMutable.value.replaceOverlay(from = from, to = to, transitionKey = transitionKey)
+    }
+
+    override fun freezeAndAnimateToCurrentState() {
+        delegateMutable.value.freezeAndAnimateToCurrentState()
+    }
+
+    override fun instantlyTransitionTo(scene: SceneKey?, overlays: Set<OverlayKey>?) {
+        delegateMutable.value.instantlyTransitionTo(scene = scene, overlays = overlays)
     }
 
     /**
@@ -108,9 +94,7 @@ class SceneDataSourceDelegator(
         delegateMutable.value = delegate ?: noOpDelegate
     }
 
-    private class NoOpSceneDataSource(
-        initialSceneKey: SceneKey,
-    ) : SceneDataSource {
+    private class NoOpSceneDataSource(initialSceneKey: SceneKey) : SceneDataSource {
         override val currentScene: StateFlow<SceneKey> =
             MutableStateFlow(initialSceneKey).asStateFlow()
 
@@ -119,8 +103,6 @@ class SceneDataSourceDelegator(
 
         override fun changeScene(toScene: SceneKey, transitionKey: TransitionKey?) = Unit
 
-        override fun snapToScene(toScene: SceneKey) = Unit
-
         override fun showOverlay(overlay: OverlayKey, transitionKey: TransitionKey?) = Unit
 
         override fun hideOverlay(overlay: OverlayKey, transitionKey: TransitionKey?) = Unit
@@ -128,7 +110,11 @@ class SceneDataSourceDelegator(
         override fun replaceOverlay(
             from: OverlayKey,
             to: OverlayKey,
-            transitionKey: TransitionKey?
+            transitionKey: TransitionKey?,
         ) = Unit
+
+        override fun freezeAndAnimateToCurrentState() = Unit
+
+        override fun instantlyTransitionTo(scene: SceneKey?, overlays: Set<OverlayKey>?) = Unit
     }
 }

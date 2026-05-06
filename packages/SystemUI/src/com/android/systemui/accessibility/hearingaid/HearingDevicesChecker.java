@@ -70,7 +70,7 @@ public class HearingDevicesChecker {
         }
 
         return mLocalBluetoothManager.getCachedDeviceManager().getCachedDevicesCopy().stream()
-                .anyMatch(device -> device.isHearingAidDevice()
+                .anyMatch(device -> device.isHearingDevice()
                         && device.getBondState() != BluetoothDevice.BOND_NONE
                         && !isExclusivelyManagedBluetoothDevice(device));
     }
@@ -99,10 +99,7 @@ public class HearingDevicesChecker {
 
     private boolean isExclusivelyManagedBluetoothDevice(
             @NonNull CachedBluetoothDevice cachedDevice) {
-        if (com.android.settingslib.flags.Flags.enableHideExclusivelyManagedBluetoothDevice()) {
-            return BluetoothUtils.isExclusivelyManagedBluetoothDevice(mContext,
-                    cachedDevice.getDevice());
-        }
-        return false;
+        return BluetoothUtils.isExclusivelyManagedBluetoothDevice(mContext,
+                cachedDevice.getDevice());
     }
 }

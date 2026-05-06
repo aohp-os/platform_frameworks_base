@@ -16,12 +16,15 @@
 
 package android.view;
 
+import android.annotation.FlaggedApi;
 import android.annotation.FloatRange;
 import android.annotation.NonNull;
 import android.annotation.TestApi;
 import android.annotation.UiContext;
 import android.app.Activity;
+import android.app.ActivityThread;
 import android.app.AppGlobals;
+import android.app.Application;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -35,18 +38,17 @@ import android.os.RemoteException;
 import android.os.StrictMode;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
-import android.util.SparseArray;
+import android.util.LongSparseArray;
 import android.util.TypedValue;
 import android.view.flags.Flags;
 
+import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 
 /**
  * Contains methods to standard constants used in the UI for timeouts, sizes, and distances.
  */
 public class ViewConfiguration {
-    private static final String TAG = "ViewConfiguration";
-
     /**
      * Defines the width of the horizontal scrollbar and the height of the vertical scrollbar in
      * dips
@@ -151,13 +153,6 @@ public class ViewConfiguration {
      * double-tap.
      */
     private static final int DOUBLE_TAP_MIN_TIME = 40;
-
-    /**
-     * Defines the maximum duration in milliseconds between a touch pad
-     * touch and release for a given touch to be considered a tap (click) as
-     * opposed to a hover movement gesture.
-     */
-    private static final int HOVER_TAP_TIMEOUT = 150;
 
     /**
      * Defines the maximum distance in pixels that a touch pad touch can move
@@ -349,6 +344,37 @@ public class ViewConfiguration {
      */
     private static final int SMART_SELECTION_INITIALIZING_TIMEOUT_IN_MILLISECOND = 500;
 
+    /**
+     * The default number of milliseconds required to invert the text cursor's pixels.
+     *
+     * Keep in sync with core/res/res/values/integers.xml.
+     *
+     * @hide
+     */
+    public static final int DEFAULT_TEXT_CURSOR_BLINK_INTERVAL_MS = 500;
+
+    /**
+     * The minimum number of milliseconds required to invert the text cursor's pixels that is
+     * comfortable for users with photosensitivity.
+     *
+     * Keep in sync with core/res/res/values/arrays.xml.
+     *
+     * @hide
+     */
+    public static final int MIN_TEXT_CURSOR_BLINK_INTERVAL_MS = 333;
+
+    /**
+     * The number of milliseconds indicating a text cursor's pixels are never inverted, i.e. the
+     * text cursor does not blink at all.
+     *
+     * Keep in sync with core/res/res/values/integers.xml.
+     *
+     * @hide
+     */
+    public static final int NO_BLINK_TEXT_CURSOR_BLINK_INTERVAL_MS = 0;
+
+    private static ResourceCache sResourceCache = new ResourceCache();
+
     private final boolean mConstructedWithContext;
     private final int mEdgeSlop;
     private final int mFadingEdgeLength;
@@ -374,7 +400,6 @@ public class ViewConfiguration {
     private final int mOverscrollDistance;
     private final int mOverflingDistance;
     private final boolean mViewTouchScreenHapticScrollFeedbackEnabled;
-    @UnsupportedAppUsage
     private final boolean mFadingMarqueeEnabled;
     private final long mGlobalActionsKeyTimeout;
     private final float mVerticalScrollFactor;
@@ -385,15 +410,19 @@ public class ViewConfiguration {
     private final int mSmartSelectionInitializingTimeout;
     private final boolean mPreferKeepClearForFocusEnabled;
     private final boolean mViewBasedRotaryEncoderScrollHapticsEnabledConfig;
+    private final int mTapTimeoutMillis;
+    private final int mDoubleTapTimeoutMillis;
+    private final int mDoubleTapMinTimeMillis;
+    private final float mScrollFriction;
+
+    private int mDeviceId = Context.DEVICE_ID_INVALID;
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 123768915)
     private boolean sHasPermanentMenuKey;
     @UnsupportedAppUsage
     private boolean sHasPermanentMenuKeySet;
 
-    @UnsupportedAppUsage
-    static final SparseArray<ViewConfiguration> sConfigurations =
-            new SparseArray<ViewConfiguration>(2);
+    static final LongSparseArray<ViewConfiguration> sConfigurations = new LongSparseArray<>(2);
 
     /**
      * @deprecated Use {@link android.view.ViewConfiguration#get(android.content.Context)} instead.
@@ -439,6 +468,11 @@ public class ViewConfiguration {
         mSmartSelectionInitializingTimeout = SMART_SELECTION_INITIALIZING_TIMEOUT_IN_MILLISECOND;
         mPreferKeepClearForFocusEnabled = false;
         mViewTouchScreenHapticScrollFeedbackEnabled = false;
+
+        mTapTimeoutMillis = sResourceCache.getTapTimeout();
+        mDoubleTapTimeoutMillis = sResourceCache.getDoubleTapTimeout();
+        mDoubleTapMinTimeMillis = sResourceCache.getDoubleTapMinTime();
+        mScrollFriction = sResourceCache.getScrollFriction();
     }
 
     /**
@@ -468,14 +502,12 @@ public class ViewConfiguration {
 
         mEdgeSlop = (int) (sizeAndDensity * EDGE_SLOP + 0.5f);
         mFadingEdgeLength = (int) (sizeAndDensity * FADING_EDGE_LENGTH + 0.5f);
-        mScrollbarSize = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_scrollbarSize);
+        mScrollbarSize = res.getDimensionPixelSize(R.dimen.config_scrollbarSize);
         mDoubleTapSlop = (int) (sizeAndDensity * DOUBLE_TAP_SLOP + 0.5f);
         mWindowTouchSlop = (int) (sizeAndDensity * WINDOW_TOUCH_SLOP + 0.5f);
 
         final TypedValue multiplierValue = new TypedValue();
-        res.getValue(
-                com.android.internal.R.dimen.config_ambiguousGestureMultiplier,
+        res.getValue(R.dimen.config_ambiguousGestureMultiplier,
                 multiplierValue,
                 true /*resolveRefs*/);
         mAmbiguousGestureMultiplier = Math.max(1.0f, multiplierValue.getFloat());
@@ -488,8 +520,7 @@ public class ViewConfiguration {
         mOverflingDistance = (int) (sizeAndDensity * OVERFLING_DISTANCE + 0.5f);
 
         if (!sHasPermanentMenuKeySet) {
-            final int configVal = res.getInteger(
-                    com.android.internal.R.integer.config_overrideHasPermanentMenuKey);
+            final int configVal = res.getInteger(R.integer.config_overrideHasPermanentMenuKey);
 
             switch (configVal) {
                 default:
@@ -516,32 +547,27 @@ public class ViewConfiguration {
             }
         }
 
-        mFadingMarqueeEnabled = res.getBoolean(
-                com.android.internal.R.bool.config_ui_enableFadingMarquee);
-        mTouchSlop = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewConfigurationTouchSlop);
+        mFadingMarqueeEnabled = res.getBoolean(R.bool.config_ui_enableFadingMarquee);
+        mTouchSlop = res.getDimensionPixelSize(R.dimen.config_viewConfigurationTouchSlop);
         mHandwritingSlop = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewConfigurationHandwritingSlop);
-        mHoverSlop = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewConfigurationHoverSlop);
+                R.dimen.config_viewConfigurationHandwritingSlop);
+        mHoverSlop = res.getDimensionPixelSize(R.dimen.config_viewConfigurationHoverSlop);
         mMinScrollbarTouchTarget = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_minScrollbarTouchTarget);
+                R.dimen.config_minScrollbarTouchTarget);
         mPagingTouchSlop = mTouchSlop * 2;
 
         mDoubleTapTouchSlop = mTouchSlop;
 
         mHandwritingGestureLineMargin = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewConfigurationHandwritingGestureLineMargin);
+                R.dimen.config_viewConfigurationHandwritingGestureLineMargin);
 
-        mMinimumFlingVelocity = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewMinFlingVelocity);
-        mMaximumFlingVelocity = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewMaxFlingVelocity);
+        mMinimumFlingVelocity = res.getDimensionPixelSize(R.dimen.config_viewMinFlingVelocity);
+        mMaximumFlingVelocity = res.getDimensionPixelSize(R.dimen.config_viewMaxFlingVelocity);
 
         int configMinRotaryEncoderFlingVelocity = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewMinRotaryEncoderFlingVelocity);
+                R.dimen.config_viewMinRotaryEncoderFlingVelocity);
         int configMaxRotaryEncoderFlingVelocity = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_viewMaxRotaryEncoderFlingVelocity);
+                R.dimen.config_viewMaxRotaryEncoderFlingVelocity);
         if (configMinRotaryEncoderFlingVelocity < 0 || configMaxRotaryEncoderFlingVelocity < 0) {
             mMinimumRotaryEncoderFlingVelocity = NO_FLING_MIN_VELOCITY;
             mMaximumRotaryEncoderFlingVelocity = NO_FLING_MAX_VELOCITY;
@@ -551,8 +577,7 @@ public class ViewConfiguration {
         }
 
         int configRotaryEncoderHapticScrollFeedbackTickIntervalPixels =
-                res.getDimensionPixelSize(
-                        com.android.internal.R.dimen
+                res.getDimensionPixelSize(R.dimen
                                 .config_rotaryEncoderAxisScrollTickInterval);
         mRotaryEncoderHapticScrollFeedbackTickIntervalPixels =
                 configRotaryEncoderHapticScrollFeedbackTickIntervalPixels > 0
@@ -560,42 +585,39 @@ public class ViewConfiguration {
                         : NO_HAPTIC_SCROLL_TICK_INTERVAL;
 
         mRotaryEncoderHapticScrollFeedbackEnabled =
-                res.getBoolean(
-                        com.android.internal.R.bool
+                res.getBoolean(R.bool
                                 .config_viewRotaryEncoderHapticScrollFedbackEnabled);
 
-        mGlobalActionsKeyTimeout = res.getInteger(
-                com.android.internal.R.integer.config_globalActionsKeyTimeout);
+        mGlobalActionsKeyTimeout = res.getInteger(R.integer.config_globalActionsKeyTimeout);
 
-        mHorizontalScrollFactor = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_horizontalScrollFactor);
-        mVerticalScrollFactor = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_verticalScrollFactor);
+        mHorizontalScrollFactor = res.getDimensionPixelSize(R.dimen.config_horizontalScrollFactor);
+        mVerticalScrollFactor = res.getDimensionPixelSize(R.dimen.config_verticalScrollFactor);
 
         mShowMenuShortcutsWhenKeyboardPresent = res.getBoolean(
-            com.android.internal.R.bool.config_showMenuShortcutsWhenKeyboardPresent);
+                R.bool.config_showMenuShortcutsWhenKeyboardPresent);
 
-        mMinScalingSpan = res.getDimensionPixelSize(
-                com.android.internal.R.dimen.config_minScalingSpan);
+        mMinScalingSpan = res.getDimensionPixelSize(R.dimen.config_minScalingSpan);
 
-        mScreenshotChordKeyTimeout = res.getInteger(
-                com.android.internal.R.integer.config_screenshotChordKeyTimeout);
+        mScreenshotChordKeyTimeout = res.getInteger(R.integer.config_screenshotChordKeyTimeout);
 
         mSmartSelectionInitializedTimeout = res.getInteger(
-                com.android.internal.R.integer.config_smartSelectionInitializedTimeoutMillis);
+                R.integer.config_smartSelectionInitializedTimeoutMillis);
         mSmartSelectionInitializingTimeout = res.getInteger(
-                com.android.internal.R.integer.config_smartSelectionInitializingTimeoutMillis);
-        mPreferKeepClearForFocusEnabled = res.getBoolean(
-                com.android.internal.R.bool.config_preferKeepClearForFocus);
+                R.integer.config_smartSelectionInitializingTimeoutMillis);
+        mPreferKeepClearForFocusEnabled = res.getBoolean(R.bool.config_preferKeepClearForFocus);
         mViewBasedRotaryEncoderScrollHapticsEnabledConfig =
-                res.getBoolean(
-                        com.android.internal.R.bool.config_viewBasedRotaryEncoderHapticsEnabled);
+                res.getBoolean(R.bool.config_viewBasedRotaryEncoderHapticsEnabled);
         mViewTouchScreenHapticScrollFeedbackEnabled =
                 Flags.enableScrollFeedbackForTouch()
-                        ? res.getBoolean(
-                        com.android.internal.R.bool
-                                .config_viewTouchScreenHapticScrollFeedbackEnabled)
+                        ? res.getBoolean(R.bool.config_viewTouchScreenHapticScrollFeedbackEnabled)
                         : false;
+
+        mTapTimeoutMillis = res.getInteger(R.integer.config_tapTimeoutMillis);
+        mDoubleTapTimeoutMillis = res.getInteger(R.integer.config_doubleTapTimeoutMillis);
+        mDoubleTapMinTimeMillis = res.getInteger(R.integer.config_doubleTapMinTimeMillis);
+        mScrollFriction = res.getFloat(R.dimen.config_scrollFriction);
+
+        mDeviceId = context.getDeviceId();
     }
 
     /**
@@ -611,12 +633,11 @@ public class ViewConfiguration {
     public static ViewConfiguration get(@NonNull @UiContext Context context) {
         StrictMode.assertConfigurationContext(context, "ViewConfiguration");
 
-        final int density = getDisplayDensity(context);
-
-        ViewConfiguration configuration = sConfigurations.get(density);
+        final long key = createKey(context);
+        ViewConfiguration configuration = sConfigurations.get(key);
         if (configuration == null) {
             configuration = new ViewConfiguration(context);
-            sConfigurations.put(density, configuration);
+            sConfigurations.put(key, configuration);
         }
 
         return configuration;
@@ -632,6 +653,7 @@ public class ViewConfiguration {
     @VisibleForTesting
     public static void resetCacheForTesting() {
         sConfigurations.clear();
+        sResourceCache = new ResourceCache();
     }
 
     /**
@@ -641,7 +663,7 @@ public class ViewConfiguration {
      */
     @VisibleForTesting
     public static void setInstanceForTesting(Context context, ViewConfiguration instance) {
-        sConfigurations.put(getDisplayDensity(context), instance);
+        sConfigurations.put(createKey(context), instance);
     }
 
     /**
@@ -707,7 +729,7 @@ public class ViewConfiguration {
      * components.
      */
     public static int getPressedStateDuration() {
-        return PRESSED_STATE_DURATION;
+        return sResourceCache.getPressedStateDuration();
     }
 
     /**
@@ -722,12 +744,30 @@ public class ViewConfiguration {
     }
 
     /**
+     * @return the duration in milliseconds before a press turns into
+     * a long press.
+     */
+    @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIEWCONFIGURATION_APIS)
+    public int getLongPressTimeoutMillis() {
+        return getSettingValue(Settings.Secure.LONG_PRESS_TIMEOUT, DEFAULT_LONG_PRESS_TIMEOUT);
+    }
+
+    /**
      * @return the duration in milliseconds between the first tap's up event and the second tap's
      * down event for an interaction to be considered part of the same multi-press.
      */
     public static int getMultiPressTimeout() {
         return AppGlobals.getIntCoreSetting(Settings.Secure.MULTI_PRESS_TIMEOUT,
                 DEFAULT_MULTI_PRESS_TIMEOUT);
+    }
+
+    /**
+     * @return the duration in milliseconds between the first tap's up event and the second tap's
+     * down event for an interaction to be considered part of the same multi-press.
+     */
+    @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIEWCONFIGURATION_APIS)
+    public int getMultiPressTimeoutMillis() {
+        return getSettingValue(Settings.Secure.MULTI_PRESS_TIMEOUT, DEFAULT_MULTI_PRESS_TIMEOUT);
     }
 
     /**
@@ -747,12 +787,53 @@ public class ViewConfiguration {
     }
 
     /**
+     * Returns the duration in milliseconds of the text cursor blink interval, which is the elapsed
+     * time between inversions of the color of the text cursor's pixels.
+     *
+     * <p>The value is user-configurable and is constrained to the following range:
+     * <ul>
+     *   <li>0 (don't blink)
+     *   <li>>= 333 (fast blink, the minimum blink interval that is comfortable for
+     *   photosensitivity)
+     * </ul>
+     *
+     * @return the duration in milliseconds of the text cursor blink interval
+     */
+    @FlaggedApi(android.view.accessibility.Flags.FLAG_TEXT_CURSOR_BLINK_INTERVAL)
+    public int getTextCursorBlinkIntervalMillis() {
+        int value = getSettingValue(Settings.Secure.ACCESSIBILITY_TEXT_CURSOR_BLINK_INTERVAL_MS,
+                sResourceCache.getDefaultTextCursorBlinkInterval());
+        int noBlink = sResourceCache.getNoBlinkTextCursorBlinkInterval();
+        int minBlink = sResourceCache.getMinTextCursorBlinkInterval();
+
+        if (value <= noBlink) {
+            // Treat any negative value as no-blink.
+            return noBlink;
+        } else if (value <= minBlink) {
+            // Constrain non-zero blink interval to >= minimum blink (333 ms).
+            return minBlink;
+        }
+
+        return value;
+    }
+
+    /**
      * @return the duration in milliseconds we will wait to see if a touch event
      * is a tap or a scroll. If the user does not move within this interval, it is
      * considered to be a tap.
      */
     public static int getTapTimeout() {
-        return TAP_TIMEOUT;
+        return sResourceCache.getTapTimeout();
+    }
+
+    /**
+     * @return the duration in milliseconds we will wait to see if a touch event
+     * is a tap or a scroll. If the user does not move within this interval, it is
+     * considered to be a tap.
+     */
+    @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIEWCONFIGURATION_APIS)
+    public int getTapTimeoutMillis() {
+        return mTapTimeoutMillis;
     }
 
     /**
@@ -761,7 +842,7 @@ public class ViewConfiguration {
      * considered to be a tap.
      */
     public static int getJumpTapTimeout() {
-        return JUMP_TAP_TIMEOUT;
+        return sResourceCache.getJumpTapTimeout();
     }
 
     /**
@@ -770,7 +851,17 @@ public class ViewConfiguration {
      * double-tap.
      */
     public static int getDoubleTapTimeout() {
-        return DOUBLE_TAP_TIMEOUT;
+        return sResourceCache.getDoubleTapTimeout();
+    }
+
+    /**
+     * @return the duration in milliseconds between the first tap's up event and
+     * the second tap's down event for an interaction to be considered a
+     * double-tap.
+     */
+    @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIEWCONFIGURATION_APIS)
+    public int getDoubleTapTimeoutMillis() {
+        return mDoubleTapTimeoutMillis;
     }
 
     /**
@@ -782,17 +873,18 @@ public class ViewConfiguration {
      */
     @UnsupportedAppUsage
     public static int getDoubleTapMinTime() {
-        return DOUBLE_TAP_MIN_TIME;
+        return sResourceCache.getDoubleTapMinTime();
     }
 
     /**
-     * @return the maximum duration in milliseconds between a touch pad
-     * touch and release for a given touch to be considered a tap (click) as
-     * opposed to a hover movement gesture.
+     * @return the minimum duration in milliseconds between the first tap's
+     * up event and the second tap's down event for an interaction to be considered a
+     * double-tap.
+     *
      * @hide
      */
-    public static int getHoverTapTimeout() {
-        return HOVER_TAP_TIMEOUT;
+    public int getDoubleTapMinTimeMillis() {
+        return mDoubleTapMinTimeMillis;
     }
 
     /**
@@ -803,7 +895,7 @@ public class ViewConfiguration {
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int getHoverTapSlop() {
-        return HOVER_TAP_SLOP;
+        return sResourceCache.getHoverTapSlop();
     }
 
     /**
@@ -1044,7 +1136,7 @@ public class ViewConfiguration {
      * in milliseconds.
      */
     public static long getZoomControlsTimeout() {
-        return ZOOM_CONTROLS_TIMEOUT;
+        return sResourceCache.getZoomControlsTimeout();
     }
 
     /**
@@ -1113,14 +1205,25 @@ public class ViewConfiguration {
      *         friction.
      */
     public static float getScrollFriction() {
-        return SCROLL_FRICTION;
+        return sResourceCache.getScrollFriction();
+    }
+
+    /**
+     * The amount of friction applied to scrolls and flings.
+     *
+     * @return A scalar dimensionless value representing the coefficient of
+     *         friction.
+     */
+    @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIEWCONFIGURATION_APIS)
+    public float getScrollFrictionAmount() {
+        return mScrollFriction;
     }
 
     /**
      * @return the default duration in milliseconds for {@link ActionMode#hide(long)}.
      */
     public static long getDefaultActionModeHideDuration() {
-        return ACTION_MODE_HIDE_DURATION_DEFAULT;
+        return sResourceCache.getDefaultActionModeHideDuration();
     }
 
     /**
@@ -1471,8 +1574,181 @@ public class ViewConfiguration {
         return HOVER_TOOLTIP_HIDE_SHORT_TIMEOUT;
     }
 
-    private static final int getDisplayDensity(Context context) {
+    private int getSettingValue(String key, int defaultValue) {
+        if (mDeviceId != Context.DEVICE_ID_INVALID) {
+            return AppGlobals.getIntCoreSetting(key, defaultValue, mDeviceId);
+        }
+        return AppGlobals.getIntCoreSetting(key, defaultValue);
+    }
+
+    private static int getDisplayDensity(Context context) {
         final DisplayMetrics metrics = context.getResources().getDisplayMetrics();
         return (int) (100.0f * metrics.density);
+    }
+
+    /**
+     * Returns a key of type long using the display density and deviceId from the {@link Context}.
+     */
+    private static long createKey(Context context) {
+        int displayDensity = getDisplayDensity(context);
+        return (((long) displayDensity) << 32) | (context.getDeviceId() & 0xffffffffL);
+    }
+
+    /**
+     * Fetches resource values statically and caches them locally for fast lookup. Note that these
+     * values will not be updated during the lifetime of a process, even if resource overlays are
+     * applied.
+     */
+    private static final class ResourceCache {
+
+        private int mPressedStateDuration = -1;
+        private int mTapTimeout = -1;
+        private int mJumpTapTimeout = -1;
+        private int mDoubleTapTimeout = -1;
+        private int mDoubleTapMinTime = -1;
+        private int mHoverTapSlop = -1;
+        private long mZoomControlsTimeout = -1L;
+        private float mScrollFriction = -1f;
+        private long mDefaultActionModeHideDuration = -1L;
+        private int mDefaultTextCursorBlinkInterval = -1;
+        private int mMinTextCursorBlinkInterval = -1;
+        private int mNoBlinkTextCursorBlinkInterval = -1;
+
+        public int getPressedStateDuration() {
+            if (mPressedStateDuration < 0) {
+                Resources resources = getCurrentResources();
+                mPressedStateDuration = resources != null
+                        ? resources.getInteger(R.integer.config_pressedStateDurationMillis)
+                        : PRESSED_STATE_DURATION;
+            }
+            return mPressedStateDuration;
+        }
+
+        public int getTapTimeout() {
+            if (mTapTimeout < 0) {
+                Resources resources = getCurrentResources();
+                mTapTimeout = resources != null
+                        ? resources.getInteger(R.integer.config_tapTimeoutMillis)
+                        : TAP_TIMEOUT;
+            }
+            return mTapTimeout;
+        }
+
+        public int getJumpTapTimeout() {
+            if (mJumpTapTimeout < 0) {
+                Resources resources = getCurrentResources();
+                mJumpTapTimeout = resources != null
+                        ? resources.getInteger(R.integer.config_jumpTapTimeoutMillis)
+                        : JUMP_TAP_TIMEOUT;
+            }
+            return mJumpTapTimeout;
+        }
+
+        public int getDoubleTapTimeout() {
+            if (mDoubleTapTimeout < 0) {
+                Resources resources = getCurrentResources();
+                mDoubleTapTimeout = resources != null
+                        ? resources.getInteger(R.integer.config_doubleTapTimeoutMillis)
+                        : DOUBLE_TAP_TIMEOUT;
+            }
+            return mDoubleTapTimeout;
+        }
+
+        public int getDoubleTapMinTime() {
+            if (mDoubleTapMinTime < 0) {
+                Resources resources = getCurrentResources();
+                mDoubleTapMinTime = resources != null
+                        ? resources.getInteger(R.integer.config_doubleTapMinTimeMillis)
+                        : DOUBLE_TAP_MIN_TIME;
+            }
+            return mDoubleTapMinTime;
+        }
+
+        public int getHoverTapSlop() {
+            if (mHoverTapSlop < 0) {
+                Resources resources = getCurrentResources();
+                mHoverTapSlop = resources != null
+                        ? resources.getDimensionPixelSize(R.dimen.config_hoverTapSlop)
+                        : HOVER_TAP_SLOP;
+            }
+            return mHoverTapSlop;
+        }
+
+        public long getZoomControlsTimeout() {
+            if (mZoomControlsTimeout < 0) {
+                Resources resources = getCurrentResources();
+                mZoomControlsTimeout = resources != null
+                        ? resources.getInteger(R.integer.config_zoomControlsTimeoutMillis)
+                        : ZOOM_CONTROLS_TIMEOUT;
+            }
+            return mZoomControlsTimeout;
+        }
+
+        public float getScrollFriction() {
+            if (mScrollFriction < 0) {
+                Resources resources = getCurrentResources();
+                mScrollFriction = resources != null
+                        ? resources.getFloat(R.dimen.config_scrollFriction)
+                        : SCROLL_FRICTION;
+            }
+            return mScrollFriction;
+        }
+
+        public long getDefaultActionModeHideDuration() {
+            if (mDefaultActionModeHideDuration < 0) {
+                Resources resources = getCurrentResources();
+                mDefaultActionModeHideDuration = resources != null
+                        ? resources.getInteger(R.integer.config_defaultActionModeHideDurationMillis)
+                        : ACTION_MODE_HIDE_DURATION_DEFAULT;
+            }
+            return mDefaultActionModeHideDuration;
+        }
+
+        public int getDefaultTextCursorBlinkInterval() {
+            if (mDefaultTextCursorBlinkInterval < 0) {
+                Resources resources = getCurrentResources();
+                mDefaultTextCursorBlinkInterval = resources != null
+                        ? resources.getInteger(
+                        R.integer.def_accessibility_text_cursor_blink_interval_ms)
+                        : DEFAULT_TEXT_CURSOR_BLINK_INTERVAL_MS;
+            }
+            return mDefaultTextCursorBlinkInterval;
+        }
+
+        public int getNoBlinkTextCursorBlinkInterval() {
+            if (mNoBlinkTextCursorBlinkInterval < 0) {
+                Resources resources = getCurrentResources();
+                mNoBlinkTextCursorBlinkInterval = resources != null
+                        ? resources.getInteger(
+                        R.integer.no_blink_accessibility_text_cursor_blink_interval_ms)
+                        : NO_BLINK_TEXT_CURSOR_BLINK_INTERVAL_MS;
+            }
+            return mNoBlinkTextCursorBlinkInterval;
+        }
+
+        public int getMinTextCursorBlinkInterval() {
+            if (mMinTextCursorBlinkInterval < 0) {
+                mMinTextCursorBlinkInterval = MIN_TEXT_CURSOR_BLINK_INTERVAL_MS;
+                Resources resources = getCurrentResources();
+                if (resources != null) {
+                    int[] textCursorBlinkIntervals = resources.getIntArray(
+                            R.array.accessibility_text_cursor_blink_intervals);
+                    if (textCursorBlinkIntervals.length > 0) {
+                        mMinTextCursorBlinkInterval = textCursorBlinkIntervals[0];
+                    }
+                }
+            }
+            return mMinTextCursorBlinkInterval;
+        }
+
+        private static Resources getCurrentResources() {
+            if (!android.companion.virtualdevice.flags.Flags
+                    .migrateViewconfigurationConstantsToResources()) {
+                return null;
+            }
+            Application application = ActivityThread.currentApplication();
+            Context context = application != null ? application.getApplicationContext() : null;
+            return context != null ? context.getResources() : null;
+        }
     }
 }

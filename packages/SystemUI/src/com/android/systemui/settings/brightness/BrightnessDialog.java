@@ -16,6 +16,8 @@
 
 package com.android.systemui.settings.brightness;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
+import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.content.Intent.EXTRA_BRIGHTNESS_DIALOG_IS_FULL_WIDTH;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import static android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
@@ -23,7 +25,6 @@ import static android.view.WindowManagerPolicyConstants.EXTRA_FROM_BRIGHTNESS_KE
 
 import static com.android.systemui.util.kotlin.JavaAdapterKt.collectFlow;
 
-import android.app.Activity;
 import android.content.res.Configuration;
 import android.graphics.Insets;
 import android.graphics.Rect;
@@ -39,14 +40,13 @@ import android.view.WindowMetrics;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.FrameLayout;
 
-import androidx.annotation.NonNull;
+import androidx.activity.ComponentActivity;
 import androidx.compose.ui.platform.ComposeView;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel;
-import com.android.systemui.compose.ComposeInitializer;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.qs.flags.QsInCompose;
 import com.android.systemui.res.R;
@@ -58,8 +58,15 @@ import java.util.List;
 
 import javax.inject.Inject;
 
-/** A dialog that provides controls for adjusting the screen brightness. */
-public class BrightnessDialog extends Activity {
+/**
+ * A dialog that provides controls for adjusting the screen brightness.
+ *
+ * This class extends `ComponentActivity` instead of the base `android.app.Activity` to support
+ * hosting Jetpack Compose content. `ComponentActivity` provides the necessary
+ * `LifecycleOwner`and `SavedStateRegistryOwner` that Compose requires to function correctly,
+ * preventing crashes and simplifying lifecycle management. See b/417544544.
+ */
+public class BrightnessDialog extends ComponentActivity {
 
     @VisibleForTesting
     static final int DIALOG_TIMEOUT_MILLIS = 3000;
@@ -140,49 +147,42 @@ public class BrightnessDialog extends Activity {
         window.getDecorView();
         window.setLayout(WRAP_CONTENT, WRAP_CONTENT);
         getTheme().applyStyle(R.style.Theme_SystemUI_QuickSettings, false);
-        if (QsInCompose.isEnabled()) {
-            window.getDecorView().addOnAttachStateChangeListener(
-                    new View.OnAttachStateChangeListener() {
-                        @Override
-                        public void onViewAttachedToWindow(@NonNull View v) {
-                            ComposeInitializer.INSTANCE.onAttachedToWindow(v);
-                        }
-
-                        @Override
-                        public void onViewDetachedFromWindow(@NonNull View v) {
-                            ComposeInitializer.INSTANCE.onDetachedFromWindow(v);
-                        }
-                    });
-        }
     }
 
     void setBrightnessDialogViewAttributes(View container) {
+        Configuration configuration = getResources().getConfiguration();
         // The brightness mirror container is INVISIBLE by default.
         container.setVisibility(View.VISIBLE);
         ViewGroup.MarginLayoutParams lp =
                 (ViewGroup.MarginLayoutParams) container.getLayoutParams();
-        int horizontalMargin =
-                getResources().getDimensionPixelSize(R.dimen.notification_side_paddings);
-        lp.leftMargin = horizontalMargin;
-        lp.rightMargin = horizontalMargin;
+        // Remove the margin. Have the container take all the space. Instead, insert padding.
+        // This allows for the background to be visible around the slider.
+        int margin = 0;
+        lp.topMargin = margin;
+        lp.bottomMargin = margin;
+        lp.leftMargin = margin;
+        lp.rightMargin = margin;
+        int padding = getResources().getDimensionPixelSize(
+                R.dimen.rounded_slider_background_padding
+        );
+        container.setPadding(padding, padding, padding, padding);
+        // If in multi-window or freeform, increase the top margin so the brightness dialog
+        // doesn't get cut off.
+        final int windowingMode = configuration.windowConfiguration.getWindowingMode();
+        if (windowingMode == WINDOWING_MODE_MULTI_WINDOW
+                || windowingMode == WINDOWING_MODE_FREEFORM) {
+            lp.topMargin += 50;
+        }
 
-        int verticalMargin =
-                getResources().getDimensionPixelSize(
-                        R.dimen.notification_guts_option_vertical_padding);
-
-        lp.topMargin = verticalMargin;
-        lp.bottomMargin = verticalMargin;
-
-        Configuration configuration = getResources().getConfiguration();
         int orientation = configuration.orientation;
         int windowWidth = getWindowAvailableWidth();
 
         if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
             boolean shouldBeFullWidth = getIntent()
                     .getBooleanExtra(EXTRA_BRIGHTNESS_DIALOG_IS_FULL_WIDTH, false);
-            lp.width = (shouldBeFullWidth ? windowWidth : windowWidth / 2) - horizontalMargin * 2;
+            lp.width = shouldBeFullWidth ? windowWidth : windowWidth / 2;
         } else if (orientation == Configuration.ORIENTATION_PORTRAIT) {
-            lp.width = windowWidth - horizontalMargin * 2;
+            lp.width = windowWidth;
         }
 
         container.setLayoutParams(lp);
@@ -192,7 +192,7 @@ public class BrightnessDialog extends Activity {
                     // Exclude this view (and its horizontal margins) from triggering gestures.
                     // This prevents back gesture from being triggered by dragging close to the
                     // edge of the slider (0% or 100%).
-                    bounds.set(-horizontalMargin, 0, right - left + horizontalMargin, bottom - top);
+                    bounds.set(0, 0, right - left, bottom - top);
                     v.setSystemGestureExclusionRects(List.of(bounds));
                 });
     }

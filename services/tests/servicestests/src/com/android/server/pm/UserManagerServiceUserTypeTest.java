@@ -25,8 +25,6 @@ import static android.content.pm.UserInfo.FLAG_PROFILE;
 import static android.content.pm.UserInfo.FLAG_RESTRICTED;
 import static android.content.pm.UserInfo.FLAG_SYSTEM;
 
-import static com.android.server.pm.UserTypeDetails.UNLIMITED_NUMBER_OF_USERS;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -106,6 +104,7 @@ public class UserManagerServiceUserTypeTest {
                 .setMaxAllowed(21)
                 .setBaseType(FLAG_PROFILE)
                 .setDefaultUserInfoPropertyFlags(FLAG_EPHEMERAL)
+                .setProfileParentRequired(true)
                 .setBadgeLabels(23, 24, 25)
                 .setBadgeColors(26, 27)
                 .setIconBadge(28)
@@ -125,6 +124,7 @@ public class UserManagerServiceUserTypeTest {
         assertTrue(type.isEnabled());
         assertEquals(21, type.getMaxAllowed());
         assertEquals(FLAG_PROFILE | FLAG_EPHEMERAL, type.getDefaultUserInfoFlags());
+        assertTrue(type.isProfileParentRequired());
         assertEquals(28, type.getIconBadge());
         assertEquals(29, type.getBadgePlain());
         assertEquals(30, type.getBadgeNoBackground());
@@ -208,8 +208,9 @@ public class UserManagerServiceUserTypeTest {
                 .createUserTypeDetails();
 
         assertTrue(type.isEnabled());
-        assertEquals(UNLIMITED_NUMBER_OF_USERS, type.getMaxAllowed());
-        assertEquals(UNLIMITED_NUMBER_OF_USERS, type.getMaxAllowedPerParent());
+        assertEquals(android.multiuser.Flags.decoupleMaxUsersFromProfiles() ?
+                0 : UserTypeDetails.getLegacyUnlimitedNumberOfUsersValue(), type.getMaxAllowed());
+        assertEquals(0, type.getMaxAllowedPerParent());
         assertEquals(FLAG_FULL, type.getDefaultUserInfoFlags());
         assertEquals(Resources.ID_NULL, type.getIconBadge());
         assertEquals(Resources.ID_NULL, type.getBadgePlain());
@@ -452,9 +453,10 @@ public class UserManagerServiceUserTypeTest {
         assertTrue(aospType.getDefaultUserPropertiesReference().areItemsRestrictedOnHomeScreen());
 
         // userTypeOem1 should be created.
-        UserTypeDetails.Builder customType = builders.get(userTypeOem1);
-        assertNotNull(customType);
-        assertEquals(14, customType.createUserTypeDetails().getMaxAllowedPerParent());
+        assertNotNull(builders.get(userTypeOem1));
+        UserTypeDetails customType = builders.get(userTypeOem1).createUserTypeDetails();
+        assertEquals(14, customType.getMaxAllowedPerParent());
+        assertTrue(customType.isProfileParentRequired());
     }
 
     /** Tests {@link UserTypeFactory#customizeBuilders} for customizing a FULL user. */
@@ -475,7 +477,7 @@ public class UserManagerServiceUserTypeTest {
         UserTypeFactory.customizeBuilders(builders, parser);
 
         UserTypeDetails details = builders.get(userTypeFull).createUserTypeDetails();
-        assertEquals(UNLIMITED_NUMBER_OF_USERS, details.getMaxAllowedPerParent());
+        assertEquals(0, details.getMaxAllowedPerParent());
         assertFalse(details.isEnabled());
         assertEquals(17, details.getMaxAllowed());
         assertTrue(UserRestrictionsUtils.areEqual(

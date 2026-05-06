@@ -16,104 +16,62 @@
 
 package com.android.systemui.kairos.internal
 
-import com.android.systemui.kairos.FrpDeferredValue
-import com.android.systemui.kairos.FrpTransactionScope
-import com.android.systemui.kairos.TFlow
-import com.android.systemui.kairos.TFlowInit
-import com.android.systemui.kairos.TFlowLoop
-import com.android.systemui.kairos.TState
-import com.android.systemui.kairos.TStateInit
+import com.android.systemui.kairos.DeferredValue
+import com.android.systemui.kairos.Events
+import com.android.systemui.kairos.EventsInit
+import com.android.systemui.kairos.EventsLoop
+import com.android.systemui.kairos.State
+import com.android.systemui.kairos.StateInit
+import com.android.systemui.kairos.TransactionScope
 import com.android.systemui.kairos.Transactional
-import com.android.systemui.kairos.emptyTFlow
+import com.android.systemui.kairos.emptyEvents
 import com.android.systemui.kairos.init
 import com.android.systemui.kairos.mapCheap
-import com.android.systemui.kairos.switch
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.startCoroutine
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.completeWith
-import kotlinx.coroutines.job
+import com.android.systemui.kairos.switchEvents
+import com.android.systemui.kairos.util.nameTag
+import com.android.systemui.kairos.util.plus
+import com.android.systemui.kairos.util.toNameData
 
 internal class EvalScopeImpl(networkScope: NetworkScope, deferScope: DeferScope) :
-    EvalScope, NetworkScope by networkScope, DeferScope by deferScope {
+    EvalScope, NetworkScope by networkScope, DeferScope by deferScope, TransactionScope {
 
-    private suspend fun <A> Transactional<A>.sample(): A =
-        impl.sample().sample(this@EvalScopeImpl).await()
+    override fun <A> Transactional<A>.sampleDeferred(): DeferredValue<A> =
+        DeferredValue(deferAsync { impl.sample().sample(this@EvalScopeImpl).value })
 
-    private suspend fun <A> TState<A>.sample(): A =
-        init.connect(evalScope = this@EvalScopeImpl).getCurrentWithEpoch(this@EvalScopeImpl).first
+    override fun <A> State<A>.sampleDeferred(): DeferredValue<A> =
+        DeferredValue(
+            deferAsync {
+                init
+                    .connect(evalScope = this@EvalScopeImpl)
+                    .getCurrentWithEpoch(this@EvalScopeImpl)
+                    .first
+            }
+        )
 
-    private val <A> Transactional<A>.deferredValue: FrpDeferredValue<A>
-        get() = FrpDeferredValue(deferAsync { sample() })
+    override fun <R> deferredTransactionScope(block: TransactionScope.() -> R): DeferredValue<R> =
+        DeferredValue(deferAsync { block() })
 
-    private val <A> TState<A>.deferredValue: FrpDeferredValue<A>
-        get() = FrpDeferredValue(deferAsync { sample() })
-
-    private val nowInternal: TFlow<Unit> by lazy {
-        var result by TFlowLoop<Unit>()
+    override val now: Events<Unit> by lazy {
+        var result by EventsLoop<Unit>()
+        val switchOff = result.mapCheap { emptyEvents }
+        val nameTag = nameTag { "now(epoch=$epoch)" }.toNameData("TransactionScope.now")
         result =
-            TStateInit(
+            StateInit(
                     constInit(
-                        "now",
-                        mkState(
-                            "now",
-                            "now",
+                        nameTag,
+                        activatedStateSource(
+                            nameTag + "switchedIn",
                             this,
-                            { result.mapCheap { emptyTFlow }.init.connect(evalScope = this) },
-                            CompletableDeferred(
-                                TFlowInit(
-                                    constInit(
-                                        "now",
-                                        TFlowCheap {
-                                            ActivationResult(
-                                                connection = NodeConnection(AlwaysNode, AlwaysNode),
-                                                needsEval = true,
-                                            )
-                                        },
-                                    )
-                                )
-                            ),
+                            { switchOff.init.connect(evalScope = this) },
+                            lazyOf(EventsInit(constInit(nameTag + "always", alwaysImpl))),
                         ),
                     )
                 )
-                .switch()
+                .switchEvents(nameTag)
         result
     }
+}
 
-    private fun <R> deferredInternal(
-        block: suspend FrpTransactionScope.() -> R
-    ): FrpDeferredValue<R> = FrpDeferredValue(deferAsync { runInTransactionScope(block) })
-
-    override suspend fun <R> runInTransactionScope(block: suspend FrpTransactionScope.() -> R): R {
-        val complete = CompletableDeferred<R>(parent = coroutineContext.job)
-        block.startCoroutine(
-            frpScope,
-            object : Continuation<R> {
-                override val context: CoroutineContext
-                    get() = EmptyCoroutineContext
-
-                override fun resumeWith(result: Result<R>) {
-                    complete.completeWith(result)
-                }
-            },
-        )
-        return complete.await()
-    }
-
-    override val frpScope: FrpTransactionScope = FrpTransactionScopeImpl()
-
-    inner class FrpTransactionScopeImpl : FrpTransactionScope {
-        override fun <A> Transactional<A>.sampleDeferred(): FrpDeferredValue<A> = deferredValue
-
-        override fun <A> TState<A>.sampleDeferred(): FrpDeferredValue<A> = deferredValue
-
-        override fun <R> deferredTransactionScope(
-            block: suspend FrpTransactionScope.() -> R
-        ): FrpDeferredValue<R> = deferredInternal(block)
-
-        override val now: TFlow<Unit>
-            get() = nowInternal
-    }
+private val alwaysImpl = EventsImplCheap {
+    ActivationResult(connection = NodeConnection(AlwaysNode, AlwaysNode), needsEval = true)
 }

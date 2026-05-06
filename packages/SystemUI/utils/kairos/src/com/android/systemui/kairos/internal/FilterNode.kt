@@ -16,32 +16,38 @@
 
 package com.android.systemui.kairos.internal
 
-import com.android.systemui.kairos.util.Just
+import com.android.systemui.kairos.internal.store.Single
+import com.android.systemui.kairos.internal.store.SingletonMapK
 import com.android.systemui.kairos.util.Maybe
-import com.android.systemui.kairos.util.just
-import com.android.systemui.kairos.util.none
+import com.android.systemui.kairos.util.Maybe.Present
+import com.android.systemui.kairos.util.NameData
+import com.android.systemui.kairos.util.maybeOf
+import com.android.systemui.kairos.util.plus
 
-internal inline fun <A, B> mapMaybeNode(
-    crossinline getPulse: suspend EvalScope.() -> TFlowImpl<A>,
-    crossinline f: suspend EvalScope.(A) -> Maybe<B>,
-): TFlowImpl<B> {
-    return DemuxImpl(
-            {
-                mapImpl(getPulse) {
-                    val maybeResult = f(it)
-                    if (maybeResult is Just) {
-                        mapOf(Unit to maybeResult.value)
-                    } else {
-                        emptyMap()
-                    }
+internal inline fun <A> filterPresentImpl(
+    nameData: NameData,
+    crossinline getPulse: EvalScope.() -> EventsImpl<Maybe<A>>,
+): EventsImpl<A> =
+    DemuxImpl(
+            nameData,
+            mapImpl(getPulse, nameData + "toSingletonMap") { maybeResult, _ ->
+                if (maybeResult is Present) {
+                    Single(maybeResult.value)
+                } else {
+                    Single<A>()
                 }
             },
             numKeys = 1,
+            storeFactory = SingletonMapK.Factory(),
         )
         .eventsForKey(Unit)
-}
 
-internal inline fun <A> filterNode(
-    crossinline getPulse: suspend EvalScope.() -> TFlowImpl<A>,
-    crossinline f: suspend EvalScope.(A) -> Boolean,
-): TFlowImpl<A> = mapMaybeNode(getPulse) { if (f(it)) just(it) else none }
+internal inline fun <A> filterImpl(
+    nameData: NameData,
+    crossinline getPulse: EvalScope.() -> EventsImpl<A>,
+    crossinline f: EvalScope.(A) -> Boolean,
+): EventsImpl<A> {
+    val mapped =
+        mapImpl(getPulse, nameData + "toMaybe") { it, _ -> if (f(it)) maybeOf(it) else maybeOf() }
+    return filterPresentImpl(nameData) { mapped }
+}

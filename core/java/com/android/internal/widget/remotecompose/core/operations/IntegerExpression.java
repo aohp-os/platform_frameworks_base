@@ -29,6 +29,9 @@ import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
 import com.android.internal.widget.remotecompose.core.operations.utilities.IntegerExpressionEvaluator;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.Arrays;
 import java.util.List;
@@ -38,19 +41,19 @@ import java.util.List;
  * like injecting the width of the component int draw rect As well as supporting generalized
  * animation floats. The floats represent a RPN style calculator
  */
-public class IntegerExpression extends Operation implements VariableSupport {
+public class IntegerExpression extends Operation implements VariableSupport, Serializable {
     private static final int OP_CODE = Operations.INTEGER_EXPRESSION;
     private static final String CLASS_NAME = "IntegerExpression";
     public int mId;
     private int mMask;
     private int mPreMask;
-    @NonNull public final int[] mSrcValue;
-    @Nullable public int[] mPreCalcValue;
+    public final @NonNull int [] mSrcValue;
+    public @Nullable int [] mPreCalcValue;
     private float mLastChange = Float.NaN;
     public static final int MAX_SIZE = 320;
     @NonNull IntegerExpressionEvaluator mExp = new IntegerExpressionEvaluator();
 
-    public IntegerExpression(int id, int mask, @NonNull int[] value) {
+    public IntegerExpression(int id, int mask, @NonNull int [] value) {
         this.mId = id;
         this.mMask = mask;
         this.mSrcValue = value;
@@ -163,7 +166,7 @@ public class IntegerExpression extends Operation implements VariableSupport {
      * @param mask the mask bits of ints & operators or variables
      * @param value array of integers to be evaluated
      */
-    public static void apply(@NonNull WireBuffer buffer, int id, int mask, @NonNull int[] value) {
+    public static void apply(@NonNull WireBuffer buffer, int id, int mask, @NonNull int [] value) {
         buffer.start(OP_CODE);
         buffer.writeInt(id);
         buffer.writeInt(mask);
@@ -224,5 +227,15 @@ public class IntegerExpression extends Operation implements VariableSupport {
      */
     public static boolean isId(int mask, int i, int value) {
         return ((1 << i) & mask) != 0 && value < IntegerExpressionEvaluator.OFFSET;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.EXPRESSION)
+                .addType(CLASS_NAME)
+                .add("id", mId)
+                .add("mask", mId)
+                .addIntExpressionSrc("srcValues", mSrcValue, mMask);
     }
 }

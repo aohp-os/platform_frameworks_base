@@ -2,8 +2,10 @@ package com.android.systemui.statusbar.notification.stack
 
 import android.annotation.DimenRes
 import android.content.pm.PackageManager
-import android.platform.test.annotations.DisableFlags
+import android.graphics.RectF
+import android.platform.test.annotations.EnableFlags
 import android.platform.test.flag.junit.FlagsParameterization
+import android.view.View
 import android.widget.FrameLayout
 import androidx.test.filters.SmallTest
 import com.android.keyguard.BouncerPanelExpansionCalculator.aboutToShowBouncerProgress
@@ -22,17 +24,25 @@ import com.android.systemui.shade.transition.LargeScreenShadeInterpolator
 import com.android.systemui.statusbar.NotificationShelf
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.notification.RoundableState
+import com.android.systemui.statusbar.notification.collection.EntryAdapter
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
+import com.android.systemui.statusbar.notification.data.repository.HeadsUpRepository
 import com.android.systemui.statusbar.notification.emptyshade.ui.view.EmptyShadeView
 import com.android.systemui.statusbar.notification.footer.ui.view.FooterView
 import com.android.systemui.statusbar.notification.footer.ui.view.FooterView.FooterViewState
 import com.android.systemui.statusbar.notification.headsup.AvalancheController
+import com.android.systemui.statusbar.notification.headsup.HeadsUpAnimator
+import com.android.systemui.statusbar.notification.promoted.PromotedNotificationUi
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
+import com.android.systemui.statusbar.ui.fakeSystemBarUtilsProxy
+import com.android.systemui.surfaceeffects.utils.MathUtils
+import com.android.systemui.testKosmos
 import com.google.common.truth.Expect
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlin.math.roundToInt
 import org.junit.Assume
 import org.junit.Before
 import org.junit.Rule
@@ -52,31 +62,36 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     @JvmField @Rule var expect: Expect = Expect.create()
 
+    private val kosmos = testKosmos()
+
     private val largeScreenShadeInterpolator = mock<LargeScreenShadeInterpolator>()
     private val avalancheController = mock<AvalancheController>()
 
     private val hostView = FrameLayout(context)
-    private val stackScrollAlgorithm = StackScrollAlgorithm(context, hostView)
+    private lateinit var headsUpAnimator: HeadsUpAnimator
+    private lateinit var stackScrollAlgorithm: StackScrollAlgorithm
     private val notificationRow = mock<ExpandableNotificationRow>()
     private val notificationEntry = mock<NotificationEntry>()
+    private val notificationEntryAdapter = mock<EntryAdapter>()
     private val dumpManager = mock<DumpManager>()
-    @OptIn(ExperimentalCoroutinesApi::class)
     private val mStatusBarKeyguardViewManager = mock<StatusBarKeyguardViewManager>()
     private val notificationShelf = mock<NotificationShelf>()
+    private val headsUpRepository = mock<HeadsUpRepository>()
     private val emptyShadeView =
         EmptyShadeView(context, /* attrs= */ null).apply {
             layout(/* l= */ 0, /* t= */ 0, /* r= */ 100, /* b= */ 100)
         }
     private val footerView = FooterView(context, /* attrs= */ null)
-    @OptIn(ExperimentalCoroutinesApi::class)
+
     private val ambientState =
         AmbientState(
             context,
             dumpManager,
-            /* sectionProvider */ { _, _ -> false },
+            kosmos.stackScrollAlgorithmSectionProvider,
             /* bypassController */ { false },
             mStatusBarKeyguardViewManager,
             largeScreenShadeInterpolator,
+            headsUpRepository,
             avalancheController,
         )
 
@@ -91,6 +106,8 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         testableResources.resources.getDimensionPixelSize(id).toFloat()
 
     private val notifSectionDividerGap = px(R.dimen.notification_section_divider_height)
+    private val bundleGap = px(R.dimen.bundle_divider_height)
+    private val bundleExpandedGap = px(R.dimen.bundle_expanded_divider_height)
     private val scrimPadding = px(R.dimen.notification_side_paddings)
     private val baseZ by lazy { ambientState.baseZHeight }
     private val headsUpZ = px(R.dimen.heads_up_pinned_elevation)
@@ -101,7 +118,8 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         @JvmStatic
         @Parameters(name = "{0}")
         fun getParams(): List<FlagsParameterization> {
-            return FlagsParameterization.allCombinationsOf().andSceneContainer()
+            return FlagsParameterization.allCombinationsOf(Flags.FLAG_NOTIFICATION_FIX_HUN_SHADOWS)
+                .andSceneContainer()
         }
     }
 
@@ -114,17 +132,343 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         Assume.assumeFalse(isTv())
         mDependency.injectTestDependency(FeatureFlags::class.java, featureFlags)
         whenever(notificationShelf.viewState).thenReturn(ExpandableViewState())
+        whenever(notificationRow.key).thenReturn("key")
         whenever(notificationRow.viewState).thenReturn(ExpandableViewState())
-        whenever(notificationRow.entry).thenReturn(notificationEntry)
+        whenever(notificationRow.entryLegacy).thenReturn(notificationEntry)
+        whenever(notificationRow.entryAdapter).thenReturn(notificationEntryAdapter)
         whenever(notificationRow.roundableState)
             .thenReturn(RoundableState(notificationRow, notificationRow, 0f))
         ambientState.isSmallScreen = true
 
         hostView.addView(notificationRow)
+
+        headsUpAnimator = HeadsUpAnimator(context, kosmos.fakeSystemBarUtilsProxy)
+        stackScrollAlgorithm = StackScrollAlgorithm(context, hostView, headsUpAnimator)
     }
 
     private fun isTv(): Boolean {
         return context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    fun getGapHeightForChild_returnsBundleGapHeight_whenChildIsBundle() {
+        // Assemble
+        val child = mock<ExpandableNotificationRow>()
+        val previousChild = mock<View>()
+        whenever(child.isBundle()).thenReturn(true)
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0.5f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(bundleGap)
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    fun getGapHeightForChild_returnsBundleGapHeight_whenPreviousChildIsBundle() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<ExpandableNotificationRow>()
+        whenever(previousChild.isBundle()).thenReturn(true) // Previous child is a bundle
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0.5f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(bundleGap)
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsBigGap_whenChildNeedsGapHeightAndNotOnKeyguard() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<View>()
+
+        // Trigger childNeedsGapHeight
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(bigGap)
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsSmallGap_whenChildNeedsGapHeightAndOnKeyguard() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<View>()
+
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                true,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(smallGap)
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsLerpedGap_whenChildNeedsGapHeightAndFractionToShade() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<View>()
+
+        // Trigger childNeedsGapHeight
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+        val fractionToShade = 0.75f
+        val expectedGap = MathUtils.lerp(smallGap, bigGap, fractionToShade)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1, // visibleIndex > 0
+                child,
+                previousChild,
+                fractionToShade,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(expectedGap)
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenNoGapConditionMet() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<View>()
+        // Ensure no section gap
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f)
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenPreviousChildIsSectionHeaderViewForBundle() {
+        // Assemble
+        val child = mock<ExpandableNotificationRow>()
+        val previousChild = mock<SectionHeaderView>()
+        whenever(child.isBundle()).thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f) // childNeedsBundleGap should return false
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenChildIsFooterViewForBundle() {
+        // Assemble
+        val child = mock<FooterView>() // Specific type
+        val previousChild = mock<ExpandableNotificationRow>()
+        whenever(previousChild.isBundle()).thenReturn(true) // previousChild is a bundle
+        // Set child to FooterView to trigger isNotFirstOrLastView returning false
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false) // ensure no section gap
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f) // childNeedsBundleGap should return false
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenPreviousChildIsSectionHeaderViewForSectionGap() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<SectionHeaderView>() // Specific type
+        // Set section provider to return true, but isNotFirstOrLastView will make it false
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f) // childNeedsGapHeight should return false
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenChildIsFooterViewForSectionGap() {
+        // Assemble
+        val child = mock<FooterView>() // Specific type
+        val previousChild = mock<View>()
+        // Set section provider to return true, but isNotFirstOrLastView will make it false
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f) // childNeedsGapHeight should return false
+    }
+
+    @Test
+    fun getGapHeightForChild_returnsZero_whenVisibleIndexIsZeroForSectionGap() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<View>()
+        // Set section provider to return true, but visibleIndex = 0 will make it false
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(child, previousChild))
+            .thenReturn(true)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                0, // visibleIndex = 0
+                child,
+                previousChild,
+                0f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(0f) // childNeedsGapHeight should return false
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    fun getGapHeightForChild_returnsBundleExpandedGapHeight_whenChildIsExpandedBundle() {
+        // Assemble
+        val child = mock<ExpandableNotificationRow>()
+        val previousChild = mock<View>()
+        whenever(child.isBundle()).thenReturn(true)
+        whenever(child.isGroupExpanded()).thenReturn(true)
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0.5f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(bundleExpandedGap)
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    fun getGapHeightForChild_returnsBundleExpandedGapHeight_whenPreviousChildIsExpandedBundle() {
+        // Assemble
+        val child = mock<View>()
+        val previousChild = mock<ExpandableNotificationRow>()
+        whenever(previousChild.isBundle()).thenReturn(true) // Previous child is a bundle
+        whenever(previousChild.isGroupExpanded()).thenReturn(true)
+        whenever(kosmos.stackScrollAlgorithmSectionProvider.beginsSection(any(), any()))
+            .thenReturn(false)
+
+        // Act
+        val gapHeight =
+            stackScrollAlgorithm.getGapHeightForChild(
+                kosmos.stackScrollAlgorithmSectionProvider,
+                1,
+                child,
+                previousChild,
+                0.5f,
+                false,
+            )
+
+        // Assert
+        assertThat(gapHeight).isEqualTo(bundleExpandedGap)
     }
 
     @Test
@@ -148,6 +492,20 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         whenever(notificationRow.isHeadsUp).thenReturn(true)
 
         resetViewStates_hunYTranslationIs(headsUpTop)
+    }
+
+    @Test
+    @EnableSceneContainer
+    fun resetViewStates_defaultHun_hasShadow() {
+        val headsUpTop = 200f
+        ambientState.headsUpTop = headsUpTop
+
+        whenever(notificationRow.isPinned).thenReturn(true)
+        whenever(notificationRow.isHeadsUp).thenReturn(true)
+
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+
+        assertThat(notificationRow.viewState.zTranslation).isGreaterThan(baseZ)
     }
 
     @Test
@@ -268,7 +626,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         fakeHunInShade(
             headsUpTop = headsUpTop,
             stackTop = 2600f, // stack scrolled below the screen
-            stackCutoff = 4000f,
+            stackBottom = 4000f,
             collapsedHeight = 100,
             intrinsicHeight = intrinsicHunHeight,
         )
@@ -387,7 +745,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         ambientState.setLayoutMinHeight(2500) // Mock the height of shade
         ambientState.stackY = 2500f // Scroll over the max translation
         stackScrollAlgorithm.setIsExpanded(true) // Mark the shade open
-        stackScrollAlgorithm.setHeadsUpAppearHeightBottom(bottomOfScreen.toInt())
+        headsUpAnimator.headsUpAppearHeightBottom = bottomOfScreen.toInt()
         whenever(notificationRow.mustStayOnScreen()).thenReturn(true)
         whenever(notificationRow.isHeadsUp).thenReturn(true)
         whenever(notificationRow.isAboveShelf).thenReturn(true)
@@ -403,12 +761,53 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         val topMargin = 100f
         ambientState.maxHeadsUpTranslation = 2000f
         ambientState.stackTopMargin = topMargin.toInt()
+        headsUpAnimator.stackTopMargin = topMargin.toInt()
         whenever(notificationRow.intrinsicHeight).thenReturn(100)
         whenever(notificationRow.isHeadsUpAnimatingAway).thenReturn(true)
 
         resetViewStates_hunYTranslationIs(
             expected = -topMargin - stackScrollAlgorithm.mHeadsUpAppearStartAboveScreen
         )
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    fun resetViewStates_hunAnimatingAway_noStatusBarChip_hunTranslatedToTopOfScreen() {
+        val topMargin = 100f
+        ambientState.maxHeadsUpTranslation = 2000f
+        ambientState.stackTopMargin = topMargin.toInt()
+        headsUpAnimator.stackTopMargin = topMargin.toInt()
+        whenever(notificationRow.intrinsicHeight).thenReturn(100)
+
+        val statusBarHeight = 432
+        kosmos.fakeSystemBarUtilsProxy.fakeStatusBarHeight = statusBarHeight
+        headsUpAnimator.updateResources(context)
+
+        whenever(notificationRow.isHeadsUpAnimatingAway).thenReturn(true)
+        whenever(notificationRow.hasStatusBarChipDuringHeadsUpAnimation()).thenReturn(false)
+
+        resetViewStates_hunYTranslationIs(
+            expected = -topMargin - stackScrollAlgorithm.mHeadsUpAppearStartAboveScreen
+        )
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    fun resetViewStates_hunAnimatingAway_withStatusBarChip_hunTranslatedToBottomOfStatusBar() {
+        val topMargin = 100f
+        ambientState.maxHeadsUpTranslation = 2000f
+        ambientState.stackTopMargin = topMargin.toInt()
+        headsUpAnimator.stackTopMargin = topMargin.toInt()
+        whenever(notificationRow.intrinsicHeight).thenReturn(100)
+
+        val statusBarHeight = 432
+        kosmos.fakeSystemBarUtilsProxy.fakeStatusBarHeight = statusBarHeight
+        headsUpAnimator.updateResources(context)
+
+        whenever(notificationRow.isHeadsUpAnimatingAway).thenReturn(true)
+        whenever(notificationRow.hasStatusBarChipDuringHeadsUpAnimation()).thenReturn(true)
+
+        resetViewStates_hunYTranslationIs(expected = statusBarHeight - topMargin)
     }
 
     @Test
@@ -443,7 +842,11 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
     @Test
     fun resetViewStates_hunsOverlapping_bottomHunClipped() {
         val topHun = mockExpandableNotificationRow()
+        whenever(topHun.key).thenReturn("key")
+        whenever(topHun.entryAdapter).thenReturn(notificationEntryAdapter)
         val bottomHun = mockExpandableNotificationRow()
+        whenever(bottomHun.key).thenReturn("key")
+        whenever(bottomHun.entryAdapter).thenReturn(notificationEntryAdapter)
         whenever(topHun.isHeadsUp).thenReturn(true)
         whenever(topHun.isPinned).thenReturn(true)
         whenever(bottomHun.isHeadsUp).thenReturn(true)
@@ -464,7 +867,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         val stackBottom = 2000f
         val stackHeight = stackBottom - stackTop
         ambientState.stackTop = stackTop
-        ambientState.stackCutoff = stackBottom
+        ambientState.drawBounds = RectF(0f, stackTop, 400f, stackBottom)
 
         stackScrollAlgorithm.resetViewStates(ambientState, /* speedBumpIndex= */ 0)
 
@@ -501,7 +904,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         assertThat(notificationRow.viewState.alpha).isEqualTo(1f)
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun resetViewStates_expansionChanging_notificationBecomesTransparent() {
         whenever(mStatusBarKeyguardViewManager.isPrimaryBouncerInTransit).thenReturn(false)
@@ -511,7 +913,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun resetViewStates_expansionChangingWhileBouncerInTransit_viewBecomesTransparent() {
         whenever(mStatusBarKeyguardViewManager.isPrimaryBouncerInTransit).thenReturn(true)
@@ -521,7 +922,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun resetViewStates_expansionChanging_notificationAlphaUpdated() {
         whenever(mStatusBarKeyguardViewManager.isPrimaryBouncerInTransit).thenReturn(false)
@@ -531,7 +931,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun resetViewStates_largeScreen_expansionChanging_alphaUpdated_largeScreenValue() {
         val expansionFraction = 0.6f
@@ -547,7 +946,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun expansionChanging_largeScreen_bouncerInTransit_alphaUpdated_bouncerValues() {
         ambientState.isSmallScreen = false
@@ -582,6 +980,19 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         stackScrollAlgorithm.resetViewStates(ambientState, /* speedBumpIndex= */ 0)
 
         assertThat(notificationRow.viewState.alpha).isEqualTo(1f - ambientState.hideAmount)
+    }
+
+    @Test
+    @EnableSceneContainer
+    fun resetViewStates_shadeCollapsed_footerViewBecomesTransparent() {
+        ambientState.expansionFraction = 0f
+        stackScrollAlgorithm.initView(context)
+        hostView.removeAllViews()
+        hostView.addView(footerView)
+
+        stackScrollAlgorithm.resetViewStates(ambientState, /* speedBumpIndex= */ 0)
+
+        assertThat(footerView.viewState.alpha).isEqualTo(0f)
     }
 
     @Test
@@ -704,13 +1115,28 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
     fun resetViewStates_noSpaceForFooter_footerHidden_withSceneContainer() {
         ambientState.isShadeExpanded = true
         ambientState.stackTop = 0f
-        ambientState.stackCutoff = 100f
+        ambientState.drawBounds = RectF(0f, 0f, 400f, 100f)
         val footerView = mockFooterView(height = 200) // no space for the footer in the stack
         hostView.addView(footerView)
 
         stackScrollAlgorithm.resetViewStates(ambientState, 0)
 
         assertThat((footerView.viewState as FooterViewState).hideContent).isTrue()
+    }
+
+    @Test
+    @EnableSceneContainer
+    fun resetViewStates_noSpaceForFooterDuringExpansion_footerShown_withSceneContainer() {
+        ambientState.isShadeExpanded = true
+        ambientState.isExpansionChanging = true
+        ambientState.stackTop = 0f
+        ambientState.drawBounds = RectF(0f, 0f, 400f, 100f)
+        val footerView = mockFooterView(height = 200) // no space for the footer in the stack
+        hostView.addView(footerView)
+
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+
+        assertThat((footerView.viewState as FooterViewState).hideContent).isFalse()
     }
 
     @Test
@@ -733,20 +1159,6 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         ambientState.isClearAllInProgress = true
         ambientState.isShadeExpanded = true
         ambientState.stackEndHeight = maxPanelHeight // plenty space for the footer in the stack
-        hostView.addView(footerView)
-
-        stackScrollAlgorithm.resetViewStates(ambientState, 0)
-
-        assertThat((footerView.viewState as FooterViewState).hideContent).isTrue()
-    }
-
-    @DisableFlags(Flags.FLAG_NOTIFICATIONS_FOOTER_VIEW_REFACTOR)
-    @Test
-    fun resetViewStates_clearAllInProgress_allRowsRemoved_emptyShade_footerHidden() {
-        ambientState.isClearAllInProgress = true
-        ambientState.isShadeExpanded = true
-        ambientState.stackEndHeight = maxPanelHeight // plenty space for the footer in the stack
-        hostView.removeAllViews() // remove all rows
         hostView.addView(footerView)
 
         stackScrollAlgorithm.resetViewStates(ambientState, 0)
@@ -1037,6 +1449,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         // Given: shade is opened, yTranslation of HUN is 0,
         // the height of HUN equals to the height of QQS Panel,
         // and HUN fully overlaps with QQS Panel
+        ambientState.isShadeExpanded = true
         ambientState.stackTranslation =
             px(R.dimen.qqs_layout_margin_top) + px(R.dimen.qqs_layout_padding_bottom)
         val childHunView =
@@ -1064,6 +1477,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         // Given: shade is opened, yTranslation of HUN is greater than 0,
         // the height of HUN is equal to the height of QQS Panel,
         // and HUN partially overlaps with QQS Panel
+        ambientState.isShadeExpanded = true
         ambientState.stackTranslation =
             px(R.dimen.qqs_layout_margin_top) + px(R.dimen.qqs_layout_padding_bottom)
         val childHunView =
@@ -1094,6 +1508,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         // Given: shade is opened, yTranslation of HUN is equal to QQS Panel's height,
         // the height of HUN is equal to the height of QQS Panel,
         // and HUN doesn't overlap with QQS Panel
+        ambientState.isShadeExpanded = true
         ambientState.stackTranslation =
             px(R.dimen.qqs_layout_margin_top) + px(R.dimen.qqs_layout_padding_bottom)
         // Mock the height of shade
@@ -1124,6 +1539,7 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
     fun shadeClosed_hunShouldHaveFullShadow() {
         // Given: shade is closed, ambientState.stackTranslation == -ambientState.topPadding,
         // the height of HUN is equal to the height of QQS Panel,
+        ambientState.isShadeExpanded = false
         ambientState.stackTranslation = (-ambientState.topPadding).toFloat()
         // Mock the height of shade
         ambientState.setLayoutMinHeight(1000)
@@ -1380,6 +1796,28 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     // endregion
 
+    @Test
+    @EnableSceneContainer
+    fun resetViewStates_hunOverQsOverlay_yTranslationIsHeadsUpTop() {
+        // GIVEN a HUN is visible on the lockscreen and QS is expanded
+        val headsUpTop = 200f
+        fakeHunInShade(
+            headsUpTop = headsUpTop,
+            stackTop = 100f,
+            collapsedHeight = 100,
+            intrinsicHeight = 300,
+        )
+        ambientState.fakeShowingStackOnLockscreen()
+        ambientState.setApplyHunTranslation(true)
+        ambientState.trackedHeadsUpRow = null
+
+        // WHEN the view states are reset
+        stackScrollAlgorithm.resetViewStates(ambientState, 0)
+
+        // THEN the HUN's yTranslation is exactly headsUpTop
+        assertThat(notificationRow.viewState.yTranslation).isEqualTo(headsUpTop)
+    }
+
     private fun createHunViewMock(
         isShadeOpen: Boolean,
         fullyVisible: Boolean,
@@ -1388,6 +1826,9 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         mock<ExpandableNotificationRow>().apply {
             val childViewStateMock = createHunChildViewState(isShadeOpen, fullyVisible)
             whenever(this.viewState).thenReturn(childViewStateMock)
+            if (!NotificationBundleUi.isEnabled) {
+                whenever(this.entryLegacy).thenReturn(notificationEntry)
+            }
 
             whenever(this.mustStayOnScreen()).thenReturn(true)
             whenever(this.headerVisibleAmount).thenReturn(headerVisibleAmount)
@@ -1498,13 +1939,13 @@ class StackScrollAlgorithmTest(flags: FlagsParameterization) : SysuiTestCase() {
         headsUpTop: Float,
         headsUpBottom: Float = headsUpTop + intrinsicHeight, // assume all the space available
         stackTop: Float,
-        stackCutoff: Float = 2000f,
+        stackBottom: Float = 2000f,
         fullStackHeight: Float = 3000f,
     ) {
         ambientState.headsUpTop = headsUpTop
-        ambientState.headsUpBottom = headsUpBottom
+        headsUpAnimator.headsUpAppearHeightBottom = headsUpBottom.roundToInt()
         ambientState.stackTop = stackTop
-        ambientState.stackCutoff = stackCutoff
+        ambientState.drawBounds = RectF(0f, stackTop, 400f, stackBottom)
 
         // shade is fully open
         ambientState.expansionFraction = 1.0f

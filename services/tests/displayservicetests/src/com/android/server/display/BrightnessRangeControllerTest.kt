@@ -16,10 +16,7 @@
 
 package com.android.server.display
 
-import android.os.IBinder
 import androidx.test.filters.SmallTest
-import com.android.server.display.brightness.clamper.HdrClamper
-import com.android.server.display.feature.DisplayManagerFlags
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import org.mockito.kotlin.mock
@@ -37,9 +34,6 @@ class BrightnessRangeControllerTest {
     private val mockCallback = mock<Runnable>()
     private val mockConfig = mock<DisplayDeviceConfig>()
     private val mockNormalBrightnessController = mock<NormalBrightnessModeController>()
-    private val mockHdrClamper = mock<HdrClamper>()
-    private val mockFlags = mock<DisplayManagerFlags>()
-    private val mockToken = mock<IBinder>()
 
     @Test
     fun testMaxBrightness_HbmSupportedAndOn() {
@@ -60,12 +54,6 @@ class BrightnessRangeControllerTest {
     }
 
     @Test
-    fun testMaxBrightness_HbmDisabledAndNotAllowed() {
-        val controller = createController(nbmEnabled = false, hbmAllowed = false)
-        assertThat(controller.currentBrightnessMax).isEqualTo(MAX_BRIGHTNESS)
-    }
-
-    @Test
     fun testMaxBrightness_transitionPointLessThanCurrentNbmLimit() {
         val controller = createController(
             hbmAllowed = false,
@@ -76,20 +64,17 @@ class BrightnessRangeControllerTest {
     }
 
     private fun createController(
-        nbmEnabled: Boolean = true,
         hbmSupported: Boolean = true,
         hbmAllowed: Boolean = true,
         hbmMaxBrightness: Float = MAX_BRIGHTNESS,
         nbmMaxBrightness: Float = NORMAL_BRIGHTNESS_LOW
     ): BrightnessRangeController {
-        whenever(mockFlags.isNbmControllerEnabled).thenReturn(nbmEnabled)
         whenever(mockHbmController.deviceSupportsHbm()).thenReturn(hbmSupported)
         whenever(mockHbmController.isHbmCurrentlyAllowed).thenReturn(hbmAllowed)
         whenever(mockHbmController.currentBrightnessMax).thenReturn(hbmMaxBrightness)
         whenever(mockNormalBrightnessController.currentBrightnessMax).thenReturn(nbmMaxBrightness)
 
         return BrightnessRangeController(mockHbmController, mockCallback, mockConfig,
-            mockNormalBrightnessController, mockHdrClamper, mockFlags, mockToken,
-            DisplayDeviceInfo())
+            mockNormalBrightnessController)
     }
 }

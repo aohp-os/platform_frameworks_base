@@ -54,8 +54,6 @@ cc_defaults {
         "hwui_lto",
     ],
 
-    cpp_std: "experimental",
-
     cflags: [
         "-DEGL_EGLEXT_PROTOTYPES",
         "-DGL_GLEXT_PROTOTYPES",
@@ -139,8 +137,10 @@ cc_defaults {
                 "libandroidfw",
                 "libcrypto",
                 "libsync",
+                "libgui",
                 "libui",
                 "aconfig_text_flags_c_lib",
+                "aconfig_view_accessibility_flags_c_lib",
                 "server_configurable_flags",
                 "libaconfig_storage_read_api_cc",
                 "libgraphicsenv",
@@ -154,13 +154,24 @@ cc_defaults {
                 "libstatssocket_lazy",
                 "libtonemap",
             ],
-            whole_static_libs: ["hwui_flags_cc_lib"],
+            whole_static_libs: [
+                "hwui_flags_cc_lib",
+                "libsurfaceflingerflags",
+            ],
         },
         host: {
             static_libs: [
                 "libandroidfw",
                 "libhostgraphics",
                 "libutils",
+            ],
+        },
+        host_linux: {
+            shared_libs: [
+                "libaconfig_storage_read_api_cc",
+            ],
+            whole_static_libs: [
+                "hwui_flags_cc_lib",
             ],
         },
     },
@@ -429,6 +440,8 @@ cc_defaults {
         "liblog",
         "libminikin",
         "libz",
+        "libtracing_perfetto",
+        "libperfetto_c",
     ],
 
     static_libs: [
@@ -466,6 +479,10 @@ cc_defaults {
         },
         linux: {
             srcs: ["platform/linux/utils/SharedLib.cpp"],
+            shared_libs: [
+                "libbinder",
+                "libbinder_ndk",
+            ],
         },
         darwin: {
             srcs: ["platform/darwin/utils/SharedLib.cpp"],
@@ -599,6 +616,7 @@ cc_defaults {
         "Animator.cpp",
         "AnimatorManager.cpp",
         "CanvasTransform.cpp",
+        "ColorArea.cpp",
         "DamageAccumulator.cpp",
         "DeviceInfo.cpp",
         "FrameInfo.cpp",
@@ -646,6 +664,8 @@ cc_defaults {
                 "pipeline/skia/ATraceMemoryDump.cpp",
                 "pipeline/skia/GLFunctorDrawable.cpp",
                 "pipeline/skia/LayerDrawable.cpp",
+                "pipeline/skia/PersistentGraphicsCache.cpp",
+                "pipeline/skia/PipelineCache.cpp",
                 "pipeline/skia/ShaderCache.cpp",
                 "pipeline/skia/SkiaGpuPipeline.cpp",
                 "pipeline/skia/SkiaMemoryTracer.cpp",
@@ -784,6 +804,7 @@ cc_test {
         "tests/unit/CommonPoolTests.cpp",
         "tests/unit/DamageAccumulatorTests.cpp",
         "tests/unit/DeferredLayerUpdaterTests.cpp",
+        "tests/unit/DrawTextFunctorTest.cpp",
         "tests/unit/EglManagerTests.cpp",
         "tests/unit/FatVectorTests.cpp",
         "tests/unit/GraphicsStatsServiceTests.cpp",
@@ -795,6 +816,8 @@ cc_test {
         "tests/unit/MatrixTests.cpp",
         "tests/unit/OpBufferTests.cpp",
         "tests/unit/PathInterpolatorTests.cpp",
+        "tests/unit/PersistentGraphicsCacheTests.cpp",
+        "tests/unit/PipelineCacheTests.cpp",
         "tests/unit/RenderEffectCapabilityQueryTests.cpp",
         "tests/unit/RenderNodeDrawableTests.cpp",
         "tests/unit/RenderNodeTests.cpp",

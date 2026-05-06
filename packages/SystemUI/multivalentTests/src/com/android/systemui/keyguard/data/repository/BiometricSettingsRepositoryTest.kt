@@ -22,21 +22,28 @@ import android.app.admin.DevicePolicyManager.KEYGUARD_DISABLE_FACE
 import android.app.admin.DevicePolicyManager.KEYGUARD_DISABLE_FINGERPRINT
 import android.content.Intent
 import android.content.pm.UserInfo
+import android.hardware.biometrics.BiometricAuthenticator.TYPE_ANY_BIOMETRIC
+import android.hardware.biometrics.BiometricAuthenticator.TYPE_FACE
+import android.hardware.biometrics.BiometricAuthenticator.TYPE_FINGERPRINT
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.IBiometricEnabledOnKeyguardCallback
+import android.platform.test.annotations.EnableFlags
+import android.security.Flags.FLAG_SECURE_LOCK_DEVICE
 import android.testing.TestableLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.widget.LockPatternUtils
+import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE
 import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_NOT_REQUIRED
 import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_BOOT
 import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_TIMEOUT
 import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN
+import com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.biometrics.AuthController
-import com.android.systemui.biometrics.data.repository.FaceSensorInfo
 import com.android.systemui.biometrics.data.repository.FakeFacePropertyRepository
 import com.android.systemui.biometrics.data.repository.FakeFingerprintPropertyRepository
+import com.android.systemui.biometrics.shared.model.FaceSensorInfo
 import com.android.systemui.biometrics.shared.model.FingerprintSensorType
 import com.android.systemui.biometrics.shared.model.SensorStrength
 import com.android.systemui.coroutines.collectLastValue
@@ -55,7 +62,6 @@ import com.android.systemui.user.data.repository.FakeUserRepository
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -75,8 +81,10 @@ import org.mockito.Mockito.clearInvocations
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.stub
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
 @RunWith(AndroidJUnit4::class)
@@ -118,7 +126,10 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
         fingerprintPropertyRepository = FakeFingerprintPropertyRepository()
     }
 
-    private suspend fun createBiometricSettingsRepository() {
+    private suspend fun createBiometricSettingsRepository(
+        isFingerprintEnrolled: Boolean = true,
+        isFaceEnrolled: Boolean = false,
+    ) {
         userRepository.setUserInfos(listOf(PRIMARY_USER, ANOTHER_USER))
         userRepository.setSelectedUserInfo(PRIMARY_USER)
         underTest =
@@ -139,12 +150,15 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
                 mobileConnectionsRepository = mobileConnectionsRepository,
             )
         testScope.runCurrent()
-        fingerprintPropertyRepository.setProperties(
-            1,
-            SensorStrength.STRONG,
-            FingerprintSensorType.UDFPS_OPTICAL,
-            emptyMap(),
-        )
+        if (isFingerprintEnrolled) {
+            fingerprintPropertyRepository.supportsUdfps()
+        }
+        if (isFaceEnrolled) {
+            facePropertyRepository.setSensorInfo(
+                FaceSensorInfo(id = 0, strength = SensorStrength.STRONG)
+            )
+        }
+
         verify(lockPatternUtils).registerStrongAuthTracker(strongAuthTracker.capture())
         verify(authController, times(2)).addCallback(authControllerCallback.capture())
     }
@@ -153,7 +167,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
     fun fingerprintEnrollmentChange() =
         testScope.runTest {
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             val fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
             runCurrent()
 
@@ -173,7 +187,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
     fun fingerprintEnabledStateChange() =
         testScope.runTest {
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             val fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
             runCurrent()
 
@@ -183,12 +197,46 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             assertThat(fingerprintAllowed()).isTrue()
 
             // when biometrics are not enabled by settings
-            biometricsAreNotEnabledBySettings()
+            biometricsAreNotEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             assertThat(fingerprintAllowed()).isFalse()
 
             // when biometrics are enabled by settings
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             assertThat(fingerprintAllowed()).isTrue()
+        }
+
+    @Test
+    @EnableFlags(com.android.settings.flags.Flags.FLAG_BIOMETRICS_ONBOARDING_EDUCATION)
+    fun enabledStateChange_typeFingerprintEnabled_typeFaceDisabled() =
+        testScope.runTest {
+            createBiometricSettingsRepository()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
+            val fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
+            val faceAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
+            runCurrent()
+
+            // start state
+            authController.stub { on { isFingerprintEnrolled(anyInt()) } doReturn true }
+            enrollmentChange(UNDER_DISPLAY_FINGERPRINT, PRIMARY_USER_ID, true)
+            assertThat(fingerprintAllowed()).isTrue()
+            assertThat(faceAllowed()).isFalse()
+        }
+
+    @Test
+    @EnableFlags(com.android.settings.flags.Flags.FLAG_BIOMETRICS_ONBOARDING_EDUCATION)
+    fun enabledStateChange_typeFingerprintDisabled_typeFaceEnabled() =
+        testScope.runTest {
+            createBiometricSettingsRepository()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
+            val fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
+            val faceAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
+            runCurrent()
+
+            // start state
+            authController.stub { on { isFaceAuthEnrolled(anyInt()) } doReturn true }
+            enrollmentChange(FACE, PRIMARY_USER_ID, true)
+            assertThat(fingerprintAllowed()).isFalse()
+            assertThat(faceAllowed()).isTrue()
         }
 
     @Test
@@ -197,7 +245,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             fingerprintIsEnrolled()
             doNotDisableKeyguardAuthFeatures()
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
 
             val strongBiometricAllowed by
                 collectLastValue(underTest.isFingerprintAuthCurrentlyAllowed)
@@ -220,7 +268,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             createBiometricSettingsRepository()
             val convenienceFaceAuthAllowed by collectLastValue(underTest.isFaceAuthCurrentlyAllowed)
             doNotDisableKeyguardAuthFeatures()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
 
             onStrongAuthChanged(STRONG_AUTH_NOT_REQUIRED, PRIMARY_USER_ID)
             onNonStrongAuthChanged(true, PRIMARY_USER_ID)
@@ -282,7 +330,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             faceAuthIsEnrolled()
             createBiometricSettingsRepository()
             doNotDisableKeyguardAuthFeatures()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
             runCurrent()
 
             val convenienceBiometricAllowed by
@@ -315,7 +363,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
         testScope.runTest {
             fingerprintIsEnrolled(PRIMARY_USER_ID)
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
 
             val fingerprintEnabledByDevicePolicy =
                 collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
@@ -341,7 +389,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             createBiometricSettingsRepository()
             val faceAuthAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
 
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
 
             doNotDisableKeyguardAuthFeatures(PRIMARY_USER_ID)
 
@@ -376,16 +424,22 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             assertThat(faceAuthAllowed()).isTrue()
         }
 
-    private fun biometricsAreEnabledBySettings(userId: Int = PRIMARY_USER_ID) {
+    private fun biometricsAreEnabledBySettings(
+        userId: Int = PRIMARY_USER_ID,
+        modality: Int = TYPE_ANY_BIOMETRIC,
+    ) {
         verify(biometricManager, atLeastOnce())
             .registerEnabledOnKeyguardCallback(biometricManagerCallback.capture())
-        biometricManagerCallback.value.onChanged(true, userId)
+        biometricManagerCallback.value.onChanged(true, userId, modality)
     }
 
-    private fun biometricsAreNotEnabledBySettings(userId: Int = PRIMARY_USER_ID) {
+    private fun biometricsAreNotEnabledBySettings(
+        userId: Int = PRIMARY_USER_ID,
+        modality: Int = TYPE_ANY_BIOMETRIC,
+    ) {
         verify(biometricManager, atLeastOnce())
             .registerEnabledOnKeyguardCallback(biometricManagerCallback.capture())
-        biometricManagerCallback.value.onChanged(false, userId)
+        biometricManagerCallback.value.onChanged(false, userId, modality)
     }
 
     @Test
@@ -413,13 +467,58 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
 
             userRepository.setSelectedUserInfo(ANOTHER_USER)
             doNotDisableKeyguardAuthFeatures(ANOTHER_USER_ID)
-            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID)
+            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID, TYPE_FACE)
             onNonStrongAuthChanged(true, ANOTHER_USER_ID)
             whenever(authController.isFaceAuthEnrolled(ANOTHER_USER_ID)).thenReturn(true)
             enrollmentChange(FACE, ANOTHER_USER_ID, true)
             runCurrent()
 
             assertThat(faceAuthAllowed).isTrue()
+        }
+
+    @Test
+    @EnableFlags(com.android.settings.flags.Flags.FLAG_BIOMETRICS_ONBOARDING_EDUCATION)
+    fun registerEnabledOnKeyguardCallback_multipleUsers_shouldSendAllUpdates() =
+        testScope.runTest {
+
+            // Simulate call to register callback when in multiple users setup
+            biometricManager.stub {
+                on { registerEnabledOnKeyguardCallback(any()) } doAnswer
+                    { invocation ->
+                        val callback =
+                            invocation.arguments[0] as IBiometricEnabledOnKeyguardCallback
+                        callback.onChanged(true, PRIMARY_USER_ID, TYPE_FACE)
+                        callback.onChanged(true, PRIMARY_USER_ID, TYPE_FINGERPRINT)
+                        callback.onChanged(true, ANOTHER_USER_ID, TYPE_FACE)
+                        callback.onChanged(true, ANOTHER_USER_ID, TYPE_FINGERPRINT)
+                    }
+            }
+            authController.stub {
+                on { isFingerprintEnrolled(anyInt()) } doReturn true
+                on { isFaceAuthEnrolled(anyInt()) } doReturn true
+            }
+
+            // Check primary user status
+            createBiometricSettingsRepository()
+            var fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
+            var faceAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
+            runCurrent()
+
+            enrollmentChange(UNDER_DISPLAY_FINGERPRINT, PRIMARY_USER_ID, true)
+            enrollmentChange(FACE, PRIMARY_USER_ID, true)
+            assertThat(fingerprintAllowed()).isTrue()
+            assertThat(faceAllowed()).isTrue()
+
+            // Check secondary user status
+            userRepository.setSelectedUserInfo(ANOTHER_USER)
+            fingerprintAllowed = collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
+            faceAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
+            runCurrent()
+
+            enrollmentChange(UNDER_DISPLAY_FINGERPRINT, ANOTHER_USER_ID, true)
+            enrollmentChange(FACE, ANOTHER_USER_ID, true)
+            assertThat(fingerprintAllowed()).isTrue()
+            assertThat(faceAllowed()).isTrue()
         }
 
     @Test
@@ -441,7 +540,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
 
             assertThat(isFaceAuthAllowed()).isFalse()
 
-            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID)
+            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID, TYPE_FACE)
             runCurrent()
             assertThat(isFaceAuthAllowed()).isFalse()
 
@@ -458,7 +557,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             faceAuthIsEnrolled()
             createBiometricSettingsRepository()
 
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
             doNotDisableKeyguardAuthFeatures()
             mobileConnectionsRepository.fake.isAnySimSecure.value = false
             runCurrent()
@@ -485,7 +584,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             deviceIsInPostureThatSupportsFaceAuth()
             doNotDisableKeyguardAuthFeatures()
             faceAuthIsStrongBiometric()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
             mobileConnectionsRepository.fake.isAnySimSecure.value = false
 
             onStrongAuthChanged(STRONG_AUTH_NOT_REQUIRED, PRIMARY_USER_ID)
@@ -512,12 +611,12 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             assertThat(isFaceAuthAllowed()).isFalse()
 
             // Value changes for another user
-            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID)
+            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID, TYPE_FACE)
 
             assertThat(isFaceAuthAllowed()).isFalse()
 
             // Value changes for current user.
-            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID)
+            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID, TYPE_FACE)
 
             assertThat(isFaceAuthAllowed()).isTrue()
         }
@@ -537,13 +636,13 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
                 .registerEnabledOnKeyguardCallback(biometricManagerCallback.capture())
             val isFingerprintEnrolledAndEnabled =
                 collectLastValue(underTest.isFingerprintEnrolledAndEnabled)
-            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID)
+            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID, TYPE_FINGERPRINT)
             runCurrent()
             userRepository.setSelectedUserInfo(ANOTHER_USER)
             runCurrent()
             assertThat(isFingerprintEnrolledAndEnabled()).isFalse()
 
-            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID)
+            biometricManagerCallback.value.onChanged(true, PRIMARY_USER_ID, TYPE_FINGERPRINT)
             runCurrent()
             userRepository.setSelectedUserInfo(PRIMARY_USER)
             runCurrent()
@@ -559,7 +658,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             verify(biometricManager)
                 .registerEnabledOnKeyguardCallback(biometricManagerCallback.capture())
             val isFaceAuthAllowed = collectLastValue(underTest.isFaceAuthEnrolledAndEnabled)
-            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID)
+            biometricManagerCallback.value.onChanged(true, ANOTHER_USER_ID, TYPE_FACE)
             runCurrent()
 
             userRepository.setSelectedUserInfo(ANOTHER_USER)
@@ -649,6 +748,101 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
         }
 
     @Test
+    @EnableFlags(FLAG_SECURE_LOCK_DEVICE)
+    fun isFaceAuthCurrentlyAllowed_updatesForSecureLockDeviceFlags() =
+        testScope.runTest {
+            createBiometricSettingsRepository(isFaceEnrolled = true, isFingerprintEnrolled = false)
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
+            whenever(authController.isFaceAuthEnrolled(anyInt())).thenReturn(true)
+            enrollmentChange(FACE, PRIMARY_USER_ID, true)
+            runCurrent()
+
+            val isFaceAuthCurrentlyAllowed = collectLastValue(underTest.isFaceAuthCurrentlyAllowed)
+
+            // Secure lock device enabled: both flags set
+            onStrongAuthChanged(
+                PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE or
+                    STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE,
+                PRIMARY_USER_ID,
+            )
+            assertThat(isFaceAuthCurrentlyAllowed()).isFalse()
+
+            // Secure lock device primary bouncer auth complete:
+            // PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE unset
+            onStrongAuthChanged(
+                STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE,
+                PRIMARY_USER_ID,
+            )
+
+            assertThat(isFaceAuthCurrentlyAllowed()).isTrue()
+        }
+
+    @Test
+    @EnableFlags(FLAG_SECURE_LOCK_DEVICE)
+    fun isFingerprintAuthCurrentlyAllowed_updatesForSecureLockDeviceFlags() =
+        testScope.runTest {
+            createBiometricSettingsRepository(isFaceEnrolled = false, isFingerprintEnrolled = true)
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
+            whenever(authController.isFingerprintEnrolled(anyInt())).thenReturn(true)
+            enrollmentChange(UNDER_DISPLAY_FINGERPRINT, PRIMARY_USER_ID, true)
+            runCurrent()
+
+            val isFingerprintAuthCurrentlyAllowed =
+                collectLastValue(underTest.isFingerprintAuthCurrentlyAllowed)
+
+            // Secure lock device enabled: both flags set
+            onStrongAuthChanged(
+                PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE or
+                    STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE,
+                PRIMARY_USER_ID,
+            )
+            assertThat(isFingerprintAuthCurrentlyAllowed()).isFalse()
+
+            // Secure lock device primary bouncer auth complete:
+            // PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE unset
+            onStrongAuthChanged(
+                STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE,
+                PRIMARY_USER_ID,
+            )
+
+            assertThat(isFingerprintAuthCurrentlyAllowed()).isTrue()
+        }
+
+    @Test
+    @EnableFlags(FLAG_SECURE_LOCK_DEVICE)
+    fun secureLockDeviceStateUpdates_acrossTwoFactorAuthentication() =
+        testScope.runTest {
+            createBiometricSettingsRepository()
+
+            val requiresPrimaryAuthForSecureLockDevice =
+                collectLastValue(underTest.requiresPrimaryAuthForSecureLockDevice)
+            val requiresStrongBiometricAuthForSecureLockDevice =
+                collectLastValue(underTest.requiresStrongBiometricAuthForSecureLockDevice)
+
+            // has default value.
+            assertThat(requiresPrimaryAuthForSecureLockDevice()).isFalse()
+
+            // enable both secure lock device strong auth flags
+            val inSecureLockDevice =
+                PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE or
+                    STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE
+            onStrongAuthChanged(inSecureLockDevice, PRIMARY_USER_ID)
+
+            assertThat(requiresPrimaryAuthForSecureLockDevice()).isTrue()
+            assertThat(requiresStrongBiometricAuthForSecureLockDevice()).isFalse()
+
+            // mock secure lock device bouncer auth complete,
+            // PRIMARY_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE unset
+            onStrongAuthChanged(
+                STRONG_BIOMETRIC_AUTH_REQUIRED_FOR_SECURE_LOCK_DEVICE,
+                PRIMARY_USER_ID,
+            )
+
+            assertThat(requiresPrimaryAuthForSecureLockDevice()).isFalse()
+            assertThat(requiresStrongBiometricAuthForSecureLockDevice()).isTrue()
+        }
+
+    @Test
     fun authFlagChangesForCurrentUserArePropagated() =
         testScope.runTest {
             createBiometricSettingsRepository()
@@ -691,7 +885,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             deviceIsInPostureThatSupportsFaceAuth()
             doNotDisableKeyguardAuthFeatures()
             faceAuthIsStrongBiometric()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
 
             onStrongAuthChanged(STRONG_AUTH_NOT_REQUIRED, PRIMARY_USER_ID)
             onNonStrongAuthChanged(false, PRIMARY_USER_ID)
@@ -715,7 +909,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
             deviceIsInPostureThatSupportsFaceAuth()
             doNotDisableKeyguardAuthFeatures()
             faceAuthIsNonStrongBiometric()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FACE)
 
             onStrongAuthChanged(STRONG_AUTH_NOT_REQUIRED, PRIMARY_USER_ID)
             onNonStrongAuthChanged(false, PRIMARY_USER_ID)
@@ -737,7 +931,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
     fun fpAuthCurrentlyAllowed_dependsOnNonStrongAuthBiometricSetting_ifFpIsNotStrong() =
         testScope.runTest {
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             val isFingerprintCurrentlyAllowed by
                 collectLastValue(underTest.isFingerprintAuthCurrentlyAllowed)
 
@@ -779,7 +973,7 @@ class BiometricSettingsRepositoryTest : SysuiTestCase() {
     fun fpAuthCurrentlyAllowed_dependsOnStrongAuthBiometricSetting_ifFpIsStrong() =
         testScope.runTest {
             createBiometricSettingsRepository()
-            biometricsAreEnabledBySettings()
+            biometricsAreEnabledBySettings(PRIMARY_USER_ID, TYPE_FINGERPRINT)
             val isFingerprintCurrentlyAllowed by
                 collectLastValue(underTest.isFingerprintAuthCurrentlyAllowed)
 

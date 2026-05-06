@@ -19,8 +19,11 @@ import android.content.ComponentName;
 import android.graphics.drawable.Drawable;
 import android.testing.LeakCheck;
 
+import androidx.annotation.Nullable;
+
 import com.android.systemui.statusbar.policy.SecurityController;
 import com.android.systemui.statusbar.policy.SecurityController.SecurityControllerCallback;
+import com.android.systemui.supervision.data.model.SupervisionModel;
 
 public class FakeSecurityController extends BaseLeakChecker<SecurityControllerCallback>
         implements SecurityController {
@@ -79,11 +82,6 @@ public class FakeSecurityController extends BaseLeakChecker<SecurityControllerCa
     }
 
     @Override
-    public int getDeviceOwnerType(ComponentName admin) {
-        return 0;
-    }
-
-    @Override
     public boolean isFinancedDevice() {
         return false;
     }
@@ -134,9 +132,7 @@ public class FakeSecurityController extends BaseLeakChecker<SecurityControllerCa
     }
 
     @Override
-    public void onUserSwitched(int newUserId) {
-
-    }
+    public void onUserSwitched(int newUserId) {}
 
     @Override
     public boolean isParentalControlsEnabled() {
@@ -154,7 +150,25 @@ public class FakeSecurityController extends BaseLeakChecker<SecurityControllerCa
     }
 
     @Override
+    public Drawable getIcon() {
+        return null;
+    }
+
+    @Override
     public CharSequence getLabel(DeviceAdminInfo info) {
         return null;
     }
+
+    @Override
+    public CharSequence getLabel() {
+        return null;
+    }
+
+    @Override
+    public SupervisionModel getSupervisionModel() {
+        return null;
+    }
+
+    @Override
+    public void setSupervisionModel(@Nullable SupervisionModel supervisionModel) {}
 }

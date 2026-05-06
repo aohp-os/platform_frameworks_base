@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.biometrics.domain.interactor
 
 import android.hardware.biometrics.AuthenticateOptions
@@ -32,7 +30,6 @@ import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
@@ -179,6 +176,7 @@ constructor(
             KeyguardState.LOCKSCREEN,
             KeyguardState.OCCLUDED,
             KeyguardState.ALTERNATE_BOUNCER,
+            KeyguardState.GLANCEABLE_HUB,
             KeyguardState.PRIMARY_BOUNCER -> AuthenticateOptions.DISPLAY_STATE_LOCKSCREEN
             KeyguardState.AOD -> AuthenticateOptions.DISPLAY_STATE_AOD
             KeyguardState.OFF,

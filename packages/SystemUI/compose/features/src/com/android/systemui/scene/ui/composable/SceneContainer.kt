@@ -14,17 +14,21 @@
  * limitations under the License.
  */
 
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.android.systemui.scene.ui.composable
 
+import android.os.Build
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -32,24 +36,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import com.android.compose.animation.scene.ContentKey
-import com.android.compose.animation.scene.MutableSceneTransitionLayoutState
 import com.android.compose.animation.scene.OverlayKey
 import com.android.compose.animation.scene.SceneKey
 import com.android.compose.animation.scene.SceneTransitionLayout
-import com.android.compose.animation.scene.SceneTransitions
 import com.android.compose.animation.scene.UserAction
 import com.android.compose.animation.scene.UserActionResult
 import com.android.compose.animation.scene.observableTransitionState
-import com.android.systemui.qs.ui.adapter.QSSceneAdapter
-import com.android.systemui.qs.ui.composable.QuickSettingsTheme
+import com.android.compose.animation.scene.rememberMutableSceneTransitionLayoutState
+import com.android.compose.gesture.effect.rememberOffsetOverscrollEffectFactory
+import com.android.systemui.keyguard.ui.composable.blueprint.rememberBurnIn
+import com.android.systemui.keyguard.ui.composable.modifier.burnInAware
+import com.android.systemui.lifecycle.rememberActivated
+import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.ribbon.ui.composable.BottomRightCornerRibbon
 import com.android.systemui.scene.shared.model.SceneDataSourceDelegator
-import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.scene.ui.view.SceneJankMonitor
 import com.android.systemui.scene.ui.viewmodel.SceneContainerViewModel
-import javax.inject.Provider
+import com.android.systemui.shade.ui.composable.OverlayShade
+import com.android.systemui.shade.ui.composable.isFullWidthShade
 
 /**
  * Renders a container of a collection of "scenes" that the user can switch between using certain
@@ -79,19 +86,63 @@ fun SceneContainer(
     sceneByKey: Map<SceneKey, Scene>,
     overlayByKey: Map<OverlayKey, Overlay>,
     initialSceneKey: SceneKey,
-    sceneTransitions: SceneTransitions,
+    transitionsBuilder: SceneContainerTransitionsBuilder,
     dataSourceDelegator: SceneDataSourceDelegator,
-    qsSceneAdapter: Provider<QSSceneAdapter>,
+    sceneJankMonitorFactory: SceneJankMonitor.Factory,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val state: MutableSceneTransitionLayoutState = remember {
-        MutableSceneTransitionLayoutState(
+
+    val view = LocalView.current
+    val sceneJankMonitor =
+        rememberActivated(traceName = "sceneJankMonitor") { sceneJankMonitorFactory.create() }
+
+    val hapticFeedback = LocalHapticFeedback.current
+    val shadeExpansionMotion = OverlayShade.rememberShadeExpansionMotion(isFullWidthShade())
+    val animateQsTilesViewModel =
+        rememberViewModel(traceName = "SceneContainer.animateQsTilesViewModel") {
+            viewModel.animateQsTilesViewModelFactory.create()
+        }
+    val sceneTransitions =
+        remember(hapticFeedback, shadeExpansionMotion, animateQsTilesViewModel) {
+            transitionsBuilder.build(
+                shadeExpansionMotion,
+                viewModel.hapticsViewModel.getRevealHaptics(hapticFeedback),
+                animateQsTilesViewModel,
+            )
+        }
+
+    val state =
+        rememberMutableSceneTransitionLayoutState(
             initialScene = initialSceneKey,
             canChangeScene = { toScene -> viewModel.canChangeScene(toScene) },
+            canShowOverlay = { overlay -> viewModel.canShowOrReplaceOverlay(overlay) },
+            canReplaceOverlay = { beingReplaced, newlyShown ->
+                viewModel.canShowOrReplaceOverlay(
+                    newlyShown = newlyShown,
+                    beingReplaced = beingReplaced,
+                )
+            },
             transitions = sceneTransitions,
+            onTransitionStart = { transition ->
+                sceneJankMonitor.onTransitionStart(
+                    view = view,
+                    from = transition.fromContent,
+                    to = transition.toContent,
+                    cuj = transition.cuj,
+                )
+            },
+            onTransitionEnd = { transition ->
+                sceneJankMonitor.onTransitionEnd(
+                    from = transition.fromContent,
+                    to = transition.toContent,
+                    cuj = transition.cuj,
+                )
+            },
+            deferTransitionProgress = true,
         )
-    }
+
+    LaunchedEffect(Unit) { viewModel.onInitialComposition() }
 
     DisposableEffect(state) {
         val dataSource = SceneTransitionLayoutDataSource(state, coroutineScope)
@@ -127,42 +178,39 @@ fun SceneContainer(
         }
     }
 
-    // Inflate qsView here so that shade has the correct qqs height in the first measure pass after
-    // rebooting
-    if (
-        viewModel.allContentKeys.contains(Scenes.QuickSettings) ||
-            viewModel.allContentKeys.contains(Scenes.Shade)
-    ) {
-        val qsAdapter = qsSceneAdapter.get()
-        QuickSettingsTheme {
-            val context = LocalContext.current
-            val qsView by qsAdapter.qsView.collectAsStateWithLifecycle()
-            LaunchedEffect(context) {
-                if (qsView == null) {
-                    qsAdapter.inflate(context)
-                }
-            }
-        }
-    }
+    // Overlays use the offset overscroll effect when shown on large screens, otherwise they
+    // stretch. All scenes use the OffsetOverscrollEffect.
+    val offsetOverscrollEffectFactory = rememberOffsetOverscrollEffectFactory()
+    val stretchOverscrollEffectFactory = checkNotNull(LocalOverscrollFactory.current)
+    val overlayEffectFactory =
+        if (isFullWidthShade()) stretchOverscrollEffectFactory else offsetOverscrollEffectFactory
 
     Box(
         modifier =
-            Modifier.fillMaxSize().pointerInput(Unit) {
+            modifier.fillMaxSize().pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(false)
                     viewModel.onSceneContainerUserInputStarted()
                 }
             }
     ) {
+        SceneRevealScrim(
+            viewModel = viewModel.lightRevealScrim,
+            wallpaperViewModel = viewModel.wallpaperViewModel,
+            modifier = Modifier.fillMaxSize(),
+        )
+
         SceneTransitionLayout(
             state = state,
-            modifier = modifier.fillMaxSize(),
-            swipeSourceDetector = viewModel.edgeDetector,
+            modifier = Modifier.fillMaxSize(),
+            swipeSourceDetector = viewModel.swipeSourceDetector,
         ) {
             sceneByKey.forEach { (sceneKey, scene) ->
                 scene(
                     key = sceneKey,
                     userActions = userActionsByContentKey.getOrDefault(sceneKey, emptyMap()),
+                    effectFactory = offsetOverscrollEffectFactory,
+                    alwaysCompose = scene.alwaysCompose,
                 ) {
                     // Activate the scene.
                     LaunchedEffect(scene) { scene.activate() }
@@ -179,6 +227,8 @@ fun SceneContainer(
                 overlay(
                     key = overlayKey,
                     userActions = userActionsByContentKey.getOrDefault(overlayKey, emptyMap()),
+                    effectFactory = overlayEffectFactory,
+                    alwaysCompose = overlay.alwaysCompose,
                 ) {
                     // Activate the overlay.
                     LaunchedEffect(overlay) { overlay.activate() }
@@ -189,9 +239,17 @@ fun SceneContainer(
             }
         }
 
-        BottomRightCornerRibbon(
-            content = { Text(text = "flexi\uD83E\uDD43", color = Color.White) },
-            modifier = Modifier.align(Alignment.BottomEnd),
-        )
+        if (Build.IS_ENG) {
+            BottomRightCornerRibbon(
+                content = { Text(text = "flexi\uD83E\uDD43", color = Color.White) },
+                colorSaturation = { viewModel.ribbonColorSaturation },
+                modifier =
+                    Modifier.align(Alignment.BottomEnd)
+                        .burnInAware(
+                            viewModel = viewModel.burnIn,
+                            params = rememberBurnIn(viewModel.clock).parameters,
+                        ),
+            )
+        }
     }
 }

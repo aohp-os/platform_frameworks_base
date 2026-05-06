@@ -16,12 +16,24 @@
 
 package com.android.server.am;
 
+import static com.android.aconfig_new_storage.Flags.enableAconfigStorageDaemon;
+import static com.android.aconfig_new_storage.Flags.enableAconfigdFromMainline;
+import static com.android.aconfig_new_storage.Flags.supportClearLocalOverridesImmediately;
+import static com.android.aconfig_new_storage.Flags.supportImmediateLocalOverrides;
+import static com.android.server.am.Flags.rolloutComputerControl;
+
+import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
+
+import android.aconfigd.Aconfigd.StorageRequestMessage;
+import android.aconfigd.Aconfigd.StorageRequestMessages;
+import android.aconfigd.Aconfigd.StorageReturnMessage;
+import android.aconfigd.Aconfigd.StorageReturnMessages;
 import android.annotation.NonNull;
 import android.content.ContentResolver;
 import android.database.ContentObserver;
-import android.net.Uri;
-import android.net.LocalSocketAddress;
 import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.SystemProperties;
@@ -35,28 +47,14 @@ import android.util.proto.ProtoOutputStream;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.providers.settings.Flags;
 
-import android.aconfigd.Aconfigd.StorageRequestMessage;
-import android.aconfigd.Aconfigd.StorageRequestMessages;
-import android.aconfigd.Aconfigd.StorageReturnMessage;
-import android.aconfigd.Aconfigd.StorageReturnMessages;
-import static com.android.aconfig_new_storage.Flags.enableAconfigStorageDaemon;
-import static com.android.aconfig_new_storage.Flags.supportImmediateLocalOverrides;
-import static com.android.aconfig_new_storage.Flags.supportClearLocalOverridesImmediately;
-import static com.android.aconfig_new_storage.Flags.enableAconfigdFromMainline;
-
+import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashSet;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Set;
-import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
 
 /**
  * Maps system settings to system properties.
@@ -98,6 +96,9 @@ public class SettingsToPropertiesMapper {
     private static final String NAMESPACE_TETHERING_U_OR_LATER_NATIVE =
             "tethering_u_or_later_native";
 
+    private static final String NAMESPACE_COMPUTER_CONTROL =
+            "computer_control";
+
     // All the flags under the listed DeviceConfig scopes will be synced to native level.
     //
     // NOTE: please grant write permission system property prefix
@@ -137,144 +138,6 @@ public class SettingsToPropertiesMapper {
         NAMESPACE_TETHERING_U_OR_LATER_NATIVE
     };
 
-    // All the aconfig flags under the listed DeviceConfig scopes will be synced to native level.
-    // The list is sorted.
-    @VisibleForTesting
-    static final String[] sDeviceConfigAconfigScopes = new String[] {
-        "tv_os",
-        "aaos_carframework_triage",
-        "aaos_performance_triage",
-        "aaos_input_triage",
-        "aaos_user_triage",
-        "aaos_window_triage",
-        "aaos_audio_triage",
-        "aaos_power_triage",
-        "aaos_storage_triage",
-        "aaos_sdv",
-        "aaos_vac_triage",
-        "accessibility",
-        "android_core_networking",
-        "android_health_services",
-        "android_sdk",
-        "aoc",
-        "app_widgets",
-        "arc_next",
-        "art_mainline",
-        "art_performance",
-        "attack_tools",
-        "automotive_cast",
-        "avic",
-        "desktop_firmware",
-        "biometrics",
-        "biometrics_framework",
-        "biometrics_integration",
-        "bluetooth",
-        "brownout_mitigation_audio",
-        "brownout_mitigation_modem",
-        "build",
-        "camera_hal",
-        "camera_platform",
-        "car_framework",
-        "car_perception",
-        "car_security",
-        "car_telemetry",
-        "codec_fwk",
-        "companion",
-        "com_android_adbd",
-        "content_protection",
-        "context_hub",
-        "core_experiments_team_internal",
-        "core_graphics",
-        "core_libraries",
-        "crumpet",
-        "dck_framework",
-        "desktop_hwsec",
-        "desktop_stats",
-        "devoptions_settings",
-        "game",
-        "gpu",
-        "haptics",
-        "hardware_backed_security_mainline",
-        "input",
-        "incremental",
-        "llvm_and_toolchains",
-        "lse_desktop_experience",
-        "machine_learning",
-        "mainline_modularization",
-        "mainline_sdk",
-        "make_pixel_haptics",
-        "media_audio",
-        "media_drm",
-        "media_projection",
-        "media_reliability",
-        "media_solutions",
-        "media_tv",
-        "nearby",
-        "nfc",
-        "pdf_viewer",
-        "perfetto",
-        "pixel_audio_android",
-        "pixel_biometrics_face",
-        "pixel_bluetooth",
-        "pixel_connectivity_gps",
-        "pixel_continuity",
-        "pixel_display",
-        "pixel_perf",
-        "pixel_sensors",
-        "pixel_state_server",
-        "pixel_system_sw_video",
-        "pixel_video_sw",
-        "pixel_watch",
-        "platform_compat",
-        "platform_security",
-        "pixel_watch_debug_trace",
-        "pmw",
-        "power",
-        "preload_safety",
-        "printing",
-        "privacy_infra_policy",
-        "psap_ai",
-        "ravenwood",
-        "resource_manager",
-        "responsible_apis",
-        "rust",
-        "safety_center",
-        "sensors",
-        "spoon",
-        "stability",
-        "statsd",
-        "system_performance",
-        "system_sw_battery",
-        "system_sw_touch",
-        "system_sw_usb",
-        "test_suites",
-        "text",
-        "threadnetwork",
-        "treble",
-        "tv_os_media",
-        "tv_system_ui",
-        "usb",
-        "vibrator",
-        "virtual_devices",
-        "virtualization",
-        "wallet_integration",
-        "wear_calling_messaging",
-        "wear_connectivity",
-        "wear_esim_carriers",
-        "wear_frameworks",
-        "wear_media",
-        "wear_offload",
-        "wear_security",
-        "wear_system_health",
-        "wear_systems",
-        "wear_sysui",
-        "wear_system_managed_surfaces",
-        "wear_watchfaces",
-        "window_surfaces",
-        "windowing_frontend",
-        "xr",
-    };
-
     public static final String NAMESPACE_REBOOT_STAGING = "staged";
     public static final String NAMESPACE_REBOOT_STAGING_DELIMITER = "*";
 
@@ -289,8 +152,7 @@ public class SettingsToPropertiesMapper {
     @VisibleForTesting
     protected SettingsToPropertiesMapper(ContentResolver contentResolver,
             String[] globalSettings,
-            String[] deviceConfigScopes,
-            String[] deviceConfigAconfigScopes) {
+            String[] deviceConfigScopes) {
         mContentResolver = contentResolver;
         mGlobalSettings = globalSettings;
         mDeviceConfigScopes = deviceConfigScopes;
@@ -348,11 +210,12 @@ public class SettingsToPropertiesMapper {
             NAMESPACE_REBOOT_STAGING,
             newSingleThreadScheduledExecutor(),
             (DeviceConfig.Properties properties) -> {
+
               // send prop stage request to new storage
               if (enableAconfigStorageDaemon()) {
                   stageFlagsInNewStorage(properties);
+                  return;
               }
-
         });
 
         // add prop sync callback for flag local overrides
@@ -362,6 +225,7 @@ public class SettingsToPropertiesMapper {
             (DeviceConfig.Properties properties) -> {
                 if (enableAconfigStorageDaemon()) {
                     setLocalOverridesInNewStorage(properties);
+                    return;
                 }
         });
     }
@@ -373,17 +237,22 @@ public class SettingsToPropertiesMapper {
      */
     static void sendAconfigdRequests(ProtoOutputStream requests) {
         ProtoInputStream returns = sendAconfigdRequests("aconfigd_system", requests);
-        try {
-          parseAndLogAconfigdReturn(returns);
-        } catch (IOException ioe) {
-          logErr("failed to parse aconfigd return", ioe);
+        if (returns != null) {
+            try {
+                parseAndLogAconfigdReturn(returns);
+            } catch (IOException ioe) {
+                logErr("failed to parse aconfigd return", ioe);
+            }
         }
+
         if (enableAconfigdFromMainline()) {
             returns = sendAconfigdRequests("aconfigd_mainline", requests);
-            try {
-              parseAndLogAconfigdReturn(returns);
-            } catch (IOException ioe) {
-              logErr("failed to parse aconfigd return", ioe);
+            if (returns != null) {
+                try {
+                    parseAndLogAconfigdReturn(returns);
+                } catch (IOException ioe) {
+                    logErr("failed to parse aconfigd return", ioe);
+                }
             }
         }
     }
@@ -583,8 +452,7 @@ public class SettingsToPropertiesMapper {
         SettingsToPropertiesMapper mapper =  new SettingsToPropertiesMapper(
                 contentResolver,
                 sGlobalSettings,
-                sDeviceConfigScopes,
-                sDeviceConfigAconfigScopes);
+                getDeviceConfigScopes());
         mapper.updatePropertiesFromSettings();
         return mapper;
     }
@@ -749,5 +617,15 @@ public class SettingsToPropertiesMapper {
     void updatePropertyFromSetting(String settingName, String propName) {
         String settingValue = Settings.Global.getString(mContentResolver, settingName);
         setProperty(propName, settingValue);
+    }
+
+    @VisibleForTesting
+    static String[] getDeviceConfigScopes() {
+        String[] deviceConfigScopes = sDeviceConfigScopes;
+        if (rolloutComputerControl()) {
+            deviceConfigScopes = Arrays.copyOf(sDeviceConfigScopes, sDeviceConfigScopes.length + 1);
+            deviceConfigScopes[sDeviceConfigScopes.length] = NAMESPACE_COMPUTER_CONTROL;
+        }
+        return deviceConfigScopes;
     }
 }

@@ -22,9 +22,9 @@ import android.content.res.Resources
 import android.view.LayoutInflater
 import com.android.internal.logging.testing.UiEventLoggerFake
 import com.android.wm.shell.R
-import com.android.wm.shell.TestShellExecutor
 import com.android.wm.shell.bubbles.BubbleViewInfoTask.BubbleViewInfo
 import com.android.wm.shell.bubbles.bar.BubbleBarExpandedView
+import com.android.wm.shell.common.TestShellExecutor
 import com.google.common.util.concurrent.MoreExecutors.directExecutor
 
 /** Helper to create a [Bubble] instance */
@@ -35,6 +35,7 @@ class FakeBubbleFactory {
             context: Context,
             bubblePositioner: BubblePositioner,
             expandedViewManager: BubbleExpandedViewManager,
+            bubble: Bubble,
             bubbleTaskView: BubbleTaskView,
             mainExecutor: TestShellExecutor,
             bgExecutor: TestShellExecutor,
@@ -45,28 +46,26 @@ class FakeBubbleFactory {
                         .inflate(R.layout.bubble_bar_expanded_view, null, false /* attachToRoot */)
                         as BubbleBarExpandedView)
                     .apply {
+                        this.bubbleLogger = bubbleLogger
                         initialize(
                             expandedViewManager,
                             bubblePositioner,
-                            bubbleLogger,
                             false, /* isOverflow */
+                            bubble,
                             bubbleTaskView,
-                            mainExecutor,
-                            bgExecutor,
-                            null, /* regionSamplingProvider */
                         )
                     }
+            bubble.setViewInfo(createViewInfo(bubbleBarExpandedView))
             return bubbleBarExpandedView
         }
 
-        fun createViewInfo(bubbleExpandedView: BubbleBarExpandedView): BubbleViewInfo {
+        private fun createViewInfo(bubbleExpandedView: BubbleBarExpandedView): BubbleViewInfo {
             return BubbleViewInfo().apply { bubbleBarExpandedView = bubbleExpandedView }
         }
 
         fun createChatBubble(
             context: Context,
             key: String = "key",
-            viewInfo: BubbleViewInfo? = null,
         ): Bubble {
             val bubble =
                 Bubble(
@@ -81,9 +80,6 @@ class FakeBubbleFactory {
                     directExecutor(),
                     directExecutor(),
                 ) {}
-            if (viewInfo != null) {
-                bubble.setViewInfo(viewInfo)
-            }
             return bubble
         }
     }

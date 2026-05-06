@@ -21,21 +21,28 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.biometrics.data.repository.fingerprintPropertyRepository
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.coroutines.collectValues
 import com.android.systemui.keyguard.data.repository.biometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
+import com.android.systemui.keyguard.ui.transitions.blurConfig
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.scene.data.repository.HideOverlay
+import com.android.systemui.scene.data.repository.setSceneTransition
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Overlays
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class PrimaryBouncerToAodTransitionViewModelTest : SysuiTestCase() {
@@ -47,7 +54,22 @@ class PrimaryBouncerToAodTransitionViewModelTest : SysuiTestCase() {
     val fingerprintPropertyRepository = kosmos.fingerprintPropertyRepository
     val biometricSettingsRepository = kosmos.biometricSettingsRepository
 
-    val underTest = kosmos.primaryBouncerToAodTransitionViewModel
+    lateinit var underTest: PrimaryBouncerToAodTransitionViewModel
+
+    @Before
+    fun setup() {
+        underTest = kosmos.primaryBouncerToAodTransitionViewModel
+
+        // Put STL in transition: Bouncer => Lockscreen transition (includes KeyguardState.AOD)
+        kosmos.setSceneTransition(
+            HideOverlay(
+                overlay = Overlays.Bouncer,
+                toScene = Scenes.Lockscreen,
+                currentOverlays = flowOf(setOf(Overlays.Bouncer)),
+                progress = flowOf(.5f),
+            )
+        )
+    }
 
     @Test
     fun deviceEntryBackgroundViewAlpha() =
@@ -138,16 +160,35 @@ class PrimaryBouncerToAodTransitionViewModelTest : SysuiTestCase() {
             assertThat(deviceEntryParentViewAlpha).isNull()
         }
 
+    @Test
+    fun blurRadiusGoesFromMaxToMin() =
+        testScope.runTest {
+            val values by collectValues(underTest.windowBlurRadius)
+
+            kosmos.keyguardWindowBlurTestUtil.assertTransitionToBlurRadius(
+                transitionProgress = listOf(0.0f, 0.2f, 0.3f, 0.65f, 0.7f, 1.0f),
+                startValue = kosmos.blurConfig.maxBlurRadiusPx,
+                endValue = kosmos.blurConfig.minBlurRadiusPx,
+                actualValuesProvider = { values },
+                transitionFactory = ::step,
+            )
+        }
+
     private fun step(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return TransitionStep(
-            from = KeyguardState.PRIMARY_BOUNCER,
+            from =
+                if (SceneContainerFlag.isEnabled) {
+                    KeyguardState.UNDEFINED
+                } else {
+                    KeyguardState.PRIMARY_BOUNCER
+                },
             to = KeyguardState.AOD,
             value = value,
             transitionState = state,
-            ownerName = "PrimaryBouncerToAodTransitionViewModelTest"
+            ownerName = "PrimaryBouncerToAodTransitionViewModelTest",
         )
     }
 }

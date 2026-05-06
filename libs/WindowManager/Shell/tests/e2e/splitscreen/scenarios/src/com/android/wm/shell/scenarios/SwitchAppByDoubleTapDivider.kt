@@ -17,16 +17,17 @@
 package com.android.wm.shell.scenarios
 
 import android.app.Instrumentation
-import android.graphics.Point
 import android.tools.NavBar
 import android.tools.Rotation
-import android.tools.helpers.WindowUtils
+import android.tools.flicker.rules.RemoveAllTasksButHomeRule
 import android.tools.traces.parsers.WindowManagerStateHelper
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import com.android.launcher3.tapl.LauncherInstrumentation
 import com.android.wm.shell.Utils
 import com.android.wm.shell.flicker.utils.SplitScreenUtils
+import com.android.wm.shell.flicker.utils.SplitScreenUtils.isLeftRightSplit
+import com.android.wm.shell.flicker.utils.SplitScreenUtils.isTablet
 import org.junit.After
 import org.junit.Before
 import org.junit.Ignore
@@ -48,11 +49,8 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
 
     @Before
     fun setup() {
-        val overview = tapl.workspace.switchToOverview()
-        if (overview.hasTasks()) {
-            overview.dismissAllTasks()
-        }
-
+        // TODO: b/349075982 - Remove once launcher rotation and checks are stable.
+        tapl.expectedRotationCheckEnabled = false
         tapl.setEnableRotation(true)
         tapl.setExpectedRotation(rotation.value)
 
@@ -61,7 +59,7 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
 
     @Test
     open fun switchAppByDoubleTapDivider() {
-        SplitScreenUtils.doubleTapDividerToSwitch(device)
+        SplitScreenUtils.doubleTapDividerToSwitch(device, instrumentation.uiAutomation)
         wmHelper.StateSyncBuilder().withAppTransitionIdle().waitForAndVerify()
 
         waitForLayersToSwitch(wmHelper)
@@ -72,6 +70,7 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
     fun teardown() {
         primaryApp.exit(wmHelper)
         secondaryApp.exit(wmHelper)
+        RemoveAllTasksButHomeRule.removeAllTasksButHome()
     }
 
     private fun waitForWindowsToSwitch(wmHelper: WindowManagerStateHelper) {
@@ -89,14 +88,14 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
                     }
                         ?: return@add false
 
-                if (isLandscape(rotation)) {
-                    return@add if (isTablet()) {
+                if (isLeftRightSplit(instrumentation.context, rotation, device.displaySizeDp)) {
+                    return@add if (isTablet(device.displaySizeDp)) {
                         secondaryAppWindow.frame.right <= primaryAppWindow.frame.left
                     } else {
                         primaryAppWindow.frame.right <= secondaryAppWindow.frame.left
                     }
                 } else {
-                    return@add if (isTablet()) {
+                    return@add if (isTablet(device.displaySizeDp)) {
                         primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
                     } else {
                         primaryAppWindow.frame.bottom <= secondaryAppWindow.frame.top
@@ -125,14 +124,14 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
                 val secondaryVisibleRegion =
                     secondaryAppLayer.visibleRegion?.bounds ?: return@add false
 
-                if (isLandscape(rotation)) {
-                    return@add if (isTablet()) {
+                if (isLeftRightSplit(instrumentation.context, rotation, device.displaySizeDp)) {
+                    return@add if (isTablet(device.displaySizeDp)) {
                         secondaryVisibleRegion.right <= primaryVisibleRegion.left
                     } else {
                         primaryVisibleRegion.right <= secondaryVisibleRegion.left
                     }
                 } else {
-                    return@add if (isTablet()) {
+                    return@add if (isTablet(device.displaySizeDp)) {
                         primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
                     } else {
                         primaryVisibleRegion.bottom <= secondaryVisibleRegion.top
@@ -140,16 +139,5 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
                 }
             }
             .waitForAndVerify()
-    }
-
-    private fun isLandscape(rotation: Rotation): Boolean {
-        val displayBounds = WindowUtils.getDisplayBounds(rotation)
-        return displayBounds.width() > displayBounds.height()
-    }
-
-    private fun isTablet(): Boolean {
-        val sizeDp: Point = device.displaySizeDp
-        val LARGE_SCREEN_DP_THRESHOLD = 600
-        return sizeDp.x >= LARGE_SCREEN_DP_THRESHOLD && sizeDp.y >= LARGE_SCREEN_DP_THRESHOLD
     }
 }

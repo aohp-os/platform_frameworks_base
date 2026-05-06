@@ -2318,12 +2318,12 @@ void IncrementalService::registerAppOpsCallback(const std::string& packageName) 
         if (cb) {
             return;
         }
-        cb = new AppOpsListener(*this, packageName);
+        cb = new AppOpsListener(*this, packageName, AppOpsManager::OP_GET_USAGE_STATS);
         listener = cb;
     }
 
-    mAppOpsManager->startWatchingMode(AppOpsManager::OP_GET_USAGE_STATS,
-                                      String16(packageName.c_str()), listener);
+    mAppOpsManager->startWatchingMode(AppOpsManager::OP_NONE, String16(packageName.c_str()),
+                                      listener);
 }
 
 bool IncrementalService::unregisterAppOpsCallback(const std::string& packageName) {
@@ -3198,8 +3198,14 @@ void IncrementalService::DataLoaderStub::onDump(int fd) {
     dprintf(fd, "    }\n");
 }
 
-void IncrementalService::AppOpsListener::opChanged(int32_t, const String16&) {
-    incrementalService.onAppOpChanged(packageName);
+binder::Status IncrementalService::AppOpsListener::opChanged(int32_t changedOp, int32_t,
+                                                             const String16&, const String16&) {
+    // The listener will notify for any AppOp change for the given package.
+    // Confirm it's the one we're interested in.
+    if (changedOp == op) {
+        incrementalService.onAppOpChanged(packageName);
+    }
+    return binder::Status::ok();
 }
 
 binder::Status IncrementalService::IncrementalServiceConnector::setStorageParams(

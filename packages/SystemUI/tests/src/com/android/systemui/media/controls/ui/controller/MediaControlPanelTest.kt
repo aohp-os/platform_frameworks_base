@@ -19,16 +19,13 @@ package com.android.systemui.media.controls.ui.controller
 import android.animation.Animator
 import android.animation.AnimatorSet
 import android.app.PendingIntent
-import android.app.smartspace.SmartspaceAction
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.content.res.Configuration
+import android.content.theming.ThemeStyle
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Matrix
 import android.graphics.drawable.Animatable2
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
@@ -40,56 +37,52 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Bundle
-import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.EnableFlags
 import android.platform.test.annotations.RequiresFlagsEnabled
 import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import android.provider.Settings
 import android.provider.Settings.ACTION_MEDIA_CONTROLS_SETTINGS
 import android.testing.TestableLooper
-import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.Interpolator
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.constraintlayout.widget.Barrier
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.lifecycle.LiveData
-import androidx.media.utils.MediaConstants
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.logging.InstanceId
 import com.android.internal.widget.CachingIconView
+import com.android.settingslib.media.LocalMediaManager.MediaDeviceState
 import com.android.systemui.ActivityIntentHelper
 import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.bluetooth.BroadcastDialogController
 import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.communal.domain.interactor.CommunalSceneInteractor
 import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.media.controls.MediaTestUtils
-import com.android.systemui.media.controls.domain.pipeline.EMPTY_SMARTSPACE_MEDIA_DATA
 import com.android.systemui.media.controls.domain.pipeline.MediaDataManager
-import com.android.systemui.media.controls.shared.model.KEY_SMARTSPACE_APP_NAME
 import com.android.systemui.media.controls.shared.model.MediaAction
 import com.android.systemui.media.controls.shared.model.MediaButton
 import com.android.systemui.media.controls.shared.model.MediaData
 import com.android.systemui.media.controls.shared.model.MediaDeviceData
 import com.android.systemui.media.controls.shared.model.MediaNotificationAction
-import com.android.systemui.media.controls.shared.model.SmartspaceMediaData
+import com.android.systemui.media.controls.shared.model.SuggestedMediaDeviceData
+import com.android.systemui.media.controls.shared.model.SuggestionData
 import com.android.systemui.media.controls.ui.binder.SeekBarObserver
 import com.android.systemui.media.controls.ui.view.GutsViewHolder
+import com.android.systemui.media.controls.ui.view.MediaCarouselScrollHandler
 import com.android.systemui.media.controls.ui.view.MediaViewHolder
-import com.android.systemui.media.controls.ui.view.RecommendationViewHolder
 import com.android.systemui.media.controls.ui.viewmodel.SeekBarViewModel
 import com.android.systemui.media.controls.util.MediaUiEventLogger
 import com.android.systemui.media.dialog.MediaOutputDialogManager
 import com.android.systemui.monet.ColorScheme
-import com.android.systemui.monet.Style
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
@@ -125,6 +118,7 @@ import org.mockito.Mockito.`when` as whenever
 import org.mockito.junit.MockitoJUnit
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.eq
 
 private const val KEY = "TEST_KEY"
@@ -164,9 +158,10 @@ public class MediaControlPanelTest : SysuiTestCase() {
     @Mock private lateinit var collapsedSet: ConstraintSet
     @Mock private lateinit var mediaOutputDialogManager: MediaOutputDialogManager
     @Mock private lateinit var mediaCarouselController: MediaCarouselController
+    @Mock private lateinit var mediaCarouselScrollHandler: MediaCarouselScrollHandler
     @Mock private lateinit var falsingManager: FalsingManager
     @Mock private lateinit var transitionParent: ViewGroup
-    @Mock private lateinit var broadcastDialogController: BroadcastDialogController
+    @Mock private lateinit var suggestionDrawable: Drawable
     private lateinit var appIcon: ImageView
     @Mock private lateinit var albumView: ImageView
     private lateinit var titleText: TextView
@@ -199,11 +194,17 @@ public class MediaControlPanelTest : SysuiTestCase() {
     private lateinit var multiRippleView: MultiRippleView
     private lateinit var turbulenceNoiseView: TurbulenceNoiseView
     private lateinit var loadingEffectView: LoadingEffectView
+    private lateinit var deviceSuggestionContainer: ViewGroup
+    private lateinit var deviceSuggestionText: TextView
+    private lateinit var deviceSuggestionIcon: ImageView
+    private lateinit var deviceSuggestionConnectingIcon: ProgressBar
+    private lateinit var deviceSuggestionButton: View
+    private lateinit var pageLeftButton: ImageButton
+    private lateinit var pageRightButton: ImageButton
 
     private lateinit var session: MediaSession
     private lateinit var device: MediaDeviceData
-    private val disabledDevice =
-        MediaDeviceData(false, null, DISABLED_DEVICE_NAME, null, showBroadcastButton = false)
+    private val disabledDevice = MediaDeviceData(false, null, DISABLED_DEVICE_NAME, null)
     private lateinit var mediaData: MediaData
     private val clock = FakeSystemClock()
     @Mock private lateinit var logger: MediaUiEventLogger
@@ -216,38 +217,15 @@ public class MediaControlPanelTest : SysuiTestCase() {
 
     @Mock private lateinit var communalSceneInteractor: CommunalSceneInteractor
 
-    @Mock private lateinit var recommendationViewHolder: RecommendationViewHolder
-    @Mock private lateinit var smartspaceAction: SmartspaceAction
-    private lateinit var smartspaceData: SmartspaceMediaData
-    @Mock private lateinit var coverContainer1: ViewGroup
-    @Mock private lateinit var coverContainer2: ViewGroup
-    @Mock private lateinit var coverContainer3: ViewGroup
-    @Mock private lateinit var recAppIconItem: CachingIconView
-    @Mock private lateinit var recCardTitle: TextView
-    @Mock private lateinit var coverItem: ImageView
-    @Mock private lateinit var matrix: Matrix
-    private lateinit var recTitle1: TextView
-    private lateinit var recTitle2: TextView
-    private lateinit var recTitle3: TextView
-    private lateinit var recSubtitle1: TextView
-    private lateinit var recSubtitle2: TextView
-    private lateinit var recSubtitle3: TextView
-    @Mock private lateinit var recProgressBar1: SeekBar
-    @Mock private lateinit var recProgressBar2: SeekBar
-    @Mock private lateinit var recProgressBar3: SeekBar
     @Mock private lateinit var globalSettings: GlobalSettings
 
-    private val intent =
-        Intent().apply {
-            putExtras(Bundle().also { it.putString(KEY_SMARTSPACE_APP_NAME, REC_APP_NAME) })
-            setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
+    private val intent = Intent().apply { setFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
     private val pendingIntent =
         PendingIntent.getActivity(
             mContext,
             0,
             intent.setPackage(mContext.packageName),
-            PendingIntent.FLAG_MUTABLE
+            PendingIntent.FLAG_MUTABLE,
         )
 
     @JvmField @Rule val mockito = MockitoJUnit.rule()
@@ -258,6 +236,8 @@ public class MediaControlPanelTest : SysuiTestCase() {
         mainExecutor = FakeExecutor(clock)
         whenever(mediaViewController.expandedLayout).thenReturn(expandedSet)
         whenever(mediaViewController.collapsedLayout).thenReturn(collapsedSet)
+        whenever(mediaCarouselController.mediaCarouselScrollHandler)
+            .thenReturn(mediaCarouselScrollHandler)
 
         // Set up package manager mocks
         val icon = context.getDrawable(R.drawable.ic_android)
@@ -282,19 +262,17 @@ public class MediaControlPanelTest : SysuiTestCase() {
                     mediaOutputDialogManager,
                     mediaCarouselController,
                     falsingManager,
-                    clock,
                     logger,
                     keyguardStateController,
                     activityIntentHelper,
                     communalSceneInteractor,
                     lockscreenUserManager,
-                    broadcastDialogController,
                     globalSettings,
                 ) {
                 override fun loadAnimator(
                     animId: Int,
                     otionInterpolator: Interpolator,
-                    vararg targets: View
+                    vararg targets: View,
                 ): AnimatorSet {
                     return mockAnimator
                 }
@@ -303,28 +281,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         initGutsViewHolderMocks()
         initMediaViewHolderMocks()
 
-        initDeviceMediaData(false, DEVICE_NAME)
-
-        // Set up recommendation view
-        initRecommendationViewHolderMocks()
-
-        // Set valid recommendation data
-        val extras = Bundle()
-        extras.putString(KEY_SMARTSPACE_APP_NAME, REC_APP_NAME)
-        val intent =
-            Intent().apply {
-                putExtras(extras)
-                setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        whenever(smartspaceAction.intent).thenReturn(intent)
-        whenever(smartspaceAction.extras).thenReturn(extras)
-        smartspaceData =
-            EMPTY_SMARTSPACE_MEDIA_DATA.copy(
-                packageName = PACKAGE,
-                instanceId = instanceId,
-                recommendations = listOf(smartspaceAction, smartspaceAction, smartspaceAction),
-                cardAction = smartspaceAction
-            )
+        initDeviceMediaData(DEVICE_NAME)
     }
 
     private fun initGutsViewHolderMocks() {
@@ -341,9 +298,8 @@ public class MediaControlPanelTest : SysuiTestCase() {
         whenever(gutsViewHolder.dismissText).thenReturn(dismissText)
     }
 
-    private fun initDeviceMediaData(shouldShowBroadcastButton: Boolean, name: String) {
-        device =
-            MediaDeviceData(true, null, name, null, showBroadcastButton = shouldShowBroadcastButton)
+    private fun initDeviceMediaData(name: String) {
+        device = MediaDeviceData(true, null, name, null)
 
         // Create media session
         val metadataBuilder =
@@ -370,7 +326,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 packageName = PACKAGE,
                 token = session.sessionToken,
                 device = device,
-                instanceId = instanceId
+                instanceId = instanceId,
             )
     }
 
@@ -416,13 +372,18 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         action1.id,
                         action2.id,
                         action3.id,
-                        action4.id
+                        action4.id,
                     )
             }
 
         multiRippleView = MultiRippleView(context, null)
         turbulenceNoiseView = TurbulenceNoiseView(context, null)
         loadingEffectView = LoadingEffectView(context, null)
+        deviceSuggestionContainer = FrameLayout(context)
+        deviceSuggestionText = TextView(context)
+        deviceSuggestionIcon = ImageView(context)
+        deviceSuggestionConnectingIcon = ProgressBar(context)
+        deviceSuggestionButton = View(context)
 
         whenever(viewHolder.player).thenReturn(view)
         whenever(viewHolder.appIcon).thenReturn(appIcon)
@@ -469,49 +430,18 @@ public class MediaControlPanelTest : SysuiTestCase() {
         whenever(viewHolder.multiRippleView).thenReturn(multiRippleView)
         whenever(viewHolder.turbulenceNoiseView).thenReturn(turbulenceNoiseView)
         whenever(viewHolder.loadingEffectView).thenReturn(loadingEffectView)
-    }
 
-    /** Initialize elements for the recommendation view holder */
-    private fun initRecommendationViewHolderMocks() {
-        recTitle1 = TextView(context)
-        recTitle2 = TextView(context)
-        recTitle3 = TextView(context)
-        recSubtitle1 = TextView(context)
-        recSubtitle2 = TextView(context)
-        recSubtitle3 = TextView(context)
+        whenever(viewHolder.deviceSuggestionContainer).thenReturn(deviceSuggestionContainer)
+        whenever(viewHolder.deviceSuggestionText).thenReturn(deviceSuggestionText)
+        whenever(viewHolder.deviceSuggestionIcon).thenReturn(deviceSuggestionIcon)
+        whenever(viewHolder.deviceSuggestionConnectingIcon)
+            .thenReturn(deviceSuggestionConnectingIcon)
+        whenever(viewHolder.deviceSuggestionButton).thenReturn(deviceSuggestionButton)
 
-        whenever(recommendationViewHolder.recommendations).thenReturn(view)
-        whenever(recommendationViewHolder.mediaAppIcons)
-            .thenReturn(listOf(recAppIconItem, recAppIconItem, recAppIconItem))
-        whenever(recommendationViewHolder.cardTitle).thenReturn(recCardTitle)
-        whenever(recommendationViewHolder.mediaCoverItems)
-            .thenReturn(listOf(coverItem, coverItem, coverItem))
-        whenever(recommendationViewHolder.mediaCoverContainers)
-            .thenReturn(listOf(coverContainer1, coverContainer2, coverContainer3))
-        whenever(recommendationViewHolder.mediaTitles)
-            .thenReturn(listOf(recTitle1, recTitle2, recTitle3))
-        whenever(recommendationViewHolder.mediaSubtitles)
-            .thenReturn(listOf(recSubtitle1, recSubtitle2, recSubtitle3))
-        whenever(recommendationViewHolder.mediaProgressBars)
-            .thenReturn(listOf(recProgressBar1, recProgressBar2, recProgressBar3))
-        whenever(coverItem.imageMatrix).thenReturn(matrix)
-
-        // set ids for recommendation containers
-        whenever(coverContainer1.id).thenReturn(1)
-        whenever(coverContainer2.id).thenReturn(2)
-        whenever(coverContainer3.id).thenReturn(3)
-
-        whenever(recommendationViewHolder.gutsViewHolder).thenReturn(gutsViewHolder)
-
-        val actionIcon = Icon.createWithResource(context, R.drawable.ic_android)
-        whenever(smartspaceAction.icon).thenReturn(actionIcon)
-
-        // Needed for card and item action click
-        val mockContext = mock(Context::class.java)
-        whenever(view.context).thenReturn(mockContext)
-        whenever(coverContainer1.context).thenReturn(mockContext)
-        whenever(coverContainer2.context).thenReturn(mockContext)
-        whenever(coverContainer3.context).thenReturn(mockContext)
+        pageLeftButton = ImageButton(context).also { it.setId(R.id.page_left) }
+        whenever(viewHolder.pageLeft).thenReturn(pageLeftButton)
+        pageRightButton = ImageButton(context).also { it.setId(R.id.page_right) }
+        whenever(viewHolder.pageRight).thenReturn(pageRightButton)
     }
 
     @After
@@ -536,7 +466,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 playOrPause = MediaAction(icon, Runnable {}, "play", bg),
                 nextOrCustom = MediaAction(icon, Runnable {}, "next", bg),
                 custom0 = MediaAction(icon, null, "custom 0", bg),
-                custom1 = MediaAction(icon, null, "custom 1", bg)
+                custom1 = MediaAction(icon, null, "custom 1", bg),
             )
         val state = mediaData.copy(semanticActions = semanticActions)
         player.attachPlayer(viewHolder)
@@ -590,7 +520,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 custom0 = MediaAction(icon, null, "custom 0", bg),
                 custom1 = MediaAction(icon, null, "custom 1", bg),
                 false,
-                true
+                true,
             )
         val state = mediaData.copy(semanticActions = semanticActions)
 
@@ -622,7 +552,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 custom0 = MediaAction(icon, null, "custom 0", bg),
                 custom1 = MediaAction(icon, null, "custom 1", bg),
                 true,
-                false
+                false,
             )
         val state = mediaData.copy(semanticActions = semanticActions)
 
@@ -723,12 +653,12 @@ public class MediaControlPanelTest : SysuiTestCase() {
         // Setup redArtwork and its color scheme.
         val redArt = getColorIcon(Color.RED)
         val redWallpaperColor = player.getWallpaperColor(redArt)
-        val redColorScheme = ColorScheme(redWallpaperColor, true, Style.CONTENT)
+        val redColorScheme = ColorScheme(redWallpaperColor, true, ThemeStyle.CONTENT)
 
         // Setup greenArt and its color scheme.
         val greenArt = getColorIcon(Color.GREEN)
         val greenWallpaperColor = player.getWallpaperColor(greenArt)
-        val greenColorScheme = ColorScheme(greenWallpaperColor, true, Style.CONTENT)
+        val greenColorScheme = ColorScheme(greenWallpaperColor, true, ThemeStyle.CONTENT)
 
         // Add gradient to both icons.
         val redArtwork = player.addGradientToPlayerAlbum(redArt, redColorScheme, 10, 10)
@@ -760,7 +690,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         val semanticActions =
             MediaButton(
                 playOrPause = MediaAction(icon, Runnable {}, "play", null),
-                nextOrCustom = MediaAction(icon, Runnable {}, "next", null)
+                nextOrCustom = MediaAction(icon, Runnable {}, "next", null),
             )
         val state = mediaData.copy(semanticActions = semanticActions)
 
@@ -850,7 +780,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         val semanticActions =
             MediaButton(
                 prevOrCustom = MediaAction(icon, {}, "prev", null),
-                nextOrCustom = MediaAction(icon, {}, "next", null)
+                nextOrCustom = MediaAction(icon, {}, "next", null),
             )
         val state = mediaData.copy(semanticActions = semanticActions)
 
@@ -921,7 +851,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         val semanticActions =
             MediaButton(
                 prevOrCustom = MediaAction(icon, {}, "prev", null),
-                nextOrCustom = MediaAction(icon, {}, "next", null)
+                nextOrCustom = MediaAction(icon, {}, "next", null),
             )
         val state = mediaData.copy(semanticActions = semanticActions)
         player.attachPlayer(viewHolder)
@@ -944,7 +874,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         val semanticActions =
             MediaButton(
                 prevOrCustom = MediaAction(icon, {}, "prev", null),
-                nextOrCustom = MediaAction(icon, {}, "next", null)
+                nextOrCustom = MediaAction(icon, {}, "next", null),
             )
         val state = mediaData.copy(semanticActions = semanticActions)
 
@@ -963,6 +893,29 @@ public class MediaControlPanelTest : SysuiTestCase() {
         verify(expandedSet).setVisibility(R.id.media_scrubbing_total_time, ConstraintSet.GONE)
         verify(expandedSet).setVisibility(R.id.actionPrev, ConstraintSet.VISIBLE)
         verify(expandedSet).setVisibility(R.id.actionNext, ConstraintSet.VISIBLE)
+    }
+
+    @Test
+    fun setIsScrubbing_reservedButtonSpaces_scrubbingTimesShown() {
+        val semanticActions =
+            MediaButton(
+                prevOrCustom = null,
+                nextOrCustom = null,
+                reserveNext = true,
+                reservePrev = true,
+            )
+        val state = mediaData.copy(semanticActions = semanticActions)
+        player.attachPlayer(viewHolder)
+        player.bindPlayer(state, PACKAGE)
+        reset(expandedSet)
+
+        getScrubbingChangeListener().onScrubbingChanged(true)
+        mainExecutor.runAllReady()
+
+        verify(expandedSet).setVisibility(R.id.actionPrev, View.GONE)
+        verify(expandedSet).setVisibility(R.id.actionNext, View.GONE)
+        verify(expandedSet).setVisibility(R.id.media_scrubbing_elapsed_time, View.VISIBLE)
+        verify(expandedSet).setVisibility(R.id.media_scrubbing_total_time, View.VISIBLE)
     }
 
     @Test
@@ -1009,13 +962,13 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 MediaNotificationAction(true, actionIntent = pendingIntent, icon, "play"),
                 MediaNotificationAction(true, actionIntent = null, icon, "next"),
                 MediaNotificationAction(true, actionIntent = null, icon, "custom 0"),
-                MediaNotificationAction(true, actionIntent = pendingIntent, icon, "custom 1")
+                MediaNotificationAction(true, actionIntent = pendingIntent, icon, "custom 1"),
             )
         val state =
             mediaData.copy(
                 actions = actions,
                 actionsToShowInCompact = listOf(1, 2),
-                semanticActions = null
+                semanticActions = null,
             )
 
         player.attachPlayer(viewHolder)
@@ -1062,8 +1015,6 @@ public class MediaControlPanelTest : SysuiTestCase() {
         whenever(mockAvd1.mutate()).thenReturn(mockAvd1)
         whenever(mockAvd2.mutate()).thenReturn(mockAvd2)
 
-        val icon = context.getDrawable(R.drawable.ic_media_play)
-        val bg = context.getDrawable(R.drawable.ic_media_play_container)
         val semanticActions0 =
             MediaButton(playOrPause = MediaAction(mockAvd0, Runnable {}, "play", null))
         val semanticActions1 =
@@ -1251,25 +1202,164 @@ public class MediaControlPanelTest : SysuiTestCase() {
     }
 
     @Test
-    @RequiresFlagsEnabled(com.android.settingslib.flags.Flags.FLAG_LEGACY_LE_AUDIO_SHARING)
-    fun bindBroadcastButton() {
-        initMediaViewHolderMocks()
-        initDeviceMediaData(true, APP_NAME)
-
-        val mockAvd0 = mock(AnimatedVectorDrawable::class.java)
-        whenever(mockAvd0.mutate()).thenReturn(mockAvd0)
-        val semanticActions0 =
-            MediaButton(playOrPause = MediaAction(mockAvd0, Runnable {}, "play", null))
-        val state =
-            mediaData.copy(resumption = true, semanticActions = semanticActions0, isPlaying = false)
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceWithDisconnectedSuggestedDeviceData() {
         player.attachPlayer(viewHolder)
-        player.bindPlayer(state, PACKAGE)
-        assertThat(seamlessText.getText()).isEqualTo(APP_NAME)
-        assertThat(seamless.isEnabled()).isTrue()
 
-        seamless.callOnClick()
+        player.bindPlayer(
+            mediaData.copy(
+                suggestionData =
+                    createSuggestionData(DEVICE_NAME, MediaDeviceState.STATE_DISCONNECTED)
+            ),
+            PACKAGE,
+        )
 
-        verify(logger).logOpenBroadcastDialog(anyInt(), eq(PACKAGE), eq(instanceId))
+        assertThat(seamlessText.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO)
+        assertThat(deviceSuggestionText.text)
+            .isEqualTo(mContext.getString(R.string.media_suggestion_disconnected_text, DEVICE_NAME))
+        assertThat(deviceSuggestionIcon.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionConnectingIcon.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionContainer.isClickable).isTrue()
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceWithConnectingSuggestedDeviceData() {
+        player.attachPlayer(viewHolder)
+
+        player.bindPlayer(
+            mediaData.copy(
+                suggestionData =
+                    createSuggestionData(DEVICE_NAME, MediaDeviceState.STATE_CONNECTING)
+            ),
+            PACKAGE,
+        )
+
+        assertThat(seamlessText.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO)
+        assertThat(deviceSuggestionText.text)
+            .isEqualTo(mContext.getString(R.string.media_suggestion_disconnected_text, DEVICE_NAME))
+        assertThat(deviceSuggestionIcon.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionConnectingIcon.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionContainer.isClickable).isFalse()
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceWithErrorSuggestedDeviceData() {
+        player.attachPlayer(viewHolder)
+
+        player.bindPlayer(
+            mediaData.copy(
+                suggestionData =
+                    createSuggestionData(DEVICE_NAME, MediaDeviceState.STATE_CONNECTING_FAILED)
+            ),
+            PACKAGE,
+        )
+
+        assertThat(seamlessText.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO)
+        assertThat(deviceSuggestionText.text)
+            .isEqualTo(mContext.getString(R.string.media_suggestion_failure_text))
+        assertThat(deviceSuggestionIcon.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionConnectingIcon.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionContainer.isClickable).isTrue()
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceWithConnectedSuggestedDeviceData() {
+        player.attachPlayer(viewHolder)
+
+        player.bindPlayer(
+            mediaData.copy(
+                suggestionData = createSuggestionData(DEVICE_NAME, MediaDeviceState.STATE_CONNECTED)
+            ),
+            PACKAGE,
+        )
+
+        assertThat(seamlessText.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceWithNoSuggestedDeviceData() {
+        player.attachPlayer(viewHolder)
+
+        player.bindPlayer(mediaData, PACKAGE)
+
+        assertThat(seamlessText.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun bindDeviceResumptionPlayerWithSuggestedDeviceData() {
+        player.attachPlayer(viewHolder)
+
+        player.bindPlayer(
+            mediaData.copy(
+                suggestionData =
+                    createSuggestionData(DEVICE_NAME, MediaDeviceState.STATE_DISCONNECTED),
+                resumption = true,
+            ),
+            PACKAGE,
+        )
+
+        assertThat(seamlessText.visibility).isEqualTo(View.VISIBLE)
+        assertThat(deviceSuggestionButton.visibility).isEqualTo(View.GONE)
+        assertThat(deviceSuggestionContainer.importantForAccessibility)
+            .isEqualTo(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun onPanelFullyVisible_activeState_requestsSuggestion() {
+        player.attachPlayer(viewHolder)
+
+        val suggestionData =
+            SuggestionData(
+                suggestedMediaDeviceData = null,
+                onSuggestionSpaceVisible = mock(Runnable::class.java),
+            )
+        player.bindPlayer(
+            mediaData.copy(suggestionData = suggestionData, resumption = false),
+            PACKAGE,
+        )
+        player.onPanelFullyVisible()
+
+        verify(suggestionData.onSuggestionSpaceVisible).run()
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_ENABLE_SUGGESTED_DEVICE_UI)
+    fun onPanelFullyVisible_resumptionState_doesNothing() {
+        player.attachPlayer(viewHolder)
+
+        val suggestionData =
+            SuggestionData(
+                suggestedMediaDeviceData = null,
+                onSuggestionSpaceVisible = mock(Runnable::class.java),
+            )
+        player.bindPlayer(
+            mediaData.copy(suggestionData = suggestionData, resumption = true),
+            PACKAGE,
+        )
+        player.onPanelFullyVisible()
+
+        verify(suggestionData.onSuggestionSpaceVisible, never()).run()
     }
 
     /* ***** Guts tests for the player ***** */
@@ -1375,7 +1465,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
         dismiss.callOnClick()
 
         verify(mediaDataManager).dismissMediaData(eq(mediaKey), anyLong(), eq(true))
-        verify(mediaCarouselController).removePlayer(eq(mediaKey), eq(false), eq(false), eq(true))
+        verify(mediaCarouselController).removePlayer(eq(mediaKey), eq(false), eq(true))
     }
 
     @Test
@@ -1465,169 +1555,6 @@ public class MediaControlPanelTest : SysuiTestCase() {
 
     /* ***** END guts tests for the player ***** */
 
-    /* ***** Guts tests for the recommendations ***** */
-
-    @Test
-    fun recommendations_longClick_isFalse() {
-        whenever(falsingManager.isFalseLongTap(FalsingManager.LOW_PENALTY)).thenReturn(true)
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(viewHolder.player).onLongClickListener = captor.capture()
-
-        captor.value.onLongClick(viewHolder.player)
-        verify(mediaViewController, never()).openGuts()
-        verify(mediaViewController, never()).closeGuts()
-    }
-
-    @Test
-    fun recommendations_longClickWhenGutsClosed_gutsOpens() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-        whenever(mediaViewController.isGutsVisible).thenReturn(false)
-
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(viewHolder.player).onLongClickListener = captor.capture()
-
-        captor.value.onLongClick(viewHolder.player)
-        verify(mediaViewController).openGuts()
-        verify(logger).logLongPressOpen(anyInt(), eq(PACKAGE), eq(instanceId))
-    }
-
-    @Test
-    fun recommendations_longClickWhenGutsOpen_gutsCloses() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-        whenever(mediaViewController.isGutsVisible).thenReturn(true)
-
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(viewHolder.player).onLongClickListener = captor.capture()
-
-        captor.value.onLongClick(viewHolder.player)
-        verify(mediaViewController, never()).openGuts()
-        verify(mediaViewController).closeGuts(false)
-    }
-
-    @Test
-    fun recommendations_cancelButtonClick_animation() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        cancel.callOnClick()
-
-        verify(mediaViewController).closeGuts(false)
-    }
-
-    @Test
-    fun recommendations_settingsButtonClick() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        settings.callOnClick()
-        verify(logger).logLongPressSettings(anyInt(), eq(PACKAGE), eq(instanceId))
-
-        val captor = ArgumentCaptor.forClass(Intent::class.java)
-        verify(activityStarter).startActivity(captor.capture(), eq(true))
-
-        assertThat(captor.value.action).isEqualTo(ACTION_MEDIA_CONTROLS_SETTINGS)
-    }
-
-    @Test
-    fun recommendations_dismissButtonClick() {
-        val mediaKey = "key for dismissal"
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData.copy(targetId = mediaKey))
-
-        assertThat(dismiss.isEnabled).isEqualTo(true)
-        dismiss.callOnClick()
-        verify(logger).logLongPressDismiss(anyInt(), eq(PACKAGE), eq(instanceId))
-        verify(mediaDataManager).dismissSmartspaceRecommendation(eq(mediaKey), anyLong())
-    }
-
-    @Test
-    fun recommendation_gutsOpen_contentDescriptionIsForGuts() {
-        whenever(mediaViewController.isGutsVisible).thenReturn(true)
-        player.attachRecommendation(recommendationViewHolder)
-
-        val gutsTextString = "gutsText"
-        whenever(gutsText.text).thenReturn(gutsTextString)
-        player.bindRecommendation(smartspaceData)
-
-        val descriptionCaptor = ArgumentCaptor.forClass(CharSequence::class.java)
-        verify(viewHolder.player).contentDescription = descriptionCaptor.capture()
-        val description = descriptionCaptor.value.toString()
-
-        assertThat(description).isEqualTo(gutsTextString)
-    }
-
-    @Test
-    fun recommendation_gutsClosed_contentDescriptionIsForPlayer() {
-        whenever(mediaViewController.isGutsVisible).thenReturn(false)
-        player.attachRecommendation(recommendationViewHolder)
-
-        player.bindRecommendation(smartspaceData)
-
-        val descriptionCaptor = ArgumentCaptor.forClass(CharSequence::class.java)
-        verify(viewHolder.player).contentDescription = descriptionCaptor.capture()
-        val description = descriptionCaptor.value.toString()
-
-        assertThat(description)
-            .isEqualTo(context.getString(R.string.controls_media_smartspace_rec_header))
-    }
-
-    @Test
-    fun recommendation_gutsChangesFromOpenToClosed_contentDescriptionUpdated() {
-        // Start out open
-        whenever(mediaViewController.isGutsVisible).thenReturn(true)
-        whenever(gutsText.text).thenReturn("gutsText")
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        // Update to closed by long pressing
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(viewHolder.player).onLongClickListener = captor.capture()
-        reset(viewHolder.player)
-
-        whenever(mediaViewController.isGutsVisible).thenReturn(false)
-        captor.value.onLongClick(viewHolder.player)
-
-        // Then content description is now the player content description
-        val descriptionCaptor = ArgumentCaptor.forClass(CharSequence::class.java)
-        verify(viewHolder.player).contentDescription = descriptionCaptor.capture()
-        val description = descriptionCaptor.value.toString()
-
-        assertThat(description)
-            .isEqualTo(context.getString(R.string.controls_media_smartspace_rec_header))
-    }
-
-    @Test
-    fun recommendation_gutsChangesFromClosedToOpen_contentDescriptionUpdated() {
-        // Start out closed
-        whenever(mediaViewController.isGutsVisible).thenReturn(false)
-        val gutsTextString = "gutsText"
-        whenever(gutsText.text).thenReturn(gutsTextString)
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        // Update to open by long pressing
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(viewHolder.player).onLongClickListener = captor.capture()
-        reset(viewHolder.player)
-
-        whenever(mediaViewController.isGutsVisible).thenReturn(true)
-        captor.value.onLongClick(viewHolder.player)
-
-        // Then content description is now the guts content description
-        val descriptionCaptor = ArgumentCaptor.forClass(CharSequence::class.java)
-        verify(viewHolder.player).contentDescription = descriptionCaptor.capture()
-        val description = descriptionCaptor.value.toString()
-
-        assertThat(description).isEqualTo(gutsTextString)
-    }
-
-    /* ***** END guts tests for the recommendations ***** */
-
     @Test
     fun actionPlayPauseClick_isLogged() {
         val semanticActions =
@@ -1701,7 +1628,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 1"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 2"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 3"),
-                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4")
+                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4"),
             )
         val data = mediaData.copy(actions = actions)
 
@@ -1720,7 +1647,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 1"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 2"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 3"),
-                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4")
+                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4"),
             )
         val data = mediaData.copy(actions = actions)
 
@@ -1739,7 +1666,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 1"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 2"),
                 MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 3"),
-                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4")
+                MediaNotificationAction(true, actionIntent = pendingIntent, null, "action 4"),
             )
         val data = mediaData.copy(actions = actions)
 
@@ -1786,7 +1713,6 @@ public class MediaControlPanelTest : SysuiTestCase() {
         verify(logger).logSeek(anyInt(), eq(PACKAGE), eq(instanceId))
     }
 
-    @EnableFlags(Flags.FLAG_MEDIA_LOCKSCREEN_LAUNCH_ANIMATION)
     @Test
     fun tapContentView_showOverLockscreen_openActivity_withOriginAnimation() {
         // WHEN we are on lockscreen and this activity can show over lockscreen
@@ -1818,30 +1744,6 @@ public class MediaControlPanelTest : SysuiTestCase() {
         verify(activityStarter, never()).postStartActivityDismissingKeyguard(eq(clickIntent), any())
     }
 
-    @DisableFlags(Flags.FLAG_MEDIA_LOCKSCREEN_LAUNCH_ANIMATION)
-    @Test
-    fun tapContentView_showOverLockscreen_openActivity_withoutOriginAnimation() {
-        // WHEN we are on lockscreen and this activity can show over lockscreen
-        whenever(keyguardStateController.isShowing).thenReturn(true)
-        whenever(activityIntentHelper.wouldPendingShowOverLockscreen(any(), any())).thenReturn(true)
-
-        val clickIntent = mock(Intent::class.java)
-        val pendingIntent = mock(PendingIntent::class.java)
-        whenever(pendingIntent.intent).thenReturn(clickIntent)
-        val captor = ArgumentCaptor.forClass(View.OnClickListener::class.java)
-        val data = mediaData.copy(clickIntent = pendingIntent)
-        player.attachPlayer(viewHolder)
-        player.bindPlayer(data, KEY)
-        verify(viewHolder.player).setOnClickListener(captor.capture())
-
-        // THEN it sends the PendingIntent without dismissing keyguard first,
-        // and does not use the Intent directly (see b/271845008)
-        captor.value.onClick(viewHolder.player)
-        verify(pendingIntent).send(any<Bundle>())
-        verify(pendingIntent, never()).getIntent()
-        verify(activityStarter, never()).postStartActivityDismissingKeyguard(eq(clickIntent), any())
-    }
-
     @Test
     fun tapContentView_noShowOverLockscreen_dismissKeyguard() {
         // WHEN we are on lockscreen and the activity cannot show over lockscreen
@@ -1864,578 +1766,6 @@ public class MediaControlPanelTest : SysuiTestCase() {
     }
 
     @Test
-    fun recommendation_gutsClosed_longPressOpens() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-        whenever(mediaViewController.isGutsVisible).thenReturn(false)
-
-        val captor = ArgumentCaptor.forClass(View.OnLongClickListener::class.java)
-        verify(recommendationViewHolder.recommendations).setOnLongClickListener(captor.capture())
-
-        captor.value.onLongClick(recommendationViewHolder.recommendations)
-        verify(mediaViewController).openGuts()
-        verify(logger).logLongPressOpen(anyInt(), eq(PACKAGE), eq(instanceId))
-    }
-
-    @Test
-    fun recommendation_settingsButtonClick_isLogged() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        settings.callOnClick()
-        verify(logger).logLongPressSettings(anyInt(), eq(PACKAGE), eq(instanceId))
-
-        val captor = ArgumentCaptor.forClass(Intent::class.java)
-        verify(activityStarter).startActivity(captor.capture(), eq(true))
-
-        assertThat(captor.value.action).isEqualTo(ACTION_MEDIA_CONTROLS_SETTINGS)
-    }
-
-    @Test
-    fun recommendation_dismissButton_isLogged() {
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        dismiss.callOnClick()
-        verify(logger).logLongPressDismiss(anyInt(), eq(PACKAGE), eq(instanceId))
-    }
-
-    @Test
-    fun recommendation_tapOnCard_isLogged() {
-        val captor = ArgumentCaptor.forClass(View.OnClickListener::class.java)
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        verify(recommendationViewHolder.recommendations).setOnClickListener(captor.capture())
-        captor.value.onClick(recommendationViewHolder.recommendations)
-
-        verify(logger).logRecommendationCardTap(eq(PACKAGE), eq(instanceId))
-    }
-
-    @Test
-    fun recommendation_tapOnItem_isLogged() {
-        val captor = ArgumentCaptor.forClass(View.OnClickListener::class.java)
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(smartspaceData)
-
-        verify(coverContainer1).setOnClickListener(captor.capture())
-        captor.value.onClick(recommendationViewHolder.recommendations)
-
-        verify(logger).logRecommendationItemTap(eq(PACKAGE), eq(instanceId), eq(0))
-    }
-
-    @Test
-    fun bindRecommendation_listHasTooFewRecs_notDisplayed() {
-        player.attachRecommendation(recommendationViewHolder)
-        val icon =
-            Icon.createWithResource(context, com.android.settingslib.R.drawable.ic_1x_mobiledata)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle2")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                    )
-            )
-
-        player.bindRecommendation(data)
-
-        assertThat(recTitle1.text).isEqualTo("")
-        verify(mediaViewController, never()).refreshState()
-    }
-
-    @Test
-    fun bindRecommendation_listHasTooFewRecsWithIcons_notDisplayed() {
-        player.attachRecommendation(recommendationViewHolder)
-        val icon =
-            Icon.createWithResource(context, com.android.settingslib.R.drawable.ic_1x_mobiledata)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle2")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "empty icon 1")
-                            .setSubtitle("subtitle2")
-                            .setIcon(null)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "empty icon 2")
-                            .setSubtitle("subtitle2")
-                            .setIcon(null)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                    )
-            )
-
-        player.bindRecommendation(data)
-
-        assertThat(recTitle1.text).isEqualTo("")
-        verify(mediaViewController, never()).refreshState()
-    }
-
-    @Test
-    fun bindRecommendation_hasTitlesAndSubtitles() {
-        player.attachRecommendation(recommendationViewHolder)
-
-        val title1 = "Title1"
-        val title2 = "Title2"
-        val title3 = "Title3"
-        val subtitle1 = "Subtitle1"
-        val subtitle2 = "Subtitle2"
-        val subtitle3 = "Subtitle3"
-        val icon =
-            Icon.createWithResource(context, com.android.settingslib.R.drawable.ic_1x_mobiledata)
-
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", title1)
-                            .setSubtitle(subtitle1)
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", title2)
-                            .setSubtitle(subtitle2)
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", title3)
-                            .setSubtitle(subtitle3)
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-        player.bindRecommendation(data)
-
-        assertThat(recTitle1.text).isEqualTo(title1)
-        assertThat(recTitle2.text).isEqualTo(title2)
-        assertThat(recTitle3.text).isEqualTo(title3)
-        assertThat(recSubtitle1.text).isEqualTo(subtitle1)
-        assertThat(recSubtitle2.text).isEqualTo(subtitle2)
-        assertThat(recSubtitle3.text).isEqualTo(subtitle3)
-    }
-
-    @Test
-    fun bindRecommendation_noTitle_subtitleNotShown() {
-        player.attachRecommendation(recommendationViewHolder)
-
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "")
-                            .setSubtitle("fake subtitle")
-                            .setIcon(
-                                Icon.createWithResource(
-                                    context,
-                                    com.android.settingslib.R.drawable.ic_1x_mobiledata
-                                )
-                            )
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-        player.bindRecommendation(data)
-
-        assertThat(recSubtitle1.text).isEqualTo("")
-    }
-
-    @Test
-    fun bindRecommendation_someHaveTitles_allTitleViewsShown() {
-        useRealConstraintSets()
-        player.attachRecommendation(recommendationViewHolder)
-
-        val icon =
-            Icon.createWithResource(context, com.android.settingslib.R.drawable.ic_1x_mobiledata)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "")
-                            .setSubtitle("fake subtitle")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("fake subtitle")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "")
-                            .setSubtitle("fake subtitle")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-        player.bindRecommendation(data)
-
-        assertThat(expandedSet.getVisibility(recTitle1.id)).isEqualTo(ConstraintSet.VISIBLE)
-        assertThat(expandedSet.getVisibility(recTitle2.id)).isEqualTo(ConstraintSet.VISIBLE)
-        assertThat(expandedSet.getVisibility(recTitle3.id)).isEqualTo(ConstraintSet.VISIBLE)
-    }
-
-    @Test
-    fun bindRecommendation_someHaveSubtitles_allSubtitleViewsShown() {
-        useRealConstraintSets()
-        player.attachRecommendation(recommendationViewHolder)
-
-        val icon =
-            Icon.createWithResource(context, com.android.settingslib.R.drawable.ic_1x_mobiledata)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "")
-                            .setSubtitle("")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle2")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("")
-                            .setIcon(icon)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-        player.bindRecommendation(data)
-
-        assertThat(expandedSet.getVisibility(recSubtitle1.id)).isEqualTo(ConstraintSet.VISIBLE)
-        assertThat(expandedSet.getVisibility(recSubtitle2.id)).isEqualTo(ConstraintSet.VISIBLE)
-        assertThat(expandedSet.getVisibility(recSubtitle3.id)).isEqualTo(ConstraintSet.VISIBLE)
-    }
-
-    @Test
-    fun bindRecommendation_noneHaveSubtitles_subtitleViewsGone() {
-        useRealConstraintSets()
-        player.attachRecommendation(recommendationViewHolder)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("")
-                            .setIcon(
-                                Icon.createWithResource(
-                                    context,
-                                    com.android.settingslib.R.drawable.ic_1x_mobiledata
-                                )
-                            )
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("")
-                            .setIcon(Icon.createWithResource(context, R.drawable.ic_alarm))
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("")
-                            .setIcon(
-                                Icon.createWithResource(
-                                    context,
-                                    com.android.settingslib.R.drawable.ic_3g_mobiledata
-                                )
-                            )
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        player.bindRecommendation(data)
-
-        assertThat(expandedSet.getVisibility(recSubtitle1.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recSubtitle2.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recSubtitle3.id)).isEqualTo(ConstraintSet.GONE)
-    }
-
-    @Test
-    fun bindRecommendation_noneHaveTitles_titleAndSubtitleViewsGone() {
-        useRealConstraintSets()
-        player.attachRecommendation(recommendationViewHolder)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "")
-                            .setSubtitle("subtitle1")
-                            .setIcon(
-                                Icon.createWithResource(
-                                    context,
-                                    com.android.settingslib.R.drawable.ic_1x_mobiledata
-                                )
-                            )
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "")
-                            .setSubtitle("subtitle2")
-                            .setIcon(Icon.createWithResource(context, R.drawable.ic_alarm))
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "")
-                            .setSubtitle("subtitle3")
-                            .setIcon(
-                                Icon.createWithResource(
-                                    context,
-                                    com.android.settingslib.R.drawable.ic_3g_mobiledata
-                                )
-                            )
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        player.bindRecommendation(data)
-
-        assertThat(expandedSet.getVisibility(recTitle1.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recTitle2.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recTitle3.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recSubtitle1.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recSubtitle2.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(expandedSet.getVisibility(recSubtitle3.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recTitle1.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recTitle2.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recTitle3.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recSubtitle1.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recSubtitle2.id)).isEqualTo(ConstraintSet.GONE)
-        assertThat(collapsedSet.getVisibility(recSubtitle3.id)).isEqualTo(ConstraintSet.GONE)
-    }
-
-    @Test
-    fun bindRecommendation_setAfterExecutors() {
-        val albumArt = getColorIcon(Color.RED)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(data)
-        bgExecutor.runAllReady()
-        mainExecutor.runAllReady()
-
-        verify(recCardTitle).setTextColor(any<Int>())
-        verify(recAppIconItem, times(3)).setImageDrawable(any<Drawable>())
-        verify(coverItem, times(3)).setImageDrawable(any<Drawable>())
-        verify(coverItem, times(3)).imageMatrix = any()
-    }
-
-    @Test
-    fun bindRecommendationWithProgressBars() {
-        useRealConstraintSets()
-        val albumArt = getColorIcon(Color.RED)
-        val bundle =
-            Bundle().apply {
-                putInt(
-                    MediaConstants.DESCRIPTION_EXTRAS_KEY_COMPLETION_STATUS,
-                    MediaConstants.DESCRIPTION_EXTRAS_VALUE_COMPLETION_STATUS_PARTIALLY_PLAYED
-                )
-                putDouble(MediaConstants.DESCRIPTION_EXTRAS_KEY_COMPLETION_PERCENTAGE, 0.5)
-            }
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(bundle)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(data)
-
-        verify(recProgressBar1).setProgress(50)
-        verify(recProgressBar1).visibility = View.VISIBLE
-        verify(recProgressBar2).visibility = View.GONE
-        verify(recProgressBar3).visibility = View.GONE
-        assertThat(recSubtitle1.visibility).isEqualTo(View.GONE)
-        assertThat(recSubtitle2.visibility).isEqualTo(View.VISIBLE)
-        assertThat(recSubtitle3.visibility).isEqualTo(View.VISIBLE)
-    }
-
-    @Test
-    fun bindRecommendation_carouselNotFitThreeRecs_OrientationPortrait() {
-        useRealConstraintSets()
-        val albumArt = getColorIcon(Color.RED)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        // set the screen width less than the width of media controls.
-        player.context.resources.configuration.screenWidthDp = 350
-        player.context.resources.configuration.orientation = Configuration.ORIENTATION_PORTRAIT
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(data)
-
-        val res = player.context.resources
-        val displayAvailableWidth =
-            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 350f, res.displayMetrics).toInt()
-        val recCoverWidth: Int =
-            (res.getDimensionPixelSize(R.dimen.qs_media_rec_album_width) +
-                res.getDimensionPixelSize(R.dimen.qs_media_info_spacing) * 2)
-        val numOfRecs = displayAvailableWidth / recCoverWidth
-
-        assertThat(player.numberOfFittedRecommendations).isEqualTo(numOfRecs)
-        recommendationViewHolder.mediaCoverContainers.forEachIndexed { index, container ->
-            if (index < numOfRecs) {
-                assertThat(expandedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.VISIBLE)
-                assertThat(collapsedSet.getVisibility(container.id))
-                    .isEqualTo(ConstraintSet.VISIBLE)
-            } else {
-                assertThat(expandedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.GONE)
-                assertThat(collapsedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.GONE)
-            }
-        }
-    }
-
-    @Test
-    fun bindRecommendation_carouselNotFitThreeRecs_OrientationLandscape() {
-        useRealConstraintSets()
-        val albumArt = getColorIcon(Color.RED)
-        val data =
-            smartspaceData.copy(
-                recommendations =
-                    listOf(
-                        SmartspaceAction.Builder("id1", "title1")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id2", "title2")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build(),
-                        SmartspaceAction.Builder("id3", "title3")
-                            .setSubtitle("subtitle1")
-                            .setIcon(albumArt)
-                            .setExtras(Bundle.EMPTY)
-                            .build()
-                    )
-            )
-
-        // set the screen width less than the width of media controls.
-        // We should have dp width less than 378 to test. In landscape we should have 2x.
-        player.context.resources.configuration.screenWidthDp = 700
-        player.context.resources.configuration.orientation = Configuration.ORIENTATION_LANDSCAPE
-        player.attachRecommendation(recommendationViewHolder)
-        player.bindRecommendation(data)
-
-        val res = player.context.resources
-        val displayAvailableWidth =
-            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 350f, res.displayMetrics).toInt()
-        val recCoverWidth: Int =
-            (res.getDimensionPixelSize(R.dimen.qs_media_rec_album_width) +
-                res.getDimensionPixelSize(R.dimen.qs_media_info_spacing) * 2)
-        val numOfRecs = displayAvailableWidth / recCoverWidth
-
-        assertThat(player.numberOfFittedRecommendations).isEqualTo(numOfRecs)
-        recommendationViewHolder.mediaCoverContainers.forEachIndexed { index, container ->
-            if (index < numOfRecs) {
-                assertThat(expandedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.VISIBLE)
-                assertThat(collapsedSet.getVisibility(container.id))
-                    .isEqualTo(ConstraintSet.VISIBLE)
-            } else {
-                assertThat(expandedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.GONE)
-                assertThat(collapsedSet.getVisibility(container.id)).isEqualTo(ConstraintSet.GONE)
-            }
-        }
-    }
-
-    @Test
-    fun addTwoRecommendationGradients_differentStates() {
-        // Setup redArtwork and its color scheme.
-        val redArt = getColorIcon(Color.RED)
-        val redWallpaperColor = player.getWallpaperColor(redArt)
-        val redColorScheme = ColorScheme(redWallpaperColor, true, Style.CONTENT)
-
-        // Setup greenArt and its color scheme.
-        val greenArt = getColorIcon(Color.GREEN)
-        val greenWallpaperColor = player.getWallpaperColor(greenArt)
-        val greenColorScheme = ColorScheme(greenWallpaperColor, true, Style.CONTENT)
-
-        // Add gradient to both icons.
-        val redArtwork = player.addGradientToRecommendationAlbum(redArt, redColorScheme, 10, 10)
-        val greenArtwork =
-            player.addGradientToRecommendationAlbum(greenArt, greenColorScheme, 10, 10)
-
-        // They should have different constant states as they have different gradient color.
-        assertThat(redArtwork.getDrawable(1).constantState)
-            .isNotEqualTo(greenArtwork.getDrawable(1).constantState)
-    }
-
-    @Test
     fun onButtonClick_playsTouchRipple() {
         val semanticActions =
             MediaButton(
@@ -2444,7 +1774,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         icon = null,
                         action = {},
                         contentDescription = "play",
-                        background = null
+                        background = null,
                     )
             )
         val data = mediaData.copy(semanticActions = semanticActions)
@@ -2465,7 +1795,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         icon = null,
                         action = {},
                         contentDescription = "play",
-                        background = null
+                        background = null,
                     )
             )
         val data = mediaData.copy(semanticActions = semanticActions)
@@ -2498,7 +1828,7 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         icon = null,
                         action = {},
                         contentDescription = "play",
-                        background = null
+                        background = null,
                     )
             )
         val data = mediaData.copy(semanticActions = semanticActions)
@@ -2530,8 +1860,8 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         icon = null,
                         action = {},
                         contentDescription = "custom0",
-                        background = null
-                    ),
+                        background = null,
+                    )
             )
         val data = mediaData.copy(semanticActions = semanticActions)
         player.attachPlayer(viewHolder)
@@ -2553,8 +1883,8 @@ public class MediaControlPanelTest : SysuiTestCase() {
                         icon = null,
                         action = {},
                         contentDescription = "custom0",
-                        background = null
-                    ),
+                        background = null,
+                    )
             )
         val data = mediaData.copy(semanticActions = semanticActions)
         player.attachPlayer(viewHolder)
@@ -2608,6 +1938,89 @@ public class MediaControlPanelTest : SysuiTestCase() {
         verify(activityStarter).postStartActivityDismissingKeyguard(eq(pendingIntent))
     }
 
+    @RequiresFlagsEnabled(Flags.FLAG_MEDIA_CAROUSEL_ARROWS)
+    @Test
+    fun bindPageArrows() {
+        player.attachPlayer(viewHolder)
+        player.bindPlayer(mediaData, PACKAGE)
+
+        viewHolder.pageLeft.callOnClick()
+        verify(mediaCarouselScrollHandler).scrollByStep(eq(-1))
+
+        viewHolder.pageRight.callOnClick()
+        verify(mediaCarouselScrollHandler).scrollByStep(eq(1))
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_MEDIA_CAROUSEL_ARROWS)
+    @Test
+    fun setArrowsVisible() {
+        val guidePx =
+            context.resources.getDimensionPixelSize(
+                R.dimen.qs_media_session_collapsed_guideline_with_arrows
+            )
+
+        player.attachPlayer(viewHolder)
+        player.bindPlayer(mediaData, PACKAGE)
+
+        player.setPageArrowsVisible(true)
+
+        verify(expandedSet).setVisibility(R.id.page_left, ConstraintSet.VISIBLE)
+        verify(expandedSet).setVisibility(R.id.page_right, ConstraintSet.VISIBLE)
+
+        verify(collapsedSet).setVisibility(R.id.page_left, ConstraintSet.VISIBLE)
+        verify(collapsedSet).setVisibility(R.id.page_right, ConstraintSet.VISIBLE)
+        verify(collapsedSet).setGuidelineEnd(eq(R.id.action_button_guideline), eq(guidePx))
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_MEDIA_CAROUSEL_ARROWS)
+    @Test
+    fun setArrowsVisible_alreadyVisible_noOp() {
+        setArrowsVisible()
+
+        // If same visibility is set again, does not update the constraints again
+        player.setPageArrowsVisible(true)
+        verify(expandedSet).setVisibility(R.id.page_left, ConstraintSet.VISIBLE)
+        verify(expandedSet).setVisibility(R.id.page_right, ConstraintSet.VISIBLE)
+
+        verify(collapsedSet).setVisibility(R.id.page_left, ConstraintSet.VISIBLE)
+        verify(collapsedSet).setVisibility(R.id.page_right, ConstraintSet.VISIBLE)
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_MEDIA_CAROUSEL_ARROWS)
+    @Test
+    fun setArrowsNotVisible() {
+        val guidePx =
+            context.resources.getDimensionPixelSize(R.dimen.qs_media_session_collapsed_guideline)
+
+        player.attachPlayer(viewHolder)
+        player.bindPlayer(mediaData, PACKAGE)
+        player.setPageArrowsVisible(true)
+        clearInvocations(expandedSet)
+        clearInvocations(collapsedSet)
+
+        player.setPageArrowsVisible(false)
+
+        verify(expandedSet).setVisibility(R.id.page_left, ConstraintSet.GONE)
+        verify(expandedSet).setVisibility(R.id.page_right, ConstraintSet.GONE)
+
+        verify(collapsedSet).setVisibility(R.id.page_left, ConstraintSet.GONE)
+        verify(collapsedSet).setVisibility(R.id.page_right, ConstraintSet.GONE)
+        verify(collapsedSet).setGuidelineEnd(eq(R.id.action_button_guideline), eq(guidePx))
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_MEDIA_CAROUSEL_ARROWS)
+    @Test
+    fun enablePageArrows() {
+        player.attachPlayer(viewHolder)
+        player.bindPlayer(mediaData, PACKAGE)
+
+        player.setPageLeftEnabled(true)
+        assertThat(viewHolder.pageLeft.isEnabled).isTrue()
+
+        player.setPageRightEnabled(true)
+        assertThat(viewHolder.pageRight.isEnabled).isTrue()
+    }
+
     private fun getColorIcon(color: Int): Icon {
         val bmp = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -2643,4 +2056,19 @@ public class MediaControlPanelTest : SysuiTestCase() {
         whenever(mediaViewController.expandedLayout).thenReturn(expandedSet)
         whenever(mediaViewController.collapsedLayout).thenReturn(collapsedSet)
     }
+
+    private fun createSuggestionData(deviceName: String, state: Int) =
+        SuggestionData(
+            suggestedMediaDeviceData =
+                SuggestedMediaDeviceData(
+                    name = deviceName,
+                    icon = suggestionDrawable,
+                    connectionState = state,
+                    connect = {},
+                ),
+            onSuggestionSpaceVisible =
+                object : Runnable {
+                    override fun run() {}
+                },
+        )
 }

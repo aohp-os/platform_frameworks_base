@@ -58,6 +58,7 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.PackageUserStateInternal;
+import com.android.server.pm.verify.developer.DeveloperVerificationStatusInternal;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -159,8 +160,7 @@ final class InstallRequest {
     @NonNull
     private int[] mUpdateBroadcastInstantUserIds = EMPTY_INT_ARRAY;
 
-    @NonNull
-    private final ArrayList<String> mWarnings = new ArrayList<>();
+    @NonNull private final ArrayList<String> mWarnings;
 
     @Nullable
     private DomainSet mPreVerifiedDomains;
@@ -170,6 +170,10 @@ final class InstallRequest {
     private final boolean mHasAppMetadataFileFromInstaller;
 
     private boolean mKeepArtProfile = false;
+    private final boolean mDependencyInstallerEnabled;
+    private final int mMissingSharedLibraryCount;
+    @Nullable
+    private final DeveloperVerificationStatusInternal mDeveloperVerificationStatus;;
 
     // New install
     InstallRequest(InstallingSession params) {
@@ -190,6 +194,10 @@ final class InstallRequest {
         mRequireUserAction = params.mRequireUserAction;
         mPreVerifiedDomains = params.mPreVerifiedDomains;
         mHasAppMetadataFileFromInstaller = params.mHasAppMetadataFile;
+        mDependencyInstallerEnabled = params.mDependencyInstallerEnabled;
+        mMissingSharedLibraryCount = params.mMissingSharedLibraryCount;
+        mDeveloperVerificationStatus = params.mDeveloperVerificationStatus;
+        mWarnings = new ArrayList<>(params.mWarnings);
     }
 
     // Install existing package as user
@@ -209,6 +217,10 @@ final class InstallRequest {
         mInstallerUidForInstallExisting = installerUid;
         mSystem = isSystem;
         mHasAppMetadataFileFromInstaller = false;
+        mDependencyInstallerEnabled = false;
+        mMissingSharedLibraryCount = 0;
+        mDeveloperVerificationStatus = null;
+        mWarnings = new ArrayList<>();
     }
 
     // addForInit
@@ -231,6 +243,10 @@ final class InstallRequest {
         mRequireUserAction = USER_ACTION_UNSPECIFIED;
         mDisabledPs = disabledPs;
         mHasAppMetadataFileFromInstaller = false;
+        mDependencyInstallerEnabled = false;
+        mMissingSharedLibraryCount = 0;
+        mDeveloperVerificationStatus = null;
+        mWarnings = new ArrayList<>();
     }
 
     @Nullable
@@ -318,12 +334,6 @@ final class InstallRequest {
     public File getOldCodeFile() {
         return (mRemovedInfo != null && mRemovedInfo.mArgs != null)
                 ? mRemovedInfo.mArgs.getCodeFile() : null;
-    }
-
-    @Nullable
-    public String[] getOldInstructionSet() {
-        return (mRemovedInfo != null && mRemovedInfo.mArgs != null)
-                ? mRemovedInfo.mArgs.getInstructionSets() : null;
     }
 
     public UserHandle getUser() {
@@ -584,12 +594,6 @@ final class InstallRequest {
         return mScanResult.mRequest.mRealPkgName;
     }
 
-    @Nullable
-    public List<String> getChangedAbiCodePath() {
-        assertScanResultExists();
-        return mScanResult.mChangedAbiCodePath;
-    }
-
     public boolean isApplicationEnabledSettingPersistent() {
         return mInstallArgs == null ? false : mInstallArgs.mApplicationEnabledSettingPersistent;
     }
@@ -634,20 +638,6 @@ final class InstallRequest {
     public PackageSetting getScannedPackageSetting() {
         assertScanResultExists();
         return mScanResult.mPkgSetting;
-    }
-
-    @Nullable
-    public PackageSetting getRealPackageSetting() {
-        // TODO: Fix this to have 1 mutable PackageSetting for scan/install. If the previous
-        //  setting needs to be passed to have a comparison, hide it behind an immutable
-        //  interface. There's no good reason to have 3 different ways to access the real
-        //  PackageSetting object, only one of which is actually correct.
-        PackageSetting realPkgSetting = isExistingSettingCopied()
-                ? getScanRequestPackageSetting() : getScannedPackageSetting();
-        if (realPkgSetting == null) {
-            realPkgSetting = getScannedPackageSetting();
-        }
-        return realPkgSetting;
     }
 
     public boolean isExistingSettingCopied() {
@@ -875,6 +865,9 @@ final class InstallRequest {
     public void setScannedPackageSettingFirstInstallTimeFromReplaced(
             @Nullable PackageStateInternal replacedPkgSetting, int[] userId) {
         assertScanResultExists();
+        if (replacedPkgSetting == null) {
+            return;
+        }
         mScanResult.mPkgSetting.setFirstInstallTimeFromReplaced(replacedPkgSetting, userId);
     }
 
@@ -1008,6 +1001,30 @@ final class InstallRequest {
         }
     }
 
+    public void onRestoreStarted() {
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onStepStarted(PackageMetrics.STEP_RESTORE);
+        }
+    }
+
+    public void onRestoreFinished() {
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onStepFinished(PackageMetrics.STEP_RESTORE);
+        }
+    }
+
+    public void onWaitDexoptStarted() {
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onStepStarted(PackageMetrics.STEP_WAIT_DEXOPT);
+        }
+    }
+
+    public void onWaitDexoptFinished() {
+        if (mPackageMetrics != null) {
+            mPackageMetrics.onStepFinished(PackageMetrics.STEP_WAIT_DEXOPT);
+        }
+    }
+
     public void onDexoptFinished(DexoptResult dexoptResult) {
         // Only report external profile warnings when installing from adb. The goal is to warn app
         // developers if they have provided bad external profiles, so it's not beneficial to report
@@ -1068,5 +1085,17 @@ final class InstallRequest {
 
     boolean isKeepArtProfile() {
         return mKeepArtProfile;
+    }
+
+    int getMissingSharedLibraryCount() {
+        return mMissingSharedLibraryCount;
+    }
+
+    boolean isDependencyInstallerEnabled() {
+        return mDependencyInstallerEnabled;
+    }
+
+    DeveloperVerificationStatusInternal getDeveloperVerificationStatus() {
+        return mDeveloperVerificationStatus;
     }
 }

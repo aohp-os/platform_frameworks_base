@@ -204,7 +204,7 @@ class TransparentPolicy {
             return true;
         }
         final AppCompatSizeCompatModePolicy scmPolicy = mActivityRecord.mAppCompatController
-                .getAppCompatSizeCompatModePolicy();
+                .getSizeCompatModePolicy();
         if (mActivityRecord.getTask() == null || mActivityRecord.fillsParent()
                 || scmPolicy.hasAppCompatDisplayInsetsWithoutInheritance()) {
             return true;
@@ -337,9 +337,6 @@ class TransparentPolicy {
             final Task task = mActivityRecord.getTask();
             if (task == null || task.getWindowingMode() == WINDOWING_MODE_FREEFORM) {
                 return false;
-            }
-            if (!mActivityRecord.mWmService.mFlags.mRespectNonTopVisibleFixedOrientation) {
-                return true;
             }
             // Do not enable the policy if the activity can affect display orientation.
             final int orientation = mActivityRecord.getOverrideOrientation();

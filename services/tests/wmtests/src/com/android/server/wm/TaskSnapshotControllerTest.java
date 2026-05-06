@@ -28,11 +28,14 @@ import static com.android.server.wm.TaskSnapshotController.SNAPSHOT_MODE_REAL;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,12 +49,10 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.platform.test.annotations.Presubmit;
-import android.util.ArraySet;
 import android.window.TaskSnapshot;
+import android.window.TaskSnapshotManager;
 
 import androidx.test.filters.SmallTest;
-
-import com.google.android.collect.Sets;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -69,79 +70,20 @@ import org.mockito.Mockito;
 public class TaskSnapshotControllerTest extends WindowTestsBase {
 
     @Test
-    public void testGetClosingApps_closing() {
-        final WindowState closingWindow = createWindow(null, FIRST_APPLICATION_WINDOW,
-                "closingWindow");
-        closingWindow.mActivityRecord.commitVisibility(
-                false /* visible */, true /* performLayout */);
-        final ArraySet<ActivityRecord> closingApps = new ArraySet<>();
-        closingApps.add(closingWindow.mActivityRecord);
-        final ArraySet<Task> closingTasks = new ArraySet<>();
-        getClosingTasks(closingApps, closingTasks);
-        assertEquals(1, closingTasks.size());
-        assertEquals(closingWindow.mActivityRecord.getTask(), closingTasks.valueAt(0));
-    }
-
-    @Test
-    public void testGetClosingApps_notClosing() {
-        final WindowState closingWindow = createWindow(null, FIRST_APPLICATION_WINDOW,
-                "closingWindow");
-        final WindowState openingWindow = createAppWindow(closingWindow.getTask(),
-                FIRST_APPLICATION_WINDOW, "openingWindow");
-        closingWindow.mActivityRecord.commitVisibility(
-                false /* visible */, true /* performLayout */);
-        openingWindow.mActivityRecord.commitVisibility(
-                true /* visible */, true /* performLayout */);
-        final ArraySet<ActivityRecord> closingApps = new ArraySet<>();
-        closingApps.add(closingWindow.mActivityRecord);
-        final ArraySet<Task> closingTasks = new ArraySet<>();
-        getClosingTasks(closingApps, closingTasks);
-        assertEquals(0, closingTasks.size());
-    }
-
-    @Test
-    public void testGetClosingApps_skipClosingAppsSnapshotTasks() {
-        final WindowState closingWindow = createWindow(null, FIRST_APPLICATION_WINDOW,
-                "closingWindow");
-        closingWindow.mActivityRecord.commitVisibility(
-                false /* visible */, true /* performLayout */);
-        final ArraySet<ActivityRecord> closingApps = new ArraySet<>();
-        closingApps.add(closingWindow.mActivityRecord);
-        final ArraySet<Task> closingTasks = new ArraySet<>();
-        mWm.mTaskSnapshotController.addSkipClosingAppSnapshotTasks(
-                Sets.newArraySet(closingWindow.mActivityRecord.getTask()));
-        getClosingTasks(closingApps, closingTasks);
-        assertEquals(0, closingTasks.size());
-    }
-
-    /** Retrieves all closing tasks based on the list of closing apps during an app transition. */
-    private void getClosingTasks(ArraySet<ActivityRecord> closingApps,
-            ArraySet<Task> outClosingTasks) {
-        outClosingTasks.clear();
-        for (int i = closingApps.size() - 1; i >= 0; i--) {
-            final ActivityRecord activity = closingApps.valueAt(i);
-            final Task task = activity.getTask();
-            if (task == null) continue;
-
-            mWm.mTaskSnapshotController.getClosingTasksInner(task, outClosingTasks);
-        }
-    }
-
-    @Test
     public void testGetSnapshotMode() {
-        final WindowState disabledWindow = createWindow(null,
-                FIRST_APPLICATION_WINDOW, mDisplayContent, "disabledWindow");
+        final WindowState disabledWindow = newWindowBuilder("disabledWindow",
+                FIRST_APPLICATION_WINDOW).setDisplay(mDisplayContent).build();
         disabledWindow.mActivityRecord.setRecentsScreenshotEnabled(false);
         assertEquals(SNAPSHOT_MODE_APP_THEME,
                 mWm.mTaskSnapshotController.getSnapshotMode(disabledWindow.getTask()));
 
-        final WindowState normalWindow = createWindow(null,
-                FIRST_APPLICATION_WINDOW, mDisplayContent, "normalWindow");
+        final WindowState normalWindow = newWindowBuilder("normalWindow",
+                FIRST_APPLICATION_WINDOW).setDisplay(mDisplayContent).build();
         assertEquals(SNAPSHOT_MODE_REAL,
                 mWm.mTaskSnapshotController.getSnapshotMode(normalWindow.getTask()));
 
-        final WindowState secureWindow = createWindow(null,
-                FIRST_APPLICATION_WINDOW, mDisplayContent, "secureWindow");
+        final WindowState secureWindow = newWindowBuilder("secureWindow",
+                FIRST_APPLICATION_WINDOW).setDisplay(mDisplayContent).build();
         secureWindow.mAttrs.flags |= FLAG_SECURE;
         assertEquals(SNAPSHOT_MODE_APP_THEME,
                 mWm.mTaskSnapshotController.getSnapshotMode(secureWindow.getTask()));
@@ -170,6 +112,7 @@ public class TaskSnapshotControllerTest extends WindowTestsBase {
         final Rect contentInsets = new Rect(1, 2, 3, 4);
         final Rect letterboxInsets = new Rect(5, 6, 7, 8);
         final Point taskSize = new Point(9, 10);
+        final int densityDpi = 400;
 
         try {
             TaskSnapshot.Builder builder =
@@ -187,6 +130,7 @@ public class TaskSnapshotControllerTest extends WindowTestsBase {
             builder.setIsRealSnapshot(true);
             builder.setPixelFormat(pixelFormat);
             builder.setTaskSize(taskSize);
+            builder.setDensityDpi(densityDpi);
 
             // Not part of TaskSnapshot itself, used in screenshot process
             assertEquals(pixelFormat, builder.getPixelFormat());
@@ -204,9 +148,10 @@ public class TaskSnapshotControllerTest extends WindowTestsBase {
             assertEquals(contentInsets, snapshot.getContentInsets());
             assertEquals(letterboxInsets, snapshot.getLetterboxInsets());
             assertTrue(snapshot.isTranslucent());
-            assertSame(buffer, snapshot.getHardwareBuffer());
+            assertTrue(snapshot.isSameHardwareBuffer(buffer));
             assertTrue(snapshot.isRealSnapshot());
             assertEquals(taskSize, snapshot.getTaskSize());
+            assertEquals(densityDpi, snapshot.getDensityDpi());
         } finally {
             if (buffer != null) {
                 buffer.close();
@@ -267,7 +212,6 @@ public class TaskSnapshotControllerTest extends WindowTestsBase {
         mAppWindow.mWinAnimator.mLastAlpha = 1f;
         spyOn(mAppWindow.mWinAnimator);
         doReturn(true).when(mAppWindow.mWinAnimator).getShown();
-        doReturn(true).when(mAppWindow.mActivityRecord).isSurfaceShowing();
 
         final TaskSnapshot.Builder builder =
                 new TaskSnapshot.Builder();
@@ -284,5 +228,77 @@ public class TaskSnapshotControllerTest extends WindowTestsBase {
                 mAppWindow.mActivityRecord.getTask(), builder) != null;
 
         assertFalse(success);
+    }
+
+    @Test
+    public void testRecordTaskSnapshot() {
+        spyOn(mWm.mTaskSnapshotController.mCache);
+        spyOn(mWm.mTaskSnapshotController);
+        doReturn(false).when(mWm.mTaskSnapshotController).shouldDisableSnapshots();
+
+        final WindowState normalWindow = newWindowBuilder("normalWindow",
+                FIRST_APPLICATION_WINDOW).setDisplay(mDisplayContent).build();
+        final TaskSnapshot snapshot = new TaskSnapshotPersisterTestBase.TaskSnapshotBuilder()
+                .setTopActivityComponent(normalWindow.mActivityRecord.mActivityComponent).build();
+        doReturn(snapshot).when(mWm.mTaskSnapshotController).snapshot(any());
+        final Task task = normalWindow.mActivityRecord.getTask();
+        mWm.mTaskSnapshotController.recordSnapshot(task);
+        verify(mWm.mTaskSnapshotController.mCache).putSnapshot(eq(task), any());
+        clearInvocations(mWm.mTaskSnapshotController.mCache);
+
+        normalWindow.mAttrs.flags |= FLAG_SECURE;
+        mWm.mTaskSnapshotController.recordSnapshot(task);
+        waitHandlerIdle(mWm.mH);
+        verify(mWm.mTaskSnapshotController.mCache).putSnapshot(eq(task), any());
+    }
+
+    @Test
+    public void testGetTaskSnapshotFromClient() {
+        spyOn(mWm.mTaskSnapshotController.mCache);
+        spyOn(mWm.mTaskSnapshotController);
+        final long captureTime = 100;
+        final WindowState normalWindow = newWindowBuilder("normalWindow",
+                FIRST_APPLICATION_WINDOW).setDisplay(mDisplayContent).build();
+        final Task task = normalWindow.mActivityRecord.getTask();
+
+        final TaskSnapshot diskSnapshot = new TaskSnapshotPersisterTestBase.TaskSnapshotBuilder()
+                .setTopActivityComponent(normalWindow.mActivityRecord.mActivityComponent)
+                .build();
+        doReturn(diskSnapshot).when(mWm.mTaskSnapshotController)
+                .getSnapshotFromDisk(anyInt(), anyInt(), anyBoolean(), anyInt());
+        doReturn(null).when(mWm.mTaskSnapshotController.mCache)
+                .getSnapshot(anyInt(), anyInt(), anyInt());
+
+        // Client process doesn't has snapshot.
+        TaskSnapshot result = mWm.mSnapshotController.getTaskSnapshotInner(task.mTaskId, task,
+                -1 /* latestCaptureTime */, TaskSnapshotManager.RESOLUTION_ANY);
+        assertEquals(result, diskSnapshot);
+
+        // Put snapshot in cache
+        final TaskSnapshot snapshot = new TaskSnapshotPersisterTestBase.TaskSnapshotBuilder()
+                .setTopActivityComponent(normalWindow.mActivityRecord.mActivityComponent)
+                .setCaptureTime(captureTime).build();
+        doReturn(snapshot).when(mWm.mTaskSnapshotController.mCache)
+                .getSnapshot(anyInt(), anyInt(), anyInt());
+
+        // Client process doesn't has snapshot.
+        result = mWm.mSnapshotController.getTaskSnapshotInner(task.mTaskId, task,
+                -1 /* latestCaptureTime */, TaskSnapshotManager.RESOLUTION_ANY);
+        assertEquals(result, snapshot);
+
+        // Snapshot in client process is older than in system server.
+        result = mWm.mSnapshotController.getTaskSnapshotInner(task.mTaskId, task,
+                captureTime - 10 /* latestCaptureTime */, TaskSnapshotManager.RESOLUTION_ANY);
+        assertEquals(result, snapshot);
+
+        // Snapshot in client process is the same as in system server.
+        result = mWm.mSnapshotController.getTaskSnapshotInner(task.mTaskId, task,
+                captureTime, TaskSnapshotManager.RESOLUTION_ANY);
+        assertNull(result);
+
+        // Snapshot in client process is newer than in system server?
+        result = mWm.mSnapshotController.getTaskSnapshotInner(task.mTaskId, task,
+                captureTime + 10 /* latestCaptureTime */, TaskSnapshotManager.RESOLUTION_ANY);
+        assertNull(result);
     }
 }

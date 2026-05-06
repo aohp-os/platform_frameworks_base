@@ -23,6 +23,8 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SpecialUsers.CanBeALL;
+import android.annotation.SpecialUsers.CanBeCURRENT;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
@@ -223,20 +225,20 @@ public abstract class ContentResolver implements ContentInterface {
     public static final String SYNC_EXTRAS_DISCARD_LOCAL_DELETIONS = "discard_deletions";
 
     /* Extensions to API. TODO: Not clear if we will keep these as public flags. */
-    /** {@hide} User-specified flag for expected upload size. */
+    /** @hide User-specified flag for expected upload size. */
     public static final String SYNC_EXTRAS_EXPECTED_UPLOAD = "expected_upload";
 
-    /** {@hide} User-specified flag for expected download size. */
+    /** @hide User-specified flag for expected download size. */
     public static final String SYNC_EXTRAS_EXPECTED_DOWNLOAD = "expected_download";
 
-    /** {@hide} Priority of this sync with respect to other syncs scheduled for this application. */
+    /** @hide Priority of this sync with respect to other syncs scheduled for this application. */
     public static final String SYNC_EXTRAS_PRIORITY = "sync_priority";
 
-    /** {@hide} Flag to allow sync to occur on metered network. */
+    /** @hide Flag to allow sync to occur on metered network. */
     public static final String SYNC_EXTRAS_DISALLOW_METERED = "allow_metered";
 
     /**
-     * {@hide} Integer extra containing a SyncExemption flag.
+     * @hide Integer extra containing a SyncExemption flag.
      *
      * Only the system and the shell user can set it.
      *
@@ -588,7 +590,7 @@ public abstract class ContentResolver implements ContentInterface {
      */
     public static final String ANY_CURSOR_ITEM_TYPE = "vnd.android.cursor.item/*";
 
-    /** {@hide} */
+    /** @hide */
     @Deprecated
     public static final String MIME_TYPE_DEFAULT = ClipDescription.MIMETYPE_UNKNOWN;
 
@@ -812,7 +814,7 @@ public abstract class ContentResolver implements ContentInterface {
         this(context, null);
     }
 
-    /** {@hide} */
+    /** @hide */
     public ContentResolver(@Nullable Context context, @Nullable ContentInterface wrapped) {
         mContext = context != null ? context : ActivityThread.currentApplication();
         mPackageName = mContext.getOpPackageName();
@@ -820,7 +822,7 @@ public abstract class ContentResolver implements ContentInterface {
         mWrapped = wrapped;
     }
 
-    /** {@hide} */
+    /** @hide */
     public static @NonNull ContentResolver wrap(@NonNull ContentInterface wrapped) {
         Objects.requireNonNull(wrapped);
 
@@ -942,7 +944,7 @@ public abstract class ContentResolver implements ContentInterface {
                 // Manager will kill this process shortly anyway.
                 return null;
             } catch (java.lang.Exception e) {
-                Log.w(TAG, "Failed to get type for: " + url + " (" + e.getMessage() + ")");
+                Log.w(TAG, "Failed to get type for: " + url, e);
                 return null;
             } finally {
                 try {
@@ -972,7 +974,7 @@ public abstract class ContentResolver implements ContentInterface {
             // We just failed to send a oneway request to the System Server. Nothing to do.
             return null;
         } catch (java.lang.Exception e) {
-            Log.w(TAG, "Failed to get type for: " + url + " (" + e.getMessage() + ")");
+            Log.w(TAG, "Failed to get type for: " + url, e);
             return null;
         }
     }
@@ -1276,7 +1278,7 @@ public abstract class ContentResolver implements ContentInterface {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public final @NonNull Uri canonicalizeOrElse(@NonNull Uri uri) {
         final Uri res = canonicalize(uri);
         return (res != null) ? res : uri;
@@ -2709,7 +2711,7 @@ public abstract class ContentResolver implements ContentInterface {
     public final void registerContentObserverAsUser(@NonNull Uri uri,
             boolean notifyForDescendants,
             @NonNull ContentObserver observer,
-            @NonNull UserHandle userHandle) {
+            @NonNull @CanBeALL @CanBeCURRENT UserHandle userHandle) {
         Objects.requireNonNull(uri, "uri");
         Objects.requireNonNull(observer, "observer");
         Objects.requireNonNull(userHandle, "userHandle");
@@ -2722,10 +2724,10 @@ public abstract class ContentResolver implements ContentInterface {
 
     /** @hide - designated user version */
     @UnsupportedAppUsage
-    public final void registerContentObserver(Uri uri, boolean notifyForDescendents,
-            ContentObserver observer, @UserIdInt int userHandle) {
+    public final void registerContentObserver(Uri uri, boolean notifyForDescendants,
+            ContentObserver observer, @CanBeALL @CanBeCURRENT @UserIdInt int userHandle) {
         try {
-            getContentService().registerContentObserver(uri, notifyForDescendents,
+            getContentService().registerContentObserver(uri, notifyForDescendants,
                     observer.getContentObserver(), userHandle, mTargetSdkVersion);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -2908,13 +2910,13 @@ public abstract class ContentResolver implements ContentInterface {
      */
     @Deprecated
     public void notifyChange(@NonNull Uri uri, ContentObserver observer, boolean syncToNetwork,
-            @UserIdInt int userHandle) {
+            @CanBeALL @CanBeCURRENT @UserIdInt int userHandle) {
         notifyChange(uri, observer, syncToNetwork ? NOTIFY_SYNC_TO_NETWORK : 0, userHandle);
     }
 
-    /** {@hide} */
+    /** @hide */
     public void notifyChange(@NonNull Uri uri, ContentObserver observer, @NotifyFlags int flags,
-            @UserIdInt int userHandle) {
+            @CanBeALL @CanBeCURRENT @UserIdInt int userHandle) {
         notifyChange(new Uri[] { uri }, observer, flags, userHandle);
     }
 
@@ -2924,7 +2926,7 @@ public abstract class ContentResolver implements ContentInterface {
      * @hide
      */
     public void notifyChange(@NonNull Uri[] uris, ContentObserver observer, @NotifyFlags int flags,
-            @UserIdInt int userHandle) {
+            @CanBeALL @CanBeCURRENT @UserIdInt int userHandle) {
         try {
             getContentService().notifyChange(
                     uris, observer == null ? null : observer.getContentObserver(),
@@ -3320,7 +3322,7 @@ public abstract class ContentResolver implements ContentInterface {
     }
 
     /**
-     * {@hide}
+     * @hide
      * Helper function to throw an <code>IllegalArgumentException</code> if any illegal
      * extras were set for a sync scheduled as an expedited job.
      *
@@ -3379,7 +3381,7 @@ public abstract class ContentResolver implements ContentInterface {
     }
 
     /**
-     * {@hide}
+     * @hide
      * Helper function to throw an <code>IllegalArgumentException</code> if any illegal
      * extras were set for a periodic sync.
      *
@@ -3786,7 +3788,7 @@ public abstract class ContentResolver implements ContentInterface {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public int getTargetSdkVersion() {
         return mTargetSdkVersion;
     }
@@ -3974,7 +3976,7 @@ public abstract class ContentResolver implements ContentInterface {
         return mContext.getUserId();
     }
 
-    /** {@hide} */
+    /** @hide */
     @Deprecated
     public Drawable getTypeDrawable(String mimeType) {
         return getTypeInfo(mimeType).getIcon().loadDrawable(mContext);
@@ -4000,7 +4002,7 @@ public abstract class ContentResolver implements ContentInterface {
         private final CharSequence mLabel;
         private final CharSequence mContentDescription;
 
-        /** {@hide} */
+        /** @hide */
         public MimeTypeInfo(@NonNull Icon icon, @NonNull CharSequence label,
                 @NonNull CharSequence contentDescription) {
             mIcon = Objects.requireNonNull(icon);
@@ -4155,7 +4157,7 @@ public abstract class ContentResolver implements ContentInterface {
         return loadThumbnail(this, uri, size, signal, ImageDecoder.ALLOCATOR_SOFTWARE);
     }
 
-    /** {@hide} */
+    /** @hide */
     public static Bitmap loadThumbnail(@NonNull ContentInterface content, @NonNull Uri uri,
             @NonNull Size size, @Nullable CancellationSignal signal, int allocator)
             throws IOException {
@@ -4205,7 +4207,7 @@ public abstract class ContentResolver implements ContentInterface {
         return bitmap;
     }
 
-    /** {@hide} */
+    /** @hide */
     public static void onDbCorruption(String tag, String message, Throwable stacktrace) {
         try {
             getContentService().onDbCorruption(tag, message, Log.getStackTraceString(stacktrace));
@@ -4252,14 +4254,14 @@ public abstract class ContentResolver implements ContentInterface {
         return new File(translateDeprecatedDataPath(uri));
     }
 
-    /** {@hide} */
+    /** @hide */
     public static @NonNull Uri translateDeprecatedDataPath(@NonNull String path) {
         final String ssp = "//" + path.substring(DEPRECATE_DATA_PREFIX.length());
         return Uri.parse(new Uri.Builder().scheme(SCHEME_CONTENT)
                 .encodedOpaquePart(ssp).build().toString());
     }
 
-    /** {@hide} */
+    /** @hide */
     public static @NonNull String translateDeprecatedDataPath(@NonNull Uri uri) {
         return DEPRECATE_DATA_PREFIX + uri.getEncodedSchemeSpecificPart().substring(2);
     }

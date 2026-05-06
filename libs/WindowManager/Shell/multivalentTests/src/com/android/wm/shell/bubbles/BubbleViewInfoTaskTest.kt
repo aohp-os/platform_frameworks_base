@@ -30,20 +30,23 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.R
+import com.android.internal.logging.InstanceIdSequence
 import com.android.internal.logging.testing.UiEventLoggerFake
 import com.android.internal.protolog.ProtoLog
 import com.android.internal.statusbar.IStatusBarService
 import com.android.launcher3.icons.BubbleIconFactory
 import com.android.wm.shell.ShellTaskOrganizer
-import com.android.wm.shell.TestShellExecutor
-import com.android.wm.shell.WindowManagerShellWrapper
-import com.android.wm.shell.bubbles.properties.BubbleProperties
+import com.android.wm.shell.bubbles.logging.BubbleSessionTracker
+import com.android.wm.shell.bubbles.logging.BubbleSessionTrackerImpl
 import com.android.wm.shell.bubbles.storage.BubblePersistentRepository
 import com.android.wm.shell.common.DisplayController
+import com.android.wm.shell.common.DisplayImeController
 import com.android.wm.shell.common.DisplayInsetsController
 import com.android.wm.shell.common.FloatingContentCoordinator
+import com.android.wm.shell.common.HomeIntentProvider
 import com.android.wm.shell.common.SyncTransactionQueue
 import com.android.wm.shell.common.TaskStackListenerImpl
+import com.android.wm.shell.common.TestShellExecutor
 import com.android.wm.shell.shared.TransactionPool
 import com.android.wm.shell.sysui.ShellCommandHandler
 import com.android.wm.shell.sysui.ShellController
@@ -53,6 +56,7 @@ import com.android.wm.shell.taskview.TaskViewTransitions
 import com.android.wm.shell.transition.Transitions
 import com.google.common.truth.Truth.assertThat
 import com.google.common.util.concurrent.MoreExecutors.directExecutor
+import java.util.Optional
 import org.junit.Assert
 import org.junit.Before
 import org.junit.Test
@@ -76,6 +80,8 @@ class BubbleViewInfoTaskTest {
     private lateinit var bubblePositioner: BubblePositioner
     private lateinit var bubbleLogger: BubbleLogger
     private lateinit var expandedViewManager: BubbleExpandedViewManager
+    private lateinit var appInfoProvider: FakeBubbleAppInfoProvider
+    private lateinit var sessionTracker: BubbleSessionTracker
 
     private val bubbleTaskViewFactory = BubbleTaskViewFactory {
         BubbleTaskView(mock<TaskView>(), directExecutor())
@@ -105,10 +111,13 @@ class BubbleViewInfoTaskTest {
                 shellInit,
                 shellCommandHandler,
                 mock<DisplayInsetsController>(),
+                mock<UserManager>(),
                 mainExecutor
             )
         bubblePositioner = BubblePositioner(context, windowManager)
         bubbleLogger = BubbleLogger(UiEventLoggerFake())
+        val instanceIdSequence = InstanceIdSequence(/* instanceIdMax= */ 10)
+        sessionTracker = BubbleSessionTrackerImpl(instanceIdSequence, bubbleLogger)
         val bubbleData =
             BubbleData(
                 context,
@@ -129,6 +138,8 @@ class BubbleViewInfoTaskTest {
                 BubblePersistentRepository(context)
             )
 
+        appInfoProvider = FakeBubbleAppInfoProvider()
+
         bubbleController =
             BubbleController(
                 context,
@@ -139,9 +150,11 @@ class BubbleViewInfoTaskTest {
                 surfaceSynchronizer,
                 FloatingContentCoordinator(),
                 bubbleDataRepository,
+                mock<BubbleTransitions>(),
                 mock<IStatusBarService>(),
                 windowManager,
-                WindowManagerShellWrapper(mainExecutor),
+                mock<DisplayInsetsController>(),
+                mock<DisplayImeController>(),
                 mock<UserManager>(),
                 mock<LauncherApps>(),
                 bubbleLogger,
@@ -158,7 +171,13 @@ class BubbleViewInfoTaskTest {
                 mock<Transitions>(),
                 SyncTransactionQueue(TransactionPool(), mainExecutor),
                 mock<IWindowManager>(),
-                mock<BubbleProperties>()
+                BubbleResizabilityChecker(),
+                HomeIntentProvider(context),
+                appInfoProvider,
+                { Optional.empty() },
+                Optional.empty(),
+                { false },
+                sessionTracker,
             )
 
         // TODO: (b/371829099) - when optional overflow is no longer flagged we can enable this
@@ -177,6 +196,8 @@ class BubbleViewInfoTaskTest {
 //            )
         bubbleStackView = mock<BubbleStackView>()
         whenever(bubbleStackView.generateLayoutParams(any()))
+            .thenReturn(FrameLayout.LayoutParams(1000, 1000))
+        whenever(bubbleStackView.generateLayoutParams(any(), any()))
             .thenReturn(FrameLayout.LayoutParams(1000, 1000))
         expandedViewManager = BubbleExpandedViewManager.fromBubbleController(bubbleController)
     }
@@ -325,10 +346,10 @@ class BubbleViewInfoTaskTest {
             expandedViewManager,
             bubbleTaskViewFactory,
             bubblePositioner,
-            bubbleLogger,
             bubbleStackView,
             null /* layerView */,
             iconFactory,
+            appInfoProvider,
             false /* skipInflation */,
             callback,
             mainExecutor,

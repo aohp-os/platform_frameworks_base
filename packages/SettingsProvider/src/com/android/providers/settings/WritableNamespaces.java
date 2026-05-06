@@ -34,13 +34,18 @@ final class WritableNamespaces {
     public static final Set<String> ALLOWLIST =
             new ArraySet<String>(Arrays.asList(
                     "adservices",
+                    "autofill",
+                    "app_compat_overrides",
                     "captive_portal_login",
                     "connectivity",
                     "exo",
+                    "location",
                     "nearby",
                     "netd_native",
                     "network_security",
                     "on_device_personalization",
+                    "profiling_testing",
+                    "testing",
                     "tethering",
                     "tethering_u_or_later_native",
                     "thread_network"

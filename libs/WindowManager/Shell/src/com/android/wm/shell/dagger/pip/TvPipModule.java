@@ -203,6 +203,7 @@ public abstract class TvPipModule {
     @WMSingleton
     @Provides
     static PipTaskOrganizer providePipTaskOrganizer(Context context,
+            ShellInit shellInit,
             TvPipMenuController tvPipMenuController,
             SyncTransactionQueue syncTransactionQueue,
             TvPipBoundsState tvPipBoundsState,
@@ -219,7 +220,7 @@ public abstract class TvPipModule {
             DisplayController displayController,
             PipUiEventLogger pipUiEventLogger, ShellTaskOrganizer shellTaskOrganizer,
             @ShellMainThread ShellExecutor mainExecutor) {
-        return new TvPipTaskOrganizer(context,
+        return new TvPipTaskOrganizer(context, shellInit,
                 syncTransactionQueue, pipTransitionState, tvPipBoundsState, pipDisplayLayoutState,
                 tvPipBoundsAlgorithm, tvPipMenuController, pipAnimationController,
                 pipSurfaceTransactionHelper, tvPipTransition, pipParamsChangedForwarder,
@@ -232,13 +233,5 @@ public abstract class TvPipModule {
     @Provides
     static PipParamsChangedForwarder providePipParamsChangedForwarder() {
         return new PipParamsChangedForwarder();
-    }
-
-    @WMSingleton
-    @Provides
-    static PipAppOpsListener providePipAppOpsListener(Context context,
-            PipTaskOrganizer pipTaskOrganizer,
-            @ShellMainThread ShellExecutor mainExecutor) {
-        return new PipAppOpsListener(context, pipTaskOrganizer::removePip, mainExecutor);
     }
 }

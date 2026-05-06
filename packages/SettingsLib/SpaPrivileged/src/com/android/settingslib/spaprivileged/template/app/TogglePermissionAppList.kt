@@ -53,6 +53,10 @@ interface TogglePermissionAppListModel<T : AppRecord> {
     val enhancedConfirmationKey: String?
         get() = null
 
+    /** Whether the App List page shows the system apps initially. */
+    val showSystemAppsInitially: Boolean
+        get() = false
+
     /**
      * Loads the extra info for the App List, and generates the [AppRecord] List.
      *
@@ -91,9 +95,6 @@ interface TogglePermissionAppListModel<T : AppRecord> {
      * Sets whether the permission is allowed for the given app.
      */
     fun setAllowed(record: T, newAllowed: Boolean)
-
-    @Composable
-    fun InfoPageAdditionalContent(record: T, isAllowed: () -> Boolean?) {}
 }
 
 /**
@@ -116,12 +117,15 @@ fun <T : AppRecord> TogglePermissionAppListModel<T>.isChangeableWithSystemUidChe
 fun <T : AppRecord> TogglePermissionAppListModel<T>.getRestrictions(
     userId: Int,
     packageName: String,
+    isRestrictedSettingAllowed: Boolean?
 ) =
     Restrictions(
         userId = userId,
         keys = switchRestrictionKeys,
         enhancedConfirmation =
-            enhancedConfirmationKey?.let { key -> EnhancedConfirmation(key, packageName) },
+            enhancedConfirmationKey?.let {
+                key -> EnhancedConfirmation(key, packageName, isRestrictedSettingAllowed)
+                                         },
     )
 
 interface TogglePermissionAppListProvider {

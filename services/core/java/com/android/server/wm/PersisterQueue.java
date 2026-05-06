@@ -86,6 +86,34 @@ class PersisterQueue {
         mLazyTaskWriterThread = new LazyTaskWriterThread("LazyTaskWriterThread");
     }
 
+    /**
+     * Busy wait until {@link #mLazyTaskWriterThread} is in {@link Thread.State#WAITING}, or
+     * times out. This indicates the thread is waiting for new tasks to appear. If the wait
+     * succeeds, this queue waits at least {@link #mPreTaskDelayMs} milliseconds before running the
+     * next task.
+     *
+     * <p>This is for testing purposes only.
+     *
+     * @param timeoutMillis the maximum time of waiting in milliseconds
+     * @return {@code true} if the thread is in {@link Thread.State#WAITING} at return
+     */
+    @VisibleForTesting
+    boolean waitUntilWritingThreadIsWaiting(long timeoutMillis) {
+        final long timeoutTime = SystemClock.uptimeMillis() + timeoutMillis;
+        do {
+            Thread.State state;
+            synchronized (this) {
+                state = mLazyTaskWriterThread.getState();
+            }
+            if (state == Thread.State.WAITING) {
+                return true;
+            }
+            Thread.yield();
+        } while (SystemClock.uptimeMillis() < timeoutTime);
+
+        return false;
+    }
+
     synchronized void startPersisting() {
         if (!mLazyTaskWriterThread.isAlive()) {
             mLazyTaskWriterThread.start();
@@ -204,8 +232,12 @@ class PersisterQueue {
         final WriteQueueItem item;
         synchronized (this) {
             if (mNextWriteTime != FLUSH_QUEUE) {
-                // The next write we don't have to wait so long.
-                mNextWriteTime = SystemClock.uptimeMillis() + mInterWriteDelayMs;
+                // mNextWriteTime can be mPreTaskDelayMs from the time when the first item is added
+                // before the writer thread enters this synchronized block for the first time. In
+                // other cases, mNextWriteTime is the time when the last item was processed and we
+                // don't need to wait so long to process the next task if the queue isn't empty.
+                mNextWriteTime =
+                    Math.max(mNextWriteTime, SystemClock.uptimeMillis() + mInterWriteDelayMs);
                 if (DEBUG) {
                     Slog.d(TAG, "Next write time may be in " + mInterWriteDelayMs
                             + " msec. (" + mNextWriteTime + ")");
@@ -224,8 +256,7 @@ class PersisterQueue {
                 }
                 if (DEBUG) Slog.d(TAG, "LazyTaskWriter: waiting indefinitely.");
                 wait();
-                // Invariant: mNextWriteTime is either FLUSH_QUEUE or PRE_WRITE_DELAY_MS
-                // from now.
+                // Invariant: mNextWriteTime is either FLUSH_QUEUE or mPreTaskDelayMs from now.
             }
             item = mWriteQueue.remove(0);
 

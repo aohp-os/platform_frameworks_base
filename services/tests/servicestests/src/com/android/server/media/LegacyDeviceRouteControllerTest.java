@@ -30,12 +30,15 @@ import android.media.AudioRoutesInfo;
 import android.media.IAudioRoutesObserver;
 import android.media.MediaRoute2Info;
 import android.os.RemoteException;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.text.TextUtils;
 
 import com.android.internal.R;
 import com.android.server.audio.AudioService;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
@@ -48,6 +51,7 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 
 @RunWith(Enclosed.class)
 public class LegacyDeviceRouteControllerTest {
@@ -70,6 +74,11 @@ public class LegacyDeviceRouteControllerTest {
 
     @RunWith(JUnit4.class)
     public static class DefaultDeviceRouteValueTest {
+
+        @Rule
+        public final CheckFlagsRule mCheckFlagsRule =
+                DeviceFlagsValueProvider.createCheckFlagsRule();
+
         @Mock
         private Context mContext;
         @Mock
@@ -78,8 +87,7 @@ public class LegacyDeviceRouteControllerTest {
         private AudioManager mAudioManager;
         @Mock
         private AudioService mAudioService;
-        @Mock
-        private DeviceRouteController.OnDeviceRouteChangedListener mOnDeviceRouteChangedListener;
+        @Mock private DeviceRouteController.EventListener mEventListener;
 
         @Before
         public void setUp() {
@@ -97,14 +105,11 @@ public class LegacyDeviceRouteControllerTest {
             // Default route should be initialized even when AudioService returns null.
             when(mAudioService.startWatchingRoutes(any())).thenReturn(null);
 
-            LegacyDeviceRouteController deviceRouteController = new LegacyDeviceRouteController(
-                    mContext,
-                    mAudioManager,
-                    mAudioService,
-                    mOnDeviceRouteChangedListener
-            );
+            LegacyDeviceRouteController deviceRouteController =
+                    new LegacyDeviceRouteController(
+                            mContext, mAudioManager, mAudioService, mEventListener);
 
-            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoutes().getFirst();
 
             assertThat(actualMediaRoute.getType()).isEqualTo(MediaRoute2Info.TYPE_BUILTIN_SPEAKER);
             assertThat(TextUtils.equals(actualMediaRoute.getName(), DEFAULT_ROUTE_NAME))
@@ -122,19 +127,32 @@ public class LegacyDeviceRouteControllerTest {
             AudioRoutesInfo fakeBluetoothAudioRoute = createFakeBluetoothAudioRoute();
             when(mAudioService.startWatchingRoutes(any())).thenReturn(fakeBluetoothAudioRoute);
 
-            LegacyDeviceRouteController deviceRouteController = new LegacyDeviceRouteController(
-                    mContext,
-                    mAudioManager,
-                    mAudioService,
-                    mOnDeviceRouteChangedListener
-            );
+            LegacyDeviceRouteController deviceRouteController =
+                    new LegacyDeviceRouteController(
+                            mContext, mAudioManager, mAudioService, mEventListener);
 
-            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoutes().getFirst();
 
             assertThat(actualMediaRoute.getType()).isEqualTo(MediaRoute2Info.TYPE_BUILTIN_SPEAKER);
             assertThat(TextUtils.equals(actualMediaRoute.getName(), DEFAULT_ROUTE_NAME))
                     .isTrue();
             assertThat(actualMediaRoute.getVolume()).isEqualTo(VOLUME_DEFAULT_VALUE);
+        }
+
+        @Test
+        public void getAvailableRoutes_matchesSelectedRoute() {
+            when(mResources.getText(R.string.default_audio_route_name))
+                    .thenReturn(DEFAULT_ROUTE_NAME);
+
+            when(mAudioService.startWatchingRoutes(any())).thenReturn(null);
+
+            LegacyDeviceRouteController deviceRouteController =
+                    new LegacyDeviceRouteController(
+                            mContext, mAudioManager, mAudioService, mEventListener);
+
+            MediaRoute2Info selectedRoute = deviceRouteController.getSelectedRoutes().getFirst();
+            assertThat(deviceRouteController.getAvailableRoutes())
+                    .isEqualTo(List.of(selectedRoute));
         }
     }
 
@@ -195,8 +213,7 @@ public class LegacyDeviceRouteControllerTest {
         private AudioManager mAudioManager;
         @Mock
         private AudioService mAudioService;
-        @Mock
-        private DeviceRouteController.OnDeviceRouteChangedListener mOnDeviceRouteChangedListener;
+        @Mock private DeviceRouteController.EventListener mEventListener;
 
         @IdRes
         private final int mExpectedRouteNameResource;
@@ -236,14 +253,11 @@ public class LegacyDeviceRouteControllerTest {
             when(mResources.getText(mExpectedRouteNameResource))
                     .thenReturn(mExpectedRouteNameValue);
 
-            LegacyDeviceRouteController deviceRouteController = new LegacyDeviceRouteController(
-                    mContext,
-                    mAudioManager,
-                    mAudioService,
-                    mOnDeviceRouteChangedListener
-            );
+            LegacyDeviceRouteController deviceRouteController =
+                    new LegacyDeviceRouteController(
+                            mContext, mAudioManager, mAudioService, mEventListener);
 
-            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute = deviceRouteController.getSelectedRoutes().getFirst();
 
             assertThat(actualMediaRoute.getType()).isEqualTo(mExpectedRouteType);
             assertThat(TextUtils.equals(actualMediaRoute.getName(), mExpectedRouteNameValue))
@@ -263,8 +277,7 @@ public class LegacyDeviceRouteControllerTest {
         private AudioManager mAudioManager;
         @Mock
         private AudioService mAudioService;
-        @Mock
-        private DeviceRouteController.OnDeviceRouteChangedListener mOnDeviceRouteChangedListener;
+        @Mock private DeviceRouteController.EventListener mEventListener;
 
         @Captor
         private ArgumentCaptor<IAudioRoutesObserver.Stub> mAudioRoutesObserverCaptor;
@@ -287,12 +300,9 @@ public class LegacyDeviceRouteControllerTest {
             when(mAudioService.startWatchingRoutes(mAudioRoutesObserverCaptor.capture()))
                     .thenReturn(audioRoutesInfo);
 
-            mDeviceRouteController = new LegacyDeviceRouteController(
-                    mContext,
-                    mAudioManager,
-                    mAudioService,
-                    mOnDeviceRouteChangedListener
-            );
+            mDeviceRouteController =
+                    new LegacyDeviceRouteController(
+                            mContext, mAudioManager, mAudioService, mEventListener);
 
             mAudioRoutesObserver = mAudioRoutesObserverCaptor.getValue();
         }
@@ -310,7 +320,8 @@ public class LegacyDeviceRouteControllerTest {
             // Simulating wired device being connected.
             callAudioRoutesObserver(audioRoutesInfo);
 
-            MediaRoute2Info actualMediaRoute = mDeviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute =
+                    mDeviceRouteController.getSelectedRoutes().getFirst();
 
             assertThat(actualMediaRoute.getType()).isEqualTo(MediaRoute2Info.TYPE_WIRED_HEADPHONES);
             assertThat(TextUtils.equals(actualMediaRoute.getName(), DEFAULT_HEADPHONES_NAME))
@@ -324,7 +335,8 @@ public class LegacyDeviceRouteControllerTest {
             AudioRoutesInfo fakeBluetoothAudioRoute = createFakeBluetoothAudioRoute();
             callAudioRoutesObserver(fakeBluetoothAudioRoute);
 
-            MediaRoute2Info actualMediaRoute = mDeviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute =
+                    mDeviceRouteController.getSelectedRoutes().getFirst();
 
             assertThat(actualMediaRoute.getType()).isEqualTo(MediaRoute2Info.TYPE_BUILTIN_SPEAKER);
             assertThat(TextUtils.equals(actualMediaRoute.getName(), DEFAULT_ROUTE_NAME))
@@ -334,12 +346,13 @@ public class LegacyDeviceRouteControllerTest {
 
         @Test
         public void updateVolume_differentValue_updatesDeviceRouteVolume() {
-            MediaRoute2Info actualMediaRoute = mDeviceRouteController.getSelectedRoute();
+            MediaRoute2Info actualMediaRoute =
+                    mDeviceRouteController.getSelectedRoutes().getFirst();
             assertThat(actualMediaRoute.getVolume()).isEqualTo(VOLUME_DEFAULT_VALUE);
 
             assertThat(mDeviceRouteController.updateVolume(VOLUME_VALUE_SAMPLE_1)).isTrue();
 
-            actualMediaRoute = mDeviceRouteController.getSelectedRoute();
+            actualMediaRoute = mDeviceRouteController.getSelectedRoutes().getFirst();
             assertThat(actualMediaRoute.getVolume()).isEqualTo(VOLUME_VALUE_SAMPLE_1);
         }
 

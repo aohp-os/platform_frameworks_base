@@ -21,6 +21,7 @@ import com.android.internal.widget.remotecompose.core.CoreDocument;
 import com.android.internal.widget.remotecompose.core.PaintContext;
 import com.android.internal.widget.remotecompose.core.PaintOperation;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
+import com.android.internal.widget.remotecompose.core.SerializableToString;
 import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.operations.MatrixRestore;
@@ -31,12 +32,19 @@ import com.android.internal.widget.remotecompose.core.operations.layout.Componen
 import com.android.internal.widget.remotecompose.core.operations.layout.DecoratorComponent;
 import com.android.internal.widget.remotecompose.core.operations.layout.TouchHandler;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.ArrayList;
 
 /** Maintain a list of modifiers */
 public class ComponentModifiers extends PaintOperation
-        implements DecoratorComponent, ClickHandler, TouchHandler {
+        implements DecoratorComponent,
+                ClickHandler,
+                TouchHandler,
+                SerializableToString,
+                Serializable {
     @NonNull ArrayList<ModifierOperation> mList = new ArrayList<>();
 
     @NonNull
@@ -56,11 +64,11 @@ public class ComponentModifiers extends PaintOperation
     @NonNull
     @Override
     public String toString() {
-        String str = "ComponentModifiers \n";
+        StringBuilder str = new StringBuilder("ComponentModifiers \n");
         for (ModifierOperation modifierOperation : mList) {
-            str += "    " + modifierOperation.toString() + "\n";
+            str.append("    ").append(modifierOperation.toString()).append("\n");
         }
-        return str;
+        return str.toString();
     }
 
     @Override
@@ -68,6 +76,7 @@ public class ComponentModifiers extends PaintOperation
         // nothing
     }
 
+    @Override
     public void serializeToString(int indent, @NonNull StringSerializer serializer) {
         serializer.append(indent, "MODIFIERS");
         for (ModifierOperation m : mList) {
@@ -75,10 +84,20 @@ public class ComponentModifiers extends PaintOperation
         }
     }
 
+    /**
+     * Add a ModifierOperation
+     *
+     * @param operation a ModifierOperation
+     */
     public void add(@NonNull ModifierOperation operation) {
         mList.add(operation);
     }
 
+    /**
+     * Returns the size of the modifier list
+     *
+     * @return number of modifiers
+     */
     public int size() {
         return mList.size();
     }
@@ -116,7 +135,10 @@ public class ComponentModifiers extends PaintOperation
 
     @Override
     public void layout(
-            @NonNull RemoteContext context, Component component, float width, float height) {
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         float w = width;
         float h = height;
         for (ModifierOperation op : mList) {
@@ -133,6 +155,11 @@ public class ComponentModifiers extends PaintOperation
         }
     }
 
+    /**
+     * Add the operations to this ComponentModifier
+     *
+     * @param operations list of ModifierOperation
+     */
     public void addAll(@NonNull ArrayList<ModifierOperation> operations) {
         mList.addAll(operations);
     }
@@ -153,7 +180,11 @@ public class ComponentModifiers extends PaintOperation
 
     @Override
     public void onTouchDown(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         for (ModifierOperation op : mList) {
             if (op instanceof TouchHandler) {
                 ((TouchHandler) op).onTouchDown(context, document, component, x, y);
@@ -163,9 +194,9 @@ public class ComponentModifiers extends PaintOperation
 
     @Override
     public void onTouchUp(
-            RemoteContext context,
-            CoreDocument document,
-            Component component,
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
             float x,
             float y,
             float dx,
@@ -179,7 +210,11 @@ public class ComponentModifiers extends PaintOperation
 
     @Override
     public void onTouchCancel(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         for (ModifierOperation op : mList) {
             if (op instanceof TouchHandler) {
                 ((TouchHandler) op).onTouchCancel(context, document, component, x, y);
@@ -189,7 +224,11 @@ public class ComponentModifiers extends PaintOperation
 
     @Override
     public void onTouchDrag(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         for (ModifierOperation op : mList) {
             if (op instanceof TouchHandler) {
                 ((TouchHandler) op).onTouchDrag(context, document, component, x, y);
@@ -197,6 +236,11 @@ public class ComponentModifiers extends PaintOperation
         }
     }
 
+    /**
+     * Returns true if we have a horizontal scroll modifier
+     *
+     * @return true if we have a horizontal scroll modifier, false otherwise
+     */
     public boolean hasHorizontalScroll() {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -209,6 +253,11 @@ public class ComponentModifiers extends PaintOperation
         return false;
     }
 
+    /**
+     * Returns true if we have a vertical scroll modifier
+     *
+     * @return true if we have a vertical scroll modifier, false otherwise
+     */
     public boolean hasVerticalScroll() {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -221,6 +270,12 @@ public class ComponentModifiers extends PaintOperation
         return false;
     }
 
+    /**
+     * Set the horizontal scroll dimension (if we have a scroll modifier)
+     *
+     * @param hostDimension the host component horizontal dimension
+     * @param contentDimension the content horizontal dimension
+     */
     public void setHorizontalScrollDimension(float hostDimension, float contentDimension) {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -232,6 +287,12 @@ public class ComponentModifiers extends PaintOperation
         }
     }
 
+    /**
+     * Set the vertical scroll dimension (if we have a scroll modifier)
+     *
+     * @param hostDimension the host component vertical dimension
+     * @param contentDimension the content vertical dimension
+     */
     public void setVerticalScrollDimension(float hostDimension, float contentDimension) {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -243,6 +304,11 @@ public class ComponentModifiers extends PaintOperation
         }
     }
 
+    /**
+     * Returns the horizontal scroll dimension if we have a scroll modifier
+     *
+     * @return the horizontal scroll dimension, or 0 if no scroll modifier
+     */
     public float getHorizontalScrollDimension() {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -255,6 +321,11 @@ public class ComponentModifiers extends PaintOperation
         return 0f;
     }
 
+    /**
+     * Returns the vertical scroll dimension if we have a scroll modifier
+     *
+     * @return the vertical scroll dimension, or 0 if no scroll modifier
+     */
     public float getVerticalScrollDimension() {
         for (ModifierOperation op : mList) {
             if (op instanceof ScrollModifierOperation) {
@@ -265,5 +336,13 @@ public class ComponentModifiers extends PaintOperation
             }
         }
         return 0f;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("ComponentModifiers")
+                .add("modifiers", mList);
     }
 }

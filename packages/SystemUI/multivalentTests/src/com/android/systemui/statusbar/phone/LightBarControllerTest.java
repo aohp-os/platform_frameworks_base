@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.phone;
 
 import static android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS;
+import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_3BUTTON;
 
 import static com.android.systemui.shared.statusbar.phone.BarTransitions.MODE_TRANSPARENT;
 
@@ -35,6 +36,8 @@ import static org.mockito.Mockito.when;
 
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.testing.TestableLooper;
 
 import androidx.annotation.ColorInt;
@@ -51,6 +54,7 @@ import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.statusbar.data.model.StatusBarAppearance;
 import com.android.systemui.statusbar.data.model.StatusBarMode;
 import com.android.systemui.statusbar.data.repository.FakeStatusBarModePerDisplayRepository;
+import com.android.systemui.statusbar.layout.BoundsPair;
 import com.android.systemui.statusbar.policy.BatteryController;
 
 import kotlinx.coroutines.test.TestScope;
@@ -77,7 +81,7 @@ public class LightBarControllerTest extends SysuiTestCase {
     private LightBarTransitionsController mLightBarTransitionsController;
     private LightBarTransitionsController mNavBarController;
     private SysuiDarkIconDispatcher mStatusBarIconController;
-    private LightBarController mLightBarController;
+    private LightBarControllerImpl mLightBarController;
     private final TestScope mTestScope = TestScopeProvider.getTestScope();
     private final FakeStatusBarModePerDisplayRepository mStatusBarModeRepository =
             new FakeStatusBarModePerDisplayRepository();
@@ -90,12 +94,14 @@ public class LightBarControllerTest extends SysuiTestCase {
         mLightBarTransitionsController = mock(LightBarTransitionsController.class);
         when(mStatusBarIconController.getTransitionsController()).thenReturn(
                 mLightBarTransitionsController);
+        NavigationModeController navigationModeController = mock(NavigationModeController.class);
+
         mLightBarController = new LightBarControllerImpl(
                 mContext.getDisplayId(),
                 mTestScope,
                 mStatusBarIconController,
                 mock(BatteryController.class),
-                mock(NavigationModeController.class),
+                navigationModeController,
                 mStatusBarModeRepository,
                 mock(DumpManager.class),
                 mTestScope.getCoroutineContext(),
@@ -221,6 +227,7 @@ public class LightBarControllerTest extends SysuiTestCase {
                         /* navbarColorManagedByIme= */ false));
         mTestScope.getTestScheduler().advanceUntilIdle();
 
+        verify(mStatusBarIconController).setIconsDarkArea(eq(null));
         verify(mLightBarTransitionsController).setIconsDark(eq(false), anyBoolean());
     }
 
@@ -428,8 +435,36 @@ public class LightBarControllerTest extends SysuiTestCase {
         verifyNavBarIconsDark(false, /* didFireEvent= */ false);
     }
 
+    @Test
+    @EnableFlags(
+            android.view.accessibility.Flags.FLAG_LIGHT_BAR_UPDATE_BUTTON_TINT_ON_NAV_MODE_CHANGE)
+    public void navModeChanges_3buttonNavigation_setsDark() {
+        mLightBarController.setNavigationBar(mNavBarController);
+        clearInvocations(mNavBarController);
+
+        mLightBarController.onNavigationModeChanged(NAV_BAR_MODE_3BUTTON);
+        verifyNavBarIconsWereChanged();
+    }
+
+    @Test
+    @DisableFlags(
+            android.view.accessibility.Flags.FLAG_LIGHT_BAR_UPDATE_BUTTON_TINT_ON_NAV_MODE_CHANGE)
+    public void navModeChanges_3buttonNavigation_doesNotSetDark() {
+        mLightBarController.setNavigationBar(mNavBarController);
+        clearInvocations(mNavBarController);
+
+        mLightBarController.onNavigationModeChanged(NAV_BAR_MODE_3BUTTON);
+        verifyNavBarIconsUnchanged();
+    }
+
+    private void verifyNavBarIconsWereChanged() {
+        verify(mNavBarController).setIconsDark(anyBoolean(), anyBoolean());
+        clearInvocations(mNavBarController);
+    }
+
     private void verifyNavBarIconsUnchanged() {
         verify(mNavBarController, never()).setIconsDark(anyBoolean(), anyBoolean());
+        clearInvocations(mNavBarController);
     }
 
     private void verifyNavBarIconsDarkSetTo(boolean iconsDark) {

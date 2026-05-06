@@ -129,6 +129,10 @@
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
+            "name": "CtsWindowManagerDeviceAppCompat_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
             "name": "CtsWindowManagerDeviceBackNavigation_wm_cts",
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
@@ -137,7 +141,11 @@
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
-            "name": "CtsWindowManagerDeviceKeyguard_wm_cts",
+            "name": "CtsWindowManagerDeviceDragAndDrop_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDeviceDreams_wm_cts",
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
@@ -145,7 +153,23 @@
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
+            "name": "CtsWindowManagerDeviceKeyguard_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDeviceOther_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDevicePip_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
             "name": "CtsWindowManagerDeviceTaskFragment_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDeviceTv_wm_cts",
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
@@ -153,8 +177,8 @@
             "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
-            "name": "CtsWindowManagerDeviceOther_wm_cts",
-            "file_patterns": ["(/|^)ContextImpl.java"]
+            "name": "BroadcastUnitTests",
+            "file_patterns": ["(/|^)BroadcastStickyCache.java"]
         },
         {
             "file_patterns": [
@@ -163,6 +187,23 @@
                 "(/|^)ComtextImpl.java"
             ],
             "name": "CtsWindowManagerBackgroundActivityTestCases"
+        }
+    ],
+    // v2/sysui/suite/test-mapping-sysui-screenshot-test
+    "sysui-screenshot-test": [
+        {
+        "name": "SystemUIGoogleScreenshotTests",
+        "options": [
+            {
+            "exclude-annotation": "org.junit.Ignore"
+            },
+            {
+            "exclude-annotation": "androidx.test.filters.FlakyTest"
+            },
+            {
+            "exclude-annotation": "android.platform.test.annotations.Postsubmit"
+            }
+        ]
         }
     ],
     "postsubmit": [
@@ -177,10 +218,24 @@
         {
             "file_patterns": ["(/|^)AppOpsManager.java"],
             "name": "CtsAppOpsTestCases"
+        }
+    ],
+    "desktop-presubmit": [
+        {
+            "name": "CtsWindowManagerDeviceAm_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
         },
         {
-            "file_patterns": ["(/|^)BroadcastStickyCache.java"],
-            "name": "BroadcastUnitTests"
+            "name": "CtsWindowManagerDeviceBackNavigation_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDeviceDragAndDrop_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
+        },
+        {
+            "name": "CtsWindowManagerDevicePip_wm_cts",
+            "file_patterns": ["(/|^)ContextImpl.java"]
         }
     ]
 }

@@ -31,19 +31,20 @@ import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_FULL_RESTORE_
 import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_MISSING_SIGNATURE;
 import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_RESTORE_ANY_VERSION;
 import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_SYSTEM_APP_NO_AGENT;
-import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_V_TO_U_RESTORE_PKG_ELIGIBLE;
 import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_VERSIONS_MATCH;
 import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_VERSION_OF_BACKUP_OLDER;
+import static android.app.backup.BackupManagerMonitor.LOG_EVENT_ID_V_TO_U_RESTORE_PKG_ELIGIBLE;
 
 import static com.android.server.backup.BackupManagerService.DEBUG;
-import static com.android.server.backup.BackupManagerService.MORE_DEBUG;
 import static com.android.server.backup.BackupManagerService.TAG;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_MANIFEST_FILENAME;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_MANIFEST_VERSION;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_METADATA_FILENAME;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_WIDGET_METADATA_TOKEN;
+import static com.android.server.backup.UserBackupManagerService.CROSS_PLATFORM_MANIFEST_FILENAME;
 import static com.android.server.backup.UserBackupManagerService.SHARED_BACKUP_AGENT_PACKAGE;
 
+import android.annotation.Nullable;
 import android.app.backup.BackupAgent;
 import android.app.backup.BackupManagerMonitor;
 import android.app.backup.FullBackup;
@@ -62,6 +63,7 @@ import android.util.Slog;
 
 import com.android.server.backup.FileMetadata;
 import com.android.server.backup.Flags;
+import com.android.server.backup.crossplatform.CrossPlatformManifest;
 import com.android.server.backup.restore.RestorePolicy;
 
 import java.io.ByteArrayInputStream;
@@ -175,7 +177,7 @@ public class TarBackupReader {
                     }
                     case 0: {
                         // presume EOF
-                        if (MORE_DEBUG) {
+                        if (DEBUG) {
                             Slog.w(TAG, "Saw type=0 in tar header block, info=" + info);
                         }
                         return null;
@@ -195,9 +197,7 @@ public class TarBackupReader {
                     info.path = info.path.substring(FullBackup.SHARED_PREFIX.length());
                     info.packageName = SHARED_BACKUP_AGENT_PACKAGE;
                     info.domain = FullBackup.SHARED_STORAGE_TOKEN;
-                    if (DEBUG) {
-                        Slog.i(TAG, "File in shared storage: " + info.path);
-                    }
+                    Slog.i(TAG, "File in shared storage: " + info.path);
                 } else if (FullBackup.APPS_PREFIX.regionMatches(0,
                         info.path, 0, FullBackup.APPS_PREFIX.length())) {
                     // App content!  Parse out the package name and domain
@@ -215,8 +215,9 @@ public class TarBackupReader {
 
                     // if it's a manifest or metadata payload we're done, otherwise parse
                     // out the domain into which the file will be restored
-                    if (!info.path.equals(BACKUP_MANIFEST_FILENAME) &&
-                            !info.path.equals(BACKUP_METADATA_FILENAME)) {
+                    if (!info.path.equals(BACKUP_MANIFEST_FILENAME)
+                            && !info.path.equals(CROSS_PLATFORM_MANIFEST_FILENAME)
+                            && !info.path.equals(BACKUP_METADATA_FILENAME)) {
                         slash = info.path.indexOf('/');
                         if (slash < 0) {
                             throw new IOException("Illegal semantic path in non-manifest "
@@ -227,11 +228,9 @@ public class TarBackupReader {
                     }
                 }
             } catch (IOException e) {
+                Slog.e(TAG, "Parse error in header: " + e.getMessage());
                 if (DEBUG) {
-                    Slog.e(TAG, "Parse error in header: " + e.getMessage());
-                    if (MORE_DEBUG) {
-                        hexLog(block);
-                    }
+                    hexLog(block);
                 }
                 throw e;
             }
@@ -254,20 +253,20 @@ public class TarBackupReader {
         if (size <= 0) {
             throw new IllegalArgumentException("size must be > 0");
         }
-        if (MORE_DEBUG) {
+        if (DEBUG) {
             Slog.i(TAG, "  ... readExactly(" + size + ") called");
         }
         int soFar = 0;
         while (soFar < size) {
             int nRead = in.read(buffer, offset + soFar, size - soFar);
             if (nRead <= 0) {
-                if (MORE_DEBUG) {
+                if (DEBUG) {
                     Slog.w(TAG, "- wanted exactly " + size + " but got only " + soFar);
                 }
                 break;
             }
             soFar += nRead;
-            if (MORE_DEBUG) {
+            if (DEBUG) {
                 Slog.v(TAG, "   + got " + nRead + "; now wanting " + (size - soFar));
             }
         }
@@ -290,7 +289,7 @@ public class TarBackupReader {
         }
 
         byte[] buffer = new byte[(int) info.size];
-        if (MORE_DEBUG) {
+        if (DEBUG) {
             Slog.i(TAG,
                     "   readAppManifestAndReturnSignatures() looking for " + info.size + " bytes");
         }
@@ -381,6 +380,53 @@ public class TarBackupReader {
         }
 
         return null;
+    }
+
+    /**
+     * Parses the cross-platform manifest from the tar file and returns it.
+     * @throws IOException in case of an error.
+     */
+    @Nullable
+    public CrossPlatformManifest readCrossPlatformManifest(FileMetadata info) throws IOException {
+        // Fail on suspiciously large manifest files
+        if (info.size > 64 * 1024) {
+            throw new IOException(
+                    "Restore cross platform manifest too big; corrupt? size=" + info.size);
+        }
+
+        byte[] buffer = new byte[(int) info.size];
+        if (DEBUG) {
+            Slog.i(TAG, "   readCrossPlatformManifest() looking for " + info.size + " bytes");
+        }
+        if (readExactly(mInputStream, buffer, 0, (int) info.size) == info.size) {
+            mBytesReadListener.onBytesRead(info.size);
+        } else {
+            throw new IOException("Unexpected EOF in cross-platform manifest");
+        }
+        CrossPlatformManifest manifest = CrossPlatformManifest.parseFrom(buffer);
+        if (!manifest.getPackageName().equals(info.packageName)) {
+            Slog.i(
+                    TAG,
+                    "Expected package "
+                            + info.packageName
+                            + " but restore manifest claims "
+                            + manifest.getPackageName());
+            Bundle monitoringExtras =
+                    mBackupManagerMonitorEventSender.putMonitoringExtra(
+                            null, EXTRA_LOG_EVENT_PACKAGE_NAME, info.packageName);
+            monitoringExtras =
+                    mBackupManagerMonitorEventSender.putMonitoringExtra(
+                            monitoringExtras,
+                            EXTRA_LOG_MANIFEST_PACKAGE_NAME,
+                            manifest.getPackageName());
+            mBackupManagerMonitorEventSender.monitorEvent(
+                    LOG_EVENT_ID_EXPECTED_DIFFERENT_PACKAGE,
+                    null,
+                    LOG_EVENT_CATEGORY_BACKUP_MANAGER_POLICY,
+                    monitoringExtras);
+            return null;
+        }
+        return manifest;
     }
 
     /**
@@ -514,10 +560,7 @@ public class TarBackupReader {
                             null);
                 }
             } else {
-                if (DEBUG) {
-                    Slog.i(TAG,
-                            "Restore manifest from " + info.packageName + " but allowBackup=false");
-                }
+                Slog.i(TAG, "Restore manifest from " + info.packageName + " but allowBackup=false");
                 mBackupManagerMonitorEventSender.monitorEvent(
                         LOG_EVENT_ID_FULL_RESTORE_ALLOW_BACKUP_FALSE,
                         pkgInfo,
@@ -529,10 +572,8 @@ public class TarBackupReader {
             // the restore properly only if the dataset provides the
             // apk file and we can successfully install it.
             if (allowApks) {
-                if (DEBUG) {
-                    Slog.i(TAG, "Package " + info.packageName
-                            + " not installed; requiring apk in dataset");
-                }
+                Slog.i(TAG,
+                        "Package " + info.packageName + " not installed; requiring apk in dataset");
                 policy = RestorePolicy.ACCEPT_IF_APK;
             } else {
                 policy = RestorePolicy.IGNORE;
@@ -570,7 +611,7 @@ public class TarBackupReader {
         long partial = (size + 512) % 512;
         if (partial > 0) {
             final int needed = 512 - (int) partial;
-            if (MORE_DEBUG) {
+            if (DEBUG) {
                 Slog.i(TAG, "Skipping tar padding: " + needed + " bytes");
             }
             byte[] buffer = new byte[needed];
@@ -619,7 +660,7 @@ public class TarBackupReader {
                     }
                     switch (token) {
                         case BACKUP_WIDGET_METADATA_TOKEN: {
-                            if (MORE_DEBUG) {
+                            if (DEBUG) {
                                 Slog.i(TAG, "Got widget metadata for " + info.packageName);
                             }
                             mWidgetData = new byte[size];
@@ -627,10 +668,9 @@ public class TarBackupReader {
                             break;
                         }
                         default: {
-                            if (DEBUG) {
-                                Slog.i(TAG, "Ignoring metadata blob " + Integer.toHexString(token)
-                                        + " for " + info.packageName);
-                            }
+                            Slog.i(TAG,
+                                    "Ignoring metadata blob " + Integer.toHexString(token) + " for "
+                                            + info.packageName);
                             in.skipBytes(size);
                             break;
                         }
@@ -759,9 +799,7 @@ public class TarBackupReader {
             } else if ("size".equals(keyStr)) {
                 info.size = Long.parseLong(valStr);
             } else {
-                if (DEBUG) {
-                    Slog.i(TAG, "Unhandled pax key: " + key);
-                }
+                Slog.i(TAG, "Unhandled pax key: " + key);
             }
 
             offset += linelen;

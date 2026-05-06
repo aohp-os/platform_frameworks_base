@@ -28,6 +28,6 @@ val Kosmos.callChipInteractor: CallChipInteractor by
             scope = applicationCoroutineScope,
             repository = ongoingCallRepository,
             ongoingCallInteractor = ongoingCallInteractor,
-            logger = statusBarChipsLogger,
+            logBuffer = statusBarChipsLogger,
         )
     }

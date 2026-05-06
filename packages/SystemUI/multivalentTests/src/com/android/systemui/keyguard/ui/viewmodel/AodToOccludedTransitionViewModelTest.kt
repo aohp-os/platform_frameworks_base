@@ -27,19 +27,24 @@ import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class AodToOccludedTransitionViewModelTest : SysuiTestCase() {
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
     private val repository = kosmos.fakeKeyguardTransitionRepository
-    private val underTest = kosmos.aodToOccludedTransitionViewModel
+
+    private lateinit var underTest: AodToOccludedTransitionViewModel
+
+    @Before
+    fun setup() {
+        underTest = kosmos.aodToOccludedTransitionViewModel
+    }
 
     @Test
     fun deviceEntryParentViewHides() =
@@ -58,14 +63,14 @@ class AodToOccludedTransitionViewModelTest : SysuiTestCase() {
 
     private fun step(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return TransitionStep(
             from = KeyguardState.AOD,
             to = KeyguardState.OCCLUDED,
             value = value,
             transitionState = state,
-            ownerName = "AodToOccludedTransitionViewModelTest"
+            ownerName = "AodToOccludedTransitionViewModelTest",
         )
     }
 }

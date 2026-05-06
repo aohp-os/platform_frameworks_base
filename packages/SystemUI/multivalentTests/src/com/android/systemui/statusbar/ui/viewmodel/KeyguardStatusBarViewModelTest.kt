@@ -16,10 +16,15 @@
 
 package com.android.systemui.statusbar.ui.viewmodel
 
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.platform.test.flag.junit.FlagsParameterization
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.desktop.domain.interactor.desktopInteractor
+import com.android.systemui.desktop.domain.interactor.enableUsingDesktopStatusBar
 import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.flags.andSceneContainer
 import com.android.systemui.keyguard.data.repository.fakeDeviceEntryFaceAuthRepository
@@ -28,18 +33,21 @@ import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepos
 import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.lifecycle.activateIn
 import com.android.systemui.scene.data.repository.sceneContainerRepository
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.statusbar.domain.interactor.keyguardStatusBarInteractor
+import com.android.systemui.statusbar.headsup.shared.StatusBarNoHunBehavior
 import com.android.systemui.statusbar.notification.data.repository.FakeHeadsUpRowRepository
 import com.android.systemui.statusbar.notification.stack.data.repository.headsUpNotificationRepository
 import com.android.systemui.statusbar.notification.stack.domain.interactor.headsUpNotificationInteractor
-import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.statusbar.policy.batteryController
+import com.android.systemui.statusbar.policy.fake
 import com.android.systemui.testKosmos
-import com.android.systemui.util.mockito.argumentCaptor
-import com.android.systemui.util.mockito.capture
+import com.android.systemui.user.data.repository.fakeUserRepository
+import com.android.systemui.user.domain.interactor.userLogoutInteractor
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.launchIn
@@ -48,16 +56,16 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.verify
 import platform.test.runner.parameterized.ParameterizedAndroidJunit4
 import platform.test.runner.parameterized.Parameters
 
-@SmallTest
 @OptIn(ExperimentalCoroutinesApi::class)
+@SmallTest
 @RunWith(ParameterizedAndroidJunit4::class)
 class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
+    private val userRepository = kosmos.fakeUserRepository
     private val faceAuthRepository by lazy { kosmos.fakeDeviceEntryFaceAuthRepository }
     private val headsUpRepository by lazy { kosmos.headsUpNotificationRepository }
     private val headsUpNotificationInteractor by lazy { kosmos.headsUpNotificationInteractor }
@@ -65,6 +73,7 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
     private val keyguardTransitionRepository by lazy { kosmos.fakeKeyguardTransitionRepository }
     private val keyguardInteractor by lazy { kosmos.keyguardInteractor }
     private val keyguardStatusBarInteractor by lazy { kosmos.keyguardStatusBarInteractor }
+    private val userLogoutInteractor by lazy { kosmos.userLogoutInteractor }
     private val batteryController = kosmos.batteryController
 
     lateinit var underTest: KeyguardStatusBarViewModel
@@ -87,18 +96,30 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
             KeyguardStatusBarViewModel(
                 testScope.backgroundScope,
                 headsUpNotificationInteractor,
+                kosmos.desktopInteractor,
                 kosmos.sceneInteractor,
                 keyguardInteractor,
                 keyguardStatusBarInteractor,
+                userLogoutInteractor,
                 batteryController,
             )
+        underTest.activateIn(testScope)
     }
+
+    @Test
+    fun isVisible_lockscreen_true() =
+        testScope.runTest {
+            val latest by collectLastValue(underTest.isVisible)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+
+            assertThat(latest).isTrue()
+        }
 
     @Test
     fun isVisible_dozing_false() =
         testScope.runTest {
             val latest by collectLastValue(underTest.isVisible)
-            kosmos.sceneContainerRepository.snapToScene(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
 
             keyguardRepository.setIsDozing(true)
 
@@ -110,7 +131,31 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
         testScope.runTest {
             val latest by collectLastValue(underTest.isVisible)
 
-            kosmos.sceneContainerRepository.snapToScene(Scenes.Shade)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Shade)
+
+            assertThat(latest).isFalse()
+        }
+
+    @Test
+    fun isVisible_notificationsShadeOverlay_false() =
+        testScope.runTest {
+            val latest by collectLastValue(underTest.isVisible)
+
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.showOverlay(Overlays.NotificationsShade)
+            runCurrent()
+
+            assertThat(latest).isFalse()
+        }
+
+    @Test
+    fun isVisible_quickSettingsShadeOverlay_false() =
+        testScope.runTest {
+            val latest by collectLastValue(underTest.isVisible)
+
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.showOverlay(Overlays.QuickSettingsShade)
+            runCurrent()
 
             assertThat(latest).isFalse()
         }
@@ -120,14 +165,30 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
         testScope.runTest {
             val latest by collectLastValue(underTest.isVisible)
 
-            kosmos.sceneContainerRepository.snapToScene(Scenes.Bouncer)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.showOverlay(Overlays.Bouncer)
+
+            assertThat(latest).isFalse()
+        }
+
+    @Test
+    fun isVisible_useDesktopStatusBarEnabled_false() =
+        testScope.runTest {
+            val latest by collectLastValue(underTest.isVisible)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+            runCurrent()
+            assertThat(latest).isTrue()
+
+            kosmos.enableUsingDesktopStatusBar()
+            runCurrent()
 
             assertThat(latest).isFalse()
         }
 
     @Test
     @EnableSceneContainer
-    fun isVisible_headsUpStatusBarShown_false() =
+    @DisableFlags(StatusBarNoHunBehavior.FLAG_NAME)
+    fun isVisible_headsUpShown_noHunBehaviorFlagOff_false() =
         testScope.runTest {
             val latest by collectLastValue(underTest.isVisible)
 
@@ -137,7 +198,7 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
                 KeyguardState.LOCKSCREEN,
                 testSetup = true,
             )
-            kosmos.sceneContainerRepository.snapToScene(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
             faceAuthRepository.isBypassEnabled.value = true
 
             // THEN KeyguardStatusBar is NOT visible to make space for HeadsUpStatusBar
@@ -145,11 +206,31 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
         }
 
     @Test
+    @EnableSceneContainer
+    @EnableFlags(StatusBarNoHunBehavior.FLAG_NAME)
+    fun isVisible_headsUpShown_noHunBehaviorFlagOn_true() =
+        testScope.runTest {
+            val latest by collectLastValue(underTest.isVisible)
+
+            // WHEN HUN displayed on the bypass lock screen
+            headsUpRepository.setNotifications(FakeHeadsUpRowRepository("key 0", isPinned = true))
+            keyguardTransitionRepository.emitInitialStepsFromOff(
+                KeyguardState.LOCKSCREEN,
+                testSetup = true,
+            )
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
+            faceAuthRepository.isBypassEnabled.value = true
+
+            // THEN KeyguardStatusBar is still visible because StatusBarNoHunBehavior is enabled
+            assertThat(latest).isTrue()
+        }
+
+    @Test
     fun isVisible_sceneLockscreen_andNotDozing_andNotShowingHeadsUpStatusBar_true() =
         testScope.runTest {
             val latest by collectLastValue(underTest.isVisible)
 
-            kosmos.sceneContainerRepository.snapToScene(Scenes.Lockscreen)
+            kosmos.sceneContainerRepository.instantlyTransitionTo(Scenes.Lockscreen)
             keyguardRepository.setIsDozing(false)
 
             assertThat(latest).isTrue()
@@ -161,23 +242,12 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
             val latest by collectLastValue(underTest.isBatteryCharging)
             runCurrent()
 
-            val captor = argumentCaptor<BatteryController.BatteryStateChangeCallback>()
-            verify(batteryController).addCallback(capture(captor))
-            val callback = captor.value
-
-            callback.onBatteryLevelChanged(
-                /* level= */ 2,
-                /* pluggedIn= */ false,
-                /* charging= */ true,
-            )
+            batteryController.fake._level = 2
+            batteryController.fake._isPluggedIn = true
 
             assertThat(latest).isTrue()
 
-            callback.onBatteryLevelChanged(
-                /* level= */ 2,
-                /* pluggedIn= */ true,
-                /* charging= */ false,
-            )
+            batteryController.fake._isPluggedIn = false
 
             assertThat(latest).isFalse()
         }
@@ -188,12 +258,49 @@ class KeyguardStatusBarViewModelTest(flags: FlagsParameterization) : SysuiTestCa
             val job = underTest.isBatteryCharging.launchIn(this)
             runCurrent()
 
-            val captor = argumentCaptor<BatteryController.BatteryStateChangeCallback>()
-            verify(batteryController).addCallback(capture(captor))
-
             job.cancel()
             runCurrent()
 
-            verify(batteryController).removeCallback(captor.value)
+            assertThat(batteryController.fake.listeners).isEmpty()
         }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SIGN_OUT_BUTTON_ON_KEYGUARD_STATUS_BAR)
+    fun signOutButton_isVisible_whenUserManagerLogoutIsEnabled() {
+        testScope.runTest {
+            kosmos.fakeKeyguardRepository.setIsSignOutButtonOnStatusBarEnabledInConfig(true)
+            val logoutToSystemUserCount = userRepository.logOutWithUserManagerCallCount
+            userRepository.setUserManagerLogoutEnabled(true)
+            userRepository.setPolicyManagerLogoutEnabled(false)
+            runCurrent()
+            assertThat(underTest.isSignOutButtonEnabled).isTrue()
+            assertThat(underTest.isSignOutButtonVisible).isTrue()
+            underTest.onSignOut()
+            runCurrent()
+            assertThat(userRepository.logOutWithUserManagerCallCount)
+                .isEqualTo(logoutToSystemUserCount + 1)
+        }
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SIGN_OUT_BUTTON_ON_KEYGUARD_STATUS_BAR)
+    fun signOutButton_isNotVisible_whenUserManagerLogoutIsDisabled() {
+        testScope.runTest {
+            kosmos.fakeKeyguardRepository.setIsSignOutButtonOnStatusBarEnabledInConfig(true)
+            userRepository.setUserManagerLogoutEnabled(false)
+            userRepository.setPolicyManagerLogoutEnabled(true)
+            runCurrent()
+            assertThat(underTest.isSignOutButtonEnabled).isTrue()
+            assertThat(underTest.isSignOutButtonVisible).isFalse()
+        }
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SIGN_OUT_BUTTON_ON_KEYGUARD_STATUS_BAR)
+    fun signOutButton_isDisabled_whenDisabledInConfig() {
+        testScope.runTest {
+            kosmos.fakeKeyguardRepository.setIsSignOutButtonOnStatusBarEnabledInConfig(false)
+            assertThat(underTest.isSignOutButtonEnabled).isFalse()
+        }
+    }
 }

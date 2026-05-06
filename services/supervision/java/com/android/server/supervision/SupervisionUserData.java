@@ -20,14 +20,17 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.os.PersistableBundle;
+import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 
 /** User specific data, used internally by the {@link SupervisionService}. */
 public class SupervisionUserData {
     public final @UserIdInt int userId;
     public boolean supervisionEnabled;
+    @Nullable public String supervisionAppPackage;
     public boolean supervisionLockScreenEnabled;
     @Nullable public PersistableBundle supervisionLockScreenOptions;
+    ArraySet<String> supervisionRoleHolders = new ArraySet<>();
 
     public SupervisionUserData(@UserIdInt int userId) {
         this.userId = userId;
@@ -38,6 +41,8 @@ public class SupervisionUserData {
         pw.println("User " + userId + ":");
         pw.increaseIndent();
         pw.println("supervisionEnabled: " + supervisionEnabled);
+        pw.println("supervisionAppPackage: " + supervisionAppPackage);
+        pw.println("supervisionRoleHolders: " + supervisionRoleHolders);
         pw.println("supervisionLockScreenEnabled: " + supervisionLockScreenEnabled);
         pw.println("supervisionLockScreenOptions: " + supervisionLockScreenOptions);
         pw.decreaseIndent();

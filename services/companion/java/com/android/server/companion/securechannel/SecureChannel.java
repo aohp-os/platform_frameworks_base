@@ -21,6 +21,7 @@ import static android.security.attestationverification.AttestationVerificationMa
 import android.annotation.NonNull;
 import android.content.Context;
 import android.os.Build;
+import android.security.attestationverification.AttestationVerificationManager;
 import android.util.Slog;
 
 import com.google.security.cryptauth.lib.securegcm.ukey2.AlertException;
@@ -59,6 +60,7 @@ public class SecureChannel {
     private final Callback mCallback;
     private final byte[] mPreSharedKey;
     private final AttestationVerifier mVerifier;
+    private final int mFlags;
 
     private volatile boolean mStopped;
     private volatile boolean mInProgress;
@@ -71,6 +73,8 @@ public class SecureChannel {
     private String mAlias;
     private int mVerificationResult = FLAG_FAILURE_UNKNOWN;
     private boolean mPskVerified;
+
+    private final Object mHandshakeLock = new Object();
 
 
     /**
@@ -89,7 +93,7 @@ public class SecureChannel {
             @NonNull Callback callback,
             @NonNull byte[] preSharedKey
     ) {
-        this(in, out, callback, preSharedKey, null);
+        this(in, out, callback, preSharedKey, null, 0);
     }
 
     /**
@@ -100,14 +104,16 @@ public class SecureChannel {
      * @param out output stream from which data is sent out
      * @param callback subscription to received messages from the channel
      * @param context context for fetching the Attestation Verifier Framework system service
+     * @param flags flags for custom security settings on the channel
      */
     public SecureChannel(
             @NonNull final InputStream in,
             @NonNull final OutputStream out,
             @NonNull Callback callback,
-            @NonNull Context context
+            @NonNull Context context,
+            int flags
     ) {
-        this(in, out, callback, null, new AttestationVerifier(context));
+        this(in, out, callback, null, new AttestationVerifier(context, flags), flags);
     }
 
     public SecureChannel(
@@ -115,13 +121,15 @@ public class SecureChannel {
             final OutputStream out,
             Callback callback,
             byte[] preSharedKey,
-            AttestationVerifier verifier
+            AttestationVerifier verifier,
+            int flags
     ) {
         this.mInput = in;
         this.mOutput = out;
         this.mCallback = callback;
         this.mPreSharedKey = preSharedKey;
         this.mVerifier = verifier;
+        this.mFlags = flags;
     }
 
     /**
@@ -243,7 +251,7 @@ public class SecureChannel {
         }
     }
 
-    private void receiveSecureMessage() throws IOException, CryptoException {
+    private void receiveSecureMessage() throws IOException {
         // Check if channel is secured. Trigger error callback. Let user handle it.
         if (!isSecured()) {
             Slog.d(TAG, "Received a message without a secure connection. "
@@ -255,7 +263,7 @@ public class SecureChannel {
         try {
             byte[] receivedMessage = readMessage(MessageType.SECURE_MESSAGE);
             mCallback.onSecureMessageReceived(receivedMessage);
-        } catch (SecureChannelException e) {
+        } catch (SecureChannelException | CryptoException e) {
             Slog.w(TAG, "Ignoring received message.", e);
         }
     }
@@ -337,20 +345,22 @@ public class SecureChannel {
     }
 
     private void initiateHandshake() throws IOException, BadHandleException , HandshakeException {
-        if (mConnectionContext != null) {
-            Slog.d(TAG, "Ukey2 handshake is already completed.");
-            return;
-        }
+        synchronized (mHandshakeLock) {
+            if (mConnectionContext != null) {
+                Slog.d(TAG, "Ukey2 handshake is already completed.");
+                return;
+            }
 
-        mRole = Role.INITIATOR;
-        mHandshakeContext = D2DHandshakeContext.forInitiator();
-        mClientInit = mHandshakeContext.getNextHandshakeMessage();
+            mRole = Role.INITIATOR;
+            mHandshakeContext = D2DHandshakeContext.forInitiator();
+            mClientInit = mHandshakeContext.getNextHandshakeMessage();
 
-        // Send Client Init
-        if (DEBUG) {
-            Slog.d(TAG, "Sending Ukey2 Client Init message");
+            // Send Client Init
+            if (DEBUG) {
+                Slog.d(TAG, "Sending Ukey2 Client Init message");
+            }
+            sendMessage(MessageType.HANDSHAKE_INIT, constructHandshakeInitMessage(mClientInit));
         }
-        sendMessage(MessageType.HANDSHAKE_INIT, constructHandshakeInitMessage(mClientInit));
     }
 
     // In an occasion where both participants try to initiate a handshake, resolve the conflict
@@ -409,8 +419,17 @@ public class SecureChannel {
         // Mark "in-progress" upon receiving the first message
         mInProgress = true;
 
+        // Complete a series of handshake exchange and processing
+        synchronized (mHandshakeLock) {
+            completeHandshake(handshakeInitMessage);
+        }
+    }
+
+    private void completeHandshake(byte[] initMessage) throws IOException, HandshakeException,
+            BadHandleException, CryptoException, AlertException {
+
         // Handle a potential collision where both devices tried to initiate a connection
-        byte[] handshakeMessage = handleHandshakeCollision(handshakeInitMessage);
+        byte[] handshakeMessage = handleHandshakeCollision(initMessage);
 
         // Proceed with the rest of Ukey2 handshake
         if (mHandshakeContext == null) { // Server-side logic
@@ -525,17 +544,20 @@ public class SecureChannel {
 
         // Exchange attestation verification result and finish
         byte[] verificationResult = ByteBuffer.allocate(4)
-                .putInt(mVerificationResult)
+                // Do not share the exact failure code with remote device
+                .putInt(mVerificationResult == 0 ? 0 : FLAG_FAILURE_UNKNOWN)
                 .array();
         sendMessage(MessageType.AVF_RESULT, verificationResult);
         byte[] remoteVerificationResult = readMessage(MessageType.AVF_RESULT);
 
         if (ByteBuffer.wrap(remoteVerificationResult).getInt() != 0) {
-            throw new SecureChannelException("Remote device failed to verify local attestation.");
+            throw new AttestationVerificationException(
+                    "Remote device failed to verify local attestation.", FLAG_FAILURE_UNKNOWN);
         }
 
         if (mVerificationResult != 0) {
-            throw new SecureChannelException("Failed to verify remote attestation.");
+            throw new AttestationVerificationException(
+                    "Failed to verify remote attestation.", mVerificationResult);
         }
 
         if (DEBUG) {

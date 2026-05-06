@@ -23,21 +23,73 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <new>
 
-#include "core_jni_helpers.h"
-
 #include "android_app_PropertyInvalidatedCache.h"
+#include "core_jni_helpers.h"
 
 namespace {
 
 using namespace android::app::PropertyInvalidatedCache;
 
+class alignas(8) SystemFeaturesCache {
+public:
+    // We only need enough space to handle the official set of SDK-defined system features (~200).
+    // TODO(b/326623529): Reuse the exact value defined by PackageManager.SDK_FEATURE_COUNT.
+    static constexpr int32_t kMaxSystemFeatures = 512;
+
+    void writeSystemFeatures(JNIEnv* env, jintArray jfeatures) {
+        if (featuresLength.load(std::memory_order_seq_cst) > 0) {
+            jniThrowExceptionFmt(env, "java/lang/IllegalStateException",
+                                 "SystemFeaturesCache already written.");
+            return;
+        }
+
+        int32_t jfeaturesLength = env->GetArrayLength(jfeatures);
+        if (jfeaturesLength > kMaxSystemFeatures) {
+            jniThrowExceptionFmt(env, "java/lang/IllegalArgumentException",
+                                 "SystemFeaturesCache only supports %d elements (vs %d requested).",
+                                 kMaxSystemFeatures, jfeaturesLength);
+            return;
+        }
+        env->GetIntArrayRegion(jfeatures, 0, jfeaturesLength, features.data());
+        featuresLength.store(jfeaturesLength, std::memory_order_seq_cst);
+    }
+
+    jintArray readSystemFeatures(JNIEnv* env) const {
+        jint jfeaturesLength = static_cast<jint>(featuresLength.load(std::memory_order_seq_cst));
+        jintArray jfeatures = env->NewIntArray(jfeaturesLength);
+        if (env->ExceptionCheck()) {
+            return nullptr;
+        }
+
+        env->SetIntArrayRegion(jfeatures, 0, jfeaturesLength, features.data());
+        return jfeatures;
+    }
+
+private:
+    // A fixed length array of feature versions, with |featuresLength| dictating the actual size
+    // of features that have been written.
+    std::array<int32_t, kMaxSystemFeatures> features = {};
+    // The atomic acts as a barrier that precedes reads and follows writes, ensuring a
+    // consistent view of |features| across processes. Note that r/w synchronization *within* a
+    // process is handled at a higher level.
+    std::atomic<int64_t> featuresLength = 0;
+};
+
+static_assert(sizeof(SystemFeaturesCache) ==
+                      sizeof(int32_t) * SystemFeaturesCache::kMaxSystemFeatures + sizeof(int64_t),
+              "Unexpected SystemFeaturesCache size");
+
 // Atomics should be safe to use across processes if they are lock free.
 static_assert(std::atomic<int64_t>::is_always_lock_free == true,
               "atomic<int64_t> is not always lock free");
+// Atomics should be safe to use across processes if they are lock free.
+static_assert(std::atomic<float>::is_always_lock_free == true,
+              "atomic<float> is not always lock free");
 
 // This is the data structure that is shared between processes.
 //
@@ -51,6 +103,7 @@ class alignas(8) SharedMemory { // Ensure that `sizeof(SharedMemory)` is the sam
                                 // 64-bit systems.
 private:
     volatile std::atomic<int64_t> latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis;
+    volatile std::atomic<float> currentAnimatorScale;
 
     // LINT.IfChange(invalid_network_time)
     static constexpr int64_t INVALID_NETWORK_TIME = -1;
@@ -59,7 +112,8 @@ private:
 public:
     // Default constructor sets initial values
     SharedMemory()
-          : latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis(INVALID_NETWORK_TIME) {}
+          : latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis(INVALID_NETWORK_TIME),
+            currentAnimatorScale(1.f) {}
 
     int64_t getLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis() const {
         return latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis;
@@ -69,14 +123,43 @@ public:
         latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis = offset;
     }
 
+    void setCurrentAnimatorScale(float scale) {
+        currentAnimatorScale = scale;
+    }
+
+    float getCurrentAnimatorScale() const {
+        return currentAnimatorScale;
+    }
+
+    // The fixed size cache storage for SDK-defined system features.
+    SystemFeaturesCache systemFeaturesCache;
+
     // The nonce storage for pic.  The sizing is suitable for the system server module.
     SystemCacheNonce systemPic;
 };
 
-// Update the expected value when modifying the members of SharedMemory.
+// Update the expected values when modifying the members of SharedMemory.
 // The goal of this assertion is to ensure that the data structure is the same size across 32-bit
 // and 64-bit systems.
-static_assert(sizeof(SharedMemory) == 8 + sizeof(SystemCacheNonce), "Unexpected SharedMemory size");
+// TODO(b/396674280): Add an additional fixed size check for SystemCacheNonce after resolving
+// ABI discrepancies.
+static_assert(sizeof(SharedMemory) ==
+                      // latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis
+                      8 +
+                      // currentAnimatorScale
+                      8 +
+                      sizeof(SystemFeaturesCache) +
+                      sizeof(SystemCacheNonce),
+              "Unexpected SharedMemory size");
+static_assert(offsetof(SharedMemory, systemFeaturesCache) ==
+                      // latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis
+                      8 +
+                      // currentAnimatorScale
+                      8,
+              "Unexpected SystemFeaturesCache offset in SharedMemory");
+static_assert(offsetof(SharedMemory, systemPic) ==
+                      offsetof(SharedMemory, systemFeaturesCache) + sizeof(SystemFeaturesCache),
+              "Unexpected SystemCachceNonce offset in SharedMemory");
 
 static jint nativeCreate(JNIEnv* env, jclass) {
     // Create anonymous shared memory region
@@ -146,6 +229,26 @@ static jlong nativeGetSystemNonceBlock(JNIEnv*, jclass*, jlong ptr) {
     return reinterpret_cast<jlong>(&sharedMemory->systemPic);
 }
 
+static void nativeWriteSystemFeaturesCache(JNIEnv* env, jclass*, jlong ptr, jintArray jfeatures) {
+    SharedMemory* sharedMemory = reinterpret_cast<SharedMemory*>(ptr);
+    sharedMemory->systemFeaturesCache.writeSystemFeatures(env, jfeatures);
+}
+
+static jintArray nativeReadSystemFeaturesCache(JNIEnv* env, jclass*, jlong ptr) {
+    SharedMemory* sharedMemory = reinterpret_cast<SharedMemory*>(ptr);
+    return sharedMemory->systemFeaturesCache.readSystemFeatures(env);
+}
+
+static void nativeSetCurrentAnimatorScale(JNIEnv* env, jclass*, jlong ptr, jfloat scale) {
+    SharedMemory* sharedMemory = reinterpret_cast<SharedMemory*>(ptr);
+    sharedMemory->setCurrentAnimatorScale(scale);
+}
+
+static jfloat nativeGetCurrentAnimatorScale(JNIEnv* env, jclass*, jlong ptr) {
+    SharedMemory* sharedMemory = reinterpret_cast<SharedMemory*>(ptr);
+    return sharedMemory->getCurrentAnimatorScale();
+}
+
 static const JNINativeMethod gMethods[] = {
         {"nativeCreate", "()I", (void*)nativeCreate},
         {"nativeMap", "(IZ)J", (void*)nativeMap},
@@ -156,7 +259,11 @@ static const JNINativeMethod gMethods[] = {
          (void*)nativeSetLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis},
         {"nativeGetLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis", "(J)J",
          (void*)nativeGetLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis},
-        {"nativeGetSystemNonceBlock", "(J)J", (void*) nativeGetSystemNonceBlock},
+        {"nativeGetSystemNonceBlock", "(J)J", (void*)nativeGetSystemNonceBlock},
+        {"nativeWriteSystemFeaturesCache", "(J[I)V", (void*)nativeWriteSystemFeaturesCache},
+        {"nativeReadSystemFeaturesCache", "(J)[I", (void*)nativeReadSystemFeaturesCache},
+        {"nativeSetCurrentAnimatorScale", "(JF)V", (void*)nativeSetCurrentAnimatorScale},
+        {"nativeGetCurrentAnimatorScale", "(J)F", (void*)nativeGetCurrentAnimatorScale},
 };
 
 static const char kApplicationSharedMemoryClassName[] =

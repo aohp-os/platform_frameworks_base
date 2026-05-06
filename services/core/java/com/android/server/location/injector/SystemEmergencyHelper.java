@@ -29,7 +29,6 @@ import android.telephony.TelephonyManager;
 import android.util.Log;
 
 import com.android.internal.telephony.TelephonyIntents;
-import com.android.internal.telephony.flags.Flags;
 import com.android.server.FgThread;
 
 import java.util.Objects;
@@ -72,13 +71,14 @@ public class SystemEmergencyHelper extends EmergencyHelper {
                     return;
                 }
 
-                synchronized (SystemEmergencyHelper.this) {
-                    try {
-                        mIsInEmergencyCall = mTelephonyManager.isEmergencyNumber(
-                                intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER));
-                    } catch (IllegalStateException | UnsupportedOperationException e) {
-                        Log.w(TAG, "Failed to call TelephonyManager.isEmergencyNumber().", e);
+                try {
+                    boolean isInEmergency = mTelephonyManager.isEmergencyNumber(
+                            intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER));
+                    synchronized (SystemEmergencyHelper.this) {
+                        mIsInEmergencyCall = isInEmergency;
                     }
+                } catch (IllegalStateException | UnsupportedOperationException e) {
+                    Log.w(TAG, "Failed to call TelephonyManager.isEmergencyNumber().", e);
                 }
 
                 dispatchEmergencyStateChanged();
@@ -99,29 +99,24 @@ public class SystemEmergencyHelper extends EmergencyHelper {
     }
 
     @Override
-    public synchronized boolean isInEmergency(long extensionTimeMs) {
+    public boolean isInEmergency(long extensionTimeMs) {
         if (mTelephonyManager == null) {
             return false;
         }
-
-        boolean isInExtensionTime = mEmergencyCallEndRealtimeMs != Long.MIN_VALUE
-                && (SystemClock.elapsedRealtime() - mEmergencyCallEndRealtimeMs) < extensionTimeMs;
-
-        if (!Flags.enforceTelephonyFeatureMapping()) {
-            return mIsInEmergencyCall
-                    || isInExtensionTime
-                    || mTelephonyManager.getEmergencyCallbackMode()
-                    || mTelephonyManager.isInEmergencySmsMode();
-        } else {
-            boolean emergencyCallbackMode = false;
-            boolean emergencySmsMode = false;
-            PackageManager pm = mContext.getPackageManager();
-            if (pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_CALLING)) {
-                emergencyCallbackMode = mTelephonyManager.getEmergencyCallbackMode();
-            }
-            if (pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) {
-                emergencySmsMode = mTelephonyManager.isInEmergencySmsMode();
-            }
+        boolean emergencyCallbackMode = false;
+        boolean emergencySmsMode = false;
+        PackageManager pm = mContext.getPackageManager();
+        if (pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_CALLING)) {
+            emergencyCallbackMode = mTelephonyManager.getEmergencyCallbackMode();
+        }
+        if (pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) {
+            emergencySmsMode = mTelephonyManager.isInEmergencySmsMode();
+        }
+        boolean isInExtensionTime;
+        synchronized (this) {
+            isInExtensionTime = mEmergencyCallEndRealtimeMs != Long.MIN_VALUE
+                    && (SystemClock.elapsedRealtime() - mEmergencyCallEndRealtimeMs)
+                    < extensionTimeMs;
             return mIsInEmergencyCall
                     || isInExtensionTime
                     || emergencyCallbackMode

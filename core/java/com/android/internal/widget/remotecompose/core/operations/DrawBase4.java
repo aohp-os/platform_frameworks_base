@@ -25,11 +25,13 @@ import com.android.internal.widget.remotecompose.core.PaintOperation;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.List;
 
 /** Base class for draw commands that take 4 floats */
-public abstract class DrawBase4 extends PaintOperation implements VariableSupport {
+public abstract class DrawBase4 extends PaintOperation implements VariableSupport, Serializable {
     @NonNull protected String mName = "DrawRectBase";
     protected float mX1;
     protected float mY1;
@@ -102,8 +104,15 @@ public abstract class DrawBase4 extends PaintOperation implements VariableSuppor
                 + floatToString(mY2Value, mY2);
     }
 
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations to add to
+     * @param maker the maker of the operation
+     */
     public static void read(
-            @NonNull Maker maker, @NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
+            @NonNull WireBuffer buffer, @NonNull List<Operation> operations, @NonNull Maker maker) {
         float v1 = buffer.readFloat();
         float v2 = buffer.readFloat();
         float v3 = buffer.readFloat();
@@ -144,5 +153,18 @@ public abstract class DrawBase4 extends PaintOperation implements VariableSuppor
         buffer.writeFloat(y1);
         buffer.writeFloat(x2);
         buffer.writeFloat(y2);
+    }
+
+    protected @NonNull MapSerializer serialize(
+            @NonNull MapSerializer serializer,
+            @NonNull String x1Name,
+            @NonNull String y1Name,
+            @NonNull String x2Name,
+            @NonNull String y2Name) {
+        return serializer
+                .add(x1Name, mX1Value, mX1)
+                .add(y1Name, mY1Value, mY1)
+                .add(x2Name, mX2Value, mX2)
+                .add(y2Name, mY2Value, mY2);
     }
 }

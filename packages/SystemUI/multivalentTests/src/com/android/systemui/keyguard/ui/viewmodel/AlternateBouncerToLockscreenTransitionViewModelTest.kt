@@ -30,13 +30,12 @@ import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class AlternateBouncerToLockscreenTransitionViewModelTest : SysuiTestCase() {
@@ -46,7 +45,12 @@ class AlternateBouncerToLockscreenTransitionViewModelTest : SysuiTestCase() {
     val keyguardTransitionRepository = kosmos.fakeKeyguardTransitionRepository
     val fingerprintPropertyRepository = kosmos.fingerprintPropertyRepository
 
-    val underTest = kosmos.alternateBouncerToLockscreenTransitionViewModel
+    private lateinit var underTest: AlternateBouncerToLockscreenTransitionViewModel
+
+    @Before
+    fun setup() {
+        underTest = kosmos.alternateBouncerToLockscreenTransitionViewModel
+    }
 
     @Test
     fun lockscreenAlpha_zeroInitialAlpha() =
@@ -58,7 +62,7 @@ class AlternateBouncerToLockscreenTransitionViewModelTest : SysuiTestCase() {
             keyguardTransitionRepository.sendTransitionSteps(
                 from = KeyguardState.ALTERNATE_BOUNCER,
                 to = KeyguardState.LOCKSCREEN,
-                testScope
+                testScope,
             )
 
             assertThat(alpha[0]).isEqualTo(0f)
@@ -112,14 +116,14 @@ class AlternateBouncerToLockscreenTransitionViewModelTest : SysuiTestCase() {
 
     private fun step(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return TransitionStep(
             from = KeyguardState.ALTERNATE_BOUNCER,
             to = KeyguardState.LOCKSCREEN,
             value = value,
             transitionState = state,
-            ownerName = "AlternateBouncerToLockscreenTransitionViewModelTest"
+            ownerName = "AlternateBouncerToLockscreenTransitionViewModelTest",
         )
     }
 }

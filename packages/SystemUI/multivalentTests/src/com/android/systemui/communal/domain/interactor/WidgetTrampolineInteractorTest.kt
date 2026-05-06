@@ -19,11 +19,13 @@ package com.android.systemui.communal.domain.interactor
 import android.app.ActivityManager.RunningTaskInfo
 import android.app.usage.UsageEvents
 import android.content.pm.UserInfo
+import android.platform.test.flag.junit.FlagsParameterization
 import android.service.dream.dreamManager
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.common.usagestats.data.repository.fakeUsageStatsRepository
+import com.android.systemui.flags.DisableSceneContainer
+import com.android.systemui.flags.andSceneContainer
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.TransitionState
@@ -38,7 +40,6 @@ import com.android.systemui.util.time.fakeSystemClock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -55,23 +56,24 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4
+import platform.test.runner.parameterized.Parameters
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
-@RunWith(AndroidJUnit4::class)
-class WidgetTrampolineInteractorTest : SysuiTestCase() {
+@RunWith(ParameterizedAndroidJunit4::class)
+class WidgetTrampolineInteractorTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
 
-    private val activityStarter = kosmos.activityStarter
-    private val usageStatsRepository = kosmos.fakeUsageStatsRepository
-    private val taskStackChangeListeners = kosmos.taskStackChangeListeners
-    private val keyguardTransitionRepository = kosmos.fakeKeyguardTransitionRepository
-    private val userTracker = kosmos.fakeUserTracker
-    private val systemClock = kosmos.fakeSystemClock
+    private val activityStarter by lazy { kosmos.activityStarter }
+    private val usageStatsRepository by lazy { kosmos.fakeUsageStatsRepository }
+    private val taskStackChangeListeners by lazy { kosmos.taskStackChangeListeners }
+    private val keyguardTransitionRepository by lazy { kosmos.fakeKeyguardTransitionRepository }
+    private val userTracker by lazy { kosmos.fakeUserTracker }
+    private val systemClock by lazy { kosmos.fakeSystemClock }
 
-    private val underTest = kosmos.widgetTrampolineInteractor
+    private val underTest by lazy { kosmos.widgetTrampolineInteractor }
 
     @Before
     fun setUp() {
@@ -79,6 +81,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
         systemClock.setCurrentTimeMillis(testScope.currentTime)
     }
 
+    @DisableSceneContainer
     @Test
     fun testNewTaskStartsWhileOnHub_triggersUnlock() =
         testScope.runTest {
@@ -92,6 +95,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testNewTaskStartsWhileOnHub_stopsDream() =
         testScope.runTest {
@@ -113,6 +117,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             }
         }
 
+    @DisableSceneContainer
     @Test
     fun testNewTaskStartsAfterExitingHub_doesNotTriggerUnlock() =
         testScope.runTest {
@@ -126,6 +131,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter, never()).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testNewTaskStartsAfterTimeout_doesNotTriggerUnlock() =
         testScope.runTest {
@@ -139,6 +145,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter, never()).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testActivityResumedWhileOnHub_triggersUnlock() =
         testScope.runTest {
@@ -152,6 +159,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testActivityResumedAfterExitingHub_doesNotTriggerUnlock() =
         testScope.runTest {
@@ -166,6 +174,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter, never()).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testActivityDestroyed_doesNotTriggerUnlock() =
         testScope.runTest {
@@ -179,6 +188,7 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
             verify(activityStarter, never()).dismissKeyguardThenExecute(any(), anyOrNull(), any())
         }
 
+    @DisableSceneContainer
     @Test
     fun testMultipleActivityEvents_triggersUnlockOnlyOnce() =
         testScope.runTest {
@@ -238,7 +248,17 @@ class WidgetTrampolineInteractorTest : SysuiTestCase() {
         runCurrent()
     }
 
-    private companion object {
-        val MAIN_USER: UserInfo = UserInfo(0, "primary", UserInfo.FLAG_MAIN)
+    init {
+        mSetFlagsRule.setFlagsParameterization(flags)
+    }
+
+    companion object {
+        private val MAIN_USER: UserInfo = UserInfo(0, "primary", UserInfo.FLAG_MAIN)
+
+        @JvmStatic
+        @Parameters(name = "{0}")
+        fun getParams(): List<FlagsParameterization> {
+            return FlagsParameterization.allCombinationsOf().andSceneContainer()
+        }
     }
 }

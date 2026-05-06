@@ -156,6 +156,15 @@ int JTvInputHal::setTvMessageEnabled(int deviceId, int streamId, int type, bool 
     return NO_ERROR;
 }
 
+int JTvInputHal::setPictureProfileId(int deviceId, int streamId, long profileHandle) {
+    ::ndk::ScopedAStatus status = mTvInput->setPictureProfileId(deviceId, streamId, profileHandle);
+    if (!status.isOk()) {
+        ALOGE("Error in setPictureProfileId. device id:%d stream id:%d", deviceId, streamId);
+        return status.getStatus();
+    }
+    return NO_ERROR;
+}
+
 const std::vector<AidlTvStreamConfig> JTvInputHal::getStreamConfigs(int deviceId) {
     std::vector<AidlTvStreamConfig> list;
     ::ndk::ScopedAStatus status = mTvInput->getStreamConfigurations(deviceId, &list);
@@ -287,14 +296,6 @@ void JTvInputHal::onDeviceUnavailable(int deviceId) {
 }
 
 void JTvInputHal::onStreamConfigurationsChanged(int deviceId, int cableConnectionStatus) {
-    {
-        Mutex::Autolock autoLock(&mStreamLock);
-        KeyedVector<int, Connection>& connections = mConnections.editValueFor(deviceId);
-        for (size_t i = 0; i < connections.size(); ++i) {
-            removeStream(deviceId, connections.keyAt(i));
-        }
-        connections.clear();
-    }
     JNIEnv* env = AndroidRuntime::getJNIEnv();
     env->CallVoidMethod(mThiz, gTvInputHalClassInfo.streamConfigsChanged, deviceId,
                         cableConnectionStatus);
@@ -548,6 +549,16 @@ JTvInputHal::ITvInputWrapper::ITvInputWrapper(std::shared_ptr<AidlITvInput>& aid
         return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
     } else {
         return mAidlTvInput->setTvMessageEnabled(deviceId, streamId, in_type, enabled);
+    }
+}
+
+::ndk::ScopedAStatus JTvInputHal::ITvInputWrapper::setPictureProfileId(int32_t deviceId,
+                                                                       int32_t streamId,
+                                                                       long profileHandle) {
+    if (mIsHidl) {
+        return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+    } else {
+        return mAidlTvInput->setPictureProfileId(deviceId, streamId, profileHandle);
     }
 }
 

@@ -30,11 +30,11 @@ class ViewerConfigJsonBuilderTest {
         private val TEST1 = ViewerConfigParser.ConfigEntry("test1", LogLevel.INFO.name, TAG1)
         private val TEST2 = ViewerConfigParser.ConfigEntry("test2", LogLevel.DEBUG.name, TAG2)
         private val TEST3 = ViewerConfigParser.ConfigEntry("test3", LogLevel.ERROR.name, TAG2)
-        private val GROUP1 = LogGroup("TEST_GROUP", true, true, TAG1)
-        private val GROUP2 = LogGroup("DEBUG_GROUP", true, true, TAG2)
-        private val GROUP3 = LogGroup("DEBUG_GROUP", true, true, TAG2)
-        private val GROUP_DISABLED = LogGroup("DEBUG_GROUP", false, true, TAG2)
-        private val GROUP_TEXT_DISABLED = LogGroup("DEBUG_GROUP", true, false, TAG2)
+        private val GROUP1 = LogGroup("TEST_GROUP", true, true, TAG1, 1)
+        private val GROUP2 = LogGroup("DEBUG_GROUP", true, true, TAG2, 2)
+        private val GROUP3 = LogGroup("DEBUG_GROUP", true, true, TAG2, 3)
+        private val GROUP_DISABLED = LogGroup("DEBUG_GROUP", false, true, TAG2, 4)
+        private val GROUP_TEXT_DISABLED = LogGroup("DEBUG_GROUP", true, false, TAG2, 5)
         private const val PATH = "/tmp/test.java"
 
         private val GROUPS = listOf(GROUP1, GROUP2, GROUP3)
@@ -50,9 +50,9 @@ class ViewerConfigJsonBuilderTest {
     fun processClass() {
         val logCallRegistry = ProtoLogTool.LogCallRegistry()
         logCallRegistry.addLogCalls(listOf(
-                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH),
-                LogCall(TEST2.messageString, LogLevel.DEBUG, GROUP2, PATH),
-                LogCall(TEST3.messageString, LogLevel.ERROR, GROUP3, PATH)))
+                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 123),
+                LogCall(TEST2.messageString, LogLevel.DEBUG, GROUP2, PATH, 456),
+                LogCall(TEST3.messageString, LogLevel.ERROR, GROUP3, PATH, 789)))
 
         val parsedConfig = parseConfig(
             configBuilder.build(GROUPS, logCallRegistry.getStatements()).toString(Charsets.UTF_8))
@@ -69,9 +69,9 @@ class ViewerConfigJsonBuilderTest {
     fun processClass_nonUnique() {
         val logCallRegistry = ProtoLogTool.LogCallRegistry()
         logCallRegistry.addLogCalls(listOf(
-                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH),
-                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH),
-                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH)))
+                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 123),
+                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 456),
+                LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 789)))
 
         val parsedConfig = parseConfig(
             configBuilder.build(GROUPS, logCallRegistry.getStatements()).toString(Charsets.UTF_8))

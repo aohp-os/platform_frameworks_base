@@ -28,21 +28,22 @@ import com.android.internal.annotations.VisibleForTesting;
  */
 public class PowerStatusMonitorActionFromPlayback extends HdmiCecFeatureAction {
     private static final String TAG = "PowerStatusMonitorActionFromPlayback";
+    // State that waits for next monitoring.
+    private static final int STATE_WAIT_FOR_NEXT_MONITORING = 1;
 
     // State that waits for <Report Power Status> once sending <Give Device Power Status>
-    // to all external devices.
-    private static final int STATE_WAIT_FOR_REPORT_POWER_STATUS = 1;
-    // State that waits for next monitoring.
-    private static final int STATE_WAIT_FOR_NEXT_MONITORING = 2;
+    // to the TV.
+    private static final int STATE_WAIT_FOR_REPORT_POWER_STATUS = 2;
+    // Number of consecutive standby reports required before going to standby.
+    private static final int REQUIRED_CONSECUTIVE_STANDBY_REPORTS = 2;
+
     // Monitoring interval (60s)
     @VisibleForTesting
     protected static final int MONITORING_INTERVAL_MS = 60000;
     // Timeout once sending <Give Device Power Status>
-    private static final int REPORT_POWER_STATUS_TIMEOUT_MS = 5000;
-    // Maximum number of retries in case the <Give Device Power Status> failed being sent or times
-    // out.
-    private static final int GIVE_POWER_STATUS_FOR_SOURCE_RETRIES = 5;
-    private int mPowerStatusRetries = 0;
+
+    // Counter for consecutive standby reports
+    private int mConsecutiveStandbyReports = 0;
 
     PowerStatusMonitorActionFromPlayback(HdmiCecLocalDevice source) {
         super(source);
@@ -53,6 +54,7 @@ public class PowerStatusMonitorActionFromPlayback extends HdmiCecFeatureAction {
         // Start after timeout since the device just finished allocation.
         mState = STATE_WAIT_FOR_NEXT_MONITORING;
         addTimer(mState, MONITORING_INTERVAL_MS);
+        mConsecutiveStandbyReports = 0;
         return true;
     }
 
@@ -68,44 +70,60 @@ public class PowerStatusMonitorActionFromPlayback extends HdmiCecFeatureAction {
 
     private boolean handleReportPowerStatusFromTv(HdmiCecMessage cmd) {
         int powerStatus = cmd.getParams()[0] & 0xFF;
-        if (powerStatus == POWER_STATUS_STANDBY) {
-            Slog.d(TAG, "TV reported it turned off, going to sleep.");
-            source().getService().standby();
-            return true;
+        if (powerStatus != POWER_STATUS_STANDBY) {
+            mConsecutiveStandbyReports = 0; // Reset counter if TV is not in standby.
+        } else {
+            mConsecutiveStandbyReports++;  // Increase counter if TV reports standby.
         }
-        return false;
+
+        if (mConsecutiveStandbyReports >= REQUIRED_CONSECUTIVE_STANDBY_REPORTS) {
+            HdmiCecLocalDeviceSource source = source();
+            Slog.d(TAG, "TV reported standby, going to sleep.");
+            // Invalidate the internal active source record before calling the active source logic.
+            // This logic allows the user to be visually notified in case they have a faulty CEC
+            // setup (e.g. an old TV panel) where they can easily disable the setting that sends
+            // their source device to sleep.
+            source.mService
+                    .setActiveSource(Constants.ADDR_INVALID, Constants.INVALID_PHYSICAL_ADDRESS,
+                    "HdmiCecLocalDevicePlayback#onStandby()");
+            source.onActiveSourceLost();
+            finish();
+        }
+        // Schedule next monitoring.
+        mState = STATE_WAIT_FOR_NEXT_MONITORING;
+        addTimer(mState, MONITORING_INTERVAL_MS);
+        return true;
     }
 
     @Override
     void handleTimerEvent(int state) {
+        if (mState != state) {
+            return;
+        }
+
         switch (mState) {
             case STATE_WAIT_FOR_NEXT_MONITORING:
-                mPowerStatusRetries = 0;
                 queryPowerStatus();
                 break;
             case STATE_WAIT_FOR_REPORT_POWER_STATUS:
-                handleTimeout();
+                // Timer expired while waiting for <Report Power Status>.
+                // This means we didn't receive a power status report from the TV in time.
+                Slog.d(TAG, "Timeout waiting for <Report Power Status>."
+                        + " Resetting standby counter.");
+                mConsecutiveStandbyReports = 0; // Reset counter on timeout
+                mState = STATE_WAIT_FOR_NEXT_MONITORING;
+                addTimer(mState, MONITORING_INTERVAL_MS);
+                break;
+            default:
                 break;
         }
     }
 
     private void queryPowerStatus() {
         sendCommand(HdmiCecMessageBuilder.buildGiveDevicePowerStatus(getSourceAddress(),
-                        Constants.ADDR_TV));
+                Constants.ADDR_TV));
 
         mState = STATE_WAIT_FOR_REPORT_POWER_STATUS;
-        addTimer(mState, REPORT_POWER_STATUS_TIMEOUT_MS);
-    }
-
-    private void handleTimeout() {
-        if (mState == STATE_WAIT_FOR_REPORT_POWER_STATUS) {
-            if (mPowerStatusRetries++ < GIVE_POWER_STATUS_FOR_SOURCE_RETRIES) {
-                queryPowerStatus();
-            } else {
-                mPowerStatusRetries = 0;
-                mState = STATE_WAIT_FOR_NEXT_MONITORING;
-                addTimer(mState, MONITORING_INTERVAL_MS);
-            }
-        }
+        addTimer(mState, HdmiConfig.TIMEOUT_MS);
     }
 }

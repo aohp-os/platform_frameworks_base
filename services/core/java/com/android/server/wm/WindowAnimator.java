@@ -18,14 +18,12 @@ package com.android.server.wm;
 
 import static com.android.internal.protolog.WmProtoLogGroups.WM_SHOW_TRANSACTIONS;
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_ALL;
-import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_APP_TRANSITION;
-import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_SCREEN_ROTATION;
 import static com.android.server.wm.WindowContainer.AnimationFlags.CHILDREN;
-import static com.android.server.wm.WindowContainer.AnimationFlags.TRANSITION;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_WINDOW_TRACE;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
+import android.annotation.IntDef;
 import android.content.Context;
 import android.os.HandlerExecutor;
 import android.os.Trace;
@@ -38,6 +36,8 @@ import com.android.internal.protolog.ProtoLog;
 import com.android.server.policy.WindowManagerPolicy;
 
 import java.io.PrintWriter;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 
 /**
@@ -54,16 +54,11 @@ public class WindowAnimator {
     /** Is any window animating? */
     private boolean mLastRootAnimating;
 
-    /** True if we are running any animations that require expensive composition. */
-    private boolean mRunningExpensiveAnimations;
-
     final Choreographer.FrameCallback mAnimationFrameCallback;
+    final Choreographer.VsyncCallback mAnimationVsyncCallback;
 
     /** Time of current animation step. Reset on each iteration */
     long mCurrentTime;
-
-    int mBulkUpdateParams = 0;
-    Object mLastWindowFreezeSource;
 
     private boolean mInitialized = false;
 
@@ -78,6 +73,8 @@ public class WindowAnimator {
     private boolean mAnimationFrameCallbackScheduled;
     boolean mNotifyWhenNoAnimation = false;
 
+    private final ArrayList<WindowContainer<?>> mPendingVisibilityUpdates = new ArrayList<>();
+
     /**
      * A list of runnable that need to be run after {@link WindowContainer#prepareSurfaces} is
      * executed and the corresponding transaction is closed and applied.
@@ -86,24 +83,59 @@ public class WindowAnimator {
 
     private final SurfaceControl.Transaction mTransaction;
 
+    /** The pending transaction is applied. */
+    static final int PENDING_STATE_NONE = 0;
+    /** There are some (significant) operations set to the pending transaction. */
+    static final int PENDING_STATE_HAS_CHANGES = 1;
+    /** The pending transaction needs to be applied before sending sync transaction to shell. */
+    static final int PENDING_STATE_NEED_APPLY = 2;
+
+    @IntDef(prefix = { "PENDING_STATE_" }, value = {
+            PENDING_STATE_NONE,
+            PENDING_STATE_HAS_CHANGES,
+            PENDING_STATE_NEED_APPLY,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @interface PendingState {}
+
+    /** The global state of pending transaction. */
+    @PendingState
+    int mPendingState;
+
     WindowAnimator(final WindowManagerService service) {
         mService = service;
         mContext = service.mContext;
         mPolicy = service.mPolicy;
         mTransaction = service.mTransactionFactory.get();
-        service.mAnimationHandler.runWithScissors(
-                () -> mChoreographer = Choreographer.getSfInstance(), 0 /* timeout */);
+        if (com.android.window.flags.Flags.deprecateSurfaceAnimationFrameCallback()) {
+            service.mAnimationHandler.runWithScissors(
+                    () -> mChoreographer = Choreographer.getInstance(), 0 /* timeout */);
+        } else {
+            service.mAnimationHandler.runWithScissors(
+                    () -> mChoreographer = Choreographer.getSfInstance(), 0 /* timeout */);
+        }
         mExecutor = new HandlerExecutor(service.mAnimationHandler);
 
-        mAnimationFrameCallback = frameTimeNs -> {
-            synchronized (mService.mGlobalLock) {
-                mAnimationFrameCallbackScheduled = false;
-                animate(frameTimeNs);
-                if (mNotifyWhenNoAnimation && !mLastRootAnimating) {
-                    mService.mGlobalLock.notifyAll();
-                }
-            }
-        };
+        mAnimationFrameCallback =
+                frameTimeNs -> {
+                    synchronized (mService.mGlobalLock) {
+                        mAnimationFrameCallbackScheduled = false;
+                        animate(frameTimeNs);
+                        if (mNotifyWhenNoAnimation && !mLastRootAnimating) {
+                            mService.mGlobalLock.notifyAll();
+                        }
+                    }
+                };
+        mAnimationVsyncCallback =
+                frameData -> {
+                    synchronized (mService.mGlobalLock) {
+                        mAnimationFrameCallbackScheduled = false;
+                        animate(frameData.getFrameTimeNanos());
+                        if (mNotifyWhenNoAnimation && !mLastRootAnimating) {
+                            mService.mGlobalLock.notifyAll();
+                        }
+                    }
+                };
     }
 
     void ready() {
@@ -119,12 +151,8 @@ public class WindowAnimator {
         scheduleAnimation();
 
         final RootWindowContainer root = mService.mRoot;
-        final boolean useShellTransition = root.mTransitionController.isShellTransitionsEnabled();
-        final int animationFlags = useShellTransition ? CHILDREN : (TRANSITION | CHILDREN);
         boolean rootAnimating = false;
         mCurrentTime = frameTimeNs / TimeUtils.NANOS_PER_MS;
-        mBulkUpdateParams = 0;
-        root.mOrientationChangeComplete = true;
         if (DEBUG_WINDOW_TRACE) {
             Slog.i(TAG, "!!! animate: entry time=" + mCurrentTime);
         }
@@ -145,19 +173,24 @@ public class WindowAnimator {
                 dc.prepareSurfaces();
             }
 
+            if (!mPendingVisibilityUpdates.isEmpty()) {
+                Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "updateSurfaceVisibility");
+                for (int i = mPendingVisibilityUpdates.size() - 1; i >= 0; i--) {
+                    updateSurfaceVisibility(mPendingVisibilityUpdates.get(i));
+                }
+                mPendingVisibilityUpdates.clear();
+                Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+            }
+
             for (int i = 0; i < numDisplays; i++) {
                 final DisplayContent dc = root.getChildAt(i);
-
-                if (!useShellTransition) {
-                    dc.checkAppWindowsReadyToShow();
-                }
                 if (accessibilityController.hasCallbacks()) {
                     accessibilityController
                             .recomputeMagnifiedRegionAndDrawMagnifiedRegionBorderIfNeeded(
                                     dc.mDisplayId);
                 }
 
-                if (dc.isAnimating(animationFlags, ANIMATION_TYPE_ALL)) {
+                if (dc.isAnimating(CHILDREN, ANIMATION_TYPE_ALL)) {
                     rootAnimating = true;
                     if (!dc.mLastContainsRunningSurfaceAnimator) {
                         dc.mLastContainsRunningSurfaceAnimator = true;
@@ -181,9 +214,7 @@ public class WindowAnimator {
         }
 
         final boolean hasPendingLayoutChanges = root.hasPendingLayoutChanges(this);
-        final boolean doRequest = (mBulkUpdateParams != 0 || root.mOrientationChangeComplete)
-                && root.copyAnimToLayoutParams();
-        if (hasPendingLayoutChanges || doRequest) {
+        if (hasPendingLayoutChanges) {
             mService.mWindowPlacerLocked.requestTraversal();
         }
 
@@ -195,11 +226,6 @@ public class WindowAnimator {
             Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER, "animating", 0);
         }
         mLastRootAnimating = rootAnimating;
-
-        // APP_TRANSITION, SCREEN_ROTATION, TYPE_RECENTS are handled by shell transition.
-        if (!useShellTransition) {
-            updateRunningExpensiveAnimationsLegacy();
-        }
 
         final ArrayList<Runnable> afterPrepareSurfacesRunnables = mAfterPrepareSurfacesRunnables;
         if (!afterPrepareSurfacesRunnables.isEmpty()) {
@@ -217,6 +243,7 @@ public class WindowAnimator {
         Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "applyTransaction");
         mTransaction.apply();
         Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        mPendingState = PENDING_STATE_NONE;
         mService.mWindowTracing.logState("WindowAnimator");
         ProtoLog.i(WM_SHOW_TRANSACTIONS, "<<< CLOSE TRANSACTION animate");
 
@@ -224,35 +251,8 @@ public class WindowAnimator {
 
         if (DEBUG_WINDOW_TRACE) {
             Slog.i(TAG, "!!! animate: exit"
-                    + " mBulkUpdateParams=" + Integer.toHexString(mBulkUpdateParams)
                     + " hasPendingLayoutChanges=" + hasPendingLayoutChanges);
         }
-    }
-
-    private void updateRunningExpensiveAnimationsLegacy() {
-        final boolean runningExpensiveAnimations =
-                mService.mRoot.isAnimating(TRANSITION | CHILDREN /* flags */,
-                        ANIMATION_TYPE_APP_TRANSITION
-                                | ANIMATION_TYPE_SCREEN_ROTATION /* typesToCheck */);
-        if (runningExpensiveAnimations && !mRunningExpensiveAnimations) {
-            mService.mSnapshotController.setPause(true);
-            mTransaction.setEarlyWakeupStart();
-        } else if (!runningExpensiveAnimations && mRunningExpensiveAnimations) {
-            mService.mSnapshotController.setPause(false);
-            mTransaction.setEarlyWakeupEnd();
-        }
-        mRunningExpensiveAnimations = runningExpensiveAnimations;
-    }
-
-    private static String bulkUpdateParamsToString(int bulkUpdateParams) {
-        StringBuilder builder = new StringBuilder(128);
-        if ((bulkUpdateParams & WindowSurfacePlacer.SET_UPDATE_ROTATION) != 0) {
-            builder.append(" UPDATE_ROTATION");
-        }
-        if ((bulkUpdateParams & WindowSurfacePlacer.SET_WALLPAPER_ACTION_PENDING) != 0) {
-            builder.append(" SET_WALLPAPER_ACTION_PENDING");
-        }
-        return builder.toString();
     }
 
     public void dumpLocked(PrintWriter pw, String prefix, boolean dumpAll) {
@@ -271,24 +271,27 @@ public class WindowAnimator {
             pw.print(prefix); pw.print("mCurrentTime=");
                     pw.println(TimeUtils.formatUptime(mCurrentTime));
         }
-        if (mBulkUpdateParams != 0) {
-            pw.print(prefix); pw.print("mBulkUpdateParams=0x");
-                    pw.print(Integer.toHexString(mBulkUpdateParams));
-                    pw.println(bulkUpdateParamsToString(mBulkUpdateParams));
-        }
     }
 
     void scheduleAnimation() {
         if (!mAnimationFrameCallbackScheduled) {
             mAnimationFrameCallbackScheduled = true;
-            mChoreographer.postFrameCallback(mAnimationFrameCallback);
+            if (com.android.window.flags.Flags.deprecateWindowAnimatorFrameCallback()) {
+                mChoreographer.postVsyncCallback(mAnimationVsyncCallback);
+            } else {
+                mChoreographer.postFrameCallback(mAnimationFrameCallback);
+            }
         }
     }
 
     private void cancelAnimation() {
         if (mAnimationFrameCallbackScheduled) {
             mAnimationFrameCallbackScheduled = false;
-            mChoreographer.removeFrameCallback(mAnimationFrameCallback);
+            if (com.android.window.flags.Flags.deprecateWindowAnimatorFrameCallback()) {
+                mChoreographer.removeVsyncCallback(mAnimationVsyncCallback);
+            } else {
+                mChoreographer.removeFrameCallback(mAnimationFrameCallback);
+            }
         }
     }
 
@@ -296,8 +299,59 @@ public class WindowAnimator {
         return mAnimationFrameCallbackScheduled;
     }
 
-    Choreographer getChoreographer() {
-        return mChoreographer;
+    void applyPendingTransaction() {
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "applyPendingTransaction");
+        mPendingState = PENDING_STATE_NONE;
+        final int numDisplays = mService.mRoot.getChildCount();
+        if (numDisplays == 1) {
+            mService.mRoot.getChildAt(0).getPendingTransaction().apply();
+        } else {
+            for (int i = 0; i < numDisplays; i++) {
+                mTransaction.merge(mService.mRoot.getChildAt(i).getPendingTransaction());
+            }
+            mTransaction.apply();
+        }
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+    }
+
+    /**
+     * Updates surface visibility of the window container according to its hierarchy visibility
+     * if it is not in an active transition.
+     */
+    private void updateSurfaceVisibility(WindowContainer<?> wc) {
+        if (wc.mSurfaceControl == null) {
+            return;
+        }
+        final TransitionController controller = mService.mRoot.mTransitionController;
+        if (controller.isCollecting(wc) || controller.isPlayingTarget(wc)) {
+            // Let the transition handle surface visibility.
+            return;
+        }
+        if (controller.isParticipantOfPlayingTransition(wc)) {
+            // Non-target participants will still be updated when the transition is finished, so
+            // skip the intermediate state.
+            return;
+        }
+        wc.updateSurfaceVisibility(mTransaction);
+    }
+
+    /**
+     * The surface visibility of the window container will be evaluated on next frame. Assume the
+     * caller has invoked {@link #scheduleAnimation}.
+     */
+    void addSurfaceVisibilityUpdate(WindowContainer<?> wc) {
+        if (!mPendingVisibilityUpdates.contains(wc)) {
+            mPendingVisibilityUpdates.add(wc);
+        }
+    }
+
+    /** Same as {@link #addSurfaceVisibilityUpdate} but including animatable parents. */
+    void addSurfaceVisibilityUpdateIncludingAnimatableParents(WindowContainer<?> wc) {
+        addSurfaceVisibilityUpdate(wc);
+        for (WindowContainer<?> p = Transition.getAnimatableParent(wc);
+                p != null; p = Transition.getAnimatableParent(p)) {
+            addSurfaceVisibilityUpdate(p);
+        }
     }
 
     /**

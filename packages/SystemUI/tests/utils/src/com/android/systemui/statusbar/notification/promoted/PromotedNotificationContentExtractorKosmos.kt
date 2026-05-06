@@ -16,14 +16,42 @@
 
 package com.android.systemui.statusbar.notification.promoted
 
+import android.app.Notification
 import android.content.applicationContext
+import android.content.testableContext
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.statusbar.NotificationLockscreenUserManager.REDACTION_TYPE_PUBLIC
+import com.android.systemui.statusbar.notification.collection.NotificationEntry
+import com.android.systemui.statusbar.notification.row.RowImageInflater
+import com.android.systemui.statusbar.notification.row.icon.appIconProvider
+import com.android.systemui.statusbar.notification.row.icon.notificationIconStyleProvider
+import com.android.systemui.statusbar.notification.row.shared.skeletonImageTransform
+import com.android.systemui.util.time.systemClock
 
 var Kosmos.promotedNotificationContentExtractor by
     Kosmos.Fixture {
-        PromotedNotificationContentExtractor(
-            promotedNotificationsProvider,
-            applicationContext,
+        PromotedNotificationContentExtractorImpl(
+            notificationIconStyleProvider,
+            appIconProvider,
+            skeletonImageTransform,
+            systemClock,
             promotedNotificationLogger,
         )
     }
+
+fun Kosmos.setPromotedContent(entry: NotificationEntry) {
+    val extractedContent =
+        promotedNotificationContentExtractor.extractContent(
+            entry = entry,
+            recoveredBuilder =
+                Notification.Builder.recoverBuilder(applicationContext, entry.sbn.notification),
+            redactionType = REDACTION_TYPE_PUBLIC,
+            imageModelProvider =
+                RowImageInflater.newInstance(previousIndex = null, reinflating = false)
+                    .useForContentModel(),
+            packageContext = applicationContext, // using the app context for simplicity
+            systemUiContext = testableContext, //  sysUiContext
+        )
+    entry.promotedNotificationContentModels =
+        requireNotNull(extractedContent) { "extractContent returned null" }
+}

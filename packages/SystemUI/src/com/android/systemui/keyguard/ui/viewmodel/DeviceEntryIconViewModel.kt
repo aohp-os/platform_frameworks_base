@@ -20,7 +20,6 @@ import android.animation.FloatEvaluator
 import android.animation.IntEvaluator
 import com.android.keyguard.KeyguardViewController
 import com.android.systemui.accessibility.domain.interactor.AccessibilityInteractor
-import com.android.systemui.biometrics.shared.model.SensorLocation
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
@@ -32,19 +31,21 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInterac
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.ui.transitions.DeviceEntryIconTransition
 import com.android.systemui.keyguard.ui.view.DeviceEntryIconView
+import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
-import com.android.systemui.util.kotlin.sample
+import com.android.systemui.shared.customization.data.SensorLocation
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNot
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -55,7 +56,6 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 
 /** Models the UI state for the containing device entry icon & long-press handling view. */
-@ExperimentalCoroutinesApi
 @SysUISingleton
 class DeviceEntryIconViewModel
 @Inject
@@ -72,6 +72,7 @@ constructor(
     private val deviceEntrySourceInteractor: DeviceEntrySourceInteractor,
     private val accessibilityInteractor: AccessibilityInteractor,
     @Application private val scope: CoroutineScope,
+    private val sceneInteractor: Lazy<SceneInteractor>,
 ) {
     val isUdfpsSupported: StateFlow<Boolean> = deviceEntryUdfpsInteractor.isUdfpsSupported
     val udfpsLocation: StateFlow<SensorLocation?> =
@@ -142,11 +143,23 @@ constructor(
             KeyguardState.DREAMING,
             KeyguardState.GLANCEABLE_HUB,
             KeyguardState.GONE,
-            KeyguardState.OCCLUDED,
-            KeyguardState.UNDEFINED -> 0f
+            KeyguardState.OCCLUDED -> 0f
             KeyguardState.AOD,
             KeyguardState.ALTERNATE_BOUNCER,
             KeyguardState.LOCKSCREEN -> 1f
+            KeyguardState.UNDEFINED -> calculateAlphaForKeyguardStateUndefined()
+        }
+    }
+
+    private fun calculateAlphaForKeyguardStateUndefined(): Float {
+        return if (SceneContainerFlag.isEnabled) {
+            when (sceneInteractor.get().currentScene.value) {
+                Scenes.Shade,
+                Scenes.QuickSettings -> 1f
+                else -> 0f
+            }
+        } else {
+            1f
         }
     }
 
@@ -156,16 +169,11 @@ constructor(
             .flatMapLatest { udfpsEnrolled ->
                 if (udfpsEnrolled) {
                     combine(
-                        transitionInteractor.startedKeyguardTransitionStep.sample(
-                            shadeInteractor.isAnyFullyExpanded,
-                            ::Pair,
-                        ),
+                        transitionInteractor.startedKeyguardTransitionStep,
                         animatedBurnInOffsets,
                         nonAnimatedBurnInOffsets,
-                    ) {
-                        (startedTransitionStep, shadeExpanded),
-                        animatedBurnInOffsets,
-                        nonAnimatedBurnInOffsets ->
+                    ) { startedTransitionStep, animatedBurnInOffsets, nonAnimatedBurnInOffsets ->
+                        val shadeExpanded = shadeInteractor.isAnyFullyExpanded.value
                         if (startedTransitionStep.to == KeyguardState.AOD) {
                             when (startedTransitionStep.from) {
                                 KeyguardState.ALTERNATE_BOUNCER -> animatedBurnInOffsets
@@ -198,7 +206,7 @@ constructor(
         if (SceneContainerFlag.isEnabled) {
                 deviceEntryInteractor.isUnlocked
             } else {
-                keyguardInteractor.isKeyguardDismissible
+                keyguardInteractor.hasTrust
             }
             .flatMapLatest { isUnlocked ->
                 if (!isUnlocked) {
@@ -255,23 +263,27 @@ constructor(
 
     val isLongPressEnabled: Flow<Boolean> = isInteractive
 
+    val transitioningToDozing: Flow<Boolean> =
+        transitionInteractor.startedKeyguardTransitionStep.map { keyguardStep ->
+            keyguardStep.to == KeyguardState.DOZING
+        }
+
+    val deviceDidNotEnterFromDeviceEntryIcon =
+        deviceEntrySourceInteractor.attemptEnterDeviceFromDeviceEntryIcon
+            .map { keyguardInteractor.isKeyguardDismissible.value }
+            .filterNot { it } // only emit events if the keyguard is not dismissible
+            // map to Unit
+            .map {}
+
     suspend fun onUserInteraction() {
         if (SceneContainerFlag.isEnabled) {
-            deviceEntryInteractor.attemptDeviceEntry()
+            deviceEntryInteractor.attemptDeviceEntry("Device entry icon")
         } else {
-            keyguardViewController.get().showPrimaryBouncer(/* scrim */ true)
+            keyguardViewController
+                .get()
+                .showPrimaryBouncer(/* scrim */ true, "DeviceEntryIconViewModel#onUserInteraction")
         }
         deviceEntrySourceInteractor.attemptEnterDeviceFromDeviceEntryIcon()
-    }
-
-    private fun DeviceEntryIconView.IconType.toAccessibilityHintType():
-        DeviceEntryIconView.AccessibilityHintType {
-        return when (this) {
-            DeviceEntryIconView.IconType.FINGERPRINT,
-            DeviceEntryIconView.IconType.LOCK -> DeviceEntryIconView.AccessibilityHintType.BOUNCER
-            DeviceEntryIconView.IconType.UNLOCK -> DeviceEntryIconView.AccessibilityHintType.ENTER
-            DeviceEntryIconView.IconType.NONE -> DeviceEntryIconView.AccessibilityHintType.NONE
-        }
     }
 
     companion object {
@@ -284,3 +296,13 @@ data class BurnInOffsets(
     val y: Int, // current y burn in offset based on the aodTransitionAmount
     val progress: Float, // current progress based on the aodTransitionAmount
 )
+
+fun DeviceEntryIconView.IconType.toAccessibilityHintType():
+    DeviceEntryIconView.AccessibilityHintType {
+    return when (this) {
+        DeviceEntryIconView.IconType.FINGERPRINT,
+        DeviceEntryIconView.IconType.LOCK -> DeviceEntryIconView.AccessibilityHintType.BOUNCER
+        DeviceEntryIconView.IconType.UNLOCK -> DeviceEntryIconView.AccessibilityHintType.ENTER
+        DeviceEntryIconView.IconType.NONE -> DeviceEntryIconView.AccessibilityHintType.NONE
+    }
+}

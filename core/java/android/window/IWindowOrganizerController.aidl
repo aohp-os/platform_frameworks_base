@@ -21,6 +21,7 @@ import android.view.SurfaceControl;
 import android.os.IBinder;
 import android.view.RemoteAnimationAdapter;
 import android.window.IDisplayAreaOrganizerController;
+import android.window.IMultitaskingController;
 import android.window.ITaskFragmentOrganizerController;
 import android.window.ITaskOrganizerController;
 import android.window.ITransitionMetricsReporter;
@@ -66,17 +67,6 @@ interface IWindowOrganizerController {
     void startTransition(IBinder transitionToken, in @nullable WindowContainerTransaction t);
 
     /**
-     * Starts a legacy transition.
-     * @param type The transition type.
-     * @param adapter The animation to use.
-     * @param syncCallback A sync callback for the contents of `t`
-     * @param t Operations that are part of the transition.
-     * @return sync-id or -1 if this no-op'd because a transition is already running.
-     */
-    int startLegacyTransition(int type, in RemoteAnimationAdapter adapter,
-            in IWindowContainerTransactionCallback syncCallback, in WindowContainerTransaction t);
-
-    /**
      * Finishes a transition. This must be called for all created transitions.
      * @param transitionToken Which transition to finish
      * @param t Changes to make before finishing but in the same SF Transaction. Can be null.
@@ -91,6 +81,9 @@ interface IWindowOrganizerController {
 
     /** @return An interface enabling the management of task fragment organizers. */
     ITaskFragmentOrganizerController getTaskFragmentOrganizerController();
+
+    /** @return An interface enabling the management of some multi-window features like Bubbles. */
+    IMultitaskingController getMultitaskingController();
 
     /**
      * Registers a transition player with Core. There is only one of these active at a time so

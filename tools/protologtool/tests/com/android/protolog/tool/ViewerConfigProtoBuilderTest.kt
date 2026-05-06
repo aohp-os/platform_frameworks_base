@@ -34,9 +34,9 @@ class ViewerConfigProtoBuilderTest {
             TAG2
         )
 
-        private val GROUP1 = LogGroup("TEST_GROUP", true, true, TAG1)
-        private val GROUP2 = LogGroup("DEBUG_GROUP", true, true, TAG2)
-        private val GROUP3 = LogGroup("UNUSED_GROUP", true, true, TAG1)
+        private val GROUP1 = LogGroup("TEST_GROUP", true, true, TAG1, 1)
+        private val GROUP2 = LogGroup("DEBUG_GROUP", true, true, TAG2, 2)
+        private val GROUP3 = LogGroup("UNUSED_GROUP", true, true, TAG1, 3)
 
         private val GROUPS = listOf(
             GROUP1,
@@ -55,8 +55,8 @@ class ViewerConfigProtoBuilderTest {
 
         val logCallRegistry = ProtoLogTool.LogCallRegistry()
         logCallRegistry.addLogCalls(listOf(
-            LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH),
-            LogCall(TEST2.messageString, LogLevel.INFO, GROUP2, PATH),
+            LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 123),
+            LogCall(TEST2.messageString, LogLevel.INFO, GROUP2, PATH, 456),
         ))
 
         val rawProto = configBuilder.build(GROUPS, logCallRegistry.getStatements())
@@ -64,5 +64,23 @@ class ViewerConfigProtoBuilderTest {
         val viewerConfig = ProtoLogViewerConfig.parseFrom(rawProto)
         Truth.assertThat(viewerConfig.groupsCount).isEqualTo(GROUPS.size)
         Truth.assertThat(viewerConfig.messagesCount).isLessThan(GROUPS.size)
+    }
+
+    @Test
+    fun includesLineNumberInLocation() {
+        val configBuilder = ViewerConfigProtoBuilder()
+
+        val logCallRegistry = ProtoLogTool.LogCallRegistry()
+        logCallRegistry.addLogCalls(listOf(
+            LogCall(TEST1.messageString, LogLevel.INFO, GROUP1, PATH, 123),
+            LogCall(TEST2.messageString, LogLevel.INFO, GROUP2, PATH, 456),
+        ))
+
+        val rawProto = configBuilder.build(GROUPS, logCallRegistry.getStatements())
+
+        val viewerConfig = ProtoLogViewerConfig.parseFrom(rawProto)
+
+        Truth.assertThat(viewerConfig.messagesList[0].location).isEqualTo("$PATH:123")
+        Truth.assertThat(viewerConfig.messagesList[1].location).isEqualTo("$PATH:456")
     }
 }

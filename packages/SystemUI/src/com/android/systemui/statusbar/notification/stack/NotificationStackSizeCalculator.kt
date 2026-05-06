@@ -24,6 +24,7 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.media.controls.domain.pipeline.MediaDataManager
 import com.android.systemui.res.R
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
 import com.android.systemui.statusbar.StatusBarState.KEYGUARD
@@ -31,6 +32,7 @@ import com.android.systemui.statusbar.SysuiStatusBarStateController
 import com.android.systemui.statusbar.notification.domain.interactor.SeenNotificationsInteractor
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
 import com.android.systemui.statusbar.notification.shared.NotificationMinimalism
 import com.android.systemui.statusbar.policy.SplitShadeStateController
 import com.android.systemui.util.Compile
@@ -107,6 +109,7 @@ constructor(
             log { "\tallowedByPolicy = false" }
             false
         } else {
+            log { "\tallowedByPolicy = true" }
             true
         }
 
@@ -201,7 +204,7 @@ constructor(
         val stackHeightSequence = computeHeightPerNotificationLimit(stack, shelfHeight)
 
         // TODO: Avoid making this split shade assumption by simply checking the stack for media
-        val isMediaShowing = mediaDataManager.hasActiveMediaOrRecommendation()
+        val isMediaShowing = mediaDataManager.hasActiveMedia()
         val isMediaShowingInStack =
             isMediaShowing && !splitShadeStateController.shouldUseSplitNotificationShade(resources)
 
@@ -291,9 +294,10 @@ constructor(
         stack: NotificationStackScrollLayout,
         maxNotifs: Int,
         shelfHeight: Float,
+        reason: String? = null,
     ): Float {
         log { "\n" }
-        log { "computeHeight ---" }
+        log { "computeHeight --- reason: $reason" }
 
         val stackHeightSequence = computeHeightPerNotificationLimit(stack, shelfHeight)
 
@@ -405,16 +409,32 @@ constructor(
                     spaceBeforeShelf + shelfHeight
                 }
 
+            var bucket: Int? = null
             if (counter != null) {
-                val entry = (currentNotification as? ExpandableNotificationRow)?.entry
-                counter.incrementForBucket(entry?.bucket)
+                bucket =
+                    if (NotificationBundleUi.isEnabled) {
+                        val entryAdapter =
+                            (currentNotification as? ExpandableNotificationRow)?.entryAdapter
+                        entryAdapter?.sectionBucket
+                    } else {
+                        val entry = (currentNotification as? ExpandableNotificationRow)?.entryLegacy
+                        entry?.bucket
+                    }
+                counter.incrementForBucket(bucket)
             }
+
+            val forceIntoShelf = counter?.shouldForceIntoShelf() ?: false
+            val row = currentNotification as? ExpandableNotificationRow
 
             log {
                 "\tcomputeHeightPerNotificationLimit i=$i notifs=$notifications " +
                     "notifsHeightSavingSpace=$notifsWithCollapsedHun" +
                     " shelfWithSpaceBefore=$shelfWithSpaceBefore" +
-                    " limitLockScreenToOneImportant: $limitLockScreenToOneImportant"
+                    " isOnLockScreen=$onLockscreen" +
+                    " limitLockScreenToOneImportant: $limitLockScreenToOneImportant" +
+                    " forceIntoShelf: $forceIntoShelf" +
+                    " child: ${row?.key}" +
+                    " bucket: $bucket"
             }
             yield(
                 StackHeight(
@@ -460,10 +480,20 @@ constructor(
         val height = view.heightWithoutLockscreenConstraints.toFloat()
         val gapAndDividerHeight =
             calculateGapAndDividerHeight(stack, previousView, current = view, visibleIndex)
+        val canPeek =
+            view is ExpandableNotificationRow &&
+                if (NotificationBundleUi.isEnabled) view.entryAdapter?.canPeek() == true
+                else view.entryLegacy.isStickyAndNotDemoted
 
         var size =
             if (onLockscreen) {
-                if (view is ExpandableNotificationRow && view.entry.isStickyAndNotDemoted) {
+                if (
+                    view is ExpandableNotificationRow &&
+                        (canPeek ||
+                            view.isPromotedOngoing ||
+                                (view.isBundle && view.isGroupExpanded) ||
+                                    (SceneContainerFlag.isEnabled && view.isUserLocked))
+                ) {
                     height
                 } else {
                     view.getMinHeight(/* ignoreTemporaryStates= */ true).toFloat()

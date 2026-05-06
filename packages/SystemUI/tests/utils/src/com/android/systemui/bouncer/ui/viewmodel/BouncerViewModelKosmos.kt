@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.bouncer.ui.viewmodel
 
 import android.app.admin.devicePolicyManager
 import android.content.applicationContext
+import com.android.keyguard.domain.interactor.keyguardKeyboardInteractor
 import com.android.systemui.authentication.domain.interactor.authenticationInteractor
 import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
 import com.android.systemui.bouncer.domain.interactor.bouncerActionButtonInteractor
@@ -32,14 +31,13 @@ import com.android.systemui.keyguard.domain.interactor.keyguardDismissActionInte
 import com.android.systemui.keyguard.domain.interactor.keyguardMediaKeyInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
+import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.user.domain.interactor.selectedUserInteractor
 import com.android.systemui.user.ui.viewmodel.userSwitcherViewModel
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.android.systemui.window.domain.interactor.windowRootViewBlurInteractor
 import kotlinx.coroutines.flow.StateFlow
 
-val Kosmos.bouncerUserActionsViewModel by Fixture {
-    BouncerUserActionsViewModel(bouncerInteractor = bouncerInteractor)
-}
+val Kosmos.bouncerUserActionsViewModel by Fixture { BouncerUserActionsViewModel() }
 
 val Kosmos.bouncerUserActionsViewModelFactory by Fixture {
     object : BouncerUserActionsViewModel.Factory {
@@ -49,8 +47,8 @@ val Kosmos.bouncerUserActionsViewModelFactory by Fixture {
     }
 }
 
-val Kosmos.bouncerSceneContentViewModel by Fixture {
-    BouncerSceneContentViewModel(
+val Kosmos.bouncerOverlayContentViewModel by Fixture {
+    BouncerOverlayContentViewModel(
         applicationContext = applicationContext,
         bouncerInteractor = bouncerInteractor,
         authenticationInteractor = authenticationInteractor,
@@ -65,13 +63,15 @@ val Kosmos.bouncerSceneContentViewModel by Fixture {
         keyguardMediaKeyInteractor = keyguardMediaKeyInteractor,
         bouncerActionButtonInteractor = bouncerActionButtonInteractor,
         keyguardDismissActionInteractor = keyguardDismissActionInteractor,
+        sceneInteractor = sceneInteractor,
+        windowRootViewBlurInteractor = windowRootViewBlurInteractor,
     )
 }
 
-val Kosmos.bouncerSceneContentViewModelFactory by Fixture {
-    object : BouncerSceneContentViewModel.Factory {
-        override fun create(): BouncerSceneContentViewModel {
-            return bouncerSceneContentViewModel
+val Kosmos.bouncerOverlayContentViewModelFactory by Fixture {
+    object : BouncerOverlayContentViewModel.Factory {
+        override fun create(): BouncerOverlayContentViewModel {
+            return bouncerOverlayContentViewModel
         }
     }
 }
@@ -88,6 +88,7 @@ val Kosmos.pinBouncerViewModelFactory by Fixture {
                 applicationContext = applicationContext,
                 interactor = bouncerInteractor,
                 simBouncerInteractor = simBouncerInteractor,
+                keyguardKeyboardInteractor = keyguardKeyboardInteractor,
                 isInputEnabled = isInputEnabled,
                 onIntentionalUserInput = onIntentionalUserInput,
                 authenticationMethod = authenticationMethod,

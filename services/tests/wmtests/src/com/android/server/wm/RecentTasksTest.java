@@ -30,6 +30,11 @@ import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.os.Process.NOBODY_UID;
+import static android.view.WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW;
+import static android.view.WindowManager.LayoutParams.FIRST_SYSTEM_WINDOW;
+import static android.view.WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
+import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
+import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
@@ -52,7 +57,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import static java.lang.Integer.MAX_VALUE;
 
@@ -70,8 +75,6 @@ import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserManager;
-import android.platform.test.annotations.DisableFlags;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.ArraySet;
@@ -82,11 +85,9 @@ import android.window.TaskSnapshot;
 
 import androidx.test.filters.MediumTest;
 
-import com.android.launcher3.Flags;
 import com.android.server.wm.RecentTasks.Callbacks;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -433,11 +434,20 @@ public class RecentTasksTest extends WindowTestsBase {
 
     @Test
     public void testAddTaskCompatibleWindowingMode_withFreeformAndFullscreen_expectRemove() {
+        verifyCompatibleWindowingModeWithFullscreen(WINDOWING_MODE_FREEFORM);
+    }
+
+    @Test
+    public void testAddTaskCompatibleWindowingMode_withMultiWindowAndFullscreen_expectRemove() {
+        verifyCompatibleWindowingModeWithFullscreen(WINDOWING_MODE_MULTI_WINDOW);
+    }
+
+    private void verifyCompatibleWindowingModeWithFullscreen(int windowingMode) {
         Task task1 = createTaskBuilder(".Task1")
                 .setTaskId(1)
                 .setFlags(FLAG_ACTIVITY_NEW_TASK)
                 .build();
-        doReturn(WINDOWING_MODE_FREEFORM).when(task1).getWindowingMode();
+        doReturn(windowingMode).when(task1).getWindowingMode();
         mRecentTasks.add(task1);
         mCallbacksRecorder.clear();
 
@@ -717,18 +727,7 @@ public class RecentTasksTest extends WindowTestsBase {
     }
 
     @Test
-    @DisableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
-    public void testVisibleTasks_excludedFromRecents() {
-        testVisibleTasks_excludedFromRecents_internal();
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
     public void testVisibleTasks_excludedFromRecents_withRefactorFlag() {
-        testVisibleTasks_excludedFromRecents_internal();
-    }
-
-    private void testVisibleTasks_excludedFromRecents_internal() {
         mRecentTasks.setParameters(-1 /* min */, 4 /* max */, -1 /* ms */);
 
         Task invisibleExcludedTask = createTaskBuilder(".ExcludedTask1")
@@ -766,19 +765,7 @@ public class RecentTasksTest extends WindowTestsBase {
     }
 
     @Test
-    @Ignore("b/342627272")
-    @DisableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
-    public void testVisibleTasks_excludedFromRecents_visibleTaskNotFirstTask() {
-        testVisibleTasks_excludedFromRecents_visibleTaskNotFirstTask_internal();
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
     public void testVisibleTasks_excludedFromRecents_visibleTaskNotFirstTask_withRefactorFlag() {
-        testVisibleTasks_excludedFromRecents_visibleTaskNotFirstTask_internal();
-    }
-
-    private void testVisibleTasks_excludedFromRecents_visibleTaskNotFirstTask_internal() {
         mRecentTasks.setParameters(-1 /* min */, 4 /* max */, -1 /* ms */);
 
         Task invisibleExcludedTask = createTaskBuilder(".ExcludedTask1")
@@ -816,18 +803,7 @@ public class RecentTasksTest extends WindowTestsBase {
     }
 
     @Test
-    @DisableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
-    public void testVisibleTasks_excludedFromRecents_firstTaskNotVisible() {
-        testVisibleTasks_excludedFromRecents_firstTaskNotVisible_internal();
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ENABLE_USE_TOP_VISIBLE_ACTIVITY_FOR_EXCLUDE_FROM_RECENT_TASK)
     public void testVisibleTasks_excludedFromRecents_firstTaskNotVisible_withRefactorFlag() {
-        testVisibleTasks_excludedFromRecents_firstTaskNotVisible_internal();
-    }
-
-    private void testVisibleTasks_excludedFromRecents_firstTaskNotVisible_internal() {
         // Create some set of tasks, some of which are visible and some are not
         Task homeTask = createTaskBuilder("com.android.pkg1", ".HomeTask")
                 .setParentTask(mTaskContainer.getRootHomeTask())
@@ -966,6 +942,16 @@ public class RecentTasksTest extends WindowTestsBase {
         mRecentTasks.add(task);
 
         assertFalse(mRecentTasks.isVisibleRecentTask(task));
+    }
+
+    @Test
+    public void testVisibleTask_forceExcludedFromRecents_returnsFalse() {
+        final Task forceExcludedFromRecentsTask = mTasks.getFirst();
+        forceExcludedFromRecentsTask.setForceExcludedFromRecents(true);
+
+        final boolean visible = mRecentTasks.isVisibleRecentTask(forceExcludedFromRecentsTask);
+
+        assertFalse(visible);
     }
 
     @Test
@@ -1110,6 +1096,17 @@ public class RecentTasksTest extends WindowTestsBase {
                 mTasks.get(3),
                 mTasks.get(1),
                 mTasks.get(0));
+    }
+
+    @Test
+    public void testUnfreezeTaskListOrder_windowTypes() {
+        for (int i = FIRST_APPLICATION_WINDOW; i <= LAST_APPLICATION_WINDOW; i++) {
+            assertThat(RecentTasks.shouldUnfreezeOnInteractionInWindow(i)).isTrue();
+        }
+        assertThat(RecentTasks.shouldUnfreezeOnInteractionInWindow(TYPE_INPUT_METHOD)).isTrue();
+        assertThat(RecentTasks.shouldUnfreezeOnInteractionInWindow(TYPE_INPUT_METHOD_DIALOG))
+                .isTrue();
+        assertThat(RecentTasks.shouldUnfreezeOnInteractionInWindow(FIRST_SYSTEM_WINDOW)).isFalse();
     }
 
     @Test
@@ -1331,7 +1328,7 @@ public class RecentTasksTest extends WindowTestsBase {
 
         // Add secondTask to top again
         mRecentTasks.add(secondTask);
-        verifyZeroInteractions(controller);
+        verifyNoMoreInteractions(controller);
     }
 
     @Test
@@ -1472,7 +1469,8 @@ public class RecentTasksTest extends WindowTestsBase {
                 Surface.ROTATION_0, taskSize, new Rect() /* contentInsets */,
                 new Rect() /* letterboxInsets*/, false /* isLowResolution */,
                 true /* isRealSnapshot */, WINDOWING_MODE_FULLSCREEN, 0 /* mSystemUiVisibility */,
-                false /* isTranslucent */, false /* hasImeSurface */, 0 /* uiMode */);
+                false /* isTranslucent */, false /* hasImeSurface */, 0 /* uiMode */,
+                300 /* densityDpi */);
     }
 
     /**

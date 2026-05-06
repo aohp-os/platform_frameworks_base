@@ -33,6 +33,7 @@ import android.view.DisplayAddress;
 import android.view.Surface;
 import android.view.SurfaceControl;
 
+import com.android.server.display.feature.flags.Flags;
 import com.android.server.display.mode.DisplayModeDirector;
 
 import java.io.PrintWriter;
@@ -68,6 +69,8 @@ abstract class DisplayDevice {
     private int mCurrentLayerStack = -1;
     private int mCurrentFlags = 0;
     private int mCurrentOrientation = -1;
+    private int mLastDisplayWidth;
+    private int mLastDisplayHeight;
     private Rect mCurrentLayerStackRect;
     private Rect mCurrentDisplayRect;
     private final Context mContext;
@@ -79,22 +82,13 @@ abstract class DisplayDevice {
     // DEBUG STATE: Last device info which was written to the log, or null if none.
     // Do not use for any other purpose.
     DisplayDeviceInfo mDebugLastLoggedDeviceInfo;
-
-    private final boolean mIsAnisotropyCorrectionEnabled;
-
     DisplayDevice(DisplayAdapter displayAdapter, IBinder displayToken, String uniqueId,
             Context context) {
-        this(displayAdapter, displayToken, uniqueId, context, false);
-    }
-
-    DisplayDevice(DisplayAdapter displayAdapter, IBinder displayToken, String uniqueId,
-            Context context, boolean isAnisotropyCorrectionEnabled) {
         mDisplayAdapter = displayAdapter;
         mDisplayToken = displayToken;
         mUniqueId = uniqueId;
         mDisplayDeviceConfig = null;
         mContext = context;
-        mIsAnisotropyCorrectionEnabled = isAnisotropyCorrectionEnabled;
     }
 
     /**
@@ -162,12 +156,18 @@ abstract class DisplayDevice {
         DisplayDeviceInfo displayDeviceInfo = getDisplayDeviceInfoLocked();
         var width = displayDeviceInfo.width;
         var height = displayDeviceInfo.height;
-        if (mIsAnisotropyCorrectionEnabled && displayDeviceInfo.type == Display.TYPE_EXTERNAL
-                    && displayDeviceInfo.yDpi > 0 && displayDeviceInfo.xDpi > 0) {
+        Display.Mode userMode = getUserPreferredDisplayModeLocked();
+        if (displayDeviceInfo.type == Display.TYPE_EXTERNAL && userMode != null
+                && (userMode.getFlags() & Display.Mode.FLAG_SIZE_OVERRIDE) != 0) {
+            width = userMode.getPhysicalWidth();
+            height = userMode.getPhysicalHeight();
+        } else if (!Flags.enableAnisotropyCorrectedModes()
+                && displayDeviceInfo.type == Display.TYPE_EXTERNAL
+                && displayDeviceInfo.yDpi > 0 && displayDeviceInfo.xDpi > 0) {
             if (displayDeviceInfo.xDpi > displayDeviceInfo.yDpi * MAX_ANISOTROPY) {
                 height = (int) (height * displayDeviceInfo.xDpi / displayDeviceInfo.yDpi + 0.5);
             } else if (displayDeviceInfo.xDpi * MAX_ANISOTROPY < displayDeviceInfo.yDpi) {
-                width = (int) (width * displayDeviceInfo.yDpi / displayDeviceInfo.xDpi  + 0.5);
+                width = (int) (width * displayDeviceInfo.yDpi / displayDeviceInfo.xDpi + 0.5);
             }
         }
         return isRotatedLocked() ? new Point(height, width) : new Point(width, height);
@@ -216,9 +216,9 @@ abstract class DisplayDevice {
     }
 
     /**
-     * Gives the display device a chance to update its properties while in a transaction.
+     * Updates the surface for the display.
      */
-    public void performTraversalLocked(SurfaceControl.Transaction t) {
+    public void configureSurfaceLocked(SurfaceControl.Transaction t) {
     }
 
     /**
@@ -306,6 +306,22 @@ abstract class DisplayDevice {
     }
 
     /**
+     * Returns if the display should only mirror another display rather than showing other content
+     * until it is destroyed.
+     */
+    public boolean shouldOnlyMirror() {
+        return false;
+    }
+
+    /**
+     * Returns whether content should be automatically mirrored on the display when no content is
+     * currently being shown.
+     */
+    boolean shouldAutoMirror() {
+        return false;
+    }
+
+    /**
      * Sets the display layer stack while in a transaction.
      */
     public final void setLayerStackLocked(SurfaceControl.Transaction t, int layerStack,
@@ -362,6 +378,29 @@ abstract class DisplayDevice {
 
             t.setDisplayProjection(mDisplayToken,
                     orientation, layerStackRect, displayRect);
+        }
+    }
+
+    /**
+     * Configure transaction with the display size.
+     */
+    public void configureDisplaySizeLocked(SurfaceControl.Transaction t) {
+        DisplayDeviceInfo info = getDisplayDeviceInfoLocked();
+        boolean isInstalledRotated = info.installOrientation == ROTATION_90
+                || info.installOrientation == ROTATION_270;
+        int displayWidth = isInstalledRotated ? info.height : info.width;
+        int displayHeight = isInstalledRotated ? info.width : info.height;
+        setDisplaySizeLocked(t, displayWidth, displayHeight);
+    }
+
+    /**
+     * Sets display size while in a transaction.
+     */
+    public final void setDisplaySizeLocked(SurfaceControl.Transaction t, int width, int height) {
+        if (width != mLastDisplayWidth || height != mLastDisplayHeight) {
+            mLastDisplayWidth = width;
+            mLastDisplayHeight = height;
+            t.setDisplaySize(mDisplayToken, width, height);
         }
     }
 

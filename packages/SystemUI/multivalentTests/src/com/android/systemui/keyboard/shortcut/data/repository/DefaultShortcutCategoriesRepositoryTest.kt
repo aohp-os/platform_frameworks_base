@@ -50,19 +50,18 @@ import com.android.systemui.keyboard.shortcut.shared.model.ShortcutCategoryType
 import com.android.systemui.keyboard.shortcut.shared.model.ShortcutCommand
 import com.android.systemui.keyboard.shortcut.shared.model.ShortcutKey
 import com.android.systemui.keyboard.shortcut.shared.model.ShortcutSubCategory
+import com.android.systemui.keyboard.shortcut.shortcutHelperAccessibilityShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperAppCategoriesShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperCurrentAppShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperInputShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperMultiTaskingShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperSystemShortcutsSource
 import com.android.systemui.keyboard.shortcut.shortcutHelperTestHelper
-import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.res.R
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -71,7 +70,6 @@ import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
 import org.mockito.kotlin.whenever
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class DefaultShortcutCategoriesRepositoryTest : SysuiTestCase() {
@@ -81,13 +79,13 @@ class DefaultShortcutCategoriesRepositoryTest : SysuiTestCase() {
     private val fakeAppCategoriesSource = FakeKeyboardShortcutGroupsSource()
 
     private val kosmos =
-        testKosmos().also {
-            it.testDispatcher = UnconfinedTestDispatcher()
+        testKosmos().useUnconfinedTestDispatcher().also {
             it.shortcutHelperSystemShortcutsSource = fakeSystemSource
             it.shortcutHelperMultiTaskingShortcutsSource = fakeMultiTaskingSource
             it.shortcutHelperAppCategoriesShortcutsSource = fakeAppCategoriesSource
             it.shortcutHelperInputShortcutsSource = FakeKeyboardShortcutGroupsSource()
             it.shortcutHelperCurrentAppShortcutsSource = FakeKeyboardShortcutGroupsSource()
+            it.shortcutHelperAccessibilityShortcutsSource = FakeKeyboardShortcutGroupsSource()
         }
 
     private val repo = kosmos.defaultShortcutCategoriesRepository
@@ -120,6 +118,25 @@ class DefaultShortcutCategoriesRepositoryTest : SysuiTestCase() {
                 )
 
             assertThat(systemCategory).isEqualTo(expectedCategory)
+        }
+
+    @Test
+    fun subcategoryLabel_isEmpty_whenKeyboardShortcutGroupLabelIsNull() =
+        testScope.runTest {
+            fakeSystemSource.setGroups(
+                KeyboardShortcutGroup(
+                    /* label= */ null,
+                    /* items= */ listOf(simpleShortcutInfo(KEYCODE_1)),
+                )
+            )
+
+            helper.toggle(deviceId = 123)
+            val categories by collectLastValue(repo.categories)
+
+            val systemCategory = categories?.firstOrNull { it.type == ShortcutCategoryType.System }
+
+            // Also Tests will fail if NPE is thrown when KeyboardShortcutGroup.label is null
+            assertThat(systemCategory?.subCategories?.firstOrNull()?.label).isEmpty()
         }
 
     @Test
@@ -284,14 +301,20 @@ class DefaultShortcutCategoriesRepositoryTest : SysuiTestCase() {
             val categories by collectLastValue(repo.categories)
 
             val cycleForwardThroughRecentAppsShortcut =
-                categories?.first { it.type == ShortcutCategoryType.MultiTasking }
-                    ?.subCategories?.first { it.label == recentAppsGroup.label }
-                    ?.shortcuts?.first { it.label == CYCLE_FORWARD_THROUGH_RECENT_APPS_SHORTCUT_LABEL }
+                categories
+                    ?.first { it.type == ShortcutCategoryType.MultiTasking }
+                    ?.subCategories
+                    ?.first { it.label == recentAppsGroup.label }
+                    ?.shortcuts
+                    ?.first { it.label == CYCLE_FORWARD_THROUGH_RECENT_APPS_SHORTCUT_LABEL }
 
             val cycleBackThroughRecentAppsShortcut =
-                categories?.first { it.type == ShortcutCategoryType.MultiTasking }
-                    ?.subCategories?.first { it.label == recentAppsGroup.label }
-                    ?.shortcuts?.first { it.label == CYCLE_BACK_THROUGH_RECENT_APPS_SHORTCUT_LABEL }
+                categories
+                    ?.first { it.type == ShortcutCategoryType.MultiTasking }
+                    ?.subCategories
+                    ?.first { it.label == recentAppsGroup.label }
+                    ?.shortcuts
+                    ?.first { it.label == CYCLE_BACK_THROUGH_RECENT_APPS_SHORTCUT_LABEL }
 
             assertThat(cycleForwardThroughRecentAppsShortcut?.isCustomizable).isFalse()
             assertThat(cycleBackThroughRecentAppsShortcut?.isCustomizable).isFalse()

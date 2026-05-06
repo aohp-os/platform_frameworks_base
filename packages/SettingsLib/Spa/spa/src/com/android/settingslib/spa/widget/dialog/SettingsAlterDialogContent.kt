@@ -46,6 +46,7 @@ import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastForEachIndexed
@@ -95,7 +96,7 @@ internal fun SettingsAlertDialogContent(
 ) {
     Surface(
         modifier = modifier,
-        shape = SettingsShape.CornerExtraLarge,
+        shape = SettingsShape.CornerExtraLarge1,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Column(modifier = Modifier.padding(DialogPadding)) {
@@ -226,7 +227,12 @@ internal fun AlertDialogFlowRow(
                 val childrenMainAxisSizes =
                     IntArray(placeables.size) { j ->
                         placeables[j].width +
-                            if (j < placeables.lastIndex) mainAxisSpacing.roundToPx() else 0
+                            if ((layoutDirection == LayoutDirection.Ltr && j < placeables.lastIndex)
+                                    || (layoutDirection == LayoutDirection.Rtl && j > 0)) {
+                                mainAxisSpacing.roundToPx()
+                            } else {
+                                0
+                            }
                     }
                 val arrangement = Arrangement.End
                 val mainAxisPositions = IntArray(childrenMainAxisSizes.size) { 0 }

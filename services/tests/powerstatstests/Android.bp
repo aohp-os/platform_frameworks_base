@@ -1,7 +1,7 @@
 package {
-    default_team: "trendy_team_framework_backstage_power",
     // See: http://go/android-license-faq
     default_applicable_licenses: ["frameworks_base_license"],
+    default_team: "trendy_team_framework_bpm",
 }
 
 android_test {
@@ -27,6 +27,7 @@ android_test {
         "servicestests-utils",
         "platform-test-annotations",
         "flag-junit",
+        "apct-perftests-utils",
     ],
 
     libs: [
@@ -64,10 +65,12 @@ android_ravenwood_test {
         "ravenwood-junit",
         "truth",
         "androidx.annotation_annotation",
+        "androidx.test.ext.junit",
         "androidx.test.rules",
         "androidx.test.uiautomator_uiautomator",
         "modules-utils-binary-xml",
         "flag-junit",
+        "apct-perftests-utils",
     ],
     srcs: [
         "src/com/android/server/power/stats/*.java",

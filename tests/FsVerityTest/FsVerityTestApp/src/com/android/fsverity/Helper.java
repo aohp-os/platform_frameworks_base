@@ -21,7 +21,10 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import android.content.Context;
+import android.os.Bundle;
 import android.security.FileIntegrityManager;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import androidx.test.core.app.ApplicationProvider;
@@ -32,11 +35,13 @@ import com.android.compatibility.common.util.AdoptShellPermissionsRule;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Test helper that works with the host-side test to set up a test file, and to verify fs-verity
@@ -47,7 +52,9 @@ public class Helper {
 
     private static final String FILENAME = "test.file";
 
-    private static final long BLOCK_SIZE = 4096;
+    static {
+        System.loadLibrary("fsveritytestapp_jni");
+    }
 
     @Rule
     public final AdoptShellPermissionsRule mAdoptShellPermissionsRule =
@@ -58,7 +65,7 @@ public class Helper {
     @Test
     public void prepareTest() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
-        android.os.Bundle testArgs = InstrumentationRegistry.getArguments();
+        Bundle testArgs = InstrumentationRegistry.getArguments();
 
         String basename = testArgs.getString("basename");
         context.deleteFile(basename);
@@ -70,6 +77,7 @@ public class Helper {
         byte[] bytes = new byte[8192];
         Arrays.fill(bytes, (byte) '1');
         try (FileOutputStream os = context.openFileOutput(basename, Context.MODE_PRIVATE)) {
+            disableCompression(os.getFD());
             for (int i = 0; i < fileSize; i += bytes.length) {
                 if (i + bytes.length > fileSize) {
                     os.write(bytes, 0, fileSize % bytes.length);
@@ -84,31 +92,64 @@ public class Helper {
         fim.setupFsVerity(context.getFileStreamPath(basename));
     }
 
+    /**
+     * Explicitly disables compression on the given file. This is needed in case automatic
+     * compression is enabled filesystem-wide. The tests expect an uncompressed file.
+     *
+     * <p>This uses JNI because these flags are accessible only via ioctl().
+     *
+     * <p>Does nothing if the filesystem does not support compression.
+     *
+     * @throws RuntimeException if an unexpected error occurred
+     */
+    private static native void disableCompression(FileDescriptor fd);
+
+    private static long getPageSize() {
+        String arch = System.getProperty("os.arch");
+        Log.d(TAG, "os.arch=" + arch);
+        if ("x86_64".equals(arch)) {
+            // Override the fake 16K page size from cf_x86_64_pgagnostic.  The real page size on
+            // x86_64 is always 4K.  This test needs the real page size because it is testing I/O
+            // error reporting behavior that is dependent on the real page size.
+            return 4096;
+        }
+        return Os.sysconf(OsConstants._SC_PAGE_SIZE);
+    }
+
     @Test
     public void verifyFileRead() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
 
-        // Collect indices that the backing blocks are supposed to be corrupted.
-        android.os.Bundle testArgs = InstrumentationRegistry.getArguments();
+        Bundle testArgs = InstrumentationRegistry.getArguments();
         assertThat(testArgs).isNotNull();
         String filePath = testArgs.getString("filePath");
-        String csv = testArgs.getString("brokenBlockIndicesCsv");
-        Log.d(TAG, "brokenBlockIndicesCsv: " + csv);
-        String[] strings = csv.split(",");
-        var corrupted = new ArrayList(strings.length);
-        for (int i = 0; i < strings.length; i++) {
-            corrupted.add(Integer.parseInt(strings[i]));
-        }
+        String csv = testArgs.getString("brokenByteIndicesCsv");
+        Log.d(TAG, "brokenByteIndicesCsv: " + csv);
 
-        // Expect the read to succeed or fail per the prior.
-        try (var file = new RandomAccessFile(filePath, "r")) {
-            long total_blocks = (file.length() + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            for (int i = 0; i < (int) total_blocks; i++) {
-                file.seek(i * BLOCK_SIZE);
-                if (corrupted.contains(i)) {
-                    Log.d(TAG, "Expecting read at block #" + i + " to fail");
+        // Build the set of pages that contain a corrupted byte.
+        final long pageSize = getPageSize();
+        Set<Long> corruptedPageIndices = new HashSet();
+        for (String s : csv.split(",")) {
+            long byteIndex = Long.parseLong(s);
+            long pageIndex = byteIndex / pageSize;
+            corruptedPageIndices.add(pageIndex);
+        }
+        Log.d(TAG, "corruptedPageIndices=" + corruptedPageIndices);
+
+        // Read bytes from the file and verify the expected result based on the containing page.
+        // (The kernel reports fs-verity errors at page granularity.)
+        final long stride = 1024;
+        // Using a stride that is a divisor of the page size ensures that the last page is tested.
+        assertThat(pageSize % stride).isEqualTo(0);
+        try (RandomAccessFile file = new RandomAccessFile(filePath, "r")) {
+            for (long byteIndex = 0; byteIndex < file.length(); byteIndex += stride) {
+                file.seek(byteIndex);
+                long pageIndex = byteIndex / pageSize;
+                if (corruptedPageIndices.contains(pageIndex)) {
+                    Log.d(TAG, "Expecting read at byte #" + byteIndex + " to fail");
                     assertThrows(IOException.class, () -> file.read());
                 } else {
+                    Log.d(TAG, "Expecting read at byte #" + byteIndex + " to succeed");
                     assertThat(file.readByte()).isEqualTo('1');
                 }
             }

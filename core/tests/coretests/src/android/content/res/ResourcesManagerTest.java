@@ -17,6 +17,7 @@
 package android.content.res;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
@@ -24,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.annotation.NonNull;
 import android.app.ResourcesManager;
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Binder;
@@ -33,7 +35,6 @@ import android.platform.test.annotations.Postsubmit;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
-import android.util.ArraySet;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Display;
@@ -43,12 +44,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import java.util.ArrayList;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -66,6 +72,7 @@ public class ResourcesManagerTest {
     public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
     private ResourcesManager mResourcesManager;
+    private ResourcesManager mOldResourcesManager;
     private Map<Integer, DisplayMetrics> mDisplayMetricsMap;
 
     @Before
@@ -115,10 +122,20 @@ public class ResourcesManagerTest {
                 return mDisplayMetricsMap.get(displayId);
             }
         };
+        mOldResourcesManager = ResourcesManager.setInstance(mResourcesManager);
+    }
+
+    @After
+    public void tearDown() {
+        ResourcesManager.setInstance(mOldResourcesManager);
+    }
+
+    private Context getContext() {
+        return InstrumentationRegistry.getInstrumentation().getContext();
     }
 
     private PackageManager getPackageManager() {
-        return InstrumentationRegistry.getInstrumentation().getContext().getPackageManager();
+        return getContext().getPackageManager();
     }
 
     @Test
@@ -359,15 +376,103 @@ public class ResourcesManagerTest {
 
     @Test
     @SmallTest
-    @RequiresFlagsEnabled(Flags.FLAG_REGISTER_RESOURCE_PATHS)
+    public void testUpdateResourcesForActivityUpdateWindowConfiguration() {
+        final Binder activity = new Binder();
+        final Binder activity2 = new Binder();
+        final Configuration overrideConfig = new Configuration();
+        final Resources resources = mResourcesManager.getResources(
+                activity, APP_ONE_RES_DIR, null, null, null, null, Display.DEFAULT_DISPLAY,
+                overrideConfig, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        final Resources resources2 = mResourcesManager.getResources(
+                activity2, APP_ONE_RES_DIR, null, null, null, null, Display.DEFAULT_DISPLAY,
+                overrideConfig, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        overrideConfig.windowConfiguration.getBounds().set(100, 100, 600, 1200);
+        mResourcesManager.updateResourcesForActivity(activity, overrideConfig,
+                Display.DEFAULT_DISPLAY);
+
+        assertEquals(overrideConfig.windowConfiguration,
+                resources.getConfiguration().windowConfiguration);
+        assertEquals(overrideConfig.windowConfiguration,
+                resources.getDisplayAdjustments().getConfiguration().windowConfiguration);
+        assertNotEquals(resources.getConfiguration().windowConfiguration,
+                resources2.getConfiguration().windowConfiguration);
+
+        overrideConfig.windowConfiguration.getBounds().offset(10, 10);
+        mResourcesManager.updateResourcesForActivity(activity2, overrideConfig,
+                Display.DEFAULT_DISPLAY);
+
+        assertEquals(overrideConfig.windowConfiguration,
+                resources2.getConfiguration().windowConfiguration);
+        assertNotEquals(resources.getConfiguration().windowConfiguration,
+                resources2.getConfiguration().windowConfiguration);
+    }
+
+    @Test
+    @SmallTest
+    public void testUpdateActivityResourcesOverrideWindowConfiguration() {
+        final Binder activity = new Binder();
+        final Resources activityResources = mResourcesManager.createBaseTokenResources(
+                activity, null, null, null, null, null, Display.DEFAULT_DISPLAY,
+                null, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        final Configuration overrideConfig = new Configuration();
+        overrideConfig.windowConfiguration.getBounds().set(0, 0, 500, 1000);
+        // Simulate the usage of Activity#createConfigurationContext.
+        final Resources overrideConfigResources = mResourcesManager.getResources(
+                activity, null, null, null, null, null, Display.DEFAULT_DISPLAY,
+                overrideConfig, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        // This is a key step to make the non-window configuration fields have the same value
+        // (which were assigned from ResourcesManager#applyDisplayMetricsToConfiguration). And the
+        // following update shouldn't create the ResourcesKey that finds the same ResourcesImpl.
+        final Configuration newActivityOverrideConfig =
+                new Configuration(overrideConfigResources.getConfiguration());
+        newActivityOverrideConfig.windowConfiguration.getBounds().set(100, 200, 600, 1200);
+        mResourcesManager.updateResourcesForActivity(activity, newActivityOverrideConfig,
+                Display.DEFAULT_DISPLAY);
+
+        // Verifies that the update applies the configuration to the correct ResourcesImpl.
+        assertEquals(overrideConfig.windowConfiguration.getBounds(),
+                overrideConfigResources.getConfiguration().windowConfiguration.getBounds());
+        assertEquals(newActivityOverrideConfig.windowConfiguration.getBounds(),
+                activityResources.getConfiguration().windowConfiguration.getBounds());
+    }
+
+    @Test
+    @SmallTest
+    @RequiresFlagsEnabled(Flags.FLAG_IGNORE_NON_PUBLIC_CONFIG_DIFF_FOR_RESOURCES_KEY)
+    public void testNonPublicDiffOverrideConfigShareImpl() {
+        final Configuration overrideConfig1 = new Configuration();
+        overrideConfig1.densityDpi = 100;
+        overrideConfig1.windowConfiguration.setAppBounds(0, 0, 500, 1000);
+        final Resources resources1 = mResourcesManager.getResources(
+                null, APP_ONE_RES_DIR, null, null, null, null, null, overrideConfig1,
+                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+
+        final Configuration overrideConfig2 = new Configuration(overrideConfig1);
+        // WindowConfiguration is not a public API field. It shouldn't affect resources.
+        overrideConfig2.windowConfiguration.getAppBounds().offset(100, 100);
+        final Resources resources2 = mResourcesManager.getResources(
+                null, APP_ONE_RES_DIR, null, null, null, null, null, overrideConfig2,
+                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+
+        // Verify that ResourcesKey distinguishes undefined fields.
+        final Configuration emptyConfig = new Configuration();
+        final Resources resources3 = mResourcesManager.getResources(
+                null, APP_ONE_RES_DIR, null, null, null, null, null, emptyConfig,
+                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+
+        assertNotNull(resources1);
+        assertNotNull(resources2);
+        assertNotNull(emptyConfig);
+        assertSame(resources1.getImpl(), resources2.getImpl());
+        assertNotSame(resources3.getImpl(), resources1.getImpl());
+        assertNotSame(resources3.getImpl(), resources2.getImpl());
+    }
+
+    @Test
+    @SmallTest
     @DisabledOnRavenwood(blockedBy = PackageManager.class)
     public void testExistingResourcesAfterResourcePathsRegistration()
              throws PackageManager.NameNotFoundException {
-        // Inject ResourcesManager instance from this test to the ResourcesManager class so that all
-        // the static method can interact with this test smoothly.
-        ResourcesManager oriResourcesManager = ResourcesManager.getInstance();
-        ResourcesManager.setInstance(mResourcesManager);
-
         // Create a Resources before register resources' paths for a package.
         Resources resources = mResourcesManager.getResources(
                 null, APP_ONE_RES_DIR, null, null, null, null, null, null,
@@ -380,29 +485,18 @@ public class ResourcesManagerTest {
 
         assertNotSame(oriResImpl, resources.getImpl());
 
-        String[] resourcePaths = appInfo.getAllApkPaths();
-        resourcePaths = removeDuplicates(resourcePaths);
         ApkAssets[] loadedAssets = resources.getAssets().getApkAssets();
-        assertTrue(allResourcePathsLoaded(resourcePaths, loadedAssets));
+        assertTrue(containsPath(TEST_LIB, loadedAssets));
 
         // Package resources' paths should be cached in ResourcesManager.
         assertNotNull(ResourcesManager.getInstance().getRegisteredResourcePaths().get(TEST_LIB));
-
-        // Revert the ResourcesManager instance back.
-        ResourcesManager.setInstance(oriResourcesManager);
     }
 
     @Test
     @SmallTest
-    @RequiresFlagsEnabled(Flags.FLAG_REGISTER_RESOURCE_PATHS)
     @DisabledOnRavenwood(blockedBy = PackageManager.class)
     public void testNewResourcesAfterResourcePathsRegistration()
             throws PackageManager.NameNotFoundException {
-        // Inject ResourcesManager instance from this test to the ResourcesManager class so that all
-        // the static method can interact with this test smoothly.
-        ResourcesManager oriResourcesManager = ResourcesManager.getInstance();
-        ResourcesManager.setInstance(mResourcesManager);
-
         ApplicationInfo appInfo = getPackageManager().getApplicationInfo(TEST_LIB, 0);
         Resources.registerResourcePaths(TEST_LIB, appInfo);
 
@@ -412,35 +506,25 @@ public class ResourcesManagerTest {
                 CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
         assertNotNull(resources);
 
-        String[] resourcePaths = appInfo.getAllApkPaths();
-        resourcePaths = removeDuplicates(resourcePaths);
         ApkAssets[] loadedAssets = resources.getAssets().getApkAssets();
-        assertTrue(allResourcePathsLoaded(resourcePaths, loadedAssets));
+        assertTrue(containsPath(TEST_LIB, loadedAssets));
 
         // Package resources' paths should be cached in ResourcesManager.
         assertNotNull(ResourcesManager.getInstance().getRegisteredResourcePaths().get(TEST_LIB));
-        // Revert the ResourcesManager instance back.
-        ResourcesManager.setInstance(oriResourcesManager);
     }
 
     @Test
     @SmallTest
-    @RequiresFlagsEnabled(Flags.FLAG_REGISTER_RESOURCE_PATHS)
     @DisabledOnRavenwood(blockedBy = PackageManager.class)
     public void testExistingResourcesCreatedByConstructorAfterResourcePathsRegistration()
             throws PackageManager.NameNotFoundException {
-        // Inject ResourcesManager instance from this test to the ResourcesManager class so that all
-        // the static method can interact with this test smoothly.
-        ResourcesManager oriResourcesManager = ResourcesManager.getInstance();
-        ResourcesManager.setInstance(mResourcesManager);
-
         // Create a Resources through constructor directly before register resources' paths.
         final DisplayMetrics metrics = new DisplayMetrics();
         metrics.setToDefaults();
         final Configuration config = new Configuration();
         config.setToDefaults();
-        Resources resources = new Resources(new AssetManager(), metrics, config);
-        assertNotNull(resources);
+        final var assets = new AssetManager();
+        Resources resources = new Resources(assets, metrics, config);
 
         ResourcesImpl oriResImpl = resources.getImpl();
 
@@ -449,15 +533,17 @@ public class ResourcesManagerTest {
 
         assertNotSame(oriResImpl, resources.getImpl());
 
-        String[] resourcePaths = appInfo.getAllApkPaths();
-        resourcePaths = removeDuplicates(resourcePaths);
         ApkAssets[] loadedAssets = resources.getAssets().getApkAssets();
-        assertTrue(allResourcePathsLoaded(resourcePaths, loadedAssets));
+        assertTrue(containsPath(TEST_LIB, loadedAssets));
 
         // Package resources' paths should be cached in ResourcesManager.
         assertNotNull(ResourcesManager.getInstance().getRegisteredResourcePaths().get(TEST_LIB));
-        // Revert the ResourcesManager instance back.
-        ResourcesManager.setInstance(oriResourcesManager);
+
+        // Now make sure that when constructing another custom Resources object its
+        // AssetManager gets updated in place.
+        final var anotherResources = new Resources(assets, metrics, config);
+        assertSame(assets, anotherResources.getAssets());
+        assertTrue(containsPath(TEST_LIB, anotherResources.getAssets().getApkAssets()));
     }
 
     @Test
@@ -505,13 +591,9 @@ public class ResourcesManagerTest {
 
     @Test
     @SmallTest
-    @RequiresFlagsEnabled(Flags.FLAG_REGISTER_RESOURCE_PATHS)
     @DisabledOnRavenwood(blockedBy = PackageManager.class)
     public void testNewResourcesWithOutdatedImplAfterResourcePathsRegistration()
             throws PackageManager.NameNotFoundException {
-        ResourcesManager oriResourcesManager = ResourcesManager.getInstance();
-        ResourcesManager.setInstance(mResourcesManager);
-
         Resources old_resources = mResourcesManager.getResources(
                 null, APP_ONE_RES_DIR, null, null, null, null, null, null,
                 CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
@@ -532,44 +614,82 @@ public class ResourcesManagerTest {
         // which has proper asset paths appended.
         assertNotSame(oldImpl, resources.getImpl());
 
-        String[] resourcePaths = appInfo.getAllApkPaths();
-        resourcePaths = removeDuplicates(resourcePaths);
         ApkAssets[] loadedAssets = resources.getAssets().getApkAssets();
-        assertTrue(allResourcePathsLoaded(resourcePaths, loadedAssets));
+        assertTrue(containsPath(TEST_LIB, loadedAssets));
 
         // Package resources' paths should be cached in ResourcesManager.
         assertNotNull(ResourcesManager.getInstance().getRegisteredResourcePaths().get(TEST_LIB));
-        // Revert the ResourcesManager instance back.
-        ResourcesManager.setInstance(oriResourcesManager);
     }
 
-    private static boolean allResourcePathsLoaded(String[] resourcePaths, ApkAssets[] loadedAsset) {
-        for (int i = 0; i < resourcePaths.length; i++) {
-            if (!resourcePaths[i].endsWith(".apk")) {
-                continue;
-            }
-            boolean found = false;
-            for (int j = 0; j < loadedAsset.length; j++) {
-                if (loadedAsset[j].getAssetPath().equals(resourcePaths[i])) {
-                    found = true;
-                }
-            }
-            if (!found) {
-                return false;
-            }
-        }
-        return true;
+
+    @Test
+    @SmallTest
+    @DisabledOnRavenwood(blockedBy = PackageManager.class)
+    public void testRegisteringOwnApplicationInfo() {
+        Resources old_resources = mResourcesManager.getResources(
+                null, APP_ONE_RES_DIR, null, null, null, null, null, null,
+                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        assertNotNull(old_resources);
+        ResourcesImpl oldImpl = old_resources.getImpl();
+
+        ApplicationInfo appInfo =
+                InstrumentationRegistry.getInstrumentation().getContext().getApplicationInfo();
+        Resources.registerResourcePaths(TEST_LIB, appInfo);
+
+        // Create another resources with identical parameters.
+        Resources resources = mResourcesManager.getResources(
+                null, APP_ONE_RES_DIR, null, null, null, null, null, null,
+                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+        assertNotNull(resources);
+        assertNotSame(oldImpl, resources.getImpl());
+
+        ApkAssets[] loadedAssets = resources.getAssets().getApkAssets();
+        assertTrue(containsPath(appInfo.sourceDir, loadedAssets));
+
+        assertNotNull(ResourcesManager.getInstance().getRegisteredResourcePaths().get(TEST_LIB));
     }
 
-    private static String[] removeDuplicates(String[] paths) {
-        var pathList = new ArrayList<String>();
-        var pathSet = new ArraySet<String>();
-        final int pathsLen = paths.length;
-        for (int i = 0; i < pathsLen; i++) {
-            if (pathSet.add(paths[i])) {
-                pathList.add(paths[i]);
+    @Test
+    @SmallTest
+    @DisabledOnRavenwood(blockedBy = PackageManager.class)
+    public void testRegisterPathWithExistingResourcesWithInvalidPath()
+            throws PackageManager.NameNotFoundException, IOException {
+        File filesDir = getContext().getFilesDir();
+        File tmpName = new File(filesDir, "tmp.apk");
+        ApplicationInfo appInfo = getPackageManager().getApplicationInfo(TEST_LIB, 0);
+        try {
+            // This test requires a proper setup:
+            // 1. Create a temp location for an apk with resources. Make sure the file is a
+            //    separate copy, not a link, so we can remove it completely later.
+            Files.copy(Path.of(appInfo.sourceDir), tmpName.toPath());
+
+            // 2. Load those resources using the real resource manager object
+            ResourcesManager.setInstance(mOldResourcesManager);
+            Resources tmpResources = ResourcesManager.getInstance().getResources(null,
+                    tmpName.toString(),
+                    null, null, null, null, null, null,
+                    CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null, null);
+            assertNotNull(tmpResources);
+
+            // 3. Now remove the temporary apk - simulate an app uninstallation
+            Files.delete(tmpName.toPath());
+
+            // 4. Here comes the test - registering resources path is going to update all objects
+            //    and it should not fail because our temporary resources backing file is gone
+            Resources.registerResourcePaths(TEST_LIB, appInfo);
+        } catch (Exception e) {
+            Assert.fail("Shouldn't throw, but did: " + e);
+        } finally {
+            Files.deleteIfExists(tmpName.toPath());
+        }
+    }
+
+    private static boolean containsPath(String substring, ApkAssets[] assets) {
+        for (final var asset : assets) {
+            if (asset.getAssetPath().contains(substring)) {
+                return true;
             }
         }
-        return pathList.toArray(new String[0]);
+        return false;
     }
 }

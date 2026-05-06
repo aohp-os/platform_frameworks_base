@@ -1,7 +1,6 @@
 package com.android.systemui.statusbar.notification
 
 import android.app.Notification.GROUP_ALERT_SUMMARY
-import android.testing.TestableLooper
 import android.testing.TestableLooper.RunWithLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
@@ -10,14 +9,17 @@ import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.jank.interactionJankMonitor
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.res.R
+import com.android.systemui.statusbar.notification.collection.GroupEntry
 import com.android.systemui.statusbar.notification.collection.GroupEntryBuilder
+import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder
+import com.android.systemui.statusbar.notification.collection.buildNotificationEntry
 import com.android.systemui.statusbar.notification.data.repository.NotificationLaunchAnimationRepository
 import com.android.systemui.statusbar.notification.domain.interactor.NotificationLaunchAnimationInteractor
 import com.android.systemui.statusbar.notification.headsup.HeadsUpManager
 import com.android.systemui.statusbar.notification.headsup.HeadsUpUtil
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
-import com.android.systemui.statusbar.notification.row.NotificationTestHelper
+import com.android.systemui.statusbar.notification.row.createRowWithEntry
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer
 import com.android.systemui.testKosmos
 import junit.framework.Assert.assertFalse
@@ -42,7 +44,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
     @Mock lateinit var headsUpManager: HeadsUpManager
     @Mock lateinit var onFinishAnimationCallback: Runnable
 
-    private lateinit var notificationTestHelper: NotificationTestHelper
+    private lateinit var entry: NotificationEntry
     private lateinit var notification: ExpandableNotificationRow
     private lateinit var controller: NotificationTransitionAnimatorController
     private val notificationLaunchAnimationInteractor =
@@ -52,16 +54,15 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
     private val testScope = kosmos.testScope
 
     private val notificationKey: String
-        get() = notification.entry.sbn.key
+        get() = entry.sbn.key
 
     @get:Rule val rule = MockitoJUnit.rule()
 
     @Before
     fun setUp() {
         allowTestableLooperAsMainThread()
-        notificationTestHelper =
-            NotificationTestHelper(mContext, mDependency, TestableLooper.get(this))
-        notification = notificationTestHelper.createRow()
+        entry = kosmos.buildNotificationEntry()
+        notification = kosmos.createRowWithEntry(entry)
         controller =
             NotificationTransitionAnimatorController(
                 notificationLaunchAnimationInteractor,
@@ -83,7 +84,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
         controller.onIntentStarted(willAnimate = false)
 
         assertTrue(HeadsUpUtil.isClickedHeadsUpNotification(notification))
-        assertFalse(notification.entry.isExpandAnimationRunning)
+        assertFalse(notification.isLaunchAnimationRunning)
         val isExpandAnimationRunning by
             testScope.collectLastValue(
                 notificationLaunchAnimationInteractor.isLaunchAnimationRunning
@@ -106,7 +107,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
         controller.onTransitionAnimationCancelled()
 
         assertTrue(HeadsUpUtil.isClickedHeadsUpNotification(notification))
-        assertFalse(notification.entry.isExpandAnimationRunning)
+        assertFalse(notification.isLaunchAnimationRunning)
         val isExpandAnimationRunning by
             testScope.collectLastValue(
                 notificationLaunchAnimationInteractor.isLaunchAnimationRunning
@@ -129,7 +130,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
         controller.onTransitionAnimationEnd(isExpandingFullyAbove = true)
 
         assertFalse(HeadsUpUtil.isClickedHeadsUpNotification(notification))
-        assertFalse(notification.entry.isExpandAnimationRunning)
+        assertFalse(notification.isLaunchAnimationRunning)
         val isExpandAnimationRunning by
             testScope.collectLastValue(
                 notificationLaunchAnimationInteractor.isLaunchAnimationRunning
@@ -156,22 +157,21 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
                 .setId(0)
                 .apply { modifyNotification(mContext).setSmallIcon(R.drawable.ic_person) }
                 .build()
-        assertNotSame(summary.key, notification.entry.key)
+        assertNotSame(summary.key, entry.key)
 
-        notificationTestHelper.createRow(summary)
+        kosmos.createRowWithEntry(summary)
 
-        GroupEntryBuilder()
-            .setKey(GROUP_KEY)
-            .setSummary(summary)
-            .addChild(notification.entry)
-            .build()
-        assertSame(summary, notification.entry.parent?.summary)
+        GroupEntryBuilder().setKey(GROUP_KEY).setSummary(summary).addChild(entry).build()
+
+        val parentSummary =
+            if (entry.parent is GroupEntry) (entry.parent as GroupEntry).summary else null
+        assertSame(summary, parentSummary)
 
         `when`(headsUpManager.isHeadsUpEntry(notificationKey)).thenReturn(false)
         `when`(headsUpManager.isHeadsUpEntry(summary.key)).thenReturn(true)
 
         assertNotSame(GROUP_ALERT_SUMMARY, summary.sbn.notification.groupAlertBehavior)
-        assertNotSame(GROUP_ALERT_SUMMARY, notification.entry.sbn.notification.groupAlertBehavior)
+        assertNotSame(GROUP_ALERT_SUMMARY, entry.sbn.notification.groupAlertBehavior)
 
         controller.onTransitionAnimationEnd(isExpandingFullyAbove = true)
 
@@ -184,7 +184,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
             )
         verify(headsUpManager, never())
             .removeNotification(
-                notification.entry.key,
+                entry.key,
                 /* releaseImmediately= */ true,
                 /* animate= */ false,
                 /* reason= */ "onLaunchAnimationEnd()",
@@ -195,7 +195,7 @@ class NotificationTransitionAnimatorControllerTest : SysuiTestCase() {
     fun testNotificationIsExpandingDuringAnimation() {
         controller.onIntentStarted(willAnimate = true)
 
-        assertTrue(notification.entry.isExpandAnimationRunning)
+        assertTrue(notification.isLaunchAnimationRunning)
         val isExpandAnimationRunning by
             testScope.collectLastValue(
                 notificationLaunchAnimationInteractor.isLaunchAnimationRunning

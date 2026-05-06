@@ -16,6 +16,8 @@
 
 package com.android.server.rollback;
 
+import static android.crashrecovery.flags.Flags.extendRollbackLifetime;
+
 import android.Manifest;
 import android.annotation.AnyThread;
 import android.annotation.NonNull;
@@ -134,7 +136,7 @@ class RollbackManagerServiceImpl extends IRollbackManager.Stub implements Rollba
 
     // Rollbacks expire after 14 days.
     private static final long DEFAULT_ROLLBACK_LIFETIME_DURATION_MILLIS =
-            TimeUnit.DAYS.toMillis(14);
+            extendRollbackLifetime() ? TimeUnit.DAYS.toMillis(60) : TimeUnit.DAYS.toMillis(14);
 
     // Accessed on the handler thread only.
     private long mRollbackLifetimeDurationInMillis = DEFAULT_ROLLBACK_LIFETIME_DURATION_MILLIS;
@@ -1244,19 +1246,14 @@ class RollbackManagerServiceImpl extends IRollbackManager.Stub implements Rollba
         rollback.makeAvailable();
         mPackageHealthObserver.notifyRollbackAvailable(rollback.info);
 
-        if (Flags.recoverabilityDetection()) {
-            if (rollback.info.getRollbackImpactLevel() == PackageManager.ROLLBACK_USER_IMPACT_LOW) {
-                // TODO(zezeozue): Provide API to explicitly start observing instead
-                // of doing this for all rollbacks. If we do this for all rollbacks,
-                // should document in PackageInstaller.SessionParams#setEnableRollback
-                // After enabling and committing any rollback, observe packages and
-                // prepare to rollback if packages crashes too frequently.
-                mPackageWatchdog.startExplicitHealthCheck(mPackageHealthObserver,
-                        rollback.getPackageNames(), mRollbackLifetimeDurationInMillis);
-            }
-        } else {
-            mPackageWatchdog.startExplicitHealthCheck(mPackageHealthObserver,
-                    rollback.getPackageNames(), mRollbackLifetimeDurationInMillis);
+        if (rollback.info.getRollbackImpactLevel() == PackageManager.ROLLBACK_USER_IMPACT_LOW) {
+            // TODO(zezeozue): Provide API to explicitly start observing instead
+            // of doing this for all rollbacks. If we do this for all rollbacks,
+            // should document in PackageInstaller.SessionParams#setEnableRollback
+            // After enabling and committing any rollback, observe packages and
+            // prepare to rollback if packages crashes too frequently.
+            mPackageWatchdog.startExplicitHealthCheck(rollback.getPackageNames(),
+                    mRollbackLifetimeDurationInMillis, mPackageHealthObserver);
         }
         runExpiration();
     }

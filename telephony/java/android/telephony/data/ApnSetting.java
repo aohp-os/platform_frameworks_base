@@ -15,7 +15,6 @@
  */
 package android.telephony.data;
 
-import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -37,7 +36,6 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Log;
 
-import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.telephony.Rlog;
 
@@ -126,14 +124,11 @@ public class ApnSetting implements Parcelable {
     /** APN type for ENTERPRISE. */
     public static final int TYPE_ENTERPRISE = ApnTypes.ENTERPRISE;
     /** APN type for RCS (Rich Communication Services). */
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final int TYPE_RCS = ApnTypes.RCS;
     /** APN type for OEM_PAID networks (Automotive PANS) */
-    @FlaggedApi(Flags.FLAG_OEM_PAID_PRIVATE)
-    public static final int TYPE_OEM_PAID = 1 << 16; // TODO(b/366194627): ApnTypes.OEM_PAID;
+    public static final int TYPE_OEM_PAID = ApnTypes.OEM_PAID;
     /** APN type for OEM_PRIVATE networks (Automotive PANS) */
-    @FlaggedApi(Flags.FLAG_OEM_PAID_PRIVATE)
-    public static final int TYPE_OEM_PRIVATE = 1 << 17; // TODO(b/366194627): ApnTypes.OEM_PRIVATE;
+    public static final int TYPE_OEM_PRIVATE = ApnTypes.OEM_PRIVATE;
 
     /** @hide */
     @IntDef(flag = true, prefix = {"TYPE_"}, value = {
@@ -379,7 +374,6 @@ public class ApnSetting implements Parcelable {
      * modem components or carriers. Non-system apps should use the integer variants instead.
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     @SystemApi
     public static final String TYPE_RCS_STRING = "rcs";
 
@@ -390,7 +384,6 @@ public class ApnSetting implements Parcelable {
      * modem components or carriers. Non-system apps should use the integer variants instead.
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_OEM_PAID_PRIVATE)
     @SystemApi
     public static final String TYPE_OEM_PAID_STRING = "oem_paid";
 
@@ -401,7 +394,6 @@ public class ApnSetting implements Parcelable {
      * modem components or carriers. Non-system apps should use the integer variants instead.
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_OEM_PAID_PRIVATE)
     @SystemApi
     public static final String TYPE_OEM_PRIVATE_STRING = "oem_private";
 
@@ -994,7 +986,6 @@ public class ApnSetting implements Parcelable {
      *
      * @return True if the PDU session for this APN should always be on and false otherwise
      */
-    @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
     public boolean isAlwaysOn() {
         return mAlwaysOn;
     }
@@ -1537,6 +1528,8 @@ public class ApnSetting implements Parcelable {
         apnValue.put(Telephony.Carriers.ALWAYS_ON, mAlwaysOn);
         apnValue.put(Telephony.Carriers.INFRASTRUCTURE_BITMASK, mInfrastructureBitmask);
         apnValue.put(Telephony.Carriers.ESIM_BOOTSTRAP_PROVISIONING, mEsimBootstrapProvisioning);
+        apnValue.put(Telephony.Carriers.PROFILE_ID, mProfileId);
+        apnValue.put(Telephony.Carriers.MODEM_PERSIST, mPersistent);
         return apnValue;
     }
 
@@ -2349,7 +2342,6 @@ public class ApnSetting implements Parcelable {
          *
          * @param alwaysOn the always on status to set for this APN
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public @NonNull Builder setAlwaysOn(boolean alwaysOn) {
             this.mAlwaysOn = alwaysOn;
             return this;

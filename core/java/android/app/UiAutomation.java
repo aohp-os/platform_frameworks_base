@@ -73,8 +73,8 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.inputmethod.EditorInfo;
-import android.window.ScreenCapture;
-import android.window.ScreenCapture.ScreenshotHardwareBuffer;
+import android.window.ScreenCaptureInternal;
+import android.window.ScreenCaptureInternal.ScreenshotHardwareBuffer;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -117,6 +117,8 @@ import java.util.concurrent.TimeoutException;
  * interacting with another application whose behavior depends on that setting.
  * </p>
  */
+@android.ravenwood.annotation.RavenwoodKeepPartialClass
+@android.ravenwood.annotation.RavenwoodRedirectionClass("UiAutomation_ravenwood")
 public final class UiAutomation {
 
     private static final String LOG_TAG = UiAutomation.class.getSimpleName();
@@ -222,7 +224,8 @@ public final class UiAutomation {
 
     private OnAccessibilityEventListener mOnAccessibilityEventListener;
 
-    private boolean mWaitingForEventDelivery;
+    // Count the nested clients waiting for data delivery
+    private int mCurrentEventWatchersCount = 0;
 
     private long mLastEventTimeMillis;
 
@@ -283,6 +286,7 @@ public final class UiAutomation {
      *
      * @hide
      */
+    @android.ravenwood.annotation.RavenwoodKeep
     public UiAutomation(Context context, IUiAutomationConnection connection) {
         this(getDisplayId(context), context.getMainLooper(), connection);
     }
@@ -306,6 +310,7 @@ public final class UiAutomation {
         Log.w(LOG_TAG, "Created with deprecatead constructor, assumes DEFAULT_DISPLAY");
     }
 
+    @android.ravenwood.annotation.RavenwoodKeep
     private UiAutomation(int displayId, Looper looper, IUiAutomationConnection connection) {
         Preconditions.checkArgument(looper != null, "Looper cannot be null!");
         Preconditions.checkArgument(connection != null, "Connection cannot be null!");
@@ -585,6 +590,7 @@ public final class UiAutomation {
      * @see #adoptShellPermissionIdentity(String...)
      * @see #dropShellPermissionIdentity()
      */
+    @android.ravenwood.annotation.RavenwoodRedirect
     public void adoptShellPermissionIdentity() {
         try {
             // Calling out without a lock held.
@@ -610,6 +616,7 @@ public final class UiAutomation {
      * @see #adoptShellPermissionIdentity()
      * @see #dropShellPermissionIdentity()
      */
+    @android.ravenwood.annotation.RavenwoodRedirect
     public void adoptShellPermissionIdentity(@Nullable String... permissions) {
         try {
             // Calling out without a lock held.
@@ -626,6 +633,7 @@ public final class UiAutomation {
      *
      * @see #adoptShellPermissionIdentity()
      */
+    @android.ravenwood.annotation.RavenwoodRedirect
     public void dropShellPermissionIdentity() {
         try {
             // Calling out without a lock held.
@@ -644,6 +652,7 @@ public final class UiAutomation {
      */
     @TestApi
     @NonNull
+    @android.ravenwood.annotation.RavenwoodRedirect
     public Set<String> getAdoptedShellPermissions() {
         try {
             final List<String> permissions = mUiAutomationConnection.getAdoptedShellPermissions();
@@ -955,10 +964,9 @@ public final class UiAutomation {
      * <p>
      * <strong>Note:</strong> It is caller's responsibility to recycle the event.
      * </p>
-     *
-     * @param event The event to inject.
-     * @param sync Whether to inject the event synchronously.
-     * @return Whether event injection succeeded.
+     * @param event the event to inject
+     * @param sync whether to inject the event synchronously
+     * @return {@code true} if event injection succeeded
      */
     public boolean injectInputEvent(InputEvent event, boolean sync) {
         return injectInputEvent(event, sync, true /* waitForAnimations */);
@@ -971,15 +979,21 @@ public final class UiAutomation {
      * <strong>Note:</strong> It is caller's responsibility to recycle the event.
      * </p>
      *
-     * @param event The event to inject.
-     * @param sync  Whether to inject the event synchronously.
-     * @param waitForAnimations Whether to wait for all window container animations and surface
-     *   operations to complete.
-     * @return Whether event injection succeeded.
+     * @param event the event to inject
+     * @param sync  whether to inject the event synchronously.
+     * @param waitForAnimations whether to wait for all window container animations and surface
+     *   operations to complete
+     * @return {@code true} if event injection succeeded
      *
+     * @deprecated for CTS tests prefer inject input events using uinput
+     *   (com.android.cts.input.UinputDevice) or hid devices (com.android.cts.input.HidDevice).
+     *   Alternatively, InjectInputInProcess (com.android.cts.input.InjectInputProcess) can be used
+     *   for in-process injection.
      * @hide
      */
     @TestApi
+    @Deprecated  // Deprecated for CTS tests
+    @SuppressLint("UnflaggedApi")  // @FlaggedApi breaks previously released @TestApi, b/395889250
     public boolean injectInputEvent(@NonNull InputEvent event, boolean sync,
             boolean waitForAnimations) {
         try {
@@ -1002,9 +1016,15 @@ public final class UiAutomation {
      * Events injected to the input subsystem using the standard {@link #injectInputEvent} method
      * skip the accessibility input filter to avoid feedback loops.
      *
+     * @deprecated for CTS tests prefer inject input events using uinput
+     *   (com.android.cts.input.UinputDevice) or hid devices (com.android.cts.input.HidDevice).
+     *   Alternatively, InjectInputInProcess (com.android.cts.input.InjectInputProcess) can be used
+     *   for in-process injection.
      * @hide
      */
     @TestApi
+    @Deprecated
+    @SuppressLint("UnflaggedApi")  // @FlaggedApi breaks previously released @TestApi, b/395889250
     public void injectInputEventToInputFilter(@NonNull InputEvent event) {
         try {
             mUiAutomationConnection.injectInputEventToInputFilter(event);
@@ -1132,74 +1152,74 @@ public final class UiAutomation {
      */
     public AccessibilityEvent executeAndWaitForEvent(Runnable command,
             AccessibilityEventFilter filter, long timeoutMillis) throws TimeoutException {
+        int watchersDepth;
+        // Track events added after the index for this command, it is to support nested calls.
+        // This doesn't support concurrent calls correctly.
+        int eventQueueStartIndex;
+        final long executionStartTimeMillis;
+
         // Acquire the lock and prepare for receiving events.
         synchronized (mLock) {
             throwIfNotConnectedLocked();
-            mEventQueue.clear();
-            // Prepare to wait for an event.
-            mWaitingForEventDelivery = true;
+            watchersDepth = ++mCurrentEventWatchersCount;
+            executionStartTimeMillis = SystemClock.uptimeMillis();
+            eventQueueStartIndex = mEventQueue.size();
+        }
+        if (VERBOSE) {
+            Log.v(LOG_TAG, "executeAndWaitForEvent starts at depth=" + watchersDepth + ", "
+                    + "command=" + command + ", filter=" + filter + ", timeout=" + timeoutMillis);
         }
 
-        // Note: We have to release the lock since calling out with this lock held
-        // can bite. We will correctly filter out events from other interactions,
-        // so starting to collect events before running the action is just fine.
-
-        // We will ignore events from previous interactions.
-        final long executionStartTimeMillis = SystemClock.uptimeMillis();
-        // Execute the command *without* the lock being held.
-        command.run();
-
-        List<AccessibilityEvent> receivedEvents = new ArrayList<>();
-
-        // Acquire the lock and wait for the event.
         try {
-            // Wait for the event.
+            // Execute the command *without* the lock being held.
+            command.run();
+            synchronized (mLock) {
+                if (watchersDepth != mCurrentEventWatchersCount) {
+                    throw new IllegalStateException("Unexpected event watchers count, expected: "
+                            + watchersDepth + ", actual: " + mCurrentEventWatchersCount);
+                }
+            }
             final long startTimeMillis = SystemClock.uptimeMillis();
-            while (true) {
-                List<AccessibilityEvent> localEvents = new ArrayList<>();
+            List<AccessibilityEvent> receivedEvents = new ArrayList<>();
+            long elapsedTimeMillis = 0;
+            int currentQueueSize = 0;
+            while (timeoutMillis > elapsedTimeMillis) {
+                AccessibilityEvent event = null;
                 synchronized (mLock) {
-                    localEvents.addAll(mEventQueue);
-                    mEventQueue.clear();
-                }
-                // Drain the event queue
-                while (!localEvents.isEmpty()) {
-                    AccessibilityEvent event = localEvents.remove(0);
-                    // Ignore events from previous interactions.
-                    if (event.getEventTime() < executionStartTimeMillis) {
-                        continue;
-                    }
-                    if (filter.accept(event)) {
-                        return event;
-                    }
-                    receivedEvents.add(event);
-                }
-                // Check if timed out and if not wait.
-                final long elapsedTimeMillis = SystemClock.uptimeMillis() - startTimeMillis;
-                final long remainingTimeMillis = timeoutMillis - elapsedTimeMillis;
-                if (remainingTimeMillis <= 0) {
-                    throw new TimeoutException("Expected event not received within: "
-                            + timeoutMillis + " ms among: " + receivedEvents);
-                }
-                synchronized (mLock) {
-                    if (mEventQueue.isEmpty()) {
+                    currentQueueSize = mEventQueue.size();
+                    if (eventQueueStartIndex < currentQueueSize) {
+                        event = mEventQueue.get(eventQueueStartIndex++);
+                    } else {
                         try {
-                            mLock.wait(remainingTimeMillis);
+                            mLock.wait(timeoutMillis - elapsedTimeMillis);
                         } catch (InterruptedException ie) {
                             /* ignore */
                         }
                     }
                 }
+                elapsedTimeMillis = SystemClock.uptimeMillis() - startTimeMillis;
+                if (event == null || event.getEventTime() < executionStartTimeMillis) {
+                    continue;
+                }
+                if (filter.accept(event)) {
+                    return event;
+                }
+                receivedEvents.add(event);
             }
+            if (eventQueueStartIndex < currentQueueSize) {
+                Log.w(LOG_TAG, "Timed out before reading all events from the queue");
+            }
+            throw new TimeoutException("Expected event not received before timeout, events: "
+                    + receivedEvents);
         } finally {
-            int size = receivedEvents.size();
-            for (int i = 0; i < size; i++) {
-                receivedEvents.get(i).recycle();
-            }
-
             synchronized (mLock) {
-                mWaitingForEventDelivery = false;
-                mEventQueue.clear();
+                if (--mCurrentEventWatchersCount == 0) {
+                    mEventQueue.clear();
+                }
                 mLock.notifyAll();
+            }
+            if (VERBOSE) {
+                Log.v(LOG_TAG, "executeAndWaitForEvent ends at depth=" + watchersDepth);
             }
         }
     }
@@ -1270,8 +1290,8 @@ public final class UiAutomation {
         display.getRealSize(displaySize);
 
         // Take the screenshot
-        ScreenCapture.SynchronousScreenCaptureListener syncScreenCapture =
-                ScreenCapture.createSyncCaptureListener();
+        ScreenCaptureInternal.SynchronousScreenCaptureListener syncScreenCapture =
+                ScreenCaptureInternal.createSyncCaptureListener();
         try {
             if (!mUiAutomationConnection.takeScreenshot(
                     new Rect(0, 0, displaySize.x, displaySize.y), syncScreenCapture, mDisplayId)) {
@@ -1304,6 +1324,64 @@ public final class UiAutomation {
     }
 
     /**
+     * Takes a screenshot from the specified display.
+     *
+     * @param displayId The ID of the display to capture.
+     * @return A {@link android.graphics.Bitmap} representing the screenshot of the specified
+     *         display.
+     * @throws IllegalArgumentException If the provided {@code displayId} does not correspond to
+     * a valid display.
+     * @throws IOException If an error occurs while creating the screenshot or processing the
+     * captured screenshot into a bitmap.
+     * @hide
+     */
+    @TestApi
+    @NonNull
+    @SuppressLint("UnflaggedApi") // TestApi
+    public Bitmap takeScreenshot(int displayId) throws IOException {
+        if (DEBUG) {
+            Log.d(LOG_TAG, "Taking screenshot of display " + displayId);
+        }
+        Display display = DisplayManagerGlobal.getInstance().getRealDisplay(displayId);
+        if (display == null) {
+            throw new IllegalArgumentException("Error finding the display " + displayId);
+        }
+        Point displaySize = new Point();
+        display.getRealSize(displaySize);
+
+        // Take the screenshot
+        ScreenCaptureInternal.SynchronousScreenCaptureListener syncScreenCapture =
+                ScreenCaptureInternal.createSyncCaptureListener();
+        try {
+            if (!mUiAutomationConnection.takeScreenshot(
+                    new Rect(0, 0, displaySize.x, displaySize.y), syncScreenCapture, displayId)) {
+                throw new IOException("Fail to capture screenshot for display=" + displayId
+                        + " due to remote error.");
+            }
+        } catch (RemoteException e) {
+            e.rethrowFromSystemServer();
+        }
+
+        final ScreenshotHardwareBuffer screenshotBuffer = syncScreenCapture.getBuffer();
+        if (screenshotBuffer == null) {
+            throw new IOException("Empty screenshot buffer for display=" + displayId);
+        }
+        Bitmap screenShot = screenshotBuffer.asBitmap();
+        if (screenShot == null) {
+            throw new IOException("Fail to create screenshot bitmap for display=" + displayId);
+        }
+        Bitmap swBitmap;
+        try (HardwareBuffer buffer = screenshotBuffer.getHardwareBuffer()) {
+            swBitmap = screenShot.copy(Bitmap.Config.ARGB_8888, false);
+        }
+        screenShot.recycle();
+
+        // Optimization
+        swBitmap.setHasAlpha(false);
+        return swBitmap;
+    }
+
+    /**
      * Used to capture a screenshot of a Window. This can return null in the following cases:
      * 1. Window content hasn't been layed out.
      * 2. Window doesn't have a valid SurfaceControl
@@ -1316,29 +1394,33 @@ public final class UiAutomation {
     @Nullable
     public Bitmap takeScreenshot(@NonNull Window window) {
         if (window == null) {
+            Log.e(LOG_TAG, "Window is null");
             return null;
         }
 
         View decorView = window.peekDecorView();
         if (decorView == null) {
+            Log.e(LOG_TAG, "Decor view is null");
             return null;
         }
 
         ViewRootImpl viewRoot = decorView.getViewRootImpl();
         if (viewRoot == null) {
+            Log.e(LOG_TAG, "View root is null");
             return null;
         }
 
         SurfaceControl sc = viewRoot.getSurfaceControl();
         if (!sc.isValid()) {
+            Log.e(LOG_TAG, "ViewRootImpl SurfaceControl is not valid");
             return null;
         }
 
         // Apply a sync transaction to ensure SurfaceFlinger is flushed before capturing a
         // screenshot.
         new SurfaceControl.Transaction().apply(true);
-        ScreenCapture.SynchronousScreenCaptureListener syncScreenCapture =
-                ScreenCapture.createSyncCaptureListener();
+        ScreenCaptureInternal.SynchronousScreenCaptureListener syncScreenCapture =
+                ScreenCaptureInternal.createSyncCaptureListener();
         try {
             if (!mUiAutomationConnection.takeSurfaceControlScreenshot(sc, syncScreenCapture)) {
                 Log.e(LOG_TAG, "Failed to take screenshot for window=" + window);
@@ -1348,7 +1430,8 @@ public final class UiAutomation {
             Log.e(LOG_TAG, "Error while taking screenshot!", re);
             return null;
         }
-        ScreenCapture.ScreenshotHardwareBuffer captureBuffer = syncScreenCapture.getBuffer();
+        ScreenCaptureInternal.ScreenshotHardwareBuffer captureBuffer =
+                syncScreenCapture.getBuffer();
         if (captureBuffer == null) {
             Log.e(LOG_TAG, "Failed to take screenshot for window=" + window);
             return null;
@@ -1571,7 +1654,14 @@ public final class UiAutomation {
             mUiAutomationConnection.grantRuntimePermission(packageName,
                     permission, userHandle.getIdentifier());
         } catch (Exception e) {
-            throw new SecurityException("Error granting runtime permission", e);
+            throw new SecurityException(
+                    "Error granting runtime permission "
+                            + permission
+                            + " to package "
+                            + packageName
+                            + " for user "
+                            + userHandle,
+                    e);
         }
     }
 
@@ -1810,6 +1900,7 @@ public final class UiAutomation {
      * <p><b>NOTE: </b> must be a static method because it's called from a constructor to call
      * another one.
      */
+    @android.ravenwood.annotation.RavenwoodReplace(reason = "Always use DEFAULT_DISPLAY")
     private static int getDisplayId(Context context) {
         Preconditions.checkArgument(context != null, "Context cannot be null!");
 
@@ -1841,6 +1932,10 @@ public final class UiAutomation {
             Log.d(LOG_TAG, "getDisplayId(): returning user's display (" + userDisplayId + ")");
         }
         return userDisplayId;
+    }
+
+    private static int getDisplayId$ravenwood(Context context) {
+        return DEFAULT_DISPLAY;
     }
 
     private static int getMainDisplayIdAssignedToUser(Context context, UserManager userManager) {
@@ -1957,7 +2052,7 @@ public final class UiAutomation {
                         // It is not guaranteed that the accessibility framework sends events by the
                         // order of event timestamp.
                         mLastEventTimeMillis = Math.max(mLastEventTimeMillis, event.getEventTime());
-                        if (mWaitingForEventDelivery) {
+                        if (mCurrentEventWatchersCount > 0) {
                             mEventQueue.add(AccessibilityEvent.obtain(event));
                         }
                         mLock.notifyAll();

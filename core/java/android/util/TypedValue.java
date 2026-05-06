@@ -247,6 +247,12 @@ public class TypedValue {
      */
     public int sourceResourceId;
 
+    /**
+     * Whether the value uses feature flags that need to be evaluated at runtime.
+     * @hide
+     */
+    public boolean usesFeatureFlags = false;
+
     /* ------------------------------------------------------------ */
 
     /** Return the data for this value as a float.  Only use for values
@@ -809,6 +815,7 @@ public class TypedValue {
         assetCookie = other.assetCookie;
         resourceId = other.resourceId;
         density = other.density;
+        usesFeatureFlags = other.usesFeatureFlags;
     }
 
     public String toString()
@@ -825,7 +832,28 @@ public class TypedValue {
         if (resourceId != 0) {
             sb.append(" r=0x").append(Integer.toHexString(resourceId));
         }
+        if (usesFeatureFlags) {
+            sb.append(" flagged");
+        }
         sb.append("}");
         return sb.toString();
+    }
+
+    /**
+     * A JNI interface so it can set all values in a single call, speeding up a
+     * very common operation.
+     *
+     * @hide
+     */
+    void setFields(int aType, int aAssetCookie, int aData, int aResourceId,
+            int aChangingConfigurations, int aDensity, boolean aUsesFeatureFlags) {
+        type = aType;
+        assetCookie = aAssetCookie;
+        data = aData;
+        string = null;
+        resourceId = aResourceId;
+        changingConfigurations = aChangingConfigurations;
+        density = aDensity;
+        usesFeatureFlags = aUsesFeatureFlags;
     }
 }

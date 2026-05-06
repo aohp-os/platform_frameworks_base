@@ -17,14 +17,16 @@
 package com.android.systemui.keyguard.ui.viewmodel
 
 import android.util.MathUtils
-import com.android.systemui.Flags.lightRevealMigration
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.domain.interactor.FromAodTransitionInteractor
+import com.android.systemui.keyguard.domain.interactor.FromDozingTransitionInteractor.Companion.TO_OCCLUDED_DURATION
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.DOZING
 import com.android.systemui.keyguard.shared.model.KeyguardState.OCCLUDED
 import com.android.systemui.keyguard.ui.KeyguardTransitionAnimationFlow
 import com.android.systemui.keyguard.ui.transitions.DeviceEntryIconTransition
+import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.shared.Flags.ambientAod
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.flow.Flow
@@ -37,10 +39,12 @@ class DozingToOccludedTransitionViewModel
 @Inject
 constructor(animationFlow: KeyguardTransitionAnimationFlow) : DeviceEntryIconTransition {
     private val transitionAnimation =
-        animationFlow.setup(
-            duration = FromAodTransitionInteractor.TO_OCCLUDED_DURATION,
-            edge = Edge.create(from = DOZING, to = OCCLUDED),
-        )
+        animationFlow
+            .setup(
+                duration = FromAodTransitionInteractor.TO_OCCLUDED_DURATION,
+                edge = Edge.create(from = DOZING, to = Scenes.Occluded),
+            )
+            .setupWithoutSceneContainer(edge = Edge.create(from = DOZING, to = OCCLUDED))
 
     /**
      * Fade out the lockscreen during a transition to OCCLUDED.
@@ -56,7 +60,7 @@ constructor(animationFlow: KeyguardTransitionAnimationFlow) : DeviceEntryIconTra
             duration = 250.milliseconds,
             startTime = 0.milliseconds,
             onStart = {
-                if (lightRevealMigration()) {
+                if (ambientAod()) {
                     currentAlpha = viewState.alpha()
                 } else {
                     currentAlpha = 0f
@@ -65,6 +69,14 @@ constructor(animationFlow: KeyguardTransitionAnimationFlow) : DeviceEntryIconTra
             onStep = { MathUtils.lerp(currentAlpha, 0f, it) },
         )
     }
+
+    val nonAuthUIAlpha: Flow<Float> =
+        transitionAnimation.sharedFlow(
+            duration = TO_OCCLUDED_DURATION,
+            onStep = { null },
+            onCancel = { 1f },
+            onFinish = { 1f },
+        )
 
     override val deviceEntryParentViewAlpha = transitionAnimation.immediatelyTransitionTo(0f)
 }

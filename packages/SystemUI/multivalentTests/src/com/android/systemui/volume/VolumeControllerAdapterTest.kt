@@ -25,18 +25,15 @@ import com.android.systemui.kosmos.applicationCoroutineScope
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.testKosmos
 import com.android.systemui.volume.data.repository.audioRepository
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 @SmallTest
 class VolumeControllerAdapterTest : SysuiTestCase() {
@@ -47,11 +44,6 @@ class VolumeControllerAdapterTest : SysuiTestCase() {
         with(kosmos) { VolumeControllerAdapter(applicationCoroutineScope, audioRepository) }
 
     private val volumeController = mock<IVolumeController> {}
-
-    @Before
-    fun setUp() {
-        kosmos.audioRepository.init()
-    }
 
     @Test
     fun volumeControllerEvent_volumeChanged_callsMethod() =

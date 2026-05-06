@@ -78,7 +78,10 @@ class NotificationRecordLoggerImpl implements NotificationRecordLogger {
                 notificationReported.post_duration_millis,
                 notificationReported.fsi_state,
                 notificationReported.is_locked,
-                notificationReported.age_in_minutes);
+                notificationReported.age_in_minutes,
+                notificationReported.is_promoted_ongoing,
+                notificationReported.has_promotable_characteristics,
+                notificationReported.has_summary);
     }
 
     @Override

@@ -26,7 +26,6 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.media.controls.ui.controller.mediaHierarchyManager
 import com.android.systemui.plugins.activityStarter
-import com.android.systemui.qs.ui.adapter.qsSceneAdapter
 import com.android.systemui.shade.data.repository.shadeRepository
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.shade.domain.interactor.shadeLockscreenInteractor
@@ -36,7 +35,7 @@ import com.android.systemui.statusbar.phone.lsShadeTransitionLogger
 import com.android.systemui.statusbar.policy.configurationController
 import com.android.systemui.statusbar.policy.splitShadeStateController
 
-val Kosmos.lockscreenShadeTransitionController by Fixture {
+var Kosmos.lockscreenShadeTransitionController by Fixture {
     LockscreenShadeTransitionController(
         statusBarStateController = sysuiStatusBarStateController,
         logger = lsShadeTransitionLogger,
@@ -62,6 +61,5 @@ val Kosmos.lockscreenShadeTransitionController by Fixture {
         splitShadeStateController = splitShadeStateController,
         shadeLockscreenInteractorLazy = { shadeLockscreenInteractor },
         naturalScrollingSettingObserver = naturalScrollingSettingObserver,
-        lazyQSSceneAdapter = { qsSceneAdapter }
     )
 }

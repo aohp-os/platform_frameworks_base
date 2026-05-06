@@ -28,42 +28,28 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
-import com.android.app.viewcapture.ViewCapture
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.animation.ActivityTransitionAnimator
 import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor
 import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams
 import com.android.systemui.biometrics.ui.viewmodel.DefaultUdfpsTouchOverlayViewModel
 import com.android.systemui.biometrics.ui.viewmodel.DeviceEntryUdfpsTouchOverlayViewModel
-import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor
-import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor
-import com.android.systemui.dump.DumpManager
+import com.android.systemui.biometrics.ui.viewmodel.PromptUdfpsTouchOverlayViewModel
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.power.data.repository.FakePowerRepository
 import com.android.systemui.power.data.repository.fakePowerRepository
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.domain.interactor.powerInteractor
 import com.android.systemui.power.shared.model.WakeSleepReason
 import com.android.systemui.power.shared.model.WakefulnessState
-import com.android.systemui.shade.domain.interactor.ShadeInteractor
-import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
-import com.android.systemui.statusbar.phone.SystemUIDialogManager
-import com.android.systemui.statusbar.phone.UnlockedScreenOffAnimationController
-import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.testKosmos
-import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.google.common.truth.Truth.assertThat
-import dagger.Lazy
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -71,10 +57,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.eq
-import org.mockito.Captor
 import org.mockito.Mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -83,13 +67,6 @@ import org.mockito.junit.MockitoJUnit
 
 private const val REQUEST_ID = 2L
 
-// Dimensions for the current display resolution.
-private const val DISPLAY_WIDTH = 1080
-private const val DISPLAY_HEIGHT = 1920
-private const val SENSOR_WIDTH = 30
-private const val SENSOR_HEIGHT = 60
-
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @RunWithLooper(setAsMainLooper = true)
@@ -100,34 +77,18 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
 
     @Mock private lateinit var inflater: LayoutInflater
     @Mock private lateinit var windowManager: WindowManager
-    @Mock private lateinit var lazyViewCapture: kotlin.Lazy<ViewCapture>
     @Mock private lateinit var accessibilityManager: AccessibilityManager
-    @Mock private lateinit var statusBarStateController: StatusBarStateController
-    @Mock private lateinit var statusBarKeyguardViewManager: StatusBarKeyguardViewManager
     @Mock private lateinit var keyguardUpdateMonitor: KeyguardUpdateMonitor
-    @Mock private lateinit var dialogManager: SystemUIDialogManager
-    @Mock private lateinit var dumpManager: DumpManager
-    @Mock private lateinit var configurationController: ConfigurationController
     @Mock private lateinit var keyguardStateController: KeyguardStateController
-    @Mock
-    private lateinit var unlockedScreenOffAnimationController: UnlockedScreenOffAnimationController
     @Mock private lateinit var udfpsDisplayMode: UdfpsDisplayModeProvider
     @Mock private lateinit var controllerCallback: IUdfpsOverlayControllerCallback
-    @Mock private lateinit var udfpsController: UdfpsController
-    @Mock private lateinit var mActivityTransitionAnimator: ActivityTransitionAnimator
-    @Mock private lateinit var primaryBouncerInteractor: PrimaryBouncerInteractor
-    @Mock private lateinit var alternateBouncerInteractor: AlternateBouncerInteractor
-    @Mock private lateinit var mSelectedUserInteractor: SelectedUserInteractor
     @Mock
     private lateinit var deviceEntryUdfpsTouchOverlayViewModel:
         DeviceEntryUdfpsTouchOverlayViewModel
     @Mock private lateinit var defaultUdfpsTouchOverlayViewModel: DefaultUdfpsTouchOverlayViewModel
-    @Mock
-    private lateinit var udfpsKeyguardAccessibilityDelegate: UdfpsKeyguardAccessibilityDelegate
-    private lateinit var keyguardTransitionRepository: FakeKeyguardTransitionRepository
+    @Mock private lateinit var promptUdfpsTouchOverlayViewModel: PromptUdfpsTouchOverlayViewModel
+    @Mock private lateinit var keyguardTransitionRepository: FakeKeyguardTransitionRepository
     private lateinit var keyguardTransitionInteractor: KeyguardTransitionInteractor
-    @Mock private lateinit var shadeInteractor: ShadeInteractor
-    @Captor private lateinit var layoutParamsCaptor: ArgumentCaptor<WindowManager.LayoutParams>
     @Mock private lateinit var udfpsOverlayInteractor: UdfpsOverlayInteractor
     private lateinit var powerRepository: FakePowerRepository
     private lateinit var powerInteractor: PowerInteractor
@@ -146,53 +107,28 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
         keyguardTransitionInteractor = kosmos.keyguardTransitionInteractor
     }
 
-    private suspend fun withReasonSuspend(
-        @RequestReason reason: Int,
-        isDebuggable: Boolean = false,
-        block: suspend () -> Unit,
-    ) {
-        withReason(reason, isDebuggable)
+    private suspend fun withReasonSuspend(@RequestReason reason: Int, block: suspend () -> Unit) {
+        withReason(reason)
         block()
     }
 
-    private fun withReason(
-        @RequestReason reason: Int,
-        isDebuggable: Boolean = false,
-        block: () -> Unit = {},
-    ) {
+    private fun withReason(@RequestReason reason: Int, block: () -> Unit = {}) {
         controllerOverlay =
             UdfpsControllerOverlay(
-                context,
                 inflater,
-                ViewCaptureAwareWindowManager(
-                    windowManager,
-                    lazyViewCapture,
-                    isViewCaptureEnabled = false,
-                ),
+                windowManager,
                 accessibilityManager,
-                statusBarStateController,
-                statusBarKeyguardViewManager,
                 keyguardUpdateMonitor,
-                dialogManager,
-                dumpManager,
-                configurationController,
                 keyguardStateController,
-                unlockedScreenOffAnimationController,
                 udfpsDisplayMode,
                 REQUEST_ID,
                 reason,
                 controllerCallback,
                 onTouch,
-                mActivityTransitionAnimator,
-                primaryBouncerInteractor,
-                alternateBouncerInteractor,
-                isDebuggable,
-                udfpsKeyguardAccessibilityDelegate,
                 keyguardTransitionInteractor,
-                mSelectedUserInteractor,
                 { deviceEntryUdfpsTouchOverlayViewModel },
                 { defaultUdfpsTouchOverlayViewModel },
-                shadeInteractor,
+                { promptUdfpsTouchOverlayViewModel },
                 udfpsOverlayInteractor,
                 powerInteractor,
                 testScope,
@@ -217,7 +153,7 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
                 runCurrent()
 
                 // WHEN a request comes to show the view
-                controllerOverlay.show(udfpsController, overlayParams)
+                controllerOverlay.show(overlayParams)
                 runCurrent()
 
                 // THEN the view does not get added immediately
@@ -245,7 +181,7 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
                 runCurrent()
 
                 // WHEN a request comes to show the view
-                controllerOverlay.show(udfpsController, overlayParams)
+                controllerOverlay.show(overlayParams)
                 runCurrent()
 
                 // THEN view isn't added yet
@@ -260,7 +196,7 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
     fun neverRemoveViewThatHasNotBeenAdded() =
         testScope.runTest {
             withReasonSuspend(REASON_AUTH_KEYGUARD) {
-                controllerOverlay.show(udfpsController, overlayParams)
+                controllerOverlay.show(overlayParams)
                 val view = controllerOverlay.getTouchOverlay()
                 view?.let {
                     // parent is null, signalling that the view was never added
@@ -305,7 +241,7 @@ class UdfpsControllerOverlayTest : SysuiTestCase() {
                 runCurrent()
 
                 // WHEN a request comes to show the view
-                controllerOverlay.show(udfpsController, overlayParams)
+                controllerOverlay.show(overlayParams)
                 runCurrent()
 
                 // THEN the view does not get added immediately

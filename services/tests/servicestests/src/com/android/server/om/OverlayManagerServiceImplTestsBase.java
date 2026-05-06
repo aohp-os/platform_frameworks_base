@@ -32,6 +32,7 @@ import android.content.om.OverlayableInfo;
 import android.content.pm.UserPackage;
 import android.os.FabricatedOverlayInfo;
 import android.os.FabricatedOverlayInternal;
+import android.os.OverlayConstraint;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -43,7 +44,6 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.AndroidPackageSplit;
 import com.android.server.pm.pkg.PackageState;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.mockito.Mockito;
 
@@ -254,7 +254,7 @@ class OverlayManagerServiceImplTestsBase {
 
         void add(PackageBuilder pkgBuilder, int userId) {
             final Package pkg = pkgBuilder.build();
-            final Package previousPkg = select(pkg.packageName, userId);
+            final Package previousPkg = mPackages.get(pkg.packageName);
             mPackages.put(pkg.packageName, pkg);
 
             pkg.installedUserIds.add(userId);
@@ -474,13 +474,16 @@ class OverlayManagerServiceImplTestsBase {
 
         private int getCrc(@NonNull final String path) {
             final FakeDeviceState.Package pkg = mState.selectFromPath(path);
-            Assert.assertNotNull("path = " + path, pkg);
+            if (pkg == null) {
+                // This is for fabricated overlays which are not in the fake package/device state.
+                return path.hashCode();
+            }
             return pkg.versionCode;
         }
 
         @Override
         String createIdmap(String targetPath, String overlayPath, String overlayName,
-                int policies, boolean enforce, int userId) {
+                int policies, boolean enforce, int userId, OverlayConstraint[] constraints) {
             mIdmapFiles.put(overlayPath, new IdmapHeader(getCrc(targetPath),
                     getCrc(overlayPath), targetPath, overlayName, policies, enforce));
             return overlayPath;
@@ -493,7 +496,7 @@ class OverlayManagerServiceImplTestsBase {
 
         @Override
         boolean verifyIdmap(String targetPath, String overlayPath, String overlayName, int policies,
-                boolean enforce, int userId) {
+                boolean enforce, int userId, OverlayConstraint[] constraints) {
             final IdmapHeader idmap = mIdmapFiles.get(overlayPath);
             if (idmap == null) {
                 return false;

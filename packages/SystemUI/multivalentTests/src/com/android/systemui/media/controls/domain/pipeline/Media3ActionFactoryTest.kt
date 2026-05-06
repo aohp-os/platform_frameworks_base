@@ -20,15 +20,18 @@ import android.media.session.MediaSession
 import android.os.Bundle
 import android.os.Handler
 import android.os.looper
+import android.platform.test.flag.junit.FlagsParameterization
+import android.platform.test.flag.junit.FlagsParameterization.allCombinationsOf
 import android.testing.TestableLooper.RunWithLooper
 import androidx.media.utils.MediaConstants
 import androidx.media3.common.Player
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaController as Media3Controller
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags.FLAG_DO_NOT_USE_RUN_BLOCKING
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.graphics.imageLoader
 import com.android.systemui.kosmos.testScope
@@ -41,6 +44,7 @@ import com.android.systemui.testKosmos
 import com.android.systemui.util.concurrency.execution
 import com.google.common.collect.ImmutableList
 import com.google.common.truth.Truth.assertThat
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -55,6 +59,8 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4
+import platform.test.runner.parameterized.Parameters
 
 private const val PACKAGE_NAME = "package_name"
 private const val CUSTOM_ACTION_NAME = "Custom Action"
@@ -62,8 +68,8 @@ private const val CUSTOM_ACTION_COMMAND = "custom-action"
 
 @SmallTest
 @RunWithLooper
-@RunWith(AndroidJUnit4::class)
-class Media3ActionFactoryTest : SysuiTestCase() {
+@RunWith(ParameterizedAndroidJunit4::class)
+class Media3ActionFactoryTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
@@ -84,15 +90,29 @@ class Media3ActionFactoryTest : SysuiTestCase() {
                 }
         }
     private val customLayout = ImmutableList.of<CommandButton>()
+    private val customCommandFuture = mock<ListenableFuture<SessionResult>>()
     private val media3Controller =
         mock<Media3Controller> {
             on { customLayout } doReturn customLayout
             on { sessionExtras } doReturn Bundle()
             on { isCommandAvailable(any()) } doReturn true
             on { isSessionCommandAvailable(any<SessionCommand>()) } doReturn true
+            on { sendCustomCommand(any(), any()) } doReturn customCommandFuture
         }
 
     private lateinit var underTest: Media3ActionFactory
+
+    companion object {
+        @JvmStatic
+        @Parameters(name = "{0}")
+        fun getParams(): List<FlagsParameterization> {
+            return allCombinationsOf(FLAG_DO_NOT_USE_RUN_BLOCKING)
+        }
+    }
+
+    init {
+        mSetFlagsRule.setFlagsParameterization(flags)
+    }
 
     @Before
     fun setup() {
@@ -105,7 +125,7 @@ class Media3ActionFactoryTest : SysuiTestCase() {
                 kosmos.mediaLogger,
                 kosmos.looper,
                 handler,
-                kosmos.testScope,
+                testScope,
                 kosmos.execution,
             )
 

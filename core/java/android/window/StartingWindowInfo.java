@@ -27,7 +27,6 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.RemoteException;
-import android.view.InsetsState;
 import android.view.SurfaceControl;
 import android.view.WindowInsets;
 import android.view.WindowInsets.Type.InsetsType;
@@ -98,20 +97,6 @@ public final class StartingWindowInfo implements Parcelable {
      */
     @Nullable
     public ActivityInfo targetActivityInfo;
-
-    /**
-     * InsetsState of TopFullscreenOpaqueWindow
-     * @hide
-     */
-    @Nullable
-    public InsetsState topOpaqueWindowInsetsState;
-
-    /**
-     * LayoutParams of TopFullscreenOpaqueWindow
-     * @hide
-     */
-    @Nullable
-    public WindowManager.LayoutParams topOpaqueWindowLayoutParams;
 
     /**
      * LayoutParams of MainWindow
@@ -223,6 +208,8 @@ public final class StartingWindowInfo implements Parcelable {
      */
     public SurfaceControl rootSurface;
 
+    public IBinder transitionToken;
+
     /**
      * Notify windowless surface is created.
      * @param addedSurface Created surface.
@@ -263,8 +250,6 @@ public final class StartingWindowInfo implements Parcelable {
         taskBounds.writeToParcel(dest, flags);
         dest.writeTypedObject(targetActivityInfo, flags);
         dest.writeInt(startingWindowTypeParameter);
-        dest.writeTypedObject(topOpaqueWindowInsetsState, flags);
-        dest.writeTypedObject(topOpaqueWindowLayoutParams, flags);
         dest.writeTypedObject(mainWindowLayoutParams, flags);
         dest.writeInt(splashScreenThemeResId);
         dest.writeBoolean(isKeyguardOccluded);
@@ -273,6 +258,7 @@ public final class StartingWindowInfo implements Parcelable {
         dest.writeStrongBinder(appToken);
         dest.writeStrongInterface(windowlessStartingSurfaceCallback);
         dest.writeTypedObject(rootSurface, flags);
+        dest.writeStrongBinder(transitionToken);
     }
 
     void readFromParcel(@NonNull Parcel source) {
@@ -280,9 +266,6 @@ public final class StartingWindowInfo implements Parcelable {
         taskBounds.readFromParcel(source);
         targetActivityInfo = source.readTypedObject(ActivityInfo.CREATOR);
         startingWindowTypeParameter = source.readInt();
-        topOpaqueWindowInsetsState = source.readTypedObject(InsetsState.CREATOR);
-        topOpaqueWindowLayoutParams = source.readTypedObject(
-                WindowManager.LayoutParams.CREATOR);
         mainWindowLayoutParams = source.readTypedObject(WindowManager.LayoutParams.CREATOR);
         splashScreenThemeResId = source.readInt();
         isKeyguardOccluded = source.readBoolean();
@@ -292,6 +275,7 @@ public final class StartingWindowInfo implements Parcelable {
         windowlessStartingSurfaceCallback = IWindowlessStartingSurfaceCallback.Stub
                 .asInterface(source.readStrongBinder());
         rootSurface = source.readTypedObject(SurfaceControl.CREATOR);
+        transitionToken = source.readStrongBinder();
     }
 
     @Override
@@ -302,8 +286,6 @@ public final class StartingWindowInfo implements Parcelable {
                 + " topActivityType=" + taskInfo.topActivityType
                 + " preferredStartingWindowType="
                 + Integer.toHexString(startingWindowTypeParameter)
-                + " insetsState=" + topOpaqueWindowInsetsState
-                + " topWindowLayoutParams=" + topOpaqueWindowLayoutParams
                 + " mainWindowLayoutParams=" + mainWindowLayoutParams
                 + " splashScreenThemeResId " + Integer.toHexString(splashScreenThemeResId);
     }

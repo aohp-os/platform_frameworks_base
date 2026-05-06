@@ -49,9 +49,9 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
+import com.android.systemui.LauncherProxyService;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.assist.AssistManager;
-import com.android.systemui.recents.OverviewProxyService;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -76,7 +76,7 @@ public class KeyButtonViewTest extends SysuiTestCase {
     public void setup() throws Exception {
         MockitoAnnotations.initMocks(this);
         mMetricsLogger = mDependency.injectMockDependency(MetricsLogger.class);
-        mDependency.injectMockDependency(OverviewProxyService.class);
+        mDependency.injectMockDependency(LauncherProxyService.class);
         mDependency.injectMockDependency(AssistManager.class);
         mUiEventLogger = mDependency.injectMockDependency(UiEventLogger.class);
 

@@ -54,6 +54,7 @@ import com.android.server.AppWidgetBackupBridge;
 import com.android.server.backup.BackupAgentTimeoutParameters;
 import com.android.server.backup.BackupRestoreTask;
 import com.android.server.backup.DataChangedJournal;
+import com.android.server.backup.Flags;
 import com.android.server.backup.KeyValueBackupJob;
 import com.android.server.backup.OperationStorage;
 import com.android.server.backup.OperationStorage.OpState;
@@ -171,7 +172,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * complete backup should be performed.
  *
  * <p>This task is designed to run on a dedicated thread, with the exception of the {@link
- * #handleCancel(boolean)} method, which can be called from any thread.
+ * BackupRestoreTask#handleCancel(int)} method, which can be called from any thread.
  */
 // TODO: Stop poking into BMS state and doing things for it (e.g. synchronizing on public locks)
 // TODO: Consider having the caller responsible for some clean-up (like resetting state)
@@ -699,10 +700,17 @@ public class KeyValueBackupTask implements BackupRestoreTask, Runnable {
 
         try {
             extractAgentData(mCurrentPackage);
-            BackupManagerMonitorEventSender mBackupManagerMonitorEventSender =
+            int status;
+            if (Flags.enableKvBackupLogsFromTransportWithProperFlowId()) {
+                status = sendDataToTransport(mCurrentPackage);
+                mReporter.monitorAgentLoggingResults(mCurrentPackage, mAgent);
+            } else {
+                BackupManagerMonitorEventSender mBackupManagerMonitorEventSender =
                     new BackupManagerMonitorEventSender(mReporter.getMonitor());
-            mBackupManagerMonitorEventSender.monitorAgentLoggingResults(mCurrentPackage, mAgent);
-            int status = sendDataToTransport(mCurrentPackage);
+                mBackupManagerMonitorEventSender.monitorAgentLoggingResults(
+                        mCurrentPackage, mAgent);
+                status = sendDataToTransport(mCurrentPackage);
+            }
             cleanUpAgentForTransportStatus(status);
         } catch (AgentException | TaskException e) {
             cleanUpAgentForError(e);
@@ -826,7 +834,7 @@ public class KeyValueBackupTask implements BackupRestoreTask, Runnable {
         }
         mTaskFinishedListener.onFinished(callerLogString);
         mReporter.onBackupFinished(getBackupFinishedStatus(mCancelled, status));
-        mBackupManagerService.getWakelock().release();
+        mBackupManagerService.getWakeLock().release();
     }
 
     private int getBackupFinishedStatus(boolean cancelled, int transportStatus) {
@@ -878,12 +886,13 @@ public class KeyValueBackupTask implements BackupRestoreTask, Runnable {
      * the transport or not. It's the caller responsibility to do the clean-up or delegate it.
      */
     private void extractAgentData(PackageInfo packageInfo) throws AgentException, TaskException {
-        mBackupManagerService.setWorkSource(new WorkSource(packageInfo.applicationInfo.uid));
+        mBackupManagerService.getWakeLock().setWorkSource(
+                new WorkSource(packageInfo.applicationInfo.uid));
         try {
             mAgent = bindAgent(packageInfo);
             extractAgentData(packageInfo, mAgent);
         } finally {
-            mBackupManagerService.setWorkSource(null);
+            mBackupManagerService.getWakeLock().setWorkSource(null);
         }
     }
 
@@ -1207,13 +1216,13 @@ public class KeyValueBackupTask implements BackupRestoreTask, Runnable {
      *
      * <p>Note: This method is inherently racy since there are no guarantees about how much of the
      * task will be executed after you made the call.
-     *
-     * @param cancelAll MUST be {@code true}. Will be removed.
      */
     @Override
-    public void handleCancel(boolean cancelAll) {
+    public void handleCancel(@CancellationReason int cancellationReason) {
         // This is called in a thread different from the one that executes method run().
-        Preconditions.checkArgument(cancelAll, "Can't partially cancel a key-value backup task");
+        Preconditions.checkArgument(
+                cancellationReason != CancellationReason.TIMEOUT,
+                "Key-value backup task cannot time out");
         markCancel();
         waitCancel();
     }

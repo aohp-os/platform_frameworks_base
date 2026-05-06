@@ -24,6 +24,7 @@ import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWAR
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
@@ -40,7 +41,6 @@ import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.internal.R;
-import com.android.settingslib.devicestate.DeviceStateRotationLockSettingsManager.SettableDeviceState;
 
 import com.google.common.truth.Expect;
 
@@ -152,8 +152,8 @@ public class DeviceStateRotationLockSettingsManagerTest {
                 new String[]{"2:1", "1:0:1", "0:2"});
 
         List<SettableDeviceState> settableDeviceStates =
-                DeviceStateRotationLockSettingsManager.getInstance(
-                        mMockContext).getSettableDeviceStates();
+                new DeviceStateRotationLockSettingsManager(mMockContext,
+                        mFakeSecureSettings).getSettableDeviceStates();
 
         assertThat(settableDeviceStates).containsExactly(
                 new SettableDeviceState(/* deviceState= */ 2, /* isSettable= */ true),
@@ -189,6 +189,24 @@ public class DeviceStateRotationLockSettingsManagerTest {
         mExpect.that(manager.getRotationLockSetting(0)).isEqualTo(2);
         mExpect.that(manager.getRotationLockSetting(1)).isEqualTo(1);
         mExpect.that(manager.getRotationLockSetting(2)).isEqualTo(1);
+    }
+
+    @Test
+    public void getDefaultRotationLockSetting_throwsUnsupportedOperationException() {
+        final UnsupportedOperationException exception = assertThrows(
+                UnsupportedOperationException.class,
+                () -> mManager.getDefaultRotationLockSetting());
+        assertThat(exception.getMessage()).isEqualTo(
+                "This API is only support by refactored settings manager.");
+    }
+
+    @Test
+    public void getRotationLockSetting_throwsUnsupportedOperationException() {
+        final UnsupportedOperationException exception = assertThrows(
+                UnsupportedOperationException.class,
+                () -> mManager.getRotationLockSetting());
+        assertThat(exception.getMessage()).isEqualTo(
+                "This API is only support by refactored settings manager.");
     }
 
     private void persistSettings(String value) {

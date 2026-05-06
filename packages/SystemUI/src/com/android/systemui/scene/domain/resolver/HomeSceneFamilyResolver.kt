@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.scene.domain.resolver
 
 import com.android.compose.animation.scene.SceneKey
@@ -24,17 +22,17 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardEnabledInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.keyguard.domain.interactor.KeyguardOcclusionInteractor
 import com.android.systemui.scene.shared.model.SceneFamilies
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.util.kotlin.combine
 import dagger.Binds
 import dagger.Module
 import dagger.multibindings.IntoSet
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -49,16 +47,19 @@ constructor(
     deviceEntryInteractor: DeviceEntryInteractor,
     keyguardInteractor: KeyguardInteractor,
     keyguardEnabledInteractor: KeyguardEnabledInteractor,
+    keyguardOcclusionInteractor: KeyguardOcclusionInteractor,
 ) : SceneResolver {
     override val targetFamily: SceneKey = SceneFamilies.Home
 
     override val resolvedScene: StateFlow<SceneKey> =
         combine(
+                keyguardOcclusionInteractor.isKeyguardOccluded,
                 keyguardEnabledInteractor.isKeyguardEnabled,
                 deviceEntryInteractor.canSwipeToEnter,
                 deviceEntryInteractor.isDeviceEntered,
                 deviceEntryInteractor.isUnlocked,
                 keyguardInteractor.isDreamingWithOverlay,
+                keyguardInteractor.isAbleToDream,
                 transform = ::homeScene,
             )
             .stateIn(
@@ -66,36 +67,43 @@ constructor(
                 started = SharingStarted.Eagerly,
                 initialValue =
                     homeScene(
+                        isKeyguardOccluded = keyguardOcclusionInteractor.isKeyguardOccluded.value,
                         isKeyguardEnabled = keyguardEnabledInteractor.isKeyguardEnabled.value,
                         canSwipeToEnter = deviceEntryInteractor.canSwipeToEnter.value,
                         isDeviceEntered = deviceEntryInteractor.isDeviceEntered.value,
                         isUnlocked = deviceEntryInteractor.isUnlocked.value,
                         isDreamingWithOverlay = false,
+                        isAbleToDream = false,
                     ),
             )
 
     override fun includesScene(scene: SceneKey): Boolean = scene in homeScenes
 
     private fun homeScene(
+        isKeyguardOccluded: Boolean,
         isKeyguardEnabled: Boolean,
         canSwipeToEnter: Boolean?,
         isDeviceEntered: Boolean,
         isUnlocked: Boolean,
         isDreamingWithOverlay: Boolean,
-    ): SceneKey =
-        when {
+        isAbleToDream: Boolean,
+    ): SceneKey {
+        return when {
             // Dream can run even if Keyguard is disabled, thus it has the highest priority here.
-            isDreamingWithOverlay -> Scenes.Dream
+            isDreamingWithOverlay && isAbleToDream -> Scenes.Dream
+            isKeyguardOccluded -> Scenes.Occluded
             !isKeyguardEnabled -> Scenes.Gone
             canSwipeToEnter == true -> Scenes.Lockscreen
             !isDeviceEntered -> Scenes.Lockscreen
             !isUnlocked -> Scenes.Lockscreen
             else -> Scenes.Gone
         }
+    }
 
     companion object {
         val homeScenes =
             setOf(
+                Scenes.Occluded,
                 Scenes.Gone,
                 Scenes.Lockscreen,
                 // Dream is a home scene as the dream activity occludes keyguard and can show the

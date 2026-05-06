@@ -237,7 +237,14 @@ public final class BinderProxy implements IBinder {
                     // about to crash.
                     final int totalUnclearedSize = unclearedSize();
                     if (totalUnclearedSize >= CRASH_AT_SIZE) {
-                        dumpProxyInterfaceCounts();
+                        // Clear identity since the binder proxy could be getting created from
+                        // an external call
+                        final long identity = Binder.clearCallingIdentity();
+                        try {
+                            dumpProxyInterfaceCounts();
+                        } finally {
+                            Binder.restoreCallingIdentity(identity);
+                        }
                         dumpPerUidProxyCounts();
                         Runtime.getRuntime().gc();
                         throw new BinderProxyMapSizeException(
@@ -687,11 +694,17 @@ public final class BinderProxy implements IBinder {
         return removeFrozenStateChangeCallbackNative(wrappedCallback);
     }
 
+    public static boolean isFrozenStateChangeCallbackSupported() {
+        return isFrozenStateChangeCallbackSupportedNative();
+    }
+
     private native void addFrozenStateChangeCallbackNative(FrozenStateChangeCallback callback)
             throws RemoteException;
 
     private native boolean removeFrozenStateChangeCallbackNative(
             FrozenStateChangeCallback callback);
+
+    private static native boolean isFrozenStateChangeCallbackSupportedNative();
 
     /**
      * Perform a dump on the remote object

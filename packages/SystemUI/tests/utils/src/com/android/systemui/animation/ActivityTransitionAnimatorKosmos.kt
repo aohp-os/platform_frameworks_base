@@ -18,16 +18,21 @@ package com.android.systemui.animation
 
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.testCase
-import com.android.systemui.util.mockito.mock
+import com.android.wm.shell.shared.ShellTransitions
+import org.mockito.kotlin.mock
 
 val Kosmos.mockActivityTransitionAnimatorController by
     Kosmos.Fixture { mock<ActivityTransitionAnimator.Controller>() }
 
-val Kosmos.activityTransitionAnimator by
+var Kosmos.activityTransitionAnimator by
     Kosmos.Fixture {
         ActivityTransitionAnimator(
             // The main thread is checked in a bunch of places inside the different transitions
             // animators, so we have to pass the real main executor here.
             mainExecutor = testCase.context.mainExecutor,
+            transitionRegister =
+                ActivityTransitionAnimator.TransitionRegister.fromShellTransitions(
+                    mock<ShellTransitions>()
+                ),
         )
     }

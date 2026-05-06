@@ -16,8 +16,7 @@
 
 package com.android.server.notification;
 
-import static android.app.Flags.FLAG_MODES_API;
-import static android.app.Flags.FLAG_MODES_UI;
+import static android.service.notification.ZenModeDiff.DeviceEffectsDiff.FIELD_BRIGHTNESS_CAP;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -29,10 +28,10 @@ import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 
 import android.app.AutomaticZenRule;
-import android.app.Flags;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.net.Uri;
+import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.FlagsParameterization;
 import android.platform.test.flag.junit.SetFlagsRule;
@@ -54,6 +53,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
+import platform.test.runner.parameterized.Parameters;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -61,15 +63,10 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-
-import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
-import platform.test.runner.parameterized.Parameters;
-
 
 @SmallTest
 @RunWith(ParameterizedAndroidJunit4.class)
@@ -79,20 +76,14 @@ public class ZenModeDiffTest extends UiServiceTestCase {
     // version is not included in the diff; manual & automatic rules have special handling;
     // deleted rules are not included in the diff.
     public static final Set<String> ZEN_MODE_CONFIG_EXEMPT_FIELDS =
-            android.app.Flags.modesApi()
-                    ? Set.of("version", "manualRule", "automaticRules", "deletedRules")
-                    : Set.of("version", "manualRule", "automaticRules");
-
-    // allowPriorityChannels is flagged by android.app.modes_api
-    public static final Set<String> ZEN_MODE_CONFIG_FLAGGED_FIELDS =
-            Set.of("allowPriorityChannels");
+            Set.of("version", "manualRule", "automaticRules", "deletedRules");
 
     @Rule
     public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Parameters(name = "{0}")
     public static List<FlagsParameterization> getParams() {
-        return FlagsParameterization.progressionOf(FLAG_MODES_API, FLAG_MODES_UI);
+        return FlagsParameterization.progressionOf();
     }
 
     public ZenModeDiffTest(FlagsParameterization flags) {
@@ -148,7 +139,6 @@ public class ZenModeDiffTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags({FLAG_MODES_API, FLAG_MODES_UI})
     public void testRuleDiff_toStringNoChangeAddRemove() throws Exception {
         // Start with two identical rules
         ZenModeConfig.ZenRule r1 = makeRule();
@@ -165,7 +155,7 @@ public class ZenModeDiffTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags({FLAG_MODES_API, FLAG_MODES_UI})
+    @EnableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
     public void testRuleDiff_toString() throws Exception {
         // Start with two identical rules
         ZenModeConfig.ZenRule r1 = makeRule();
@@ -178,70 +168,150 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         generateFieldDiffs(r1, r2, fieldsForDiff, expectedFrom, expectedTo);
 
         ZenModeDiff.RuleDiff d = new ZenModeDiff.RuleDiff(r1, r2);
-        assertThat(d.toString()).isEqualTo("ZenRuleDiff{"
-                + "enabled:true->false, "
-                + "conditionOverride:2->1, "
-                + "name:string1->string2, "
-                + "zenMode:2->1, "
-                + "conditionId:null->, "
-                + "condition:null->Condition["
-                + "state=STATE_TRUE,"
-                + "id=hello:,"
-                + "summary=,"
-                + "line1=,"
-                + "line2=,"
-                + "icon=-1,"
-                + "source=SOURCE_UNKNOWN,"
-                + "flags=2], "
-                + "component:null->ComponentInfo{b/b}, "
-                + "configurationActivity:null->ComponentInfo{a/a}, "
-                + "id:string1->string2, "
-                + "creationTime:200->100, "
-                + "enabler:string1->string2, "
-                + "zenPolicy:ZenPolicyDiff{"
-                + "mPriorityCategories_Reminders:1->2, "
-                + "mPriorityCategories_Events:1->2, "
-                + "mPriorityCategories_Messages:1->2, "
-                + "mPriorityCategories_Calls:1->2, "
-                + "mPriorityCategories_RepeatCallers:1->2, "
-                + "mPriorityCategories_Alarms:1->2, "
-                + "mPriorityCategories_Media:1->2, "
-                + "mPriorityCategories_System:1->2, "
-                + "mPriorityCategories_Conversations:1->2, "
-                + "mVisualEffects_FullScreenIntent:1->2, "
-                + "mVisualEffects_Lights:1->2, "
-                + "mVisualEffects_Peek:1->2, "
-                + "mVisualEffects_StatusBar:1->2, "
-                + "mVisualEffects_Badge:1->2, "
-                + "mVisualEffects_Ambient:1->2, "
-                + "mVisualEffects_NotificationList:1->2, "
-                + "mPriorityMessages:2->1, "
-                + "mPriorityCalls:2->1, "
-                + "mConversationSenders:2->1, "
-                + "mAllowChannels:2->1}, "
-                + "modified:true->false, "
-                + "pkg:string1->string2, "
-                + "zenDeviceEffects:ZenDeviceEffectsDiff{"
-                + "mGrayscale:true->false, "
-                + "mSuppressAmbientDisplay:true->false, "
-                + "mDimWallpaper:true->false, "
-                + "mNightMode:true->false, "
-                + "mDisableAutoBrightness:true->false, "
-                + "mDisableTapToWake:true->false, "
-                + "mDisableTiltToWake:true->false, "
-                + "mDisableTouch:true->false, "
-                + "mMinimizeRadioUsage:true->false, "
-                + "mMaximizeDoze:true->false, "
-                + "mExtraEffects:[effect1]->[effect2]}, "
-                + "triggerDescription:string1->string2, "
-                + "type:2->1, "
-                + "allowManualInvocation:true->false, "
-                + "iconResName:string1->string2, "
-                + "legacySuppressedEffects:2->1}");
+        assertThat(d.toString())
+                .isEqualTo(
+                        "ZenRuleDiff{"
+                                + "enabled:true->false, "
+                                + "conditionOverride:2->1, "
+                                + "name:string1->string2, "
+                                + "zenMode:2->1, "
+                                + "conditionId:null->, "
+                                + "condition:null->Condition["
+                                + "state=STATE_TRUE,"
+                                + "id=hello:,"
+                                + "summary=,"
+                                + "line1=,"
+                                + "line2=,"
+                                + "icon=-1,"
+                                + "source=SOURCE_UNKNOWN,"
+                                + "flags=2], "
+                                + "component:null->ComponentInfo{b/b}, "
+                                + "configurationActivity:null->ComponentInfo{a/a}, "
+                                + "id:string1->string2, "
+                                + "creationTime:200->100, "
+                                + "enabler:string1->string2, "
+                                + "zenPolicy:ZenPolicyDiff{"
+                                + "mPriorityCategories_Reminders:1->2, "
+                                + "mPriorityCategories_Events:1->2, "
+                                + "mPriorityCategories_Messages:1->2, "
+                                + "mPriorityCategories_Calls:1->2, "
+                                + "mPriorityCategories_RepeatCallers:1->2, "
+                                + "mPriorityCategories_Alarms:1->2, "
+                                + "mPriorityCategories_Media:1->2, "
+                                + "mPriorityCategories_System:1->2, "
+                                + "mPriorityCategories_Conversations:1->2, "
+                                + "mVisualEffects_FullScreenIntent:1->2, "
+                                + "mVisualEffects_Lights:1->2, "
+                                + "mVisualEffects_Peek:1->2, "
+                                + "mVisualEffects_StatusBar:1->2, "
+                                + "mVisualEffects_Badge:1->2, "
+                                + "mVisualEffects_Ambient:1->2, "
+                                + "mVisualEffects_NotificationList:1->2, "
+                                + "mPriorityMessages:2->1, "
+                                + "mPriorityCalls:2->1, "
+                                + "mConversationSenders:2->1, "
+                                + "mAllowChannels:2->1}, "
+                                + "pkg:string1->string2, "
+                                + "zenDeviceEffects:ZenDeviceEffectsDiff{"
+                                + "mGrayscale:true->false, "
+                                + "mSuppressAmbientDisplay:true->false, "
+                                + "mDimWallpaper:true->false, "
+                                + "mNightMode:true->false, "
+                                + "mDisableAutoBrightness:true->false, "
+                                + "mDisableTapToWake:true->false, "
+                                + "mDisableTiltToWake:true->false, "
+                                + "mDisableTouch:true->false, "
+                                + "mMinimizeRadioUsage:true->false, "
+                                + "mMaximizeDoze:true->false, "
+                                + "mNightLight:true->false, "
+                                + "mBrightnessCap:0.5->0.4, "
+                                + "mExtraEffects:[effect1]->[effect2]}, "
+                                + "triggerDescription:string1->string2, "
+                                + "type:2->1, "
+                                + "allowManualInvocation:true->false, "
+                                + "iconResName:string1->string2, "
+                                + "legacySuppressedEffects:2->1}");
     }
 
     @Test
-    @EnableFlags({FLAG_MODES_API, FLAG_MODES_UI})
+    @DisableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
+    public void testRuleDiff_toString_brightnessCapFlagDisabled() throws Exception {
+        // Start with two identical rules
+        ZenModeConfig.ZenRule r1 = makeRule();
+        ZenModeConfig.ZenRule r2 = makeRule();
+
+        ArrayMap<String, Object> expectedFrom = new ArrayMap<>();
+        ArrayMap<String, Object> expectedTo = new ArrayMap<>();
+        List<Field> fieldsForDiff =
+                getFieldsForDiffCheck(ZenModeConfig.ZenRule.class, getZenRuleExemptFields(), false);
+        generateFieldDiffs(r1, r2, fieldsForDiff, expectedFrom, expectedTo);
+
+        ZenModeDiff.RuleDiff d = new ZenModeDiff.RuleDiff(r1, r2);
+        assertThat(d.toString())
+                .isEqualTo(
+                        "ZenRuleDiff{"
+                                + "enabled:true->false, "
+                                + "conditionOverride:2->1, "
+                                + "name:string1->string2, "
+                                + "zenMode:2->1, "
+                                + "conditionId:null->, "
+                                + "condition:null->Condition["
+                                + "state=STATE_TRUE,"
+                                + "id=hello:,"
+                                + "summary=,"
+                                + "line1=,"
+                                + "line2=,"
+                                + "icon=-1,"
+                                + "source=SOURCE_UNKNOWN,"
+                                + "flags=2], "
+                                + "component:null->ComponentInfo{b/b}, "
+                                + "configurationActivity:null->ComponentInfo{a/a}, "
+                                + "id:string1->string2, "
+                                + "creationTime:200->100, "
+                                + "enabler:string1->string2, "
+                                + "zenPolicy:ZenPolicyDiff{"
+                                + "mPriorityCategories_Reminders:1->2, "
+                                + "mPriorityCategories_Events:1->2, "
+                                + "mPriorityCategories_Messages:1->2, "
+                                + "mPriorityCategories_Calls:1->2, "
+                                + "mPriorityCategories_RepeatCallers:1->2, "
+                                + "mPriorityCategories_Alarms:1->2, "
+                                + "mPriorityCategories_Media:1->2, "
+                                + "mPriorityCategories_System:1->2, "
+                                + "mPriorityCategories_Conversations:1->2, "
+                                + "mVisualEffects_FullScreenIntent:1->2, "
+                                + "mVisualEffects_Lights:1->2, "
+                                + "mVisualEffects_Peek:1->2, "
+                                + "mVisualEffects_StatusBar:1->2, "
+                                + "mVisualEffects_Badge:1->2, "
+                                + "mVisualEffects_Ambient:1->2, "
+                                + "mVisualEffects_NotificationList:1->2, "
+                                + "mPriorityMessages:2->1, "
+                                + "mPriorityCalls:2->1, "
+                                + "mConversationSenders:2->1, "
+                                + "mAllowChannels:2->1}, "
+                                + "pkg:string1->string2, "
+                                + "zenDeviceEffects:ZenDeviceEffectsDiff{"
+                                + "mGrayscale:true->false, "
+                                + "mSuppressAmbientDisplay:true->false, "
+                                + "mDimWallpaper:true->false, "
+                                + "mNightMode:true->false, "
+                                + "mDisableAutoBrightness:true->false, "
+                                + "mDisableTapToWake:true->false, "
+                                + "mDisableTiltToWake:true->false, "
+                                + "mDisableTouch:true->false, "
+                                + "mMinimizeRadioUsage:true->false, "
+                                + "mMaximizeDoze:true->false, "
+                                + "mNightLight:true->false, "
+                                + "mExtraEffects:[effect1]->[effect2]}, "
+                                + "triggerDescription:string1->string2, "
+                                + "type:2->1, "
+                                + "allowManualInvocation:true->false, "
+                                + "iconResName:string1->string2, "
+                                + "legacySuppressedEffects:2->1}");
+    }
+
+    @Test
     public void testRuleDiff_toStringNullStartPolicy() throws Exception {
         // Start with two identical rules
         ZenModeConfig.ZenRule r1 = makeRule();
@@ -278,7 +348,6 @@ public class ZenModeDiffTest extends UiServiceTestCase {
                 + "creationTime:200->100, "
                 + "enabler:string1->string2, "
                 + "zenPolicy:ZenPolicyDiff{added}, "
-                + "modified:true->false, "
                 + "pkg:string1->string2, "
                 + "zenDeviceEffects:ZenDeviceEffectsDiff{added}, "
                 + "triggerDescription:string1->string2, "
@@ -309,6 +378,7 @@ public class ZenModeDiffTest extends UiServiceTestCase {
     }
 
     @Test
+    @EnableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
     public void testDeviceEffectsDiff_fieldDiffs() throws Exception {
         // Start these the same
         ZenDeviceEffects effects1 = new ZenDeviceEffects.Builder().build();
@@ -337,6 +407,36 @@ public class ZenModeDiffTest extends UiServiceTestCase {
     }
 
     @Test
+    @DisableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
+    public void testDeviceEffectsDiff_fieldDiffs_brightnessCapFlagDisabled() throws Exception {
+        // Start these the same
+        ZenDeviceEffects effects1 = new ZenDeviceEffects.Builder().build();
+        ZenDeviceEffects effects2 = new ZenDeviceEffects.Builder().build();
+
+        // maps mapping field name -> expected output value as we set diffs
+        ArrayMap<String, Object> expectedFrom = new ArrayMap<>();
+        ArrayMap<String, Object> expectedTo = new ArrayMap<>();
+        List<Field> fieldsForDiff =
+                getFieldsForDiffCheck(ZenDeviceEffects.class, Set.of(FIELD_BRIGHTNESS_CAP), true);
+        generateFieldDiffs(effects1, effects2, fieldsForDiff, expectedFrom, expectedTo);
+
+        ZenModeDiff.DeviceEffectsDiff d = new ZenModeDiff.DeviceEffectsDiff(effects1, effects2);
+        assertTrue(d.hasDiff());
+
+        // Now diff them and check that each of the fields has a diff
+        for (Field f : fieldsForDiff) {
+            String name = f.getName();
+            assertNotNull("diff not found for field: " + name, d.getDiffForField(name));
+            assertTrue(d.getDiffForField(name).hasDiff());
+            assertTrue("unexpected field: " + name, expectedFrom.containsKey(name));
+            assertTrue("unexpected field: " + name, expectedTo.containsKey(name));
+            assertEquals(expectedFrom.get(name), d.getDiffForField(name).from());
+            assertEquals(expectedTo.get(name), d.getDiffForField(name).to());
+        }
+    }
+
+    @Test
+    @EnableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
     public void testDeviceEffectsDiff_toString() throws Exception {
         // Ensure device effects toString is readable.
         ZenDeviceEffects effects1 = new ZenDeviceEffects.Builder().build();
@@ -358,18 +458,63 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         generateFieldDiffs(effects1, effects2, fieldsForDiff, expectedFrom, expectedTo);
 
         d = new ZenModeDiff.DeviceEffectsDiff(effects1, effects2);
-        assertThat(d.toString()).isEqualTo("ZenDeviceEffectsDiff{"
-                + "mGrayscale:true->false, "
-                + "mSuppressAmbientDisplay:true->false, "
-                + "mDimWallpaper:true->false, "
-                + "mNightMode:true->false, "
-                + "mDisableAutoBrightness:true->false, "
-                + "mDisableTapToWake:true->false, "
-                + "mDisableTiltToWake:true->false, "
-                + "mDisableTouch:true->false, "
-                + "mMinimizeRadioUsage:true->false, "
-                + "mMaximizeDoze:true->false, "
-                + "mExtraEffects:[effect1]->[effect2]}");
+        assertThat(d.toString())
+                .isEqualTo(
+                        "ZenDeviceEffectsDiff{"
+                                + "mGrayscale:true->false, "
+                                + "mSuppressAmbientDisplay:true->false, "
+                                + "mDimWallpaper:true->false, "
+                                + "mNightMode:true->false, "
+                                + "mDisableAutoBrightness:true->false, "
+                                + "mDisableTapToWake:true->false, "
+                                + "mDisableTiltToWake:true->false, "
+                                + "mDisableTouch:true->false, "
+                                + "mMinimizeRadioUsage:true->false, "
+                                + "mMaximizeDoze:true->false, "
+                                + "mNightLight:true->false, "
+                                + "mBrightnessCap:0.5->0.4, "
+                                + "mExtraEffects:[effect1]->[effect2]}");
+    }
+
+    @Test
+    @DisableFlags(android.service.notification.Flags.FLAG_APPLY_BRIGHTNESS_CLAMPING_FOR_MODES)
+    public void testDeviceEffectsDiff_toString_brightnessCapFlagDisabled() throws Exception {
+        // Ensure device effects toString is readable.
+        ZenDeviceEffects effects1 = new ZenDeviceEffects.Builder().build();
+        ZenDeviceEffects effects2 = new ZenDeviceEffects.Builder().build();
+
+        ZenModeDiff.DeviceEffectsDiff d = new ZenModeDiff.DeviceEffectsDiff(effects1, effects2);
+        assertThat(d.toString()).isEqualTo("ZenDeviceEffectsDiff{no changes}");
+
+        d = new ZenModeDiff.DeviceEffectsDiff(effects1, null);
+        assertThat(d.toString()).isEqualTo("ZenDeviceEffectsDiff{removed}");
+
+        d = new ZenModeDiff.DeviceEffectsDiff(null, effects2);
+        assertThat(d.toString()).isEqualTo("ZenDeviceEffectsDiff{added}");
+
+        ArrayMap<String, Object> expectedFrom = new ArrayMap<>();
+        ArrayMap<String, Object> expectedTo = new ArrayMap<>();
+        List<Field> fieldsForDiff =
+                getFieldsForDiffCheck(
+                        ZenDeviceEffects.class, Collections.emptySet() /*no exempt fields*/, true);
+        generateFieldDiffs(effects1, effects2, fieldsForDiff, expectedFrom, expectedTo);
+
+        d = new ZenModeDiff.DeviceEffectsDiff(effects1, effects2);
+        assertThat(d.toString())
+                .isEqualTo(
+                        "ZenDeviceEffectsDiff{"
+                                + "mGrayscale:true->false, "
+                                + "mSuppressAmbientDisplay:true->false, "
+                                + "mDimWallpaper:true->false, "
+                                + "mNightMode:true->false, "
+                                + "mDisableAutoBrightness:true->false, "
+                                + "mDisableTapToWake:true->false, "
+                                + "mDisableTiltToWake:true->false, "
+                                + "mDisableTouch:true->false, "
+                                + "mMinimizeRadioUsage:true->false, "
+                                + "mMaximizeDoze:true->false, "
+                                + "mNightLight:true->false, "
+                                + "mExtraEffects:[effect1]->[effect2]}");
     }
 
 
@@ -482,21 +627,9 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         // "Metadata" fields are never compared.
         Set<String> exemptFields = new LinkedHashSet<>(
                 Set.of("userModifiedFields", "zenPolicyUserModifiedFields",
-                        "zenDeviceEffectsUserModifiedFields", "deletionInstant", "disabledOrigin"));
-        // Flagged fields are only compared if their flag is on.
-        if (!Flags.modesApi()) {
-            exemptFields.addAll(
-                    Set.of(RuleDiff.FIELD_TYPE, RuleDiff.FIELD_TRIGGER_DESCRIPTION,
-                            RuleDiff.FIELD_ICON_RES, RuleDiff.FIELD_ALLOW_MANUAL,
-                            RuleDiff.FIELD_ZEN_DEVICE_EFFECTS,
-                            RuleDiff.FIELD_LEGACY_SUPPRESSED_EFFECTS));
-        }
-        if (Flags.modesApi() && Flags.modesUi()) {
-            exemptFields.add(RuleDiff.FIELD_SNOOZING); // Obsolete.
-        } else {
-            exemptFields.add(RuleDiff.FIELD_CONDITION_OVERRIDE);
-            exemptFields.add(RuleDiff.FIELD_LEGACY_SUPPRESSED_EFFECTS);
-        }
+                        "zenDeviceEffectsUserModifiedFields", "deletionInstant", "disabledOrigin",
+                        "lastActivation", "lastManualActivation", "lastDeactivation",
+                        "lastManualDeactivation"));
         return exemptFields;
     }
 
@@ -519,35 +652,6 @@ public class ZenModeDiffTest extends UiServiceTestCase {
 
     @Test
     public void testConfigDiff_fieldDiffs() throws Exception {
-        // these two start the same
-        ZenModeConfig c1 = new ZenModeConfig();
-        ZenModeConfig c2 = new ZenModeConfig();
-
-        // maps mapping field name -> expected output value as we set diffs
-        ArrayMap<String, Object> expectedFrom = new ArrayMap<>();
-        ArrayMap<String, Object> expectedTo = new ArrayMap<>();
-        List<Field> fieldsForDiff = getFieldsForDiffCheck(
-                ZenModeConfig.class, getConfigExemptAndFlaggedFields(), false);
-        generateFieldDiffs(c1, c2, fieldsForDiff, expectedFrom, expectedTo);
-
-        ZenModeDiff.ConfigDiff d = new ZenModeDiff.ConfigDiff(c1, c2);
-        assertTrue(d.hasDiff());
-
-        // Now diff them and check that each of the fields has a diff
-        for (Field f : fieldsForDiff) {
-            String name = f.getName();
-            assertNotNull("diff not found for field: " + name, d.getDiffForField(name));
-            assertTrue(d.getDiffForField(name).hasDiff());
-            assertTrue("unexpected field: " + name, expectedFrom.containsKey(name));
-            assertTrue("unexpected field: " + name, expectedTo.containsKey(name));
-            assertEquals(expectedFrom.get(name), d.getDiffForField(name).from());
-            assertEquals(expectedTo.get(name), d.getDiffForField(name).to());
-        }
-    }
-
-    @Test
-    @EnableFlags(FLAG_MODES_API)
-    public void testConfigDiff_fieldDiffs_flagOn() throws Exception {
         // these two start the same
         ZenModeConfig c1 = new ZenModeConfig();
         ZenModeConfig c2 = new ZenModeConfig();
@@ -596,20 +700,10 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         ZenModeDiff.ConfigDiff d = new ZenModeDiff.ConfigDiff(c1, c2);
         assertTrue(d.hasDiff());
 
-        if (!Flags.modesUi()) {
-            // Diff in top-level fields
-            assertTrue(d.getDiffForField("allowMessagesFrom").hasDiff());
-            assertTrue(d.getDiffForField("allowConversationsFrom").hasDiff());
-
-            // Bonus testing of stringification of people senders and conversation senders
-            assertTrue(d.toString().contains("allowMessagesFrom:stars->contacts"));
-            assertTrue(d.toString().contains("allowConversationsFrom:important->none"));
-        } else {
-            RuleDiff r = d.getManualRuleDiff();
-            assertNotNull(r);
-            ZenModeDiff.FieldDiff p = r.getDiffForField(RuleDiff.FIELD_ZEN_POLICY);
-            assertNotNull(p);
-        }
+        RuleDiff r = d.getManualRuleDiff();
+        assertNotNull(r);
+        ZenModeDiff.FieldDiff p = r.getDiffForField(RuleDiff.FIELD_ZEN_POLICY);
+        assertNotNull(p);
     }
 
     @Test
@@ -653,14 +747,6 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         assertEquals("different", automaticDiffs.get("ruleId").getDiffForField("pkg").to());
     }
 
-    // Helper method that merges the base exempt fields with fields that are flagged
-    private Set getConfigExemptAndFlaggedFields() {
-        Set merged = new HashSet();
-        merged.addAll(ZEN_MODE_CONFIG_EXEMPT_FIELDS);
-        merged.addAll(ZEN_MODE_CONFIG_FLAGGED_FIELDS);
-        return merged;
-    }
-
     // Helper methods for working with configs, policies, rules
     // Just makes a zen rule with fields filled in
     private ZenModeConfig.ZenRule makeRule() {
@@ -673,20 +759,17 @@ public class ZenModeDiffTest extends UiServiceTestCase {
         rule.creationTime = 123;
         rule.id = "ruleId";
         rule.zenMode = Settings.Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS;
-        rule.modified = false;
         rule.name = "name";
         rule.setConditionOverride(ZenModeConfig.ZenRule.OVERRIDE_DEACTIVATE);
         rule.pkg = "a";
-        if (android.app.Flags.modesApi()) {
-            rule.allowManualInvocation = true;
-            rule.type = AutomaticZenRule.TYPE_SCHEDULE_TIME;
-            rule.iconResName = "res";
-            rule.triggerDescription = "At night";
-            rule.zenDeviceEffects = new ZenDeviceEffects.Builder()
-                    .setShouldDimWallpaper(true)
-                    .build();
-            rule.userModifiedFields = AutomaticZenRule.FIELD_NAME;
-        }
+        rule.allowManualInvocation = true;
+        rule.type = AutomaticZenRule.TYPE_SCHEDULE_TIME;
+        rule.iconResName = "res";
+        rule.triggerDescription = "At night";
+        rule.zenDeviceEffects = new ZenDeviceEffects.Builder()
+                .setShouldDimWallpaper(true)
+                .build();
+        rule.userModifiedFields = AutomaticZenRule.FIELD_NAME;
         return rule;
     }
 
@@ -859,6 +942,11 @@ public class ZenModeDiffTest extends UiServiceTestCase {
                 expectedA.put(f.getName(), "string1");
                 f.set(b, "string2");
                 expectedB.put(f.getName(), "string2");
+            } else if (Float.class.equals(t)) {
+                f.set(a, 0.5f);
+                expectedA.put(f.getName(), 0.5f);
+                f.set(b, 0.4f);
+                expectedB.put(f.getName(), 0.4f);
             } else if (Set.class.equals(t)) {
                 Set<String> aSet = Set.of("effect1");
                 Set<String> bSet = Set.of("effect2");

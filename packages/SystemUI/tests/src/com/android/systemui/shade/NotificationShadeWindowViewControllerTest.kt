@@ -17,27 +17,28 @@
 package com.android.systemui.shade
 
 import android.content.Context
-import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.EnableFlags
 import android.platform.test.annotations.RequiresFlagsDisabled
 import android.platform.test.flag.junit.FlagsParameterization
 import android.testing.TestableLooper
 import android.testing.TestableLooper.RunWithLooper
-import android.view.KeyEvent
+import android.view.Choreographer
+import android.view.Display
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import androidx.test.filters.SmallTest
+import com.android.app.displaylib.PerDisplayRepository
 import com.android.keyguard.KeyguardSecurityContainerController
 import com.android.keyguard.dagger.KeyguardBouncerComponent
 import com.android.systemui.Flags
-import com.android.systemui.Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor
 import com.android.systemui.bouncer.ui.binder.BouncerViewBinder
 import com.android.systemui.classifier.FalsingCollectorFake
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.dock.DockManager
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.flags.DisableSceneContainer
@@ -47,24 +48,36 @@ import com.android.systemui.flags.andSceneContainer
 import com.android.systemui.keyevent.domain.interactor.SysUIKeyEventHandler
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
+import com.android.systemui.keyguard.domain.interactor.dozeTouchInteractor
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.DREAMING
 import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
+import com.android.systemui.log.assertLogsWtf
 import com.android.systemui.qs.flags.QSComposeFragment
 import com.android.systemui.res.R
+import com.android.systemui.scene.ui.view.WindowRootViewKeyEventHandler
 import com.android.systemui.settings.brightness.data.repository.BrightnessMirrorShowingRepository
-import com.android.systemui.settings.brightness.domain.interactor.BrightnessMirrorShowingInteractor
+import com.android.systemui.settings.brightness.domain.interactor.BrightnessMirrorShowingInteractorPassThrough
 import com.android.systemui.shade.NotificationShadeWindowView.InteractionEventHandler
+import com.android.systemui.shade.data.repository.ShadeAnimationRepository
+import com.android.systemui.shade.data.repository.ShadeRepositoryImpl
+import com.android.systemui.shade.data.repository.fakeShadeDisplaysRepository
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor
+import com.android.systemui.shade.domain.interactor.ShadeAnimationInteractorLegacyImpl
+import com.android.systemui.shade.domain.interactor.shadeStatusBarComponentsInteractor
+import com.android.systemui.statusbar.BlurUtils
 import com.android.systemui.statusbar.DragDownHelper
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
 import com.android.systemui.statusbar.NotificationInsetsController
 import com.android.systemui.statusbar.NotificationShadeDepthController
 import com.android.systemui.statusbar.NotificationShadeWindowController
 import com.android.systemui.statusbar.SysuiStatusBarStateController
+import com.android.systemui.statusbar.core.StatusBarConnectedDisplays
+import com.android.systemui.statusbar.data.repository.homeStatusBarComponentsRepository
 import com.android.systemui.statusbar.notification.data.repository.NotificationLaunchAnimationRepository
 import com.android.systemui.statusbar.notification.domain.interactor.NotificationLaunchAnimationInteractor
 import com.android.systemui.statusbar.notification.stack.AmbientState
@@ -74,18 +87,20 @@ import com.android.systemui.statusbar.phone.ConfigurationForwarder
 import com.android.systemui.statusbar.phone.DozeScrimController
 import com.android.systemui.statusbar.phone.DozeServiceHost
 import com.android.systemui.statusbar.phone.PhoneStatusBarViewController
+import com.android.systemui.statusbar.phone.fragment.dagger.createFakeHomeStatusBarComponent
 import com.android.systemui.statusbar.window.StatusBarWindowStateController
 import com.android.systemui.testKosmos
 import com.android.systemui.unfold.SysUIUnfoldComponent
 import com.android.systemui.unfold.UnfoldTransitionProgressProvider
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
+import com.android.systemui.util.kotlin.javaAdapter
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.time.FakeSystemClock
+import com.android.systemui.window.ui.viewmodel.WindowRootViewModel
 import com.google.common.truth.Truth.assertThat
 import java.util.Optional
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
@@ -93,7 +108,6 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -101,6 +115,7 @@ import org.mockito.Answers
 import org.mockito.ArgumentCaptor
 import org.mockito.Mock
 import org.mockito.Mockito.anyFloat
+import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.atLeast
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
@@ -112,13 +127,12 @@ import org.mockito.kotlin.clearInvocations
 import platform.test.runner.parameterized.ParameterizedAndroidJunit4
 import platform.test.runner.parameterized.Parameters
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(ParameterizedAndroidJunit4::class)
 @RunWithLooper(setAsMainLooper = true)
 class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : SysuiTestCase() {
 
-    val kosmos = testKosmos()
+    val kosmos = testKosmos().useUnconfinedTestDispatcher()
 
     @Mock private lateinit var view: NotificationShadeWindowView
     @Mock private lateinit var sysuiStatusBarStateController: SysuiStatusBarStateController
@@ -135,6 +149,10 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Mock private lateinit var dumpManager: DumpManager
     @Mock private lateinit var ambientState: AmbientState
     @Mock private lateinit var stackScrollLayoutController: NotificationStackScrollLayoutController
+    @Mock private lateinit var systemUIDisplaySubcomponent: SystemUIDisplaySubcomponent
+    @Mock
+    private lateinit var perDisplaySubcomponentRepository:
+        PerDisplayRepository<SystemUIDisplaySubcomponent>
     @Mock private lateinit var statusBarWindowStateController: StatusBarWindowStateController
     @Mock private lateinit var quickSettingsController: QuickSettingsControllerImpl
     @Mock
@@ -157,13 +175,16 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Mock lateinit var sysUIKeyEventHandler: SysUIKeyEventHandler
     @Mock lateinit var primaryBouncerInteractor: PrimaryBouncerInteractor
     @Mock lateinit var alternateBouncerInteractor: AlternateBouncerInteractor
+    @Mock private lateinit var blurUtils: BlurUtils
+    @Mock private lateinit var choreographer: Choreographer
+    @Mock private lateinit var windowViewModelFactory: WindowRootViewModel.Factory
     private val notificationLaunchAnimationRepository = NotificationLaunchAnimationRepository()
     private val notificationLaunchAnimationInteractor =
         NotificationLaunchAnimationInteractor(notificationLaunchAnimationRepository)
 
     private val brightnessMirrorShowingRepository = BrightnessMirrorShowingRepository()
     private val brightnessMirrorShowingInteractor =
-        BrightnessMirrorShowingInteractor(brightnessMirrorShowingRepository)
+        BrightnessMirrorShowingInteractorPassThrough(brightnessMirrorShowingRepository)
 
     private lateinit var falsingCollector: FalsingCollectorFake
     private lateinit var fakeClock: FakeSystemClock
@@ -184,6 +205,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
+        whenever(view.context).thenReturn(context)
         whenever(view.bottom).thenReturn(VIEW_BOTTOM)
         whenever(view.findViewById<ViewGroup>(R.id.keyguard_bouncer_container))
             .thenReturn(mock(ViewGroup::class.java))
@@ -193,6 +215,10 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
             .thenReturn(keyguardSecurityContainerController)
         whenever(keyguardTransitionInteractor.transition(Edge.create(LOCKSCREEN, DREAMING)))
             .thenReturn(emptyFlow<TransitionStep>())
+        whenever(systemUIDisplaySubcomponent.statusBarWindowStateController)
+            .thenReturn(statusBarWindowStateController)
+        whenever(perDisplaySubcomponentRepository.getOrDefault(anyInt()))
+            .thenReturn(systemUIDisplaySubcomponent)
 
         featureFlagsClassic = FakeFeatureFlagsClassic()
         featureFlagsClassic.set(SPLIT_SHADE_SUBPIXEL_OPTIMIZATION, true)
@@ -205,6 +231,9 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
         fakeClock = FakeSystemClock()
         underTest =
             NotificationShadeWindowViewController(
+                blurUtils,
+                windowViewModelFactory,
+                choreographer,
                 lockscreenShadeTransitionController,
                 falsingCollector,
                 sysuiStatusBarStateController,
@@ -212,10 +241,14 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
                 notificationShadeDepthController,
                 view,
                 shadeViewController,
+                ShadeAnimationInteractorLegacyImpl(
+                    ShadeAnimationRepository(),
+                    ShadeRepositoryImpl(testScope),
+                ),
                 panelExpansionInteractor,
                 ShadeExpansionStateManager(),
                 stackScrollLayoutController,
-                statusBarWindowStateController,
+                perDisplaySubcomponentRepository,
                 centralSurfaces,
                 dozeServiceHost,
                 dozeScrimController,
@@ -233,13 +266,17 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
                 notificationLaunchAnimationInteractor,
                 featureFlagsClassic,
                 fakeClock,
-                sysUIKeyEventHandler,
+                WindowRootViewKeyEventHandler({ sysUIKeyEventHandler }, falsingCollector),
                 quickSettingsController,
                 primaryBouncerInteractor,
                 alternateBouncerInteractor,
                 mock(BouncerViewBinder::class.java),
                 { mock(ConfigurationForwarder::class.java) },
                 brightnessMirrorShowingInteractor,
+                kosmos.testDispatcher,
+                kosmos.shadeStatusBarComponentsInteractor,
+                kosmos.dozeTouchInteractor,
+                kosmos.javaAdapter,
             )
         underTest.setupExpandedStatusBar()
         underTest.setDragDownHelper(dragDownHelper)
@@ -255,7 +292,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_nullStatusBarViewController_returnsFalse() =
         testScope.runTest {
-            underTest.setStatusBarViewController(null)
+            setStatusBarViewController(null)
 
             val returnVal = interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
 
@@ -265,7 +302,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_downTouchBelowView_sendsTouchToSb() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             val ev = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, VIEW_BOTTOM + 4f, 0)
             whenever(phoneStatusBarViewController.sendTouchToView(ev)).thenReturn(true)
 
@@ -278,7 +315,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_downTouchBelowViewThenAnotherTouch_sendsTouchToSb() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             val downEvBelow =
                 MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, VIEW_BOTTOM + 4f, 0)
             interactionEventHandler.handleDispatchTouchEvent(downEvBelow)
@@ -296,7 +333,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_downAndPanelCollapsedAndInSbBoundAndSbWindowShow_sendsTouchToSb() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(statusBarWindowStateController.windowIsShowing()).thenReturn(true)
             whenever(panelExpansionInteractor.isFullyCollapsed).thenReturn(true)
             whenever(phoneStatusBarViewController.touchIsWithinView(anyFloat(), anyFloat()))
@@ -312,7 +349,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_panelNotCollapsed_returnsNull() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(statusBarWindowStateController.windowIsShowing()).thenReturn(true)
             whenever(phoneStatusBarViewController.touchIsWithinView(anyFloat(), anyFloat()))
                 .thenReturn(true)
@@ -328,7 +365,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_touchNotInSbBounds_returnsNull() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(statusBarWindowStateController.windowIsShowing()).thenReturn(true)
             whenever(panelExpansionInteractor.isFullyCollapsed).thenReturn(true)
             // Item we're testing
@@ -344,7 +381,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_sbWindowNotShowing_noSendTouchToSbAndReturnsTrue() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(panelExpansionInteractor.isFullyCollapsed).thenReturn(true)
             whenever(phoneStatusBarViewController.touchIsWithinView(anyFloat(), anyFloat()))
                 .thenReturn(true)
@@ -360,7 +397,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     @Test
     fun handleDispatchTouchEvent_downEventSentToSbThenAnotherEvent_sendsTouchToSb() =
         testScope.runTest {
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(statusBarWindowStateController.windowIsShowing()).thenReturn(true)
             whenever(panelExpansionInteractor.isFullyCollapsed).thenReturn(true)
             whenever(phoneStatusBarViewController.touchIsWithinView(anyFloat(), anyFloat()))
@@ -383,7 +420,7 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     fun handleDispatchTouchEvent_launchAnimationRunningTimesOut() =
         testScope.runTest {
             // GIVEN touch dispatcher in a state that returns true
-            underTest.setStatusBarViewController(phoneStatusBarViewController)
+            setStatusBarViewController()
             whenever(keyguardUnlockAnimationController.isPlayingCannedUnlockAnimation())
                 .thenReturn(true)
             assertThat(interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)).isTrue()
@@ -401,44 +438,35 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
 
             // THEN move is ignored, down is handled, and window is notified
             assertThat(interactionEventHandler.handleDispatchTouchEvent(MOVE_EVENT)).isFalse()
-            assertThat(interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)).isTrue()
+            assertLogsWtf {
+                assertThat(interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)).isTrue()
+            }
             verify(notificationShadeWindowController).setLaunchingActivity(false)
         }
 
     @Test
-    @DisableSceneContainer
-    @DisableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
-    fun handleDispatchTouchEvent_nsslMigrationOff_userActivity_not_called() {
-        underTest.setStatusBarViewController(phoneStatusBarViewController)
+    fun handleDispatchTouchEvent_nsslMigrationOn_userActivity() =
+        testScope.runTest {
+            setStatusBarViewController()
 
-        interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
+            interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
 
-        verify(centralSurfaces, times(0)).userActivity()
-    }
-
-    @Test
-    @EnableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
-    fun handleDispatchTouchEvent_nsslMigrationOn_userActivity() {
-        underTest.setStatusBarViewController(phoneStatusBarViewController)
-
-        interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
-
-        verify(centralSurfaces).userActivity()
-    }
+            verify(centralSurfaces).userActivity()
+        }
 
     @Test
     @DisableSceneContainer
-    fun handleDispatchTouchEvent_glanceableHubIntercepts_returnsTrue() {
-        whenever(mGlanceableHubContainerController.onTouchEvent(DOWN_EVENT)).thenReturn(true)
-        underTest.setStatusBarViewController(phoneStatusBarViewController)
+    fun handleDispatchTouchEvent_glanceableHubIntercepts_returnsTrue() =
+        testScope.runTest {
+            whenever(mGlanceableHubContainerController.onTouchEvent(DOWN_EVENT)).thenReturn(true)
+            setStatusBarViewController()
 
-        val returnVal = interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
+            val returnVal = interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
 
-        assertThat(returnVal).isTrue()
-    }
+            assertThat(returnVal).isTrue()
+        }
 
     @Test
-    @EnableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
     fun shouldInterceptTouchEvent_dozing_touchNotInLockIconArea_touchIntercepted() {
         // GIVEN dozing
         whenever(sysuiStatusBarStateController.isDozing).thenReturn(true)
@@ -451,7 +479,6 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     }
 
     @Test
-    @EnableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
     fun shouldInterceptTouchEvent_dozing_touchInStatusBar_touchIntercepted() {
         // GIVEN dozing
         whenever(sysuiStatusBarStateController.isDozing).thenReturn(true)
@@ -464,7 +491,6 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     }
 
     @Test
-    @EnableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
     fun shouldInterceptTouchEvent_dozingAndPulsing_touchIntercepted() {
         // GIVEN dozing
         whenever(sysuiStatusBarStateController.isDozing).thenReturn(true)
@@ -523,11 +549,91 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_HUB_BLURRED_BY_SHADE_FIX)
+    fun handleExternalTouch_isNotInterceptedAndIsNotDraggingDown_onTouchNotSent() {
+        whenever(view.dispatchTouchEvent(any())).thenReturn(true)
+        whenever(view.onInterceptTouchEvent(any())).thenReturn(false)
+        whenever(dragDownHelper.isDraggingDown).thenReturn(false)
+
+        setStatusBarViewController(phoneStatusBarViewController)
+
+        underTest.handleExternalTouch(DOWN_EVENT)
+        underTest.handleExternalTouch(MOVE_EVENT)
+
+        // Interception offered for both events, and onTouchEvent is not called.
+        verify(view).onInterceptTouchEvent(DOWN_EVENT)
+        verify(view).onInterceptTouchEvent(MOVE_EVENT)
+        verify(view, never()).onTouchEvent(any())
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_HUB_BLURRED_BY_SHADE_FIX)
+    fun handleExternalTouch_isDraggingDown_onTouchSentAndInterceptTouchNotCalledAgain() {
+        whenever(view.dispatchTouchEvent(any())).thenReturn(true)
+        whenever(view.onInterceptTouchEvent(any())).thenReturn(false)
+
+        setStatusBarViewController(phoneStatusBarViewController)
+        underTest.handleExternalTouch(DOWN_EVENT)
+
+        whenever(panelExpansionInteractor.isFullyExpanded).thenReturn(true)
+        // AND quick settings controller doesn't want it
+        whenever(quickSettingsController.shouldQuickSettingsIntercept(any(), any(), any()))
+            .thenReturn(false)
+        whenever(dragDownHelper.isDragDownEnabled).thenReturn(true)
+        whenever(dragDownHelper.onInterceptTouchEvent(any())).thenReturn(true)
+
+        // THEN dragDownHelper should intercept.
+        assertThat(interactionEventHandler.shouldInterceptTouchEvent(MOVE_EVENT)).isTrue()
+        verify(dragDownHelper).onInterceptTouchEvent(MOVE_EVENT)
+        clearInvocations(view)
+        // AND dragging down is in progress.
+        whenever(dragDownHelper.isDraggingDown).thenReturn(true)
+
+        // Handle touch sent by hub.
+        underTest.handleExternalTouch(MOVE_EVENT)
+
+        // Interception not called again.
+        verify(view, never()).onInterceptTouchEvent(MOVE_EVENT)
+        // onTouchEvent goes to the view.
+        verify(view).onTouchEvent(MOVE_EVENT)
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_COMMUNAL_SHADE_TOUCH_HANDLING_FIXES)
+    @DisableSceneContainer
+    fun handleExternalTouch_hubDoesNotSeeTouches() =
+        testScope.runTest {
+            setStatusBarViewController()
+            whenever(view.dispatchTouchEvent(any())).thenAnswer { invocation ->
+                interactionEventHandler.handleDispatchTouchEvent(
+                    invocation.arguments.first() as MotionEvent?
+                )
+                true
+            }
+
+            underTest.handleExternalTouch(DOWN_EVENT)
+
+            // Glanceable hub never receives any external touches.
+            verify(mGlanceableHubContainerController, never()).onTouchEvent(any())
+        }
+
+    @Test
     fun testGetKeyguardMessageArea() =
         testScope.runTest {
             underTest.keyguardMessageArea
             verify(view).findViewById<ViewGroup>(R.id.keyguard_message_area)
         }
+
+    @Test
+    fun notifiesTheViewWhenLaunchAnimationIsRunning() {
+        testScope.runTest {
+            underTest.setExpandAnimationRunning(true)
+            verify(view).setAnimatingContentLaunch(true)
+
+            underTest.setExpandAnimationRunning(false)
+            verify(view).setAnimatingContentLaunch(false)
+        }
+    }
 
     @Test
     @DisableSceneContainer
@@ -581,35 +687,6 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
     }
 
     @Test
-    fun forwardsDispatchKeyEvent() {
-        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_B)
-        interactionEventHandler.dispatchKeyEvent(keyEvent)
-        verify(sysUIKeyEventHandler).dispatchKeyEvent(keyEvent)
-    }
-
-    @Test
-    fun forwardsDispatchKeyEventPreIme() {
-        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_B)
-        interactionEventHandler.dispatchKeyEventPreIme(keyEvent)
-        verify(sysUIKeyEventHandler).dispatchKeyEventPreIme(keyEvent)
-    }
-
-    @Test
-    fun forwardsInterceptMediaKey() {
-        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_UP)
-        interactionEventHandler.interceptMediaKey(keyEvent)
-        verify(sysUIKeyEventHandler).interceptMediaKey(keyEvent)
-    }
-
-    @Test
-    fun forwardsCollectKeyEvent() {
-        val keyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)
-        interactionEventHandler.collectKeyEvent(keyEvent)
-        assertEquals(keyEvent, falsingCollector.lastKeyEvent)
-    }
-
-    @Test
-    @EnableFlags(FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
     fun cancelCurrentTouch_callsDragDownHelper() {
         underTest.cancelCurrentTouch()
 
@@ -648,6 +725,26 @@ class NotificationShadeWindowViewControllerTest(flags: FlagsParameterization) : 
                 Dispatchers.resetMain()
             }
         }
+
+    private fun setStatusBarViewController(
+        controller: PhoneStatusBarViewController? = phoneStatusBarViewController
+    ) {
+        if (StatusBarConnectedDisplays.isEnabled) {
+            kosmos.fakeShadeDisplaysRepository.setDisplayId(Display.DEFAULT_DISPLAY)
+            if (controller != null) {
+                val component =
+                    kosmos.createFakeHomeStatusBarComponent(
+                        phoneStatusBarViewController = controller,
+                        displayId = Display.DEFAULT_DISPLAY,
+                    )
+                kosmos.homeStatusBarComponentsRepository.onStatusBarViewInitialized(component)
+            } else {
+                // Simulate a null controller by not adding any HomeStatusBarComponent.
+            }
+        } else {
+            underTest.setStatusBarViewController(controller)
+        }
+    }
 
     companion object {
         private val DOWN_EVENT = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 0f, 0f, 0)

@@ -18,6 +18,8 @@ package androidx.window.extensions.embedding;
 
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 
+import static com.android.window.flags.Flags.activityEmbeddingDelayTaskFragmentFinishForActivityLaunch;
+
 import android.app.Activity;
 import android.app.ActivityThread;
 import android.app.WindowConfiguration.WindowingMode;
@@ -26,6 +28,7 @@ import android.graphics.Rect;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.util.Log;
 import android.util.Size;
 import android.window.TaskFragmentAnimationParams;
 import android.window.TaskFragmentInfo;
@@ -52,6 +55,8 @@ import java.util.Objects;
 @SuppressWarnings("GuardedBy")
 class TaskFragmentContainer {
     private static final int APPEAR_EMPTY_TIMEOUT_MS = 3000;
+
+    private static final int DELAYED_TASK_FRAGMENT_CLEANUP_TIMEOUT_MS = 500;
 
     /** Parcelable data of this TaskFragmentContainer. */
     @NonNull
@@ -140,6 +145,13 @@ class TaskFragmentContainer {
     private IBinder mLastCompanionTaskFragment;
 
     /**
+     * Activity token that was requested last via
+     * {@link android.window.TaskFragmentOperation#OP_TYPE_SET_COMPANION_TASK_FRAGMENT}.
+     */
+    @Nullable
+    private IBinder mLastCompanionToBeFinishedActivity;
+
+    /**
      * When the TaskFragment has appeared in server, but is empty, we should remove the TaskFragment
      * if it is still empty after the timeout.
      */
@@ -164,6 +176,18 @@ class TaskFragmentContainer {
      * Whether to apply dimming on the parent Task that was requested last.
      */
     private boolean mLastDimOnTask;
+
+    /** The timestamp of the latest pending activity launch attempt. 0 means no pending launch. */
+    private long mLastActivityLaunchTimestampMs = 0;
+
+    /**
+     * The scheduled runnable for delayed TaskFragment cleanup. This is used when the TaskFragment
+     * becomes empty, but we expect a new activity to appear in it soon.
+     *
+     * It should be {@code null} when not scheduled.
+     */
+    @Nullable
+    private Runnable mDelayedTaskFragmentCleanupRunnable;
 
     /**
      * Creates a container with an existing activity that will be re-parented to it in a window
@@ -475,6 +499,10 @@ class TaskFragmentContainer {
             return;
         }
         mPendingAppearedIntent = null;
+        if (mPendingAppearedActivities.isEmpty() && mAppearEmptyTimeout != null) {
+            // Nothing to wait. Can be cleanup now.
+            mAppearEmptyTimeout.run();
+        }
     }
 
     boolean hasActivity(@NonNull IBinder activityToken) {
@@ -524,6 +552,12 @@ class TaskFragmentContainer {
             if (mPendingAppearedIntent != null || !mPendingAppearedActivities.isEmpty()) {
                 mAppearEmptyTimeout = () -> {
                     synchronized (mController.mLock) {
+                        if (mAppearEmptyTimeout == null) {
+                            // The timeout has already been executed.
+                            return;
+                        }
+                        Log.w(SplitController.TAG,
+                                "Fail to wait for activity start in TaskFragment=" + this);
                         mAppearEmptyTimeout = null;
                         // Call without the pass-in wct when timeout. We need to applyWct directly
                         // in this case.
@@ -538,6 +572,10 @@ class TaskFragmentContainer {
         } else if (mAppearEmptyTimeout != null && !info.isEmpty()) {
             mController.getHandler().removeCallbacks(mAppearEmptyTimeout);
             mAppearEmptyTimeout = null;
+        }
+
+        if (activityEmbeddingDelayTaskFragmentFinishForActivityLaunch()) {
+            clearActivityLaunchHintIfNecessary(mInfo, info);
         }
 
         mHasCrossProcessActivities = false;
@@ -625,12 +663,29 @@ class TaskFragmentContainer {
      * finished on exit. Otherwise, return {@code false}.
      */
     boolean hasActivityToFinishOnExit(@NonNull TaskFragmentContainer container) {
+        return getActivityToFinishOnExitInternal(container) != null;
+    }
+
+    /**
+     * Returns the Activity from the given {@code container} that was added to be finished on exit.
+     * Otherwise, return {@code false}.
+     */
+    @Nullable
+    IBinder getActivityToFinishOnExit(@NonNull TaskFragmentContainer container) {
+        if (!com.android.window.flags.Flags.taskFragmentCompanionActivity()) {
+            return null;
+        }
+        return getActivityToFinishOnExitInternal(container);
+    }
+
+    @Nullable
+    private IBinder getActivityToFinishOnExitInternal(@NonNull TaskFragmentContainer container) {
         for (IBinder activity : mParcelableData.mActivitiesToFinishOnExit) {
             if (container.hasActivity(activity)) {
-                return true;
+                return activity;
             }
         }
-        return false;
+        return null;
     }
 
     /**
@@ -866,16 +921,20 @@ class TaskFragmentContainer {
      * Checks if last requested companion TaskFragment token is equal to the provided value.
      * @see android.window.TaskFragmentOperation#OP_TYPE_SET_COMPANION_TASK_FRAGMENT
      */
-    boolean isLastCompanionTaskFragmentEqual(@Nullable IBinder fragmentToken) {
-        return Objects.equals(mLastCompanionTaskFragment, fragmentToken);
+    boolean isLastCompanionTaskFragmentEqual(@Nullable IBinder fragmentToken,
+            @Nullable IBinder toBeFinishedActivity) {
+        return Objects.equals(mLastCompanionTaskFragment, fragmentToken)
+                && Objects.equals(mLastCompanionToBeFinishedActivity, toBeFinishedActivity);
     }
 
     /**
      * Updates the last requested companion TaskFragment token.
      * @see android.window.TaskFragmentOperation#OP_TYPE_SET_COMPANION_TASK_FRAGMENT
      */
-    void setLastCompanionTaskFragment(@Nullable IBinder fragmentToken) {
+    void setLastCompanionTaskFragment(@Nullable IBinder fragmentToken,
+            @Nullable IBinder toBeFinishedActivity) {
         mLastCompanionTaskFragment = fragmentToken;
+        mLastCompanionToBeFinishedActivity = toBeFinishedActivity;
     }
 
     /** Returns whether to enable isolated navigation or not. */
@@ -957,11 +1016,6 @@ class TaskFragmentContainer {
     /** Gets the parent leaf Task id. */
     int getTaskId() {
         return mTaskContainer.getTaskId();
-    }
-
-    @NonNull
-    IBinder getToken() {
-        return mParcelableData.mToken;
     }
 
     @NonNull
@@ -1062,6 +1116,89 @@ class TaskFragmentContainer {
 
     boolean isOverlayWithActivityAssociation() {
         return isOverlay() && mParcelableData.mAssociatedActivityToken != null;
+    }
+
+    /**
+     * Indicates whether there is possibly a pending activity launching into this TaskFragment.
+     *
+     * This should only be used as a hint because we cannot reliably determine if the new activity
+     * is going to appear into this TaskFragment.
+     *
+     * TODO(b/293800510) improve activity launch tracking in TaskFragment.
+     */
+    boolean hasActivityLaunchHint() {
+        if (mLastActivityLaunchTimestampMs == 0) {
+            return false;
+        }
+        if (System.currentTimeMillis() > mLastActivityLaunchTimestampMs + APPEAR_EMPTY_TIMEOUT_MS) {
+            // The hint has expired after APPEAR_EMPTY_TIMEOUT_MS.
+            mLastActivityLaunchTimestampMs = 0;
+            return false;
+        }
+        return true;
+    }
+
+    /** Records the latest activity launch attempt. */
+    void setActivityLaunchHint() {
+        mLastActivityLaunchTimestampMs = System.currentTimeMillis();
+    }
+
+    /**
+     * If we get a new info showing that the TaskFragment has more activities than the previous
+     * info, we clear the new activity launch hint.
+     *
+     * Note that this is not a reliable way and cannot cover situations when the attempted
+     * activity launch did not cause TaskFragment info activity count changes, such as trampoline
+     * launches or single top launches.
+     *
+     * TODO(b/293800510) improve activity launch tracking in TaskFragment.
+     */
+    private void clearActivityLaunchHintIfNecessary(
+            @Nullable TaskFragmentInfo oldInfo, @NonNull TaskFragmentInfo newInfo) {
+        final int previousActivityCount = oldInfo == null ? 0 : oldInfo.getRunningActivityCount();
+        if (newInfo.getRunningActivityCount() > previousActivityCount) {
+            mLastActivityLaunchTimestampMs = 0;
+            cancelDelayedTaskFragmentCleanup();
+        }
+    }
+
+    /**
+     * Schedules delayed TaskFragment cleanup due to pending activity launch. The scheduled cleanup
+     * will be canceled if a new activity appears in this TaskFragment.
+     */
+    void scheduleDelayedTaskFragmentCleanup() {
+        if (mDelayedTaskFragmentCleanupRunnable != null) {
+            // Remove the previous callback if there is already one scheduled.
+            mController.getHandler().removeCallbacks(mDelayedTaskFragmentCleanupRunnable);
+        }
+        mDelayedTaskFragmentCleanupRunnable = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (mController.mLock) {
+                    if (mDelayedTaskFragmentCleanupRunnable != this) {
+                        // The scheduled cleanup runnable has been canceled or rescheduled, so
+                        // skipping.
+                        return;
+                    }
+                    if (isEmpty()) {
+                        mLastActivityLaunchTimestampMs = 0;
+                        mController.onTaskFragmentAppearEmptyTimeout(
+                                TaskFragmentContainer.this);
+                    }
+                    mDelayedTaskFragmentCleanupRunnable = null;
+                }
+            }
+        };
+        mController.getHandler().postDelayed(
+                mDelayedTaskFragmentCleanupRunnable, DELAYED_TASK_FRAGMENT_CLEANUP_TIMEOUT_MS);
+    }
+
+    private void cancelDelayedTaskFragmentCleanup() {
+        if (mDelayedTaskFragmentCleanupRunnable == null) {
+            return;
+        }
+        mController.getHandler().removeCallbacks(mDelayedTaskFragmentCleanupRunnable);
+        mDelayedTaskFragmentCleanupRunnable = null;
     }
 
     @Override

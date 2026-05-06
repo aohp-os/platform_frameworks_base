@@ -22,12 +22,13 @@ import android.os.ServiceManager;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.protolog.ProtoLogConfigurationServiceImpl.RegisterClientArgs;
+import com.android.internal.protolog.IProtoLogConfigurationService.RegisterClientArgs;
 import com.android.internal.protolog.common.ILogger;
 import com.android.internal.protolog.common.IProtoLogGroup;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.ArrayList;
 
 public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
@@ -103,8 +104,9 @@ public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
     @NonNull
     @Override
     protected RegisterClientArgs createConfigurationServiceRegisterClientArgs() {
-        return new RegisterClientArgs()
-                .setViewerConfigFile(mViewerConfigFilePath);
+        var args = new RegisterClientArgs();
+        args.viewerConfigFile = mViewerConfigFilePath;
+        return args;
     }
 
     /**
@@ -114,7 +116,7 @@ public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
      * @return status code
      */
     @Override
-    public int startLoggingToLogcat(String[] groups, @NonNull ILogger logger) {
+    public int startLoggingToLogcat(@NonNull String[] groups, @NonNull ILogger logger) {
         if (!validateGroups(logger, groups)) {
             return -1;
         }
@@ -130,7 +132,7 @@ public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
      * @return status code
      */
     @Override
-    public int stopLoggingToLogcat(String[] groups, @NonNull ILogger logger) {
+    public int stopLoggingToLogcat(@NonNull String[] groups, @NonNull ILogger logger) {
         if (!validateGroups(logger, groups)) {
             return -1;
         }
@@ -161,13 +163,42 @@ public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
         messageString = message.getMessage(mViewerConfigReader);
 
         if (messageString == null) {
-            throw new RuntimeException("Failed to decode message for logcat. "
-                    + "Message hash (" + message.getMessageHash() + ") either not available in "
-                    + "viewerConfig file (" +  mViewerConfigFilePath + ") or "
-                    + "not loaded into memory from file before decoding.");
+            // Either we failed to load the config for this log message from the viewer config file
+            // into memory, or the message hash is simply not available in the viewer config file.
+            // We want to confirm that the message hash is not available in the viewer config file
+            // before throwing an exception.
+            throw new RuntimeException(getReasonForFailureToGetMessageString(message));
         }
 
         return messageString;
+    }
+
+    @NonNull
+    private String getReasonForFailureToGetMessageString(@NonNull Message message) {
+        if (message.getMessageHash() == null) {
+            return "Trying to get message from null message hash";
+        }
+
+        try {
+            ProtoLogViewerConfigReader.MessageData messageData =
+                    mViewerConfigReader.getMessageDataForHashFromFile(message.getMessageHash());
+            if (messageData == null) {
+                return "Failed to decode message for logcat logging. "
+                        + "Message hash (" + message.getMessageHash() + ") is not available in "
+                        + "viewerConfig file (" +  mViewerConfigFilePath + "). This might be due "
+                        + "to the viewer config file and the executing code being out of sync.";
+            } else {
+                return "Failed to decode message for logcat. "
+                        + "Message hash (" + message.getMessageHash()
+                        + ") was available in the viewerConfig file (" + mViewerConfigFilePath
+                        + ") but wasn't loaded into memory from file before decoding! "
+                        + "This is likely a bug. Message: '" + messageData.message
+                        + "', group: '" + messageData.group + "'.";
+            }
+        } catch (IOException e) {
+            return "Failed to get string message to log but could not identify the root cause due "
+                    + "to an IO error in reading the viewer config file.";
+        }
     }
 
     private void loadLogcatGroupsViewerConfig(@NonNull IProtoLogGroup[] protoLogGroups) {
@@ -181,7 +212,7 @@ public class ProcessedPerfettoProtoLogImpl extends PerfettoProtoLogImpl {
         // Load in background to avoid delay in boot process.
         // The caveat is that any log message that is also logged to logcat will not be
         // successfully decoded until this completes.
-        mBackgroundLoggingService.execute(() -> {
+        mSingleThreadedExecutor.execute(() -> {
             mViewerConfigReader.loadViewerConfig(groupsLoggingToLogcat.toArray(new String[0]));
             readyToLogToLogcat();
         });

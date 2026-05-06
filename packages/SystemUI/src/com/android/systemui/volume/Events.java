@@ -37,16 +37,16 @@ import java.util.Arrays;
 public class Events {
     private static final String TAG = Util.logTag(Events.class);
 
-    public static final int EVENT_SHOW_DIALOG = 0;  // (reason|int) (keyguard|bool)
-    public static final int EVENT_DISMISS_DIALOG = 1; // (reason|int)
+    @Deprecated public static final int EVENT_SHOW_DIALOG = 0;  // (reason|int) (keyguard|bool)
+    @Deprecated public static final int EVENT_DISMISS_DIALOG = 1; // (reason|int)
     public static final int EVENT_ACTIVE_STREAM_CHANGED = 2; // (stream|int)
     public static final int EVENT_EXPAND = 3; // (expand|bool)
     public static final int EVENT_KEY = 4; // (stream|int) (lastAudibleStreamVolume)
     public static final int EVENT_COLLECTION_STARTED = 5;
     public static final int EVENT_COLLECTION_STOPPED = 6;
-    public static final int EVENT_ICON_CLICK = 7; // (stream|int) (icon_state|int)
-    public static final int EVENT_SETTINGS_CLICK = 8;
-    public static final int EVENT_TOUCH_LEVEL_CHANGED = 9; // (stream|int) (level|int)
+    @Deprecated public static final int EVENT_ICON_CLICK = 7; // (stream|int) (icon_state|int)
+    @Deprecated public static final int EVENT_SETTINGS_CLICK = 8;
+    @Deprecated public static final int EVENT_TOUCH_LEVEL_CHANGED = 9; // (stream|int) (level|int)
     public static final int EVENT_LEVEL_CHANGED = 10; // (stream|int) (level|int)
     public static final int EVENT_INTERNAL_RINGER_MODE_CHANGED = 11; // (mode|int)
     public static final int EVENT_EXTERNAL_RINGER_MODE_CHANGED = 12; // (mode|int)
@@ -55,12 +55,12 @@ public class Events {
     public static final int EVENT_MUTE_CHANGED = 15;  // (stream|int) (muted|bool)
     public static final int EVENT_TOUCH_LEVEL_DONE = 16;  // (stream|int) (level|int)
     public static final int EVENT_ZEN_CONFIG_CHANGED = 17; // (allow/disallow|string)
-    public static final int EVENT_RINGER_TOGGLE = 18; // (ringer_mode)
+    @Deprecated  public static final int EVENT_RINGER_TOGGLE = 18; // (ringer_mode)
     public static final int EVENT_SHOW_USB_OVERHEAT_ALARM = 19; // (reason|int) (keyguard|bool)
     public static final int EVENT_DISMISS_USB_OVERHEAT_ALARM = 20; // (reason|int) (keyguard|bool)
     public static final int EVENT_ODI_CAPTIONS_CLICK = 21;
     public static final int EVENT_ODI_CAPTIONS_TOOLTIP_CLICK = 22;
-    public static final int EVENT_SLIDER_TOUCH_TRACKING = 23; // (tracking|bool)
+    @Deprecated public static final int EVENT_SLIDER_TOUCH_TRACKING = 23; // (tracking|bool)
 
     private static final String[] EVENT_TAGS = {
             "show_dialog",
@@ -101,6 +101,7 @@ public class Events {
     public static final int DISMISS_REASON_USB_OVERHEAD_ALARM_CHANGED = 9;
     public static final int DISMISS_REASON_CSD_WARNING_TIMEOUT = 10;
     public static final int DISMISS_REASON_POSTURE_CHANGED = 11;
+    public static final int DISMISS_REASON_QUICK_SETTINGS_EXPANDED = 12;
 
     public static final String[] DISMISS_REASONS = {
             "unknown",
@@ -114,7 +115,8 @@ public class Events {
             "output_chooser",
             "usb_temperature_below_threshold",
             "csd_warning_timeout",
-            "posture_changed"
+            "posture_changed",
+            "quick_settings_expanded"
     };
 
     public static final int SHOW_REASON_UNKNOWN = 0;
@@ -184,7 +186,10 @@ public class Events {
         // reserving 141 for DISMISS_REASON_OUTPUT_CHOOSER which is currently unused
         @UiEvent(doc = "The volume dialog was dismissed because the usb high temperature alarm "
                  + "changed")
-        VOLUME_DIALOG_DISMISS_USB_TEMP_ALARM_CHANGED(142);
+        VOLUME_DIALOG_DISMISS_USB_TEMP_ALARM_CHANGED(142),
+        @UiEvent(doc = "The volume dialog was dismissed because the quick settings shade was "
+                + "expanded")
+        VOLUME_DIALOG_DISMISS_QUICK_SETTINGS(2345);
 
         private final int mId;
         VolumeDialogCloseEvent(int id) {
@@ -210,6 +215,8 @@ public class Events {
                     return VOLUME_DIALOG_DISMISS_STREAM_GONE;
                 case DISMISS_REASON_USB_OVERHEAD_ALARM_CHANGED:
                     return VOLUME_DIALOG_DISMISS_USB_TEMP_ALARM_CHANGED;
+                case DISMISS_REASON_QUICK_SETTINGS_EXPANDED:
+                    return VOLUME_DIALOG_DISMISS_QUICK_SETTINGS;
             }
             return INVALID;
         }

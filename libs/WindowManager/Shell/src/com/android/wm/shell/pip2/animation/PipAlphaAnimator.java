@@ -50,7 +50,9 @@ public class PipAlphaAnimator extends ValueAnimator {
 
     private final SurfaceControl mLeash;
     private final SurfaceControl.Transaction mStartTransaction;
+    private final SurfaceControl.Transaction mFinishTransaction;
 
+    private final int mDirection;
     private final Animator.AnimatorListener mAnimatorListener = new AnimatorListenerAdapter() {
         @Override
         public void onAnimationStart(Animator animation) {
@@ -59,6 +61,7 @@ public class PipAlphaAnimator extends ValueAnimator {
                 mAnimationStartCallback.run();
             }
             if (mStartTransaction != null) {
+                onAlphaAnimationUpdate(getStartAlphaValue(), mStartTransaction);
                 mStartTransaction.apply();
             }
         }
@@ -66,6 +69,10 @@ public class PipAlphaAnimator extends ValueAnimator {
         @Override
         public void onAnimationEnd(Animator animation) {
             super.onAnimationEnd(animation);
+            if (mFinishTransaction != null) {
+                onAlphaAnimationUpdate(getEndAlphaValue(), mFinishTransaction);
+                mFinishTransaction.apply();
+            }
             if (mAnimationEndCallback != null) {
                 mAnimationEndCallback.run();
             }
@@ -77,8 +84,9 @@ public class PipAlphaAnimator extends ValueAnimator {
                 @Override
                 public void onAnimationUpdate(@NonNull ValueAnimator animation) {
                     final float alpha = (Float) animation.getAnimatedValue();
-                    mSurfaceControlTransactionFactory.getTransaction()
-                            .setAlpha(mLeash, alpha).apply();
+                    final SurfaceControl.Transaction tx =
+                            mSurfaceControlTransactionFactory.getTransaction();
+                    onAlphaAnimationUpdate(alpha, tx);
                 }
             };
 
@@ -88,18 +96,21 @@ public class PipAlphaAnimator extends ValueAnimator {
 
     @NonNull private PipSurfaceTransactionHelper.SurfaceControlTransactionFactory
             mSurfaceControlTransactionFactory;
+    @NonNull private final PipSurfaceTransactionHelper mSurfaceTransactionHelper;
 
     public PipAlphaAnimator(Context context,
+            @NonNull PipSurfaceTransactionHelper pipSurfaceTransactionHelper,
             SurfaceControl leash,
-            SurfaceControl.Transaction tx,
+            SurfaceControl.Transaction startTransaction,
+            SurfaceControl.Transaction finishTransaction,
             @Fade int direction) {
         mLeash = leash;
-        mStartTransaction = tx;
-        if (direction == FADE_IN) {
-            setFloatValues(0f, 1f);
-        } else { // direction == FADE_OUT
-            setFloatValues(1f, 0f);
-        }
+        mStartTransaction = startTransaction;
+        mFinishTransaction = finishTransaction;
+        mSurfaceTransactionHelper = pipSurfaceTransactionHelper;
+
+        mDirection = direction;
+        setFloatValues(getStartAlphaValue(), getEndAlphaValue());
         mSurfaceControlTransactionFactory =
                 new PipSurfaceTransactionHelper.VsyncSurfaceControlTransactionFactory();
         final int enterAnimationDuration = context.getResources()
@@ -115,6 +126,22 @@ public class PipAlphaAnimator extends ValueAnimator {
 
     public void setAnimationEndCallback(@NonNull Runnable runnable) {
         mAnimationEndCallback = runnable;
+    }
+
+    private void onAlphaAnimationUpdate(float alpha, SurfaceControl.Transaction tx) {
+        // only set shadow radius on fade in
+        tx.setAlpha(mLeash, alpha);
+        mSurfaceTransactionHelper.round(tx, mLeash, true /* applyCornerRadius */);
+        mSurfaceTransactionHelper.shadow(tx, mLeash, mDirection == FADE_IN /* applyCornerRadius */);
+        tx.apply();
+    }
+
+    private float getStartAlphaValue() {
+        return mDirection == FADE_IN ? 0f : 1f;
+    }
+
+    private float getEndAlphaValue() {
+        return mDirection == FADE_IN ? 1f : 0f;
     }
 
     @VisibleForTesting

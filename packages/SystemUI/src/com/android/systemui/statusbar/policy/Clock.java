@@ -22,6 +22,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Rect;
 import android.icu.lang.UCharacter;
@@ -38,14 +40,13 @@ import android.text.format.DateFormat;
 import android.text.style.CharacterStyle;
 import android.text.style.RelativeSizeSpan;
 import android.util.AttributeSet;
-import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.Display;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.TextView;
 
 import com.android.settingslib.Utils;
+import com.android.settingslib.applications.InterestingConfigChanges;
 import com.android.systemui.Dependency;
 import com.android.systemui.FontSizeUtils;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -54,9 +55,10 @@ import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shade.shared.flag.ShadeWindowGoesAround;
 import com.android.systemui.statusbar.CommandQueue;
+import com.android.systemui.statusbar.core.StatusBarRootModernization;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
-import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
 
@@ -73,7 +75,7 @@ public class Clock extends TextView implements
         DemoModeCommandReceiver,
         Tunable,
         CommandQueue.Callbacks,
-        DarkReceiver, ConfigurationListener {
+        DarkReceiver {
 
     public static final String CLOCK_SECONDS = "clock_seconds";
     private static final String CLOCK_SUPER_PARCELABLE = "clock_super_parcelable";
@@ -107,10 +109,8 @@ public class Clock extends TextView implements
     private boolean mShowSeconds;
     private Handler mSecondsHandler;
 
-    // Fields to cache the width so the clock remains at an approximately constant width
-    private int mCharsAtCurrentWidth = -1;
-    private int mCachedWidth = -1;
-
+    // Tracks config changes that will make the clock change dimensions
+    private final InterestingConfigChanges mInterestingConfigChanges;
     /**
      * Color to be set on this {@link TextView}, when wallpaperTextColor is <b>not</b> utilized.
      */
@@ -146,6 +146,12 @@ public class Clock extends TextView implements
         }
         mBroadcastDispatcher = Dependency.get(BroadcastDispatcher.class);
         mUserTracker = Dependency.get(UserTracker.class);
+        if (ShadeWindowGoesAround.isEnabled()) {
+            mInterestingConfigChanges = new InterestingConfigChanges(
+                    ActivityInfo.CONFIG_FONT_SCALE | ActivityInfo.CONFIG_DENSITY);
+        } else {
+            mInterestingConfigChanges = null;
+        }
 
         setIncludeFontPadding(false);
     }
@@ -216,7 +222,9 @@ public class Clock extends TextView implements
 
         // Make sure we update to the current time
         updateClock();
-        updateClockVisibility();
+        if (!StatusBarRootModernization.isEnabled()) {
+            updateClockVisibility();
+        }
         updateShowSeconds();
     }
 
@@ -257,13 +265,16 @@ public class Clock extends TextView implements
                     if (mClockFormat != null) {
                         mClockFormat.setTimeZone(mCalendar.getTimeZone());
                     }
+                    if (mContentDescriptionFormat != null) {
+                        mContentDescriptionFormat.setTimeZone(mCalendar.getTimeZone());
+                    }
                 });
             } else if (action.equals(Intent.ACTION_CONFIGURATION_CHANGED)) {
                 final Locale newLocale = getResources().getConfiguration().locale;
                 handler.post(() -> {
                     if (!newLocale.equals(mLocale)) {
                         mLocale = newLocale;
-                         // Force refresh of dependent variables.
+                        // Force refresh of dependent variables.
                         mContentDescriptionFormatString = "";
                         mDateTimePatternGenerator = null;
                     }
@@ -275,19 +286,25 @@ public class Clock extends TextView implements
 
     @Override
     public void setVisibility(int visibility) {
-        if (visibility == View.VISIBLE && !shouldBeVisible()) {
-            return;
+        if (!StatusBarRootModernization.isEnabled()) {
+            if (visibility == View.VISIBLE && !shouldBeVisible()) {
+                return;
+            }
         }
 
         super.setVisibility(visibility);
     }
 
-    public void setClockVisibleByUser(boolean visible) {
+    private void setClockVisibleByUser(boolean visible) {
+        StatusBarRootModernization.assertInLegacyMode();
+
         mClockVisibleByUser = visible;
         updateClockVisibility();
     }
 
-    public void setClockVisibilityByPolicy(boolean visible) {
+    private void setClockVisibilityByPolicy(boolean visible) {
+        StatusBarRootModernization.assertInLegacyMode();
+
         mClockVisibleByPolicy = visible;
         updateClockVisibility();
     }
@@ -297,6 +314,8 @@ public class Clock extends TextView implements
     }
 
     private void updateClockVisibility() {
+        StatusBarRootModernization.assertInLegacyMode();
+
         boolean visible = shouldBeVisible();
         int visibility = visible ? View.VISIBLE : View.GONE;
         super.setVisibility(visibility);
@@ -315,46 +334,28 @@ public class Clock extends TextView implements
         setContentDescription(mContentDescriptionFormat.format(mCalendar.getTime()));
     }
 
-    /**
-     * In order to avoid the clock growing and shrinking due to proportional fonts, we want to
-     * cache the drawn width at a given number of characters (removing the cache when it changes),
-     * and only use the biggest value. This means that the clock width with grow to the maximum
-     * size over time, but reset whenever the number of characters changes (or the configuration
-     * changes)
-     */
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-
-        int chars = getText().length();
-        if (chars != mCharsAtCurrentWidth) {
-            mCharsAtCurrentWidth = chars;
-            mCachedWidth = getMeasuredWidth();
-            return;
-        }
-
-        int measuredWidth = getMeasuredWidth();
-        if (mCachedWidth > measuredWidth) {
-            setMeasuredDimension(mCachedWidth, getMeasuredHeight());
-        } else {
-            mCachedWidth = measuredWidth;
-        }
-    }
-
     @Override
     public void onTuningChanged(String key, String newValue) {
         if (CLOCK_SECONDS.equals(key)) {
             mShowSeconds = TunerService.parseIntegerSwitch(newValue, false);
             updateShowSeconds();
-        } else if (StatusBarIconController.ICON_HIDE_LIST.equals(key)) {
-            setClockVisibleByUser(!StatusBarIconController.getIconHideList(getContext(), newValue)
-                    .contains("clock"));
-            updateClockVisibility();
+        } else if (!StatusBarRootModernization.isEnabled()) {
+            if (StatusBarIconController.ICON_HIDE_LIST.equals(key)) {
+                setClockVisibleByUser(
+                        !StatusBarIconController
+                                .getIconHideList(getContext(), newValue)
+                                .contains("clock"));
+                updateClockVisibility();
+            }
         }
     }
 
     @Override
     public void disable(int displayId, int state1, int state2, boolean animate) {
+        if (StatusBarRootModernization.isEnabled()) {
+            return;
+        }
+
         if (displayId != getDisplay().getDisplayId()) {
             return;
         }
@@ -377,16 +378,18 @@ public class Clock extends TextView implements
         setTextColor(Utils.getColorAttrDefaultColor(context, R.attr.wallpaperTextColor));
     }
 
-    @Override
     public void onDensityOrFontScaleChanged() {
+        ShadeWindowGoesAround.assertInLegacyMode();
+        // Note that this class is not being registered as configuration listener when used
+        // from compose. It will instead receive a normal "View#onConfigurationChanged".
         reloadDimens();
     }
 
     private void reloadDimens() {
-        // reset mCachedWidth so the new width would be updated properly when next onMeasure
-        mCachedWidth = -1;
-
         FontSizeUtils.updateFontSize(this, R.dimen.status_bar_clock_size);
+
+        // Note: The padding for the clock in the shade is controlled by ShadeHeaderController so
+        // this just affects the status bar clock.
         setPaddingRelative(
                 mContext.getResources().getDimensionPixelSize(
                         R.dimen.status_bar_clock_starting_padding),
@@ -394,14 +397,18 @@ public class Clock extends TextView implements
                 mContext.getResources().getDimensionPixelSize(
                         R.dimen.status_bar_clock_end_padding),
                 0);
+    }
 
-        float fontHeight = getPaint().getFontMetricsInt(null);
-        setLineHeight(TypedValue.COMPLEX_UNIT_PX, fontHeight);
 
-        ViewGroup.LayoutParams lp = getLayoutParams();
-        if (lp != null) {
-            lp.height = (int) Math.ceil(fontHeight);
-            setLayoutParams(lp);
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (ShadeWindowGoesAround.isEnabled()) {
+            final boolean shouldReloadDimensions =
+                    mInterestingConfigChanges.applyNewConfig(newConfig);
+            if (shouldReloadDimensions) {
+                reloadDimens();
+            }
         }
     }
 
@@ -419,6 +426,7 @@ public class Clock extends TextView implements
                 filter.addAction(Intent.ACTION_SCREEN_ON);
                 mBroadcastDispatcher.registerReceiver(mScreenReceiver, filter);
             }
+            setFontFeatureSettings("tnum");
         } else {
             if (mSecondsHandler != null) {
                 mScreenReceiverRegistered = false;
@@ -427,6 +435,7 @@ public class Clock extends TextView implements
                 mSecondsHandler = null;
                 updateClock();
             }
+            setFontFeatureSettings(null);
         }
     }
 
@@ -437,7 +446,7 @@ public class Clock extends TextView implements
             // Despite its name, getInstance creates a cloned instance, so reuse the generator to
             // avoid unnecessary churn.
             mDateTimePatternGenerator = DateTimePatternGenerator.getInstance(
-                context.getResources().getConfiguration().locale);
+                    context.getResources().getConfiguration().locale);
         }
 
         final char MAGIC1 = '\uEF00';
@@ -477,7 +486,7 @@ public class Clock extends TextView implements
                         a--;
                     }
                     format = format.substring(0, a) + MAGIC1 + format.substring(a, b)
-                        + "a" + MAGIC2 + format.substring(b + 1);
+                            + "a" + MAGIC2 + format.substring(b + 1);
                 }
             }
             mClockFormat = new SimpleDateFormat(format);
@@ -490,12 +499,12 @@ public class Clock extends TextView implements
             if (magic1 >= 0 && magic2 > magic1) {
                 SpannableStringBuilder formatted = new SpannableStringBuilder(result);
                 if (mAmPmStyle == AM_PM_STYLE_GONE) {
-                    formatted.delete(magic1, magic2+1);
+                    formatted.delete(magic1, magic2 + 1);
                 } else {
                     if (mAmPmStyle == AM_PM_STYLE_SMALL) {
                         CharacterStyle style = new RelativeSizeSpan(0.7f);
                         formatted.setSpan(style, magic1, magic2,
-                                          Spannable.SPAN_EXCLUSIVE_INCLUSIVE);
+                                Spannable.SPAN_EXCLUSIVE_INCLUSIVE);
                     }
                     formatted.delete(magic2, magic2 + 1);
                     formatted.delete(magic1, magic1 + 1);

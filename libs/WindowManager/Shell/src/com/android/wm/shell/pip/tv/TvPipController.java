@@ -269,6 +269,8 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
 
         mShellController.addConfigurationChangeListener(this);
         mShellController.addUserChangeListener(this);
+
+        mAppOpsListener.setCallback(mPipTaskOrganizer::removePip);
     }
 
     @Override
@@ -625,6 +627,10 @@ public class TvPipController implements PipTransitionController.PipTransitionCal
             public void onExpandedAspectRatioChanged(float ratio) {
                 ProtoLog.d(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
                         "%s: onExpandedAspectRatioChanged: %f", TAG, ratio);
+
+                if (!mTvPipBoundsState.isTvExpandedPipSupported()) {
+                    return;
+                }
 
                 mTvPipBoundsState.setDesiredTvExpandedAspectRatio(ratio, false);
                 updateExpansionState();

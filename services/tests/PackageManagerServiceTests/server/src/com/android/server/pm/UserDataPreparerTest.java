@@ -19,8 +19,8 @@ package com.android.server.pm;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Matchers.isNull;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,6 +37,10 @@ import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
+import com.android.server.LocalServices;
+import com.android.server.StorageManagerInternal;
+
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -66,6 +70,9 @@ public class UserDataPreparerTest {
     private StorageManager mStorageManagerMock;
 
     @Mock
+    private StorageManagerInternal mSmInternalMock;
+
+    @Mock
     private Context mContextMock;
 
     @Mock
@@ -89,6 +96,12 @@ public class UserDataPreparerTest {
                 .thenReturn(mStorageManagerMock);
         VolumeInfo testVolume = new VolumeInfo("testuuid", VolumeInfo.TYPE_PRIVATE, null, null);
         when(mStorageManagerMock.getWritablePrivateVolumes()).thenReturn(Arrays.asList(testVolume));
+        LocalServices.addService(StorageManagerInternal.class, mSmInternalMock);
+    }
+
+    @After
+    public void tearDown() {
+        LocalServices.removeServiceForTest(StorageManagerInternal.class);
     }
 
     @Test
@@ -98,9 +111,9 @@ public class UserDataPreparerTest {
         File systemDeDir = mUserDataPreparer.getDataSystemDeDirectory(TEST_USER_ID);
         systemDeDir.mkdirs();
         mUserDataPreparer.prepareUserData(TEST_USER, StorageManager.FLAG_STORAGE_DE);
-        verify(mStorageManagerMock).prepareUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                eq(StorageManager.FLAG_STORAGE_DE));
-        verify(mInstaller).createUserData(isNull(String.class), eq(TEST_USER_ID),
+        verify(mSmInternalMock)
+                .prepareUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_DE));
+        verify(mInstaller).createUserData(isNull(), eq(TEST_USER_ID),
                 eq(TEST_USER_SERIAL), eq(StorageManager.FLAG_STORAGE_DE));
         int serialNumber = UserDataPreparer.getSerialNumber(userDeDir);
         assertEquals(TEST_USER_SERIAL, serialNumber);
@@ -115,9 +128,9 @@ public class UserDataPreparerTest {
         File systemCeDir = mUserDataPreparer.getDataSystemCeDirectory(TEST_USER_ID);
         systemCeDir.mkdirs();
         mUserDataPreparer.prepareUserData(TEST_USER, StorageManager.FLAG_STORAGE_CE);
-        verify(mStorageManagerMock).prepareUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                eq(StorageManager.FLAG_STORAGE_CE));
-        verify(mInstaller).createUserData(isNull(String.class), eq(TEST_USER_ID),
+        verify(mSmInternalMock)
+                .prepareUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
+        verify(mInstaller).createUserData(isNull(), eq(TEST_USER_ID),
                 eq(TEST_USER_SERIAL), eq(StorageManager.FLAG_STORAGE_CE));
         int serialNumber = UserDataPreparer.getSerialNumber(userCeDir);
         assertEquals(TEST_USER_SERIAL, serialNumber);
@@ -128,23 +141,23 @@ public class UserDataPreparerTest {
     @Test
     public void testPrepareUserData_forNewUser_destroysOnFailure() throws Exception {
         TEST_USER.lastLoggedInTime = 0;
-        doThrow(new IllegalStateException("expected exception for test")).when(mStorageManagerMock)
-                .prepareUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                        eq(StorageManager.FLAG_STORAGE_CE));
+        doThrow(new IllegalStateException("expected exception for test"))
+                .when(mSmInternalMock)
+                .prepareUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
         mUserDataPreparer.prepareUserData(TEST_USER, StorageManager.FLAG_STORAGE_CE);
-        verify(mStorageManagerMock).destroyUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                eq(StorageManager.FLAG_STORAGE_CE));
+        verify(mSmInternalMock)
+                .destroyUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
     }
 
     @Test
     public void testPrepareUserData_forExistingUser_doesNotDestroyOnFailure() throws Exception {
         TEST_USER.lastLoggedInTime = System.currentTimeMillis();
-        doThrow(new IllegalStateException("expected exception for test")).when(mStorageManagerMock)
-                .prepareUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                        eq(StorageManager.FLAG_STORAGE_CE));
+        doThrow(new IllegalStateException("expected exception for test"))
+                .when(mSmInternalMock)
+                .prepareUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
         mUserDataPreparer.prepareUserData(TEST_USER, StorageManager.FLAG_STORAGE_CE);
-        verify(mStorageManagerMock, never()).destroyUserStorage(isNull(String.class),
-                eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
+        verify(mSmInternalMock, never())
+                .destroyUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
     }
 
     @Test
@@ -171,10 +184,10 @@ public class UserDataPreparerTest {
 
         mUserDataPreparer.destroyUserData(TEST_USER_ID, StorageManager.FLAG_STORAGE_DE);
 
-        verify(mInstaller).destroyUserData(isNull(String.class), eq(TEST_USER_ID),
+        verify(mInstaller).destroyUserData(isNull(), eq(TEST_USER_ID),
                         eq(StorageManager.FLAG_STORAGE_DE));
-        verify(mStorageManagerMock).destroyUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                        eq(StorageManager.FLAG_STORAGE_DE));
+        verify(mSmInternalMock)
+                .destroyUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_DE));
 
         // systemDir (normal path: /data/system/users/$userId) should have been deleted.
         assertFalse(systemDir.exists());
@@ -195,10 +208,10 @@ public class UserDataPreparerTest {
 
         mUserDataPreparer.destroyUserData(TEST_USER_ID, StorageManager.FLAG_STORAGE_CE);
 
-        verify(mInstaller).destroyUserData(isNull(String.class), eq(TEST_USER_ID),
+        verify(mInstaller).destroyUserData(isNull(), eq(TEST_USER_ID),
                 eq(StorageManager.FLAG_STORAGE_CE));
-        verify(mStorageManagerMock).destroyUserStorage(isNull(String.class), eq(TEST_USER_ID),
-                eq(StorageManager.FLAG_STORAGE_CE));
+        verify(mSmInternalMock)
+                .destroyUserStorage(isNull(), eq(TEST_USER_ID), eq(StorageManager.FLAG_STORAGE_CE));
 
         // systemCeDir (normal path: /data/system_ce/$userId) should still exist but be empty, since
         // UserDataPreparer itself is responsible for deleting the contents of this directory, but
@@ -225,7 +238,7 @@ public class UserDataPreparerTest {
                 .reconcileUsers(StorageManager.UUID_PRIVATE_INTERNAL, Arrays.asList(u1, u2),
                         Arrays.asList(dir1, dir2, dir3));
         // Verify that user 3 data is removed
-        verify(mInstaller).destroyUserData(isNull(String.class), eq(3),
+        verify(mInstaller).destroyUserData(isNull(), eq(3),
                 eq(StorageManager.FLAG_STORAGE_DE|StorageManager.FLAG_STORAGE_CE));
     }
 

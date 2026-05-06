@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.statusbar.data.repository
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,7 +23,6 @@ import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.statusbar.NotificationRemoteInputManager
 import com.android.systemui.util.mockito.withArgCaptor
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -38,7 +35,6 @@ import org.mockito.MockitoAnnotations
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@android.platform.test.annotations.EnabledOnRavenwood
 class RemoteInputRepositoryImplTest : SysuiTestCase() {
     @Mock private lateinit var remoteInputManager: NotificationRemoteInputManager
 

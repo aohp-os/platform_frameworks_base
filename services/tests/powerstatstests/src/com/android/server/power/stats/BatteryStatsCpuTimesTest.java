@@ -40,7 +40,6 @@ import android.os.BatteryStats;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.UserHandle;
-import android.platform.test.ravenwood.RavenwoodRule;
 import android.util.SparseArray;
 import android.util.SparseLongArray;
 import android.view.Display;
@@ -57,7 +56,6 @@ import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidUserSysTimeRea
 import com.android.internal.util.ArrayUtils;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -88,11 +86,6 @@ import java.util.Arrays;
 @RunWith(AndroidJUnit4.class)
 @SuppressWarnings("SynchronizeOnNonFinalField")
 public class BatteryStatsCpuTimesTest {
-    @Rule
-    public final RavenwoodRule mRavenwood = new RavenwoodRule.Builder()
-            .setProvideMainThread(true)
-            .build();
-
     @Mock
     KernelCpuUidUserSysTimeReader mCpuUidUserSysTimeReader;
     @Mock
@@ -101,8 +94,6 @@ public class BatteryStatsCpuTimesTest {
     KernelCpuUidActiveTimeReader mCpuUidActiveTimeReader;
     @Mock
     KernelCpuUidClusterTimeReader mCpuUidClusterTimeReader;
-    @Mock
-    SystemServerCpuThreadReader mSystemServerCpuThreadReader;
     @Mock
     BatteryStatsImpl.UserInfoProvider mUserInfoProvider;
 
@@ -125,7 +116,6 @@ public class BatteryStatsCpuTimesTest {
                 .setKernelCpuUidFreqTimeReader(mCpuUidFreqTimeReader)
                 .setKernelCpuUidActiveTimeReader(mCpuUidActiveTimeReader)
                 .setKernelCpuUidClusterTimeReader(mCpuUidClusterTimeReader)
-                .setSystemServerCpuThreadReader(mSystemServerCpuThreadReader)
                 .setUserInfoProvider(mUserInfoProvider);
     }
 
@@ -138,7 +128,7 @@ public class BatteryStatsCpuTimesTest {
 
         // RUN
         synchronized (mBatteryStatsImpl) {
-            mBatteryStatsImpl.updateCpuTimeLocked(false, false, null);
+            mBatteryStatsImpl.updateCpuTimeLocked(false, false);
         }
 
         // VERIFY
@@ -159,7 +149,7 @@ public class BatteryStatsCpuTimesTest {
 
         // RUN
         synchronized (mBatteryStatsImpl) {
-            mBatteryStatsImpl.updateCpuTimeLocked(true, false, null);
+            mBatteryStatsImpl.updateCpuTimeLocked(true, false);
         }
 
         // VERIFY
@@ -249,7 +239,7 @@ public class BatteryStatsCpuTimesTest {
         }
 
         // RUN
-        mBatteryStatsImpl.updateClusterSpeedTimes(updatedUids, true, null);
+        mBatteryStatsImpl.updateClusterSpeedTimes(updatedUids, true);
 
         // VERIFY
         long totalClustersTimeMs = 0;
@@ -589,7 +579,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -622,7 +612,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -678,7 +668,7 @@ public class BatteryStatsCpuTimesTest {
         when(mCpuUidFreqTimeReader.perClusterTimesAvailable()).thenReturn(true);
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -721,7 +711,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -795,7 +785,7 @@ public class BatteryStatsCpuTimesTest {
         when(mCpuUidFreqTimeReader.perClusterTimesAvailable()).thenReturn(true);
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(partialTimers, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(partialTimers, true, false);
 
         // VERIFY
         final long[][] expectedWakeLockUidTimesUs = new long[2][];
@@ -884,7 +874,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -917,7 +907,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -961,7 +951,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -1000,7 +990,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -1057,7 +1047,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidFreqTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false, null);
+        mBatteryStatsImpl.readKernelUidCpuFreqTimesLocked(null, true, false);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -1257,7 +1247,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidClusterTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true, null);
+        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -1287,7 +1277,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidClusterTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true, null);
+        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {
@@ -1332,7 +1322,7 @@ public class BatteryStatsCpuTimesTest {
                 any(KernelCpuUidClusterTimeReader.Callback.class));
 
         // RUN
-        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true, null);
+        mBatteryStatsImpl.readKernelUidCpuClusterTimesLocked(true);
 
         // VERIFY
         for (int i = 0; i < testUids.length; ++i) {

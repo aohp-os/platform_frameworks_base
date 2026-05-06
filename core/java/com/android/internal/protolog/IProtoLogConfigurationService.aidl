@@ -38,14 +38,23 @@ import com.android.internal.protolog.IProtoLogClient;
  * data, so this service allows us to orchestrate which config gets dumped so we don't duplicate
  * this information in the trace and waste valuable trace space.
  *
- * {@hide}
+ * @hide
  */
 interface IProtoLogConfigurationService {
-    interface IRegisterClientArgs {
-        String[] getGroups();
-        boolean[] getGroupsDefaultLogcatStatus();
-        String getViewerConfigFile();
+    parcelable RegisterClientArgs {
+        String[] groups;
+        boolean[] groupsDefaultLogcatStatus;
+        String viewerConfigFile;
     }
 
-    void registerClient(IProtoLogClient client, IRegisterClientArgs args);
+    parcelable RegisterGroupsArgs {
+        String[] groups;
+        boolean[] groupsDefaultLogcatStatus;
+    }
+
+    oneway void registerClient(IProtoLogClient client, in RegisterClientArgs args);
+
+    oneway void registerGroups(IProtoLogClient client, in RegisterGroupsArgs args);
+
+    oneway void unregisterClient(IProtoLogClient  client);
 }

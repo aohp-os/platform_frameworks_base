@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.scene.domain.startable
 
 import android.content.applicationContext
@@ -24,16 +22,15 @@ import com.android.systemui.authentication.domain.interactor.authenticationInter
 import com.android.systemui.deviceconfig.domain.interactor.deviceConfigInteractor
 import com.android.systemui.deviceentry.domain.interactor.deviceEntryFaceAuthInteractor
 import com.android.systemui.deviceentry.domain.interactor.deviceEntryInteractor
+import com.android.systemui.keyguard.domain.interactor.keyguardOcclusionInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.applicationCoroutineScope
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.navigation.domain.interactor.navigationInteractor
 import com.android.systemui.power.domain.interactor.powerInteractor
-import com.android.systemui.scene.domain.interactor.sceneContainerOcclusionInteractor
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.user.domain.interactor.selectedUserInteractor
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 val Kosmos.statusBarStartable by Fixture {
     StatusBarStartable(
@@ -43,7 +40,7 @@ val Kosmos.statusBarStartable by Fixture {
         selectedUserInteractor = selectedUserInteractor,
         sceneInteractor = sceneInteractor,
         deviceEntryInteractor = deviceEntryInteractor,
-        sceneContainerOcclusionInteractor = sceneContainerOcclusionInteractor,
+        occlusionInteractor = keyguardOcclusionInteractor,
         deviceConfigInteractor = deviceConfigInteractor,
         navigationInteractor = navigationInteractor,
         authenticationInteractor = authenticationInteractor,

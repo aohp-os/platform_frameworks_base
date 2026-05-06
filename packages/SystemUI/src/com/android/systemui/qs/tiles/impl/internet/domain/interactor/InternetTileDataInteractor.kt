@@ -24,11 +24,12 @@ import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.ContentDescription.Companion.loadContentDescription
 import com.android.systemui.common.shared.model.Text
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.qs.tiles.base.interactor.DataUpdateTrigger
-import com.android.systemui.qs.tiles.base.interactor.QSTileDataInteractor
+import com.android.systemui.qs.tiles.base.domain.interactor.QSTileDataInteractor
+import com.android.systemui.qs.tiles.base.domain.model.DataUpdateTrigger
 import com.android.systemui.qs.tiles.impl.internet.domain.model.InternetTileModel
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.statusbar.connectivity.ui.MobileContextProvider
 import com.android.systemui.statusbar.pipeline.airplane.data.repository.AirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.ethernet.domain.EthernetInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.MobileIconsInteractor
@@ -41,7 +42,6 @@ import com.android.systemui.statusbar.pipeline.wifi.ui.model.WifiIcon
 import com.android.systemui.utils.coroutines.flow.mapLatestConflated
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +50,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 
-@OptIn(ExperimentalCoroutinesApi::class)
 /** Observes internet state changes providing the [InternetTileModel]. */
 class InternetTileDataInteractor
 @Inject
@@ -61,6 +60,7 @@ constructor(
     private val connectivityRepository: ConnectivityRepository,
     ethernetInteractor: EthernetInteractor,
     mobileIconsInteractor: MobileIconsInteractor,
+    mobileContextProvider: MobileContextProvider,
     wifiInteractor: WifiInteractor,
 ) : QSTileDataInteractor<InternetTileModel> {
     private val internetLabel: String = context.getString(R.string.quick_settings_internet_label)
@@ -75,7 +75,7 @@ constructor(
                 flowOf(
                     InternetTileModel.Active(
                         secondaryTitle = secondary,
-                        icon = InternetTileIconModel.ResourceId(wifiIcon.icon.res),
+                        icon = InternetTileIconModel.ResourceId(wifiIcon.icon.resId),
                         stateDescription = wifiIcon.contentDescription,
                         contentDescription = ContentDescription.Loaded("$internetLabel,$secondary"),
                     )
@@ -91,11 +91,13 @@ constructor(
                 flowOf(null)
             } else {
                 combine(it.isRoaming, it.networkTypeIconGroup) { isRoaming, networkTypeIconGroup ->
-                    val cd = loadString(networkTypeIconGroup.contentDescription)
+                    val mobileContext =
+                        mobileContextProvider.getMobileContextForSub(it.subscriptionId, context)
+                    val cd = loadString(networkTypeIconGroup.contentDescription, mobileContext)
                     if (isRoaming) {
-                        val roaming = context.getString(R.string.data_connection_roaming)
+                        val roaming = mobileContext.getString(R.string.data_connection_roaming)
                         if (cd != null) {
-                            context.getString(R.string.mobile_data_text_format, roaming, cd)
+                            mobileContext.getString(R.string.mobile_data_text_format, roaming, cd)
                         } else {
                             roaming
                         }
@@ -173,7 +175,7 @@ constructor(
         )
     }
 
-    private fun loadString(@StringRes resId: Int): CharSequence? =
+    private fun loadString(@StringRes resId: Int, context: Context): CharSequence? =
         if (resId != 0) {
             context.getString(resId)
         } else {
@@ -189,7 +191,7 @@ constructor(
                 flowOf(
                     InternetTileModel.Active(
                         secondaryLabel = secondary?.toText(),
-                        icon = InternetTileIconModel.ResourceId(it.res),
+                        icon = InternetTileIconModel.ResourceId(it.resId),
                         stateDescription = null,
                         contentDescription = secondary,
                     )

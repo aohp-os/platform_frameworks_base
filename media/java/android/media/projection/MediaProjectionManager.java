@@ -16,6 +16,7 @@
 
 package android.media.projection;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
@@ -23,12 +24,16 @@ import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.app.Activity;
 import android.app.ActivityOptions.LaunchCookie;
+import android.app.job.JobParameters.StopReason;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.Disabled;
 import android.compat.annotation.Overridable;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.hardware.display.VirtualDisplay;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
@@ -37,6 +42,8 @@ import android.util.ArrayMap;
 import android.util.Log;
 import android.view.ContentRecordingSession;
 import android.view.Surface;
+
+import com.android.media.projection.flags.Flags;
 
 import java.util.Map;
 
@@ -78,9 +85,12 @@ public final class MediaProjectionManager {
     private static final String TAG = "MediaProjectionManager";
 
     /**
-     * This change id ensures that users are presented with a choice of capturing a single app
-     * or the entire screen when initiating a MediaProjection session, overriding the usage of
-     * MediaProjectionConfig#createConfigForDefaultDisplay.
+     * If enabled, this change id ensures that users are presented with a choice of capturing a
+     * single app and the entire screen when initiating a MediaProjection session, overriding the
+     * usage of MediaProjectionConfig#createConfigForDefaultDisplay.
+     * <p>
+     *
+     * <a href=" https://developer.android.com/guide/practices/device-compatibility-mode#override_disable_media_projection_single_app_option">More info</a>
      *
      * @hide
      */
@@ -183,14 +193,47 @@ public final class MediaProjectionManager {
      *
      * @param config Customization for the {@link MediaProjection} that this {@link Intent} requests
      *               the user's consent for.
+     * @throws IllegalArgumentException if
+     * {@link MediaProjectionConfig#isOwnAppContentProvided()} is true but no
+     * {@link AppContentProjectionService} is declared.
+     *
      * @return An {@link Intent} requesting the user's consent, specialized based upon the given
      * configuration.
      */
     @NonNull
     public Intent createScreenCaptureIntent(@NonNull MediaProjectionConfig config) {
+        if (Flags.appContentSharing()) {
+            if (config.isOwnAppContentProvided()) {
+                checkAppContentPrerequisites();
+            }
+        }
         Intent i = createScreenCaptureIntent();
         i.putExtra(EXTRA_MEDIA_PROJECTION_CONFIG, config);
         return i;
+    }
+
+    private void checkAppContentPrerequisites() {
+        PackageManager packageManager = mContext.getPackageManager();
+        Intent serviceIntent = new Intent(AppContentProjectionService.SERVICE_INTERFACE)
+                .setPackage(mContext.getPackageName());
+
+        ResolveInfo resolveInfo = packageManager.resolveService(serviceIntent,
+                PackageManager.MATCH_ALL);
+        Log.d(TAG, "ResolveInfo:" + (resolveInfo == null ? "null" : resolveInfo.toString()));
+        if (resolveInfo == null) {
+            Log.w(TAG, "Could not resolve service declaring an intent-filter with "
+                    + AppContentProjectionService.SERVICE_INTERFACE);
+            throw new IllegalArgumentException(
+                    "Could not resolve service declaring an intent-filter with "
+                            + AppContentProjectionService.SERVICE_INTERFACE);
+        }
+        if (resolveInfo != null && !Manifest.permission.MANAGE_MEDIA_PROJECTION.equals(
+                resolveInfo.serviceInfo.permission)) {
+            Log.w(TAG,
+                    "Service declaring action %s must check %s".formatted(
+                            AppContentProjectionService.SERVICE_INTERFACE,
+                            Manifest.permission.MANAGE_MEDIA_PROJECTION));
+        }
     }
 
     /**
@@ -363,6 +406,19 @@ public final class MediaProjectionManager {
                 @Nullable ContentRecordingSession session
         ) {
         }
+
+        /**
+         * Called when a specific {@link MediaProjectionEvent} occurs during the media projection
+         * session.
+         *
+         * @param event the media projection event details.
+         * @param info optional details about the media projection host.
+         * @param session optional associated recording session details.
+         */
+        public void onMediaProjectionEvent(
+                final MediaProjectionEvent event,
+                @Nullable MediaProjectionInfo info,
+                @Nullable final ContentRecordingSession session) {}
     }
 
     /** @hide */
@@ -404,6 +460,14 @@ public final class MediaProjectionManager {
                 @Nullable final ContentRecordingSession session
         ) {
             mHandler.post(() -> mCallback.onRecordingSessionSet(info, session));
+        }
+
+        @Override
+        public void onMediaProjectionEvent(
+                final MediaProjectionEvent event,
+                @Nullable MediaProjectionInfo info,
+                @Nullable final ContentRecordingSession session) {
+            mHandler.post(() -> mCallback.onMediaProjectionEvent(event, info, session));
         }
     }
 }

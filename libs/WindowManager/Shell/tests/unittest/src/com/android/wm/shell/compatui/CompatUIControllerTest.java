@@ -16,6 +16,7 @@
 
 package com.android.wm.shell.compatui;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.view.WindowInsets.Type.navigationBars;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
@@ -30,7 +31,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.TaskInfo;
@@ -39,9 +39,6 @@ import android.content.res.Configuration;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.RequiresFlagsDisabled;
-import android.platform.test.flag.junit.CheckFlagsRule;
-import android.platform.test.flag.junit.DeviceFlagsValueProvider;
-import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.AndroidTestingRunner;
 import android.view.InsetsSource;
 import android.view.InsetsState;
@@ -50,6 +47,7 @@ import android.view.accessibility.AccessibilityManager;
 import androidx.annotation.NonNull;
 import androidx.test.filters.SmallTest;
 
+import com.android.systemui.animation.ActivityTransitionAnimator;
 import com.android.window.flags.Flags;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.ShellTestCase;
@@ -62,19 +60,19 @@ import com.android.wm.shell.common.DockStateReader;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.compatui.api.CompatUIInfo;
-import com.android.wm.shell.desktopmode.DesktopRepository;
+import com.android.wm.shell.compatui.impl.CompatUIRequests;
 import com.android.wm.shell.desktopmode.DesktopUserRepositories;
+import com.android.wm.shell.desktopmode.data.DesktopRepository;
+import com.android.wm.shell.shared.desktopmode.FakeDesktopState;
+import com.android.wm.shell.startingsurface.StartingWindowController;
 import com.android.wm.shell.sysui.ShellController;
 import com.android.wm.shell.sysui.ShellInit;
 import com.android.wm.shell.transition.Transitions;
 
 import dagger.Lazy;
 
-import java.util.Optional;
-
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -82,24 +80,20 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.util.Optional;
+
 /**
  * Tests for {@link CompatUIController}.
  *
  * Build/Install/Run:
- *  atest WMShellUnitTests:CompatUIControllerTest
+ * atest WMShellUnitTests:CompatUIControllerTest
  */
 @RunWith(AndroidTestingRunner.class)
 @SmallTest
 public class CompatUIControllerTest extends ShellTestCase {
     private static final int DISPLAY_ID = 0;
     private static final int TASK_ID = 12;
-
-    @Rule
-    public final CheckFlagsRule mCheckFlagsRule =
-            DeviceFlagsValueProvider.createCheckFlagsRule();
-
-    @Rule
-    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+    private static final int TASK_ID_2 = 18;
 
     private CompatUIController mController;
     private ShellInit mShellInit;
@@ -145,12 +139,25 @@ public class CompatUIControllerTest extends ShellTestCase {
 
     @NonNull
     private CompatUIStatusManager mCompatUIStatusManager;
+    @NonNull
+    private FakeDesktopState mDesktopState;
 
+    @Mock
+    private Lazy<ActivityTransitionAnimator> mActivityTransitionAnimatorLazy;
+    @Mock
+    private ActivityTransitionAnimator mActivityTransitionAnimator;
+
+    @Mock
+    private Lazy<StartingWindowController> mStartingWindowControllerLazy;
+    @Mock
+    private StartingWindowController mStartingWindowController;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
 
+        mDesktopState = new FakeDesktopState();
+        mDesktopState.getOverrideDesktopModeSupportPerDisplay().put(DISPLAY_ID, true);
         doReturn(mMockDisplayLayout).when(mMockDisplayController).getDisplayLayout(anyInt());
         doReturn(DISPLAY_ID).when(mMockCompatLayout).getDisplayId();
         doReturn(TASK_ID).when(mMockCompatLayout).getTaskId();
@@ -167,6 +174,8 @@ public class CompatUIControllerTest extends ShellTestCase {
         doReturn(TASK_ID).when(mMockRestartDialogLayout).getTaskId();
         doReturn(true).when(mMockRestartDialogLayout).createLayout(anyBoolean());
         doReturn(true).when(mMockRestartDialogLayout).updateCompatInfo(any(), any(), anyBoolean());
+        doReturn(mActivityTransitionAnimator).when(mActivityTransitionAnimatorLazy).get();
+        doReturn(mStartingWindowController).when(mStartingWindowControllerLazy).get();
 
         mCompatUIStatusManager = new CompatUIStatusManager();
         mShellInit = spy(new ShellInit(mMockExecutor));
@@ -174,7 +183,8 @@ public class CompatUIControllerTest extends ShellTestCase {
                 mMockDisplayController, mMockDisplayInsetsController, mMockImeController,
                 mMockSyncQueue, mMockExecutor, mMockTransitionsLazy, mDockStateReader,
                 mCompatUIConfiguration, mCompatUIShellCommandHandler, mAccessibilityManager,
-                mCompatUIStatusManager, Optional.of(mDesktopUserRepositories)) {
+                mCompatUIStatusManager, Optional.of(mDesktopUserRepositories),
+                mDesktopState, mActivityTransitionAnimatorLazy, mStartingWindowControllerLazy) {
             @Override
             CompatUIWindowManager createCompatUiWindowManager(Context context, TaskInfo taskInfo,
                     ShellTaskOrganizer.TaskListener taskListener) {
@@ -690,7 +700,8 @@ public class CompatUIControllerTest extends ShellTestCase {
 
         // Create transparent task
         final TaskInfo taskInfo1 = createTaskInfo(DISPLAY_ID, newTaskId, /* hasSizeCompat= */ true,
-                /* isVisible */ true, /* isFocused */ true, /* isTopActivityTransparent */ true);
+                /* isVisible */ true, /* isFocused */ true, /* isTopActivityTransparent */ true,
+                /* isRestartMenuEnabledForDisplayMove */ true);
 
         // Simulate new task being shown
         mController.updateActiveTaskInfo(taskInfo1);
@@ -715,16 +726,16 @@ public class CompatUIControllerTest extends ShellTestCase {
 
     @Test
     @RequiresFlagsDisabled(Flags.FLAG_APP_COMPAT_UI_FRAMEWORK)
-    @EnableFlags(Flags.FLAG_SKIP_COMPAT_UI_EDUCATION_IN_DESKTOP_MODE)
+    @EnableFlags({Flags.FLAG_SKIP_COMPAT_UI_EDUCATION_IN_DESKTOP_MODE,
+            Flags.FLAG_ENABLE_COMPAT_UI_DESKTOP_MODE_SYNCHRONIZATION_BUGFIX})
     public void testUpdateActiveTaskInfo_removeAllComponentWhenInDesktopModeFlagEnabled() {
         TaskInfo taskInfo = createTaskInfo(DISPLAY_ID, TASK_ID, /* hasSizeCompat= */ true);
-        when(mDesktopUserRepositories.getCurrent().getVisibleTaskCount(DISPLAY_ID)).thenReturn(0);
 
         mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
 
         verify(mController, never()).removeLayouts(taskInfo.taskId);
 
-        when(mDesktopUserRepositories.getCurrent().getVisibleTaskCount(DISPLAY_ID)).thenReturn(2);
+        taskInfo.configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FREEFORM);
 
         mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
 
@@ -733,35 +744,86 @@ public class CompatUIControllerTest extends ShellTestCase {
 
     @Test
     @RequiresFlagsDisabled(Flags.FLAG_APP_COMPAT_UI_FRAMEWORK)
+    @EnableFlags({Flags.FLAG_SKIP_COMPAT_UI_EDUCATION_IN_DESKTOP_MODE,
+            Flags.FLAG_ENABLE_COMPAT_UI_DESKTOP_MODE_SYNCHRONIZATION_BUGFIX})
+    public void testUpdateActiveTaskInfo_alwaysRemoveLetterboxEdu() {
+        TaskInfo taskInfo = createTaskInfo(DISPLAY_ID, TASK_ID, /* hasSizeCompat= */ true);
+
+        // When not in Desktop Mode the LetterboxEdu is removed only if the taskId is the one used
+        // when created.
+        mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
+        mController.removeLetterboxEdu(TASK_ID_2);
+        verify(mMockLetterboxEduLayout, never()).release();
+
+        mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
+        mController.removeLetterboxEdu(TASK_ID);
+        verify(mMockLetterboxEduLayout).release();
+
+        // When in Desktop Mode the LetterboxEdu is always removed
+        taskInfo.configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FREEFORM);
+
+        mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
+        mController.removeLetterboxEdu(TASK_ID);
+        verify(mMockLetterboxEduLayout).release();
+
+        mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
+        mController.removeLetterboxEdu(TASK_ID_2);
+        verify(mMockLetterboxEduLayout).release();
+    }
+
+    @Test
+    @RequiresFlagsDisabled(Flags.FLAG_APP_COMPAT_UI_FRAMEWORK)
     @DisableFlags(Flags.FLAG_SKIP_COMPAT_UI_EDUCATION_IN_DESKTOP_MODE)
+    @EnableFlags(Flags.FLAG_ENABLE_COMPAT_UI_DESKTOP_MODE_SYNCHRONIZATION_BUGFIX)
     public void testUpdateActiveTaskInfo_removeAllComponentWhenInDesktopModeFlagDisabled() {
-        when(mDesktopUserRepositories.getCurrent().getVisibleTaskCount(DISPLAY_ID)).thenReturn(0);
         TaskInfo taskInfo = createTaskInfo(DISPLAY_ID, TASK_ID, /* hasSizeCompat= */ true);
 
         mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
 
         verify(mController, never()).removeLayouts(taskInfo.taskId);
 
-        when(mDesktopUserRepositories.getCurrent().getVisibleTaskCount(DISPLAY_ID)).thenReturn(2);
+        taskInfo.configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FREEFORM);
 
         mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
 
         verify(mController, never()).removeLayouts(taskInfo.taskId);
     }
 
+    @Test
+    @RequiresFlagsDisabled(Flags.FLAG_APP_COMPAT_UI_FRAMEWORK)
+    public void testSendCompatUIRequest_createRestartDialog() {
+        final TaskInfo taskInfo = createTaskInfo(DISPLAY_ID, TASK_ID, /* hasSizeCompat= */ true,
+                /* isVisible */ true, /* isFocused */ true, /* isTopActivityTransparent */ false,
+                /* isRestartMenuEnabledForDisplayMove */ true);
+        doReturn(true).when(mCompatUIConfiguration).isRestartDialogEnabled();
+        doReturn(true).when(mCompatUIConfiguration).shouldShowRestartDialogAgain(eq(taskInfo));
+
+        mController.onCompatInfoChanged(new CompatUIInfo(taskInfo, mMockTaskListener));
+        verify(mController).createRestartDialogWindowManager(any(), eq(taskInfo),
+                eq(mMockTaskListener));
+        verify(mMockRestartDialogLayout).setRequestRestartDialog(false);
+
+        mController.sendCompatUIRequest(
+                new CompatUIRequests.DisplayCompatShowRestartDialog(taskInfo.taskId));
+        verify(mMockRestartDialogLayout).setRequestRestartDialog(true);
+    }
+
     private static TaskInfo createTaskInfo(int displayId, int taskId, boolean hasSizeCompat) {
         return createTaskInfo(displayId, taskId, hasSizeCompat, /* isVisible */ false,
-                /* isFocused */ false, /* isTopActivityTransparent */ false);
+                /* isFocused */ false, /* isTopActivityTransparent */ false,
+                /* isRestartMenuEnabledForDisplayMove */ false);
     }
 
     private static TaskInfo createTaskInfo(int displayId, int taskId, boolean hasSizeCompat,
             boolean isVisible, boolean isFocused) {
         return createTaskInfo(displayId, taskId, hasSizeCompat,
-                isVisible, isFocused, /* isTopActivityTransparent */ false);
+                isVisible, isFocused, /* isTopActivityTransparent */ false,
+                /* isRestartMenuEnabledForDisplayMove */ false);
     }
 
     private static TaskInfo createTaskInfo(int displayId, int taskId, boolean hasSizeCompat,
-            boolean isVisible, boolean isFocused, boolean isTopActivityTransparent) {
+            boolean isVisible, boolean isFocused, boolean isTopActivityTransparent,
+            boolean isRestartMenuEnabledForDisplayMove) {
         RunningTaskInfo taskInfo = new RunningTaskInfo();
         taskInfo.taskId = taskId;
         taskInfo.displayId = displayId;
@@ -771,6 +833,8 @@ public class CompatUIControllerTest extends ShellTestCase {
         taskInfo.isTopActivityTransparent = isTopActivityTransparent;
         taskInfo.appCompatTaskInfo.setLetterboxEducationEnabled(true);
         taskInfo.appCompatTaskInfo.setTopActivityLetterboxed(true);
+        taskInfo.appCompatTaskInfo.setRestartMenuEnabledForDisplayMove(
+                isRestartMenuEnabledForDisplayMove);
         return taskInfo;
     }
 }

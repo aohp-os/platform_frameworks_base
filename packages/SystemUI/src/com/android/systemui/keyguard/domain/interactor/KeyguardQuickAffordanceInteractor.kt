@@ -26,10 +26,11 @@ import com.android.app.tracing.coroutines.withContextTraced as withContext
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.internal.widget.LockPatternUtils
 import com.android.keyguard.logging.KeyguardQuickAffordancesLogger
+import com.android.systemui.Flags.msdlFeedback
+import com.android.systemui.accessibility.domain.interactor.AccessibilityInteractor
 import com.android.systemui.animation.DialogTransitionAnimator
 import com.android.systemui.animation.Expandable
 import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.devicepolicy.areKeyguardShortcutsDisabled
 import com.android.systemui.dock.DockManager
@@ -50,6 +51,7 @@ import com.android.systemui.res.R
 import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.securelockdevice.domain.interactor.SecureLockDeviceInteractor
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -57,10 +59,12 @@ import com.android.systemui.shared.customization.data.content.CustomizationProvi
 import com.android.systemui.shared.quickaffordance.shared.model.KeyguardPreviewConstants.KEYGUARD_QUICK_AFFORDANCE_ID_NONE
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.util.kotlin.combine
+import com.google.android.msdl.data.model.MSDLToken
+import com.google.android.msdl.domain.MSDLPlayer
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,7 +75,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class KeyguardQuickAffordanceInteractor
 @Inject
@@ -88,11 +91,14 @@ constructor(
     private val logger: KeyguardQuickAffordancesLogger,
     private val metricsLogger: KeyguardQuickAffordancesMetricsLogger,
     private val devicePolicyManager: DevicePolicyManager,
+    private val secureLockDeviceInteractor: Lazy<SecureLockDeviceInteractor>,
     private val dockManager: DockManager,
     private val biometricSettingsRepository: BiometricSettingsRepository,
+    private val accessibilityInteractor: AccessibilityInteractor,
     @Background private val backgroundDispatcher: CoroutineDispatcher,
     @ShadeDisplayAware private val appContext: Context,
     private val sceneInteractor: Lazy<SceneInteractor>,
+    private val msdlPlayer: MSDLPlayer,
 ) {
     /**
      * Whether a quick affordance is being launched. Quick Affordances are interactive lockscreen UI
@@ -105,7 +111,12 @@ constructor(
      *
      * If `false`, the UI goes back to using single taps.
      */
-    fun useLongPress(): Flow<Boolean> = dockManager.retrieveIsDocked().map { !it }
+    fun useLongPress(): Flow<Boolean> =
+        combine(dockManager.retrieveIsDocked(), accessibilityInteractor.isEnabledFiltered) {
+            isDocked,
+            isAccessibilityEnabled ->
+            !isDocked && !isAccessibilityEnabled
+        }
 
     /** Returns an observable for the quick affordance at the given position. */
     suspend fun quickAffordance(
@@ -137,8 +148,21 @@ constructor(
             },
             shadeInteractor.anyExpansion.map { it < 1.0f }.distinctUntilChanged(),
             biometricSettingsRepository.isCurrentUserInLockdown,
-        ) { affordance, isDozing, isKeyguardShowing, isQuickSettingsVisible, isUserInLockdown ->
-            if (!isDozing && isKeyguardShowing && isQuickSettingsVisible && !isUserInLockdown) {
+            secureLockDeviceInteractor.get().isSecureLockDeviceEnabled,
+        ) {
+            affordance,
+            isDozing,
+            isKeyguardShowing,
+            isQuickSettingsVisible,
+            isUserInLockdown,
+            isSecureLockDeviceEnabled ->
+            if (
+                !isDozing &&
+                    isKeyguardShowing &&
+                    isQuickSettingsVisible &&
+                    !isUserInLockdown &&
+                    !isSecureLockDeviceEnabled
+            ) {
                 affordance
             } else {
                 KeyguardQuickAffordanceModel.Hidden
@@ -187,15 +211,27 @@ constructor(
         metricsLogger.logOnShortcutTriggered(slotId, configKey)
 
         when (val result = config.onTriggered(expandable)) {
-            is KeyguardQuickAffordanceConfig.OnTriggeredResult.StartActivity ->
+            is KeyguardQuickAffordanceConfig.OnTriggeredResult.StartActivity -> {
                 launchQuickAffordance(
                     intent = result.intent,
                     canShowWhileLocked = result.canShowWhileLocked,
                     expandable = expandable,
                 )
-            is KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled -> Unit
-            is KeyguardQuickAffordanceConfig.OnTriggeredResult.ShowDialog ->
+                if (msdlFeedback()) {
+                    msdlPlayer.playToken(MSDLToken.LONG_PRESS)
+                }
+            }
+            is KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled -> {
+                if (result.actionLaunched && msdlFeedback()) {
+                    msdlPlayer.playToken(MSDLToken.LONG_PRESS)
+                }
+            }
+            is KeyguardQuickAffordanceConfig.OnTriggeredResult.ShowDialog -> {
+                if (msdlFeedback()) {
+                    msdlPlayer.playToken(MSDLToken.LONG_PRESS)
+                }
                 showDialog(result.dialog, result.expandable)
+            }
         }
     }
 
@@ -432,7 +468,7 @@ constructor(
             KeyguardPickerFlag(
                 name = Contract.FlagsTable.FLAG_NAME_CUSTOM_CLOCKS_ENABLED,
                 value =
-                    com.android.systemui.Flags.lockscreenCustomClocks() ||
+                    com.android.systemui.shared.Flags.lockscreenCustomClocks() ||
                         featureFlags.isEnabled(Flags.LOCKSCREEN_CUSTOM_CLOCKS),
             ),
             KeyguardPickerFlag(

@@ -20,9 +20,12 @@ import static android.view.KeyEvent.KEYCODE_VOLUME_UP;
 
 import static com.android.server.policy.PhoneWindowManager.LONG_PRESS_POWER_ASSISTANT;
 import static com.android.server.policy.PhoneWindowManager.LONG_PRESS_POWER_GLOBAL_ACTIONS;
+import static com.android.server.policy.PhoneWindowManager.LONG_PRESS_POWER_GO_TO_SLEEP;
+import static com.android.server.policy.PhoneWindowManager.POWER_MULTI_PRESS_TIMEOUT_MILLIS;
 import static com.android.server.policy.PhoneWindowManager.SHORT_PRESS_POWER_DREAM_OR_SLEEP;
 import static com.android.server.policy.PhoneWindowManager.SHORT_PRESS_POWER_GO_TO_SLEEP;
 
+import android.platform.test.annotations.Presubmit;
 import android.provider.Settings;
 import android.view.Display;
 
@@ -35,10 +38,12 @@ import org.junit.Test;
  * Build/Install/Run:
  *  atest WmTests:PowerKeyGestureTests
  */
+@Presubmit
 public class PowerKeyGestureTests extends ShortcutKeyTestBase {
     @Before
     public void setUp() {
         setUpPhoneWindowManager();
+        mPhoneWindowManager.overrideStatusBarManagerInternal();
     }
 
     /**
@@ -49,6 +54,8 @@ public class PowerKeyGestureTests extends ShortcutKeyTestBase {
         mPhoneWindowManager.overrideShortPressOnPower(SHORT_PRESS_POWER_GO_TO_SLEEP);
         sendKey(KEYCODE_POWER);
         mPhoneWindowManager.assertPowerSleep();
+
+        mPhoneWindowManager.moveTimeForward(POWER_MULTI_PRESS_TIMEOUT_MILLIS);
 
         // turn screen on when begin from non-interactive.
         mPhoneWindowManager.overrideDisplayState(Display.STATE_OFF);
@@ -90,7 +97,7 @@ public class PowerKeyGestureTests extends ShortcutKeyTestBase {
         mPhoneWindowManager.overrideCanStartDreaming(false);
         sendKey(KEYCODE_POWER);
         sendKey(KEYCODE_POWER);
-        mPhoneWindowManager.assertCameraLaunch();
+        mPhoneWindowManager.assertDoublePowerLaunch();
         mPhoneWindowManager.assertDidNotLockAfterAppTransitionFinished();
     }
 
@@ -101,7 +108,7 @@ public class PowerKeyGestureTests extends ShortcutKeyTestBase {
     public void testPowerDoublePress() {
         sendKey(KEYCODE_POWER);
         sendKey(KEYCODE_POWER);
-        mPhoneWindowManager.assertCameraLaunch();
+        mPhoneWindowManager.assertDoublePowerLaunch();
     }
 
     /**
@@ -111,13 +118,25 @@ public class PowerKeyGestureTests extends ShortcutKeyTestBase {
     public void testPowerLongPress() {
         // Show assistant.
         mPhoneWindowManager.overrideLongPressOnPower(LONG_PRESS_POWER_ASSISTANT);
-        sendKey(KEYCODE_POWER, true);
+        sendKey(KEYCODE_POWER, SingleKeyGestureDetector.sDefaultLongPressTimeout);
         mPhoneWindowManager.assertSearchManagerLaunchAssist();
+
+        mPhoneWindowManager.moveTimeForward(POWER_MULTI_PRESS_TIMEOUT_MILLIS);
 
         // Show global actions.
         mPhoneWindowManager.overrideLongPressOnPower(LONG_PRESS_POWER_GLOBAL_ACTIONS);
-        sendKey(KEYCODE_POWER, true);
+        sendKey(KEYCODE_POWER, SingleKeyGestureDetector.sDefaultLongPressTimeout);
         mPhoneWindowManager.assertShowGlobalActionsCalled();
+    }
+
+    /**
+     * Power long press to go to sleep (doze).
+     */
+    @Test
+    public void testPowerLongPressGoToSleep() {
+        mPhoneWindowManager.overrideLongPressOnPower(LONG_PRESS_POWER_GO_TO_SLEEP);
+        sendKey(KEYCODE_POWER, SingleKeyGestureDetector.sDefaultLongPressTimeout);
+        mPhoneWindowManager.assertPowerSleep();
     }
 
     /**

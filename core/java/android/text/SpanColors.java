@@ -27,6 +27,7 @@ import android.text.style.CharacterStyle;
  *
  * @hide
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class SpanColors {
     public static final @ColorInt int NO_COLOR_FOUND = Color.TRANSPARENT;
 
@@ -71,7 +72,7 @@ public class SpanColors {
         mWorkPaint.setColor(finalColor);
         for (int k = 0; k < mCharacterStyleSpanSet.numberOfSpans; k++) {
             if ((index >= mCharacterStyleSpanSet.spanStarts[k])
-                    && (index <= mCharacterStyleSpanSet.spanEnds[k])) {
+                    && (index < mCharacterStyleSpanSet.spanEnds[k])) {
                 final CharacterStyle span = mCharacterStyleSpanSet.spans[k];
                 span.updateDrawState(mWorkPaint);
 

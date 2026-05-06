@@ -17,19 +17,19 @@ package com.android.server.notification;
 
 import static android.app.NotificationManager.IMPORTANCE_DEFAULT;
 import static android.app.NotificationManager.IMPORTANCE_LOW;
-
 import static android.platform.test.flag.junit.SetFlagsRule.DefaultInitValueType.DEVICE_DEFAULT;
+
 import static com.google.common.truth.Truth.assertThat;
+
 import static junit.framework.TestCase.assertEquals;
 
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import android.app.Flags;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -40,7 +40,6 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
-import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.Build;
 import android.os.UserHandle;
@@ -67,7 +66,6 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.List;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -105,7 +103,6 @@ public class RankingHelperTest extends UiServiceTestCase {
     private NotificationRecord mRecordNoGroup;
     private NotificationRecord mRecordNoGroup2;
     private NotificationRecord mRecordNoGroupSortA;
-    private NotificationRecord mRecentlyIntrusive;
     private NotificationRecord mNewest;
     private RankingHelper mHelper;
 
@@ -154,7 +151,7 @@ public class RankingHelperTest extends UiServiceTestCase {
                 .thenReturn(SOUND_URI);
 
         mTestNotificationPolicy = new NotificationManager.Policy(0, 0, 0, 0,
-                NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND, 0);
+                NotificationManager.Policy.STATE_HAS_PRIORITY_CHANNELS, 0);
         when(mMockZenModeHelper.getNotificationPolicy(any())).thenReturn(mTestNotificationPolicy);
         mHelper = new RankingHelper(getContext(), mHandler, mConfig, mMockZenModeHelper,
                 mUsageStats, new String[] {ImportanceExtractor.class.getName()},
@@ -208,11 +205,6 @@ public class RankingHelperTest extends UiServiceTestCase {
         Notification n = new Notification.Builder(mContext, TEST_CHANNEL_ID)
                 .setContentTitle("D")
                 .build();
-        mRecentlyIntrusive = new NotificationRecord(mContext, new StatusBarNotification(
-                mPkg, mPkg, 1, null, 0, 0, n, mUser,
-                null, 100), getDefaultChannel());
-        mRecentlyIntrusive.setRecentlyIntrusive(true);
-
         mNewest = new NotificationRecord(mContext, new StatusBarNotification(
                 mPkg, mPkg, 2, null, 0, 0, n, mUser,
                 null, 10000), getDefaultChannel());
@@ -349,37 +341,6 @@ public class RankingHelperTest extends UiServiceTestCase {
     }
 
     @Test
-    @DisableFlags({android.app.Flags.FLAG_SORT_SECTION_BY_TIME})
-    public void testSortByIntrusivenessNotRecency() {
-        ArrayList<NotificationRecord> expected = new ArrayList<>();
-        expected.add(mRecentlyIntrusive);
-        expected.add(mNewest);
-
-        ArrayList<NotificationRecord> actual = new ArrayList<>();
-        actual.addAll(expected);
-        Collections.shuffle(actual);
-
-        mHelper.sort(actual);
-        assertThat(actual).containsExactlyElementsIn(expected).inOrder();
-    }
-
-    @Test
-    @EnableFlags({android.app.Flags.FLAG_SORT_SECTION_BY_TIME})
-    public void testSortByRecencyNotIntrusiveness() {
-        ArrayList<NotificationRecord> expected = new ArrayList<>();
-        expected.add(mNewest);
-        expected.add(mRecentlyIntrusive);
-
-        ArrayList<NotificationRecord> actual = new ArrayList<>();
-        actual.addAll(expected);
-        Collections.shuffle(actual);
-
-        mHelper.sort(actual);
-        assertThat(actual).containsExactlyElementsIn(expected).inOrder();
-    }
-
-    @Test
-    @EnableFlags(android.app.Flags.FLAG_SORT_SECTION_BY_TIME)
     public void testSort_oldWhenChildren_unspecifiedSummary() {
         NotificationRecord child1 = new NotificationRecord(mContext,
                 new StatusBarNotification(
@@ -431,7 +392,6 @@ public class RankingHelperTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_SORT_SECTION_BY_TIME)
     public void testSort_oldChildren_unspecifiedSummary() {
         NotificationRecord child1 = new NotificationRecord(mContext,
                 new StatusBarNotification(
@@ -481,7 +441,6 @@ public class RankingHelperTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_SORT_SECTION_BY_TIME)
     public void testSort_oldChildren_oldSummary() {
         NotificationRecord child1 = new NotificationRecord(mContext,
                 new StatusBarNotification(

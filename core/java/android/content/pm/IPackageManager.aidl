@@ -68,7 +68,7 @@ import java.util.Map;
  *  See {@link PackageManager} for documentation on most of the APIs
  *  here.
  *
- *  {@hide}
+ * @hide
  */
 interface IPackageManager {
     void checkPackageStartable(String packageName, int userId);
@@ -194,6 +194,21 @@ interface IPackageManager {
     ParceledListSlice getPersistentApplications(int flags);
 
     ProviderInfo resolveContentProvider(String name, long flags, int userId);
+
+    /**
+     * Resolve content providers with a given authority, for a specific
+     * callingUid.
+     *
+     * @param authority Authority of the content provider
+     * @param flags Additional option flags to modify the data returned.
+     * @param userId Current user ID
+     * @param callingUid UID of the caller who's access to the content provider
+              is to be checked
+     *
+     *  @return ProviderInfo of the resolved content provider. May return null
+    */
+    ProviderInfo resolveContentProviderForUid(String authority, long flags,
+      int userId, int callingUid);
 
     /**
      * Retrieve sync information for all content providers.
@@ -583,25 +598,6 @@ interface IPackageManager {
      oneway void registerDexModule(in String packageName, in String dexModulePath,
              in boolean isSharedModule, IDexModuleRegisterCallback callback);
 
-    /**
-     * Ask the package manager to perform a dex-opt with the given compiler filter.
-     *
-     * Note: exposed only for the shell command to allow moving packages explicitly to a
-     *       definite state.
-     */
-    boolean performDexOptMode(String packageName, boolean checkProfiles,
-            String targetCompilerFilter, boolean force, boolean bootComplete, String splitName);
-
-    /**
-     * Ask the package manager to perform a dex-opt with the given compiler filter on the
-     * secondary dex files belonging to the given package.
-     *
-     * Note: exposed only for the shell command to allow moving packages explicitly to a
-     *       definite state.
-     */
-    boolean performDexOptSecondary(String packageName,
-            String targetCompilerFilter, boolean force);
-
     @EnforcePermission("MOUNT_UNMOUNT_FILESYSTEMS")
     int getMoveStatus(int moveId);
 
@@ -681,10 +677,10 @@ interface IPackageManager {
 
     /**
      * Sets whether or not an update is available. Ostensibly for instant apps
-     * to force exteranl resolution.
+     * to force external resolution.
      */
     @EnforcePermission("INSTALL_PACKAGES")
-    void setUpdateAvailable(String packageName, boolean updateAvaialble);
+    void setUpdateAvailable(String packageName, boolean updateAvailable);
 
     @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
     String getServicesSystemSharedLibraryPackageName();

@@ -22,19 +22,23 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.shade.domain.interactor.shadeInteractor
+import com.android.systemui.shade.domain.interactor.shadeModeInteractor
 import com.android.systemui.statusbar.domain.interactor.remoteInputInteractor
 import com.android.systemui.statusbar.notification.stack.domain.interactor.headsUpNotificationInteractor
 import com.android.systemui.statusbar.notification.stack.domain.interactor.notificationStackAppearanceInteractor
+import com.android.systemui.wallpapers.domain.interactor.wallpaperFocalAreaInteractor
 
 val Kosmos.notificationsPlaceholderViewModel by Fixture {
     NotificationsPlaceholderViewModel(
         interactor = notificationStackAppearanceInteractor,
         sceneInteractor = sceneInteractor,
         shadeInteractor = shadeInteractor,
+        shadeModeInteractor = shadeModeInteractor,
         headsUpNotificationInteractor = headsUpNotificationInteractor,
         remoteInputInteractor = remoteInputInteractor,
         featureFlags = featureFlagsClassic,
         dumpManager = dumpManager,
+        wallpaperFocalAreaInteractor = wallpaperFocalAreaInteractor,
     )
 }
 

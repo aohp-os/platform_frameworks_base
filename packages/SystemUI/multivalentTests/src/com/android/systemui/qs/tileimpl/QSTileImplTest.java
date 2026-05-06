@@ -211,6 +211,19 @@ public class QSTileImplTest extends SysuiTestCase {
     }
 
     @Test
+    public void testSecondaryClick_falsing() {
+        mFalsingManager.setFalseTap(true);
+        mTile.secondaryClick(null /* expandable */);
+        mTestableLooper.processAllMessages();
+        assertThat(mTile.mSecondaryClicked).isFalse();
+
+        mFalsingManager.setFalseTap(false);
+        mTile.secondaryClick(null /* expandable */);
+        mTestableLooper.processAllMessages();
+        assertThat(mTile.mSecondaryClicked).isTrue();
+    }
+
+    @Test
     public void testLongClick_falsing() {
         mFalsingManager.setFalseLongTap(true);
         mTile.longClick(null /* expandable */);
@@ -508,6 +521,12 @@ public class QSTileImplTest extends SysuiTestCase {
         assertThat(mTile.mRefreshes).isEqualTo(1);
     }
 
+    @Test
+    public void testIsDestroyedImmediately() {
+        mTile.destroy();
+        assertThat(mTile.isDestroyed()).isTrue();
+    }
+
     private void assertEvent(UiEventLogger.UiEventEnum eventType,
             UiEventLoggerFake.FakeUiEvent fakeEvent) {
         assertEquals(eventType.getId(), fakeEvent.eventId);
@@ -550,6 +569,7 @@ public class QSTileImplTest extends SysuiTestCase {
     private static class TileImpl extends QSTileImpl<QSTile.BooleanState> {
         boolean mClicked;
         boolean mLongClicked;
+        boolean mSecondaryClicked;
         int mRefreshes = 0;
 
         protected TileImpl(
@@ -585,6 +605,11 @@ public class QSTileImplTest extends SysuiTestCase {
         @Override
         protected void handleLongClick(@Nullable Expandable expandable) {
             mLongClicked = true;
+        }
+
+        @Override
+        protected void handleSecondaryClick(@Nullable Expandable expandable) {
+            mSecondaryClicked = true;
         }
 
         @Override

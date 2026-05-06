@@ -21,6 +21,7 @@
 
 #include <array>
 #include <limits>
+#include <optional>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -32,7 +33,6 @@
 #include "androidfw/AssetManager.h"
 #include "androidfw/ResourceTypes.h"
 #include "androidfw/Util.h"
-#include "ftl/small_vector.h"
 
 namespace android {
 
@@ -58,9 +58,6 @@ struct ResolvedBag {
 
     // Which ApkAssets this entry came from.
     ApkAssetsCookie cookie;
-
-    ResStringPool* key_pool;
-    ResStringPool* type_pool;
   };
 
   // Denotes the configuration axis that this bag varies with.
@@ -160,16 +157,15 @@ class AssetManager2 {
 
   // Sets/resets the configuration for this AssetManager. This will cause all
   // caches that are related to the configuration change to be invalidated.
-  void SetConfigurations(std::span<const ResTable_config> configurations,
-                         bool force_refresh = false);
+  void SetConfigurations(std::vector<ResTable_config> configurations, bool force_refresh = false);
 
-  std::span<const ResTable_config> GetConfigurations() const {
+  inline const std::vector<ResTable_config>& GetConfigurations() const {
     return configurations_;
   }
 
-  inline void SetDefaultLocale(uint32_t default_locale) {
-    default_locale_ = default_locale;
-  }
+  void SetDefaultLocale(const std::optional<ResTable_config> default_locale);
+
+  void SetOverlayConstraints(int32_t display_id, int32_t device_id);
 
   // Returns all configurations for which there are resources defined, or an I/O error if reading
   // resource data failed.
@@ -188,8 +184,8 @@ class AssetManager2 {
   // ('android' package, other libraries) will be excluded from the list.
   // If `merge_equivalent_languages` is set to true, resource locales will be canonicalized
   // and de-duped in the resulting list.
-  std::set<std::string> GetResourceLocales(bool exclude_system = false,
-                                           bool merge_equivalent_languages = false) const;
+  LoadedPackage::Locales GetResourceLocales(
+      bool exclude_system = false, bool merge_equivalent_languages = false) const;
 
   // Searches the set of APKs loaded by this AssetManager and opens the first one found located
   // in the assets/ directory.
@@ -256,6 +252,7 @@ class AssetManager2 {
         : cookie(entry.cookie),
           data(entry.value.data),
           type(entry.value.dataType),
+          entry_flags(0U),
           flags(bag->type_spec_flags),
           resid(0U),
           config() {
@@ -270,6 +267,9 @@ class AssetManager2 {
     // Type of the data value.
     uint8_t type;
 
+    // The bitmask of ResTable_entry flags
+    uint16_t entry_flags;
+
     // The bitmask of configuration axis that this resource varies with.
     // See ResTable_config::CONFIG_*.
     uint32_t flags;
@@ -282,9 +282,10 @@ class AssetManager2 {
 
    private:
     SelectedValue(uint8_t value_type, Res_value::data_type value_data, ApkAssetsCookie cookie,
-                  uint32_t type_flags, uint32_t resid, ResTable_config config) :
-                  cookie(cookie), data(value_data), type(value_type), flags(type_flags),
-                  resid(resid), config(std::move(config)) {}
+                  uint16_t entry_flags, uint32_t type_flags, uint32_t resid, ResTable_config config)
+        :
+                  cookie(cookie), data(value_data), type(value_type), entry_flags(entry_flags),
+                  flags(type_flags), resid(resid), config(std::move(config)) {}
   };
 
   // Retrieves the best matching resource value with ID `resid`.
@@ -389,6 +390,9 @@ class AssetManager2 {
 
       // The cookie of the overlay assets.
       ApkAssetsCookie cookie;
+
+      // Enable/disable status of the overlay based on current constraints of AssetManager.
+      bool enabled;
   };
 
   // Represents a logical package, which can be made up of many individual packages. Each package
@@ -405,7 +409,12 @@ class AssetManager2 {
       std::vector<ConfiguredOverlay> overlays_;
 
       // A library reference table that contains build-package ID to runtime-package ID mappings.
-      std::shared_ptr<DynamicRefTable> dynamic_ref_table = std::make_shared<DynamicRefTable>();
+      std::shared_ptr<DynamicRefTable> dynamic_ref_table;
+
+      explicit PackageGroup(std::shared_ptr<DynamicRefTable> ref_table = {})
+          : dynamic_ref_table(ref_table ? std::move(ref_table)
+                                        : std::make_shared<DynamicRefTable>()) {
+      }
   };
 
   // Finds the best entry for `resid` from the set of ApkAssets. The entry can be a simple
@@ -445,8 +454,15 @@ class AssetManager2 {
   // This should always be called when mutating the AssetManager's configuration or ApkAssets set.
   void RebuildFilterList();
 
+  using AssetsSet = std::set<ApkAssetsPtr>;
+
   // Retrieves the APK paths of overlays that overlay non-system packages.
-  std::set<ApkAssetsPtr> GetNonSystemOverlays() const;
+  AssetsSet GetNonSystemOverlays() const;
+
+  // Checks if the package is a system-only package (a system package itself, or and overlay
+  // that only targets resources in system packages).
+  bool IsSystemPackage(const ConfiguredPackage& package, ApkAssetsCookie cookie,
+                       const AssetsSet& non_system_overlays) const;
 
   // AssetManager2::GetBag(resid) wraps this function to track which resource ids have already
   // been seen while traversing bag parents.
@@ -456,6 +472,8 @@ class AssetManager2 {
   // Finish an operation that was running with the current asset manager, and clean up the
   // promoted apk assets when the last operation ends.
   void FinishOperation() const;
+
+  bool IsAnyOverlayConstraintSatisfied(const Idmap_constraints& constraints) const;
 
   // The ordered list of ApkAssets to search. These are not owned by the AssetManager, and must
   // have a longer lifetime.
@@ -474,11 +492,14 @@ class AssetManager2 {
   // without taking too much memory.
   std::array<uint8_t, std::numeric_limits<uint8_t>::max() + 1> package_ids_ = {};
 
-  uint32_t default_locale_ = 0;
+  std::optional<ResTable_config> default_locale_;
 
   // The current configurations set for this AssetManager. When this changes, cached resources
   // may need to be purged.
-  ftl::SmallVector<ResTable_config, 1> configurations_;
+  std::vector<ResTable_config> configurations_;
+
+  int32_t display_id_;
+  int32_t device_id_;
 
   // Cached set of bags. These are cached because they can inherit keys from parent bags,
   // which involves some calculation.

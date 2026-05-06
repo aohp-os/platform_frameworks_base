@@ -53,11 +53,14 @@ import com.android.systemui.shade.ShadeHeaderController.Companion.QQS_HEADER_CON
 import com.android.systemui.shade.ShadeHeaderController.Companion.QS_HEADER_CONSTRAINT
 import com.android.systemui.shade.carrier.ShadeCarrierGroup
 import com.android.systemui.shade.carrier.ShadeCarrierGroupController
+import com.android.systemui.shade.data.repository.shadeDisplaysRepository
 import com.android.systemui.statusbar.data.repository.fakeStatusBarContentInsetsProviderStore
 import com.android.systemui.statusbar.phone.StatusIconContainer
 import com.android.systemui.statusbar.phone.StatusOverlayHoverListenerFactory
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController
 import com.android.systemui.statusbar.phone.ui.TintedIconManager
+import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryViewModelAlwaysShowPercentFactory
+import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.batteryWithPercentViewModelFactory
 import com.android.systemui.statusbar.policy.Clock
 import com.android.systemui.statusbar.policy.FakeConfigurationController
 import com.android.systemui.statusbar.policy.NextAlarmController
@@ -67,9 +70,9 @@ import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.capture
-import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.mock
 import com.google.common.truth.Truth.assertThat
+import dagger.Lazy
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -87,6 +90,7 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when` as whenever
 import org.mockito.junit.MockitoJUnit
+import org.mockito.kotlin.eq
 
 private val EMPTY_CHANGES = ConstraintsChanges()
 
@@ -96,7 +100,7 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val insetsProviderStore = kosmos.fakeStatusBarContentInsetsProviderStore
-    private val insetsProvider = insetsProviderStore.defaultDisplay
+    private val insetsProvider = insetsProviderStore.forDisplay(context.displayId)
 
     @Mock(answer = Answers.RETURNS_MOCKS) private lateinit var view: MotionLayout
     @Mock private lateinit var statusIcons: StatusIconContainer
@@ -196,8 +200,12 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
                 privacyIconsController,
                 insetsProviderStore,
                 configurationController,
+                viewContext,
+                Lazy { kosmos.shadeDisplaysRepository },
                 variableDateViewControllerFactory,
                 batteryMeterViewController,
+                kosmos.batteryViewModelAlwaysShowPercentFactory,
+                kosmos.batteryWithPercentViewModelFactory,
                 dumpManager,
                 mShadeCarrierGroupControllerBuilder,
                 combinedShadeHeadersConstraintManager,
@@ -210,7 +218,10 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
         whenever(view.isAttachedToWindow).thenReturn(true)
         shadeHeaderController.init()
         carrierIconSlots =
-            listOf(context.getString(com.android.internal.R.string.status_bar_mobile))
+            listOf(
+                context.getString(com.android.internal.R.string.status_bar_mobile),
+                context.getString(com.android.internal.R.string.status_bar_stacked_mobile),
+            )
     }
 
     @Test
@@ -294,7 +305,26 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
 
         verify(clock).setTextAppearance(R.style.TextAppearance_QS_Status)
         verify(date).setTextAppearance(R.style.TextAppearance_QS_Status)
-        verify(carrierGroup).updateTextAppearance(R.style.TextAppearance_QS_Status_Carriers)
+        val fgColor = context.getColor(R.color.shade_header_text_color)
+        val bgColor = context.getColor(R.color.shade_header_text_color_bg)
+        verify(carrierGroup)
+            .updateTextAppearanceAndTint(R.style.TextAppearance_QS_Status, fgColor, bgColor)
+    }
+
+    @Test
+    fun updateUiMode_changesFontStyle() {
+        configurationController.notifyUiModeChanged()
+
+        verify(clock).setTextAppearance(R.style.TextAppearance_QS_Status)
+        verify(date).setTextAppearance(R.style.TextAppearance_QS_Status)
+    }
+
+    @Test
+    fun updateTheme_changesFontStyle() {
+        configurationController.notifyThemeChanged()
+
+        verify(clock).setTextAppearance(R.style.TextAppearance_QS_Status)
+        verify(date).setTextAppearance(R.style.TextAppearance_QS_Status)
     }
 
     @Test
@@ -384,27 +414,9 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
     fun testControllersCreatedAndInitialized() {
         verify(variableDateViewController).init()
 
-        verify(batteryMeterViewController).init()
-        verify(batteryMeterViewController).ignoreTunerUpdates()
-
         val inOrder = Mockito.inOrder(mShadeCarrierGroupControllerBuilder)
         inOrder.verify(mShadeCarrierGroupControllerBuilder).setShadeCarrierGroup(carrierGroup)
         inOrder.verify(mShadeCarrierGroupControllerBuilder).build()
-    }
-
-    @Test
-    fun batteryModeControllerCalledWhenQsExpandedFractionChanges() {
-        whenever(qsBatteryModeController.getBatteryMode(Mockito.same(null), eq(0f)))
-            .thenReturn(BatteryMeterView.MODE_ON)
-        whenever(qsBatteryModeController.getBatteryMode(Mockito.same(null), eq(1f)))
-            .thenReturn(BatteryMeterView.MODE_ESTIMATE)
-        shadeHeaderController.qsVisible = true
-
-        val times = 10
-        repeat(times) { shadeHeaderController.qsExpandedFraction = it / (times - 1).toFloat() }
-
-        verify(batteryMeterView).setPercentShowMode(BatteryMeterView.MODE_ON)
-        verify(batteryMeterView).setPercentShowMode(BatteryMeterView.MODE_ESTIMATE)
     }
 
     @Test
@@ -806,6 +818,43 @@ class ShadeHeaderControllerTest : SysuiTestCase() {
         verify(mockConstraintsChanges.qqsConstraintsChanges)!!.invoke(any())
         verify(mockConstraintsChanges.qsConstraintsChanges)!!.invoke(any())
         verify(mockConstraintsChanges.largeScreenConstraintsChanges)!!.invoke(any())
+    }
+
+    @Test
+    fun sameInsetsTwice_listenerCallsOnApplyWindowInsetsOnlyOnce() {
+        val windowInsets = createWindowInsets()
+
+        val captor = ArgumentCaptor.forClass(View.OnApplyWindowInsetsListener::class.java)
+        verify(view).setOnApplyWindowInsetsListener(capture(captor))
+
+        val listener = captor.value
+
+        listener.onApplyWindowInsets(view, windowInsets)
+
+        verify(view, times(1)).onApplyWindowInsets(any())
+
+        listener.onApplyWindowInsets(view, windowInsets)
+
+        verify(view, times(1)).onApplyWindowInsets(any())
+    }
+
+    @Test
+    fun twoDifferentInsets_listenerCallsOnApplyWindowInsetsTwice() {
+        val windowInsets1 = WindowInsets(Rect(1, 2, 3, 4))
+        val windowInsets2 = WindowInsets(Rect(5, 6, 7, 8))
+
+        val captor = ArgumentCaptor.forClass(View.OnApplyWindowInsetsListener::class.java)
+        verify(view).setOnApplyWindowInsetsListener(capture(captor))
+
+        val listener = captor.value
+
+        listener.onApplyWindowInsets(view, windowInsets1)
+
+        verify(view, times(1)).onApplyWindowInsets(any())
+
+        listener.onApplyWindowInsets(view, windowInsets2)
+
+        verify(view, times(2)).onApplyWindowInsets(any())
     }
 
     @Test

@@ -57,6 +57,7 @@ import com.android.internal.display.BrightnessSynchronizer;
 import com.android.internal.os.BackgroundThread;
 import com.android.server.EventLogTags;
 import com.android.server.display.brightness.BrightnessEvent;
+import com.android.server.display.brightness.clamper.BrightnessClamperController;
 import com.android.server.display.config.HysteresisLevels;
 import com.android.server.display.feature.DisplayManagerFlags;
 
@@ -265,7 +266,7 @@ public class AutomaticBrightnessController {
     private final BrightnessRangeController mBrightnessRangeController;
 
     // Throttles (caps) maximum allowed brightness
-    private final BrightnessThrottler mBrightnessThrottler;
+    private final BrightnessClamperController mBrightnessClamperController;
     private boolean mIsBrightnessThrottled;
 
     // Context-sensitive brightness configurations require keeping track of the foreground app's
@@ -299,7 +300,7 @@ public class AutomaticBrightnessController {
             HysteresisLevels ambientBrightnessThresholdsIdle,
             HysteresisLevels screenBrightnessThresholdsIdle, Context context,
             BrightnessRangeController brightnessModeController,
-            BrightnessThrottler brightnessThrottler, int ambientLightHorizonShort,
+            BrightnessClamperController clamperController, int ambientLightHorizonShort,
             int ambientLightHorizonLong, float userLux, float userNits,
             DisplayManagerFlags displayManagerFlags) {
         this(new Injector(), callbacks, looper, sensorManager, lightSensor,
@@ -310,7 +311,7 @@ public class AutomaticBrightnessController {
                 resetAmbientLuxAfterWarmUpConfig, ambientBrightnessThresholds,
                 screenBrightnessThresholds, ambientBrightnessThresholdsIdle,
                 screenBrightnessThresholdsIdle, context, brightnessModeController,
-                brightnessThrottler, ambientLightHorizonShort, ambientLightHorizonLong, userLux,
+                clamperController, ambientLightHorizonShort, ambientLightHorizonLong, userLux,
                 userNits, displayManagerFlags
         );
     }
@@ -328,11 +329,11 @@ public class AutomaticBrightnessController {
             HysteresisLevels ambientBrightnessThresholdsIdle,
             HysteresisLevels screenBrightnessThresholdsIdle, Context context,
             BrightnessRangeController brightnessRangeController,
-            BrightnessThrottler brightnessThrottler, int ambientLightHorizonShort,
+            BrightnessClamperController clamperController, int ambientLightHorizonShort,
             int ambientLightHorizonLong, float userLux, float userNits,
             DisplayManagerFlags displayManagerFlags) {
         mInjector = injector;
-        mClock = injector.createClock(displayManagerFlags.offloadControlsDozeAutoBrightness());
+        mClock = injector.createClock();
         mContext = context;
         mCallbacks = callbacks;
         mSensorManager = sensorManager;
@@ -374,7 +375,7 @@ public class AutomaticBrightnessController {
         mForegroundAppCategory = ApplicationInfo.CATEGORY_UNDEFINED;
         mPendingForegroundAppCategory = ApplicationInfo.CATEGORY_UNDEFINED;
         mBrightnessRangeController = brightnessRangeController;
-        mBrightnessThrottler = brightnessThrottler;
+        mBrightnessClamperController = clamperController;
         mBrightnessMappingStrategyMap = brightnessMappingStrategyMap;
         mDisplayManagerFlags = displayManagerFlags;
 
@@ -417,6 +418,10 @@ public class AutomaticBrightnessController {
         if (brightnessEvent != null) {
             brightnessEvent.setLux(
                     mAmbientLuxValid ? mAmbientLux : PowerManager.BRIGHTNESS_INVALID_FLOAT);
+            if (mAmbientLightRingBuffer.size() > 0) {
+                brightnessEvent.setLastReadLux(
+                        mAmbientLightRingBuffer.getLux(mAmbientLightRingBuffer.size() - 1));
+            }
             brightnessEvent.setPreThresholdLux(mPreThresholdLux);
             brightnessEvent.setPreThresholdBrightness(mPreThresholdBrightness);
             brightnessEvent.setRecommendedBrightness(mScreenAutoBrightness);
@@ -472,9 +477,10 @@ public class AutomaticBrightnessController {
         }
         changed |= setLightSensorEnabled(enable);
 
-        if (mIsBrightnessThrottled != mBrightnessThrottler.isThrottled()) {
+        boolean isBrightnessThrottled = mBrightnessClamperController.isThrottled();
+        if (mIsBrightnessThrottled != isBrightnessThrottled) {
             // Maximum brightness has changed, so recalculate display brightness.
-            mIsBrightnessThrottled = mBrightnessThrottler.isThrottled();
+            mIsBrightnessThrottled = isBrightnessThrottled;
             changed = true;
         }
 
@@ -570,14 +576,13 @@ public class AutomaticBrightnessController {
 
     public boolean setBrightnessConfiguration(BrightnessConfiguration configuration,
             boolean shouldResetShortTermModel) {
-        if (mBrightnessMappingStrategyMap.get(AUTO_BRIGHTNESS_MODE_DEFAULT)
-                .setBrightnessConfiguration(configuration)) {
-            if (!isInIdleMode() && shouldResetShortTermModel) {
-                resetShortTermModel();
-            }
-            return true;
+        boolean changed = mBrightnessMappingStrategyMap.get(AUTO_BRIGHTNESS_MODE_DEFAULT)
+                                  .setBrightnessConfiguration(configuration);
+        if (!isInIdleMode() && shouldResetShortTermModel) {
+            resetShortTermModel();
+            changed = true;
         }
-        return false;
+        return changed;
     }
 
     /**
@@ -1004,45 +1009,50 @@ public class AutomaticBrightnessController {
             }
             return;
         }
-        if (!BrightnessSynchronizer.floatEquals(mScreenAutoBrightness,
-                newScreenAutoBrightness)) {
-            if (mLoggingEnabled) {
-                Slog.d(TAG, "updateAutoBrightness: "
-                        + "mScreenAutoBrightness=" + mScreenAutoBrightness + ", "
-                        + "newScreenAutoBrightness=" + newScreenAutoBrightness);
-            }
-            if (!withinThreshold) {
-                mPreThresholdBrightness = mScreenAutoBrightness;
-            }
-            mScreenAutoBrightness = newScreenAutoBrightness;
-            if (isInIdleMode()) {
-                mScreenBrighteningThreshold = clampScreenBrightness(
-                        mScreenBrightnessThresholdsIdle.getBrighteningThreshold(
-                                newScreenAutoBrightness));
-                mScreenDarkeningThreshold = clampScreenBrightness(
-                        mScreenBrightnessThresholdsIdle.getDarkeningThreshold(
-                                newScreenAutoBrightness));
-            } else {
-                mScreenBrighteningThreshold = clampScreenBrightness(
-                        mScreenBrightnessThresholds.getBrighteningThreshold(
-                                newScreenAutoBrightness));
-                mScreenDarkeningThreshold = clampScreenBrightness(
-                        mScreenBrightnessThresholds.getDarkeningThreshold(newScreenAutoBrightness));
-            }
 
-            if (sendUpdate) {
-                mCallbacks.updateBrightness();
-            }
+        if (mLoggingEnabled) {
+            Slog.d(TAG, "updateAutoBrightness: "
+                    + "mScreenAutoBrightness=" + mScreenAutoBrightness + ", "
+                    + "newScreenAutoBrightness=" + newScreenAutoBrightness);
+        }
+
+        if (!withinThreshold) {
+            mPreThresholdBrightness = mScreenAutoBrightness;
+        }
+        mScreenAutoBrightness = newScreenAutoBrightness;
+        if (isInIdleMode()) {
+            mScreenBrighteningThreshold = clampScreenBrightness(
+                    mScreenBrightnessThresholdsIdle.getBrighteningThreshold(
+                            newScreenAutoBrightness));
+            mScreenDarkeningThreshold = clampScreenBrightness(
+                    mScreenBrightnessThresholdsIdle.getDarkeningThreshold(
+                            newScreenAutoBrightness));
+        } else {
+            mScreenBrighteningThreshold = clampScreenBrightness(
+                    mScreenBrightnessThresholds.getBrighteningThreshold(
+                            newScreenAutoBrightness));
+            mScreenDarkeningThreshold = clampScreenBrightness(
+                    mScreenBrightnessThresholds.getDarkeningThreshold(newScreenAutoBrightness));
+        }
+
+        if (sendUpdate) {
+            mCallbacks.updateBrightness();
         }
     }
 
     // Clamps values with float range [0.0-1.0]
     private float clampScreenBrightness(float value) {
-        final float minBrightness = Math.min(mBrightnessRangeController.getCurrentBrightnessMin(),
-                mBrightnessThrottler.getBrightnessCap());
-        final float maxBrightness = Math.min(mBrightnessRangeController.getCurrentBrightnessMax(),
-                mBrightnessThrottler.getBrightnessCap());
-        return MathUtils.constrain(value, minBrightness, maxBrightness);
+        return MathUtils.constrain(value, getMinBrightness(), getMaxBrightness());
+    }
+
+    private float getMinBrightness() {
+        return Math.max(mBrightnessRangeController.getCurrentBrightnessMin(),
+                mBrightnessClamperController.getMinBrightness());
+    }
+
+    private float getMaxBrightness() {
+        return Math.min(mBrightnessRangeController.getCurrentBrightnessMax(),
+                mBrightnessClamperController.getMaxBrightness());
     }
 
     private void prepareBrightnessAdjustmentSample() {
@@ -1263,6 +1273,18 @@ public class AutomaticBrightnessController {
         return mCurrentBrightnessMapper.getBrightnessFromNits(nits);
     }
 
+    /**
+     * Convert a brightness nit value to a float scale value. It is assumed that the nit value
+     * provided might have adjustments, such as RBC, applied.
+     *
+     * @param nits The nit value
+     * @return The float scale value or {@link PowerManager.BRIGHTNESS_INVALID_FLOAT} if no
+     * conversion is possible.
+     */
+    public float getBrightnessFromAdjustedNits(float nits) {
+        return mCurrentBrightnessMapper.getBrightnessFromAdjustedNits(nits);
+    }
+
     public void recalculateSplines(boolean applyAdjustment, float[] adjustment) {
         mCurrentBrightnessMapper.recalculateSplines(applyAdjustment, adjustment);
 
@@ -1401,8 +1423,7 @@ public class AutomaticBrightnessController {
         public void onSensorChanged(SensorEvent event) {
             if (mLightSensorEnabled) {
                 // The time received from the sensor is in nano seconds, hence changing it to ms
-                final long time = (mDisplayManagerFlags.offloadControlsDozeAutoBrightness())
-                        ? TimeUnit.NANOSECONDS.toMillis(event.timestamp) : mClock.uptimeMillis();
+                final long time = TimeUnit.NANOSECONDS.toMillis(event.timestamp);
                 final float lux = event.values[0];
                 handleLightSensorEvent(time, lux);
             }
@@ -1615,20 +1636,13 @@ public class AutomaticBrightnessController {
     }
 
     private static class RealClock implements Clock {
-        private final boolean mOffloadControlsDozeBrightness;
-
-        RealClock(boolean offloadControlsDozeBrightness) {
-            mOffloadControlsDozeBrightness = offloadControlsDozeBrightness;
-        }
-
         @Override
         public long uptimeMillis() {
             return SystemClock.uptimeMillis();
         }
 
         public long getSensorEventScaleTime() {
-            return (mOffloadControlsDozeBrightness)
-                    ? SystemClock.elapsedRealtime() : uptimeMillis();
+            return SystemClock.elapsedRealtime();
         }
     }
 
@@ -1637,8 +1651,8 @@ public class AutomaticBrightnessController {
             return BackgroundThread.getHandler();
         }
 
-        Clock createClock(boolean offloadControlsDozeBrightness) {
-            return new RealClock(offloadControlsDozeBrightness);
+        Clock createClock() {
+            return new RealClock();
         }
     }
 }

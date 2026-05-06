@@ -16,13 +16,16 @@
 
 package android.security.net.config;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.os.Build;
-import android.test.ActivityUnitTestCase;
 import android.util.ArraySet;
 import android.util.Pair;
-
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.android.org.conscrypt.TrustedCertificateStore;
 
 import java.io.ByteArrayInputStream;
@@ -33,16 +36,15 @@ import java.util.HashSet;
 import java.util.Set;
 
 import javax.net.ssl.SSLContext;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
-public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
+@RunWith(AndroidJUnit4.class)
+public class NetworkSecurityConfigTests {
 
-    public NetworkSecurityConfigTests() {
-        super(Activity.class);
-    }
-
-    // SHA-256 of the GTS intermediate CA (CN = GTS CA 1C3) for android.com (as of 09/2023).
+    // SHA-256 of the GTS intermediate CA (CN = WR2) for android.com (as of 01/2025).
     private static final byte[] GTS_INTERMEDIATE_SPKI_SHA256 =
-        hexToBytes("cc24e77cbc0b29b4bd4b6b1ba7eb85cf82993a8705bd7c64574e827bd3b9336c");
+        hexToBytes("60fb4769fb4bc3aff4be773606734a185e78c62080dbc58571c723900e32a423");
 
     private static final byte[] TEST_CA_BYTES
             = hexToBytes(
@@ -116,6 +118,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
                 .build();
     }
 
+    @Test
     public void testEmptyConfig() throws Exception {
         ArraySet<Pair<Domain, NetworkSecurityConfig>> domainMap
                 = new ArraySet<Pair<Domain, NetworkSecurityConfig>>();
@@ -125,6 +128,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionFails(context, "android.com", 443);
     }
 
+    @Test
     public void testEmptyPerNetworkSecurityConfig() throws Exception {
         ArraySet<Pair<Domain, NetworkSecurityConfig>> domainMap
                 = new ArraySet<Pair<Domain, NetworkSecurityConfig>>();
@@ -136,6 +140,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionSucceeds(context, "google.com", 443);
     }
 
+    @Test
     public void testBadPin() throws Exception {
         ArraySet<Pin> pins = new ArraySet<Pin>();
         pins.add(new Pin("SHA-256", new byte[0]));
@@ -155,6 +160,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionSucceeds(context, "google.com", 443);
     }
 
+    @Test
     public void testGoodPin() throws Exception {
         ArraySet<Pin> pins = new ArraySet<Pin>();
         pins.add(new Pin("SHA-256", GTS_INTERMEDIATE_SPKI_SHA256));
@@ -174,6 +180,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionSucceeds(context, "developer.android.com", 443);
     }
 
+    @Test
     public void testOverridePins() throws Exception {
         // Use a bad pin + granting the system CA store the ability to override pins.
         ArraySet<Pin> pins = new ArraySet<Pin>();
@@ -193,6 +200,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionSucceeds(context, "android.com", 443);
     }
 
+    @Test
     public void testMostSpecificNetworkSecurityConfig() throws Exception {
         ArraySet<Pair<Domain, NetworkSecurityConfig>> domainMap
                 = new ArraySet<Pair<Domain, NetworkSecurityConfig>>();
@@ -206,6 +214,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionSucceeds(context, "developer.android.com", 443);
     }
 
+    @Test
     public void testSubdomainIncluded() throws Exception {
         // First try connecting to a subdomain of a domain entry that includes subdomains.
         ArraySet<Pair<Domain, NetworkSecurityConfig>> domainMap
@@ -223,15 +232,17 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertConnectionFails(context, "developer.android.com", 443);
     }
 
+    @Test
     public void testConfigBuilderUsesParents() throws Exception {
         // Check that a builder with a parent uses the parent's values when non is set.
         NetworkSecurityConfig config = new NetworkSecurityConfig.Builder()
                 .setParent(NetworkSecurityConfig
                         .getDefaultBuilder(TestUtils.makeApplicationInfo()))
                 .build();
-        assert(!config.getTrustAnchors().isEmpty());
+        assertFalse(config.getTrustAnchors().isEmpty());
     }
 
+    @Test
     public void testConfigBuilderParentLoop() throws Exception {
         NetworkSecurityConfig.Builder config1 = new NetworkSecurityConfig.Builder();
         NetworkSecurityConfig.Builder config2 = new NetworkSecurityConfig.Builder();
@@ -243,6 +254,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         }
     }
 
+    @Test
     public void testWithUrlConnection() throws Exception {
         ArraySet<Pin> pins = new ArraySet<Pin>();
         pins.add(new Pin("SHA-256", GTS_INTERMEDIATE_SPKI_SHA256));
@@ -263,6 +275,7 @@ public class NetworkSecurityConfigTests extends ActivityUnitTestCase<Activity> {
         TestUtils.assertUrlConnectionFails(context, "google.com", 443);
     }
 
+    @Test
     public void testUserAddedCaOptIn() throws Exception {
         TrustedCertificateStore store = new TrustedCertificateStore();
         try {

@@ -21,15 +21,18 @@ import android.annotation.Nullable;
 import android.companion.virtual.IVirtualDevice;
 import android.companion.virtual.sensor.IVirtualSensorCallback;
 import android.companion.virtual.sensor.VirtualSensor;
+import android.companion.virtual.sensor.VirtualSensorAdditionalInfo;
 import android.companion.virtual.sensor.VirtualSensorConfig;
 import android.companion.virtual.sensor.VirtualSensorEvent;
 import android.content.AttributionSource;
+import android.hardware.SensorAdditionalInfo;
 import android.hardware.SensorDirectChannel;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.SharedMemory;
+import android.os.SystemClock;
 import android.util.ArrayMap;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -140,7 +143,7 @@ public class SensorController {
         final IBinder sensorToken =
                 new Binder("android.hardware.sensor.VirtualSensor:" + config.getName());
         VirtualSensor sensor = new VirtualSensor(handle, config.getType(), config.getName(),
-                virtualDevice, sensorToken);
+                config.getFlags(), virtualDevice, sensorToken);
         synchronized (mLock) {
             mSensorDescriptors.put(sensorToken, sensorDescriptor);
             mVirtualSensors.put(handle, sensor);
@@ -164,6 +167,37 @@ public class SensorController {
         }
     }
 
+    boolean sendSensorAdditionalInfo(@NonNull IBinder token,
+            @NonNull VirtualSensorAdditionalInfo info) {
+        Objects.requireNonNull(token);
+        Objects.requireNonNull(info);
+        synchronized (mLock) {
+            final SensorDescriptor sensorDescriptor = mSensorDescriptors.get(token);
+            long timestamp = SystemClock.elapsedRealtimeNanos();
+            if (sensorDescriptor == null) {
+                throw new IllegalArgumentException("Could not send sensor event for given token");
+            }
+            if (!mSensorManagerInternal.sendSensorAdditionalInfo(
+                    sensorDescriptor.getHandle(), SensorAdditionalInfo.TYPE_FRAME_BEGIN,
+                    /* serial= */ 0, timestamp++, /* values= */ null)) {
+                return false;
+            }
+            for (int i = 0; i < info.getValues().size(); ++i) {
+                if (!mSensorManagerInternal.sendSensorAdditionalInfo(
+                        sensorDescriptor.getHandle(), info.getType(), /* serial= */ i,
+                        timestamp++, info.getValues().get(i))) {
+                    return false;
+                }
+            }
+            if (!mSensorManagerInternal.sendSensorAdditionalInfo(
+                    sensorDescriptor.getHandle(), SensorAdditionalInfo.TYPE_FRAME_END,
+                    /* serial= */ 0, timestamp, /* values= */ null)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Nullable
     VirtualSensor getSensorByHandle(int handle) {
         synchronized (mLock) {
@@ -184,14 +218,12 @@ public class SensorController {
         }
     }
 
-    void dump(@NonNull PrintWriter fout) {
-        fout.println("    SensorController: ");
+    void dump(@NonNull PrintWriter fout, String indent) {
         synchronized (mLock) {
-            fout.println("      Active descriptors: ");
+            fout.println(indent + "SensorController: " + mSensorDescriptors.size()
+                    + " virtual sensors");
             for (SensorDescriptor sensorDescriptor : mSensorDescriptors.values()) {
-                fout.println("        handle: " + sensorDescriptor.getHandle());
-                fout.println("          type: " + sensorDescriptor.getType());
-                fout.println("          name: " + sensorDescriptor.getName());
+                fout.println(indent + indent + sensorDescriptor);
             }
         }
     }
@@ -339,6 +371,14 @@ public class SensorController {
         }
         public String getName() {
             return mName;
+        }
+
+        @Override
+        public String toString() {
+            return "SensorDescriptor("
+                    + " name=" + mName
+                    + " type=" + mType
+                    + " handle=" + mHandle + " )";
         }
     }
 

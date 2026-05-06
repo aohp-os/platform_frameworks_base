@@ -38,7 +38,6 @@ import com.android.systemui.kosmos.testScope
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.domain.interactor.PowerInteractor.Companion.setAwakeForTest
 import com.android.systemui.power.domain.interactor.PowerInteractorFactory
-import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.data.repository.fakeShadeRepository
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.shade.domain.interactor.shadeLockscreenInteractor
@@ -49,7 +48,6 @@ import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -62,7 +60,6 @@ import org.mockito.MockitoAnnotations
 import platform.test.runner.parameterized.ParameterizedAndroidJunit4
 import platform.test.runner.parameterized.Parameters
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(ParameterizedAndroidJunit4::class)
 class UdfpsKeyguardInteractorTest(flags: FlagsParameterization) : SysuiTestCase() {
@@ -110,7 +107,7 @@ class UdfpsKeyguardInteractorTest(flags: FlagsParameterization) : SysuiTestCase(
                 burnInHelper,
                 testScope.backgroundScope,
                 kosmos.configurationInteractor,
-                kosmos.keyguardInteractor
+                kosmos.keyguardInteractor,
             )
         powerInteractor = PowerInteractorFactory.create().powerInteractor
 
@@ -140,15 +137,10 @@ class UdfpsKeyguardInteractorTest(flags: FlagsParameterization) : SysuiTestCase(
             assertThat(burnInOffsets?.x).isEqualTo(0)
 
             // WHEN we're in the middle of the doze amount change
-            if (SceneContainerFlag.isEnabled) {
-                sendTransitionSteps(
-                    TransitionStep(to = DOZING, value = 0.0f, transitionState = STARTED),
-                    TransitionStep(to = DOZING, value = 0.5f, transitionState = RUNNING),
-                )
-            } else {
-                keyguardRepository.setDozeAmount(.50f)
-                runCurrent()
-            }
+            sendTransitionSteps(
+                TransitionStep(to = DOZING, value = 0.0f, transitionState = STARTED),
+                TransitionStep(to = DOZING, value = 0.5f, transitionState = RUNNING),
+            )
 
             // THEN burn in is updated (between 0 and the full offset)
             assertThat(burnInOffsets?.progress).isGreaterThan(0f)
@@ -159,14 +151,9 @@ class UdfpsKeyguardInteractorTest(flags: FlagsParameterization) : SysuiTestCase(
             assertThat(burnInOffsets?.x).isLessThan(burnInXOffset)
 
             // WHEN we're fully dozing
-            if (SceneContainerFlag.isEnabled) {
-                sendTransitionSteps(
-                    TransitionStep(to = DOZING, value = 1.0f, transitionState = FINISHED)
-                )
-            } else {
-                keyguardRepository.setDozeAmount(1f)
-                runCurrent()
-            }
+            sendTransitionSteps(
+                TransitionStep(to = DOZING, value = 1.0f, transitionState = FINISHED)
+            )
 
             // THEN burn in offsets are updated to final current values (for the given time)
             assertThat(burnInOffsets?.progress).isEqualTo(burnInProgress)
@@ -238,9 +225,6 @@ class UdfpsKeyguardInteractorTest(flags: FlagsParameterization) : SysuiTestCase(
     }
 
     private fun setAwake() {
-        if (!SceneContainerFlag.isEnabled) {
-            keyguardRepository.setDozeAmount(0f)
-        }
         keyguardRepository.dozeTimeTick()
 
         bouncerRepository.setAlternateVisible(false)

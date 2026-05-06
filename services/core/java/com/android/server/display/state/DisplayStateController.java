@@ -18,7 +18,6 @@ package com.android.server.display.state;
 
 import android.hardware.display.DisplayManagerInternal;
 import android.util.IndentingPrintWriter;
-import android.util.Pair;
 import android.view.Display;
 
 import com.android.server.display.DisplayPowerProximityStateController;
@@ -31,14 +30,17 @@ import java.io.PrintWriter;
  * clients about the changes
  */
 public class DisplayStateController {
-    private DisplayPowerProximityStateController mDisplayPowerProximityStateController;
+    private final DisplayPowerProximityStateController mDisplayPowerProximityStateController;
+    private final boolean mShouldSkipScreenOffTransition;
     private boolean mPerformScreenOffTransition = false;
     private int mDozeStateOverride = Display.STATE_UNKNOWN;
     private int mDozeStateOverrideReason = Display.STATE_REASON_UNKNOWN;
 
-    public DisplayStateController(DisplayPowerProximityStateController
-            displayPowerProximityStateController) {
+    public DisplayStateController(
+            DisplayPowerProximityStateController displayPowerProximityStateController,
+            boolean shouldSkipScreenOffTransition) {
         this.mDisplayPowerProximityStateController = displayPowerProximityStateController;
+        this.mShouldSkipScreenOffTransition = shouldSkipScreenOffTransition;
     }
 
     /**
@@ -49,10 +51,9 @@ public class DisplayStateController {
      * @param isDisplayEnabled      A boolean flag representing if the display is enabled
      * @param isDisplayInTransition A boolean flag representing if the display is undergoing the
      *                              transition phase
-     * @return a {@link Pair} of integers, the first being the updated display state, and the second
-     *                              being the reason behind the new display state.
+     * @return the display state and reason
      */
-    public Pair<Integer, Integer> updateDisplayState(
+    public DisplayState updateDisplayState(
             DisplayManagerInternal.DisplayPowerRequest displayPowerRequest,
             boolean isDisplayEnabled,
             boolean isDisplayInTransition) {
@@ -65,7 +66,7 @@ public class DisplayStateController {
         switch (displayPowerRequest.policy) {
             case DisplayManagerInternal.DisplayPowerRequest.POLICY_OFF:
                 state = Display.STATE_OFF;
-                mPerformScreenOffTransition = true;
+                mPerformScreenOffTransition = !mShouldSkipScreenOffTransition;
                 break;
             case DisplayManagerInternal.DisplayPowerRequest.POLICY_DOZE:
                 if (mDozeStateOverride != Display.STATE_UNKNOWN) {
@@ -93,7 +94,7 @@ public class DisplayStateController {
             state = Display.STATE_OFF;
         }
 
-        return new Pair(state, reason);
+        return new DisplayState(state, reason);
     }
 
     /** Overrides the doze screen state with a given reason. */
@@ -117,7 +118,8 @@ public class DisplayStateController {
     public void dump(PrintWriter pw) {
         pw.println("DisplayStateController:");
         pw.println("-----------------------");
-        pw.println("  mPerformScreenOffTransition:" + mPerformScreenOffTransition);
+        pw.println("  mShouldSkipScreenOffTransition=" + mShouldSkipScreenOffTransition);
+        pw.println("  mPerformScreenOffTransition=" + mPerformScreenOffTransition);
         pw.println("  mDozeStateOverride=" + mDozeStateOverride);
 
         IndentingPrintWriter ipw = new IndentingPrintWriter(pw, " ");
@@ -125,4 +127,6 @@ public class DisplayStateController {
             mDisplayPowerProximityStateController.dumpLocal(ipw);
         }
     }
+
+    public record DisplayState(int state, @Display.StateReason int reason) {}
 }

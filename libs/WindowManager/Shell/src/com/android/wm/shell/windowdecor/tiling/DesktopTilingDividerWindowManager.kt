@@ -16,6 +16,9 @@
 
 package com.android.wm.shell.windowdecor.tiling
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Path
@@ -26,7 +29,6 @@ import android.os.Binder
 import android.util.Size
 import android.view.LayoutInflater
 import android.view.MotionEvent
-import android.view.RoundedCorner
 import android.view.SurfaceControl
 import android.view.SurfaceControlViewHost
 import android.view.View
@@ -34,14 +36,17 @@ import android.view.WindowManager
 import android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 import android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
 import android.view.WindowManager.LayoutParams.FLAG_SLIPPERY
-import android.view.WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
 import android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 import android.view.WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION
 import android.view.WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY
 import android.view.WindowManager.LayoutParams.TYPE_DOCK_DIVIDER
 import android.view.WindowlessWindowManager
+import com.android.internal.jank.Cuj.CUJ_DESKTOP_MODE_TILE_RESIZING
+import com.android.internal.jank.InteractionJankMonitor
+import com.android.internal.protolog.ProtoLog
 import com.android.wm.shell.R
-import com.android.wm.shell.common.SyncTransactionQueue
+import com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_DESKTOP_MODE
+import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
 /**
@@ -51,24 +56,29 @@ import java.util.function.Supplier
 class DesktopTilingDividerWindowManager(
     config: Configuration,
     private val windowName: String,
-    private val context: Context,
     private val leash: SurfaceControl,
-    private val syncQueue: SyncTransactionQueue,
     private val transitionHandler: DesktopTilingWindowDecoration,
     private val transactionSupplier: Supplier<SurfaceControl.Transaction>,
     private var dividerBounds: Rect,
     private val displayContext: Context,
+    private val isDarkMode: Boolean,
+    private val interactionJankMonitor: InteractionJankMonitor,
 ) : WindowlessWindowManager(config, leash, null), DividerMoveCallback, View.OnLayoutChangeListener {
     private lateinit var viewHost: SurfaceControlViewHost
     private var tilingDividerView: TilingDividerView? = null
     private var dividerShown = false
     private var handleRegionSize: Size =
         Size(
-            context.resources.getDimensionPixelSize(R.dimen.split_divider_handle_region_width),
-            context.resources.getDimensionPixelSize(R.dimen.split_divider_handle_region_height),
+            displayContext.resources.getDimensionPixelSize(
+                R.dimen.split_divider_handle_region_height
+            ),
+            displayContext.resources.getDimensionPixelSize(
+                R.dimen.split_divider_handle_region_width
+            ),
         )
     private var setTouchRegion = true
     private val maxRoundedCornerRadius = getMaxRoundedCornerRadius()
+    private var runningAnimator: ValueAnimator? = null
 
     /**
      * Gets bounds of divider window with screen based coordinate on the param Rect.
@@ -88,12 +98,9 @@ class DesktopTilingDividerWindowManager(
     fun setTouchRegion(handle: Rect, divider: Rect, cornerRadius: Float) {
         val path = Path()
         path.fillType = Path.FillType.WINDING
-        // The UI starts on the top-left corner, the region will be:
+        // The UI starts on the top-left corner leaving a radius gap, the region will be:
         //
-        //      cornerLeft     cornerRight
-        // c1Top        +--------+
-        //              |corners |
-        // c1Bottom     +--+  +--+
+        // dividerTop      +--+
         //                 |  |
         //       handleLeft|  |  handleRight
         // handleTop  +----+  +----+
@@ -101,35 +108,26 @@ class DesktopTilingDividerWindowManager(
         // handleBot  +----+  +----+
         //                 |  |
         //                 |  |
-        // c2Top        +--+  +--+
-        //              |corners |
-        // c2Bottom     +--------+
-        val cornerLeft = 0f
+        // dividerBottom   +--+
+
         val centerX = cornerRadius + divider.width() / 2f
-        val centerY = divider.height()
-        val cornerRight = divider.width() + 2 * cornerRadius
+        val centerY = divider.height() / 2f
         val handleLeft = centerX - handle.width() / 2f
         val handleRight = handleLeft + handle.width()
-        val dividerLeft = centerY - divider.width() / 2f
+        val dividerLeft = centerX - divider.width() / 2f
         val dividerRight = dividerLeft + divider.width()
 
-        val c1Top = 0f
-        val c1Bottom = cornerRadius
+        val dividerTop = cornerRadius
         val handleTop = centerY - handle.height() / 2f
         val handleBottom = handleTop + handle.height()
-        val c2Top = divider.height() - cornerRadius
-        val c2Bottom = divider.height().toFloat()
+        val dividerBottom = divider.height() - cornerRadius
 
-        // Top corners
-        path.addRect(cornerLeft, c1Top, cornerRight, c1Bottom, Path.Direction.CCW)
-        // Bottom corners
-        path.addRect(cornerLeft, c1Top, cornerRight, c2Bottom, Path.Direction.CCW)
-        // Handle
         path.addRect(handleLeft, handleTop, handleRight, handleBottom, Path.Direction.CCW)
         // Divider
-        path.addRect(dividerLeft, c2Top, dividerRight, c2Bottom, Path.Direction.CCW)
+        path.addRect(dividerLeft, dividerTop, dividerRight, dividerBottom, Path.Direction.CCW)
 
-        val clip = Rect(handleLeft.toInt(), c1Top.toInt(), handleRight.toInt(), c2Bottom.toInt())
+        val clip =
+            Rect(handleLeft.toInt(), dividerTop.toInt(), handleRight.toInt(), dividerBottom.toInt())
 
         val region = Region()
         region.setPath(path, Region(clip))
@@ -144,33 +142,67 @@ class DesktopTilingDividerWindowManager(
      * @param relativeLeash the task leash that the TilingDividerView should be shown on top of.
      */
     fun generateViewHost(relativeLeash: SurfaceControl) {
-        val t = transactionSupplier.get()
+        logV("Generating tiling view host.")
         val surfaceControlViewHost =
-            SurfaceControlViewHost(context, context.display, this, "DesktopTilingManager")
+            SurfaceControlViewHost(
+                displayContext,
+                displayContext.display,
+                this,
+                "DesktopTilingManager",
+            )
         val dividerView =
-            LayoutInflater.from(context).inflate(R.layout.tiling_split_divider, /* root= */ null)
-                as TilingDividerView
+            LayoutInflater.from(displayContext)
+                .inflate(R.layout.tiling_split_divider, /* root= */ null) as TilingDividerView
         val lp = getWindowManagerParams()
         surfaceControlViewHost.setView(dividerView, lp)
         val tmpDividerBounds = Rect()
         getDividerBounds(tmpDividerBounds)
-        dividerView.setup(this, tmpDividerBounds, handleRegionSize)
-        t.setRelativeLayer(leash, relativeLeash, 1)
-            .setPosition(
-                leash,
-                dividerBounds.left.toFloat() - maxRoundedCornerRadius,
-                dividerBounds.top.toFloat(),
-            )
-            .show(leash)
-        syncQueue.runInSync { transaction ->
-            transaction.merge(t)
-            t.close()
-        }
+        dividerView.setup(this, tmpDividerBounds, handleRegionSize, isDarkMode)
+        val dividerAnimatorT = transactionSupplier.get()
+        runningAnimator =
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = DIVIDER_FADE_IN_ALPHA_DURATION
+                addUpdateListener {
+                    dividerAnimatorT.setAlpha(leash, animatedValue as Float).apply()
+                }
+                addListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationStart(animation: Animator) {
+                            dividerAnimatorT
+                                .setRelativeLayer(leash, relativeLeash, 1)
+                                .setPosition(
+                                    leash,
+                                    dividerBounds.left.toFloat() - maxRoundedCornerRadius,
+                                    dividerBounds.top.toFloat(),
+                                )
+                                .setAlpha(leash, 0f)
+                                .show(leash)
+                                .apply()
+                        }
+
+                        override fun onAnimationEnd(animation: Animator) {
+                            dividerAnimatorT.setAlpha(leash, 1f).apply()
+                            runningAnimator = null
+                        }
+                    }
+                )
+            }
+        runningAnimator?.start()
         dividerShown = true
         viewHost = surfaceControlViewHost
-        dividerView.addOnLayoutChangeListener(this)
         tilingDividerView = dividerView
         updateTouchRegion()
+        dividerView.addOnLayoutChangeListener(this)
+    }
+
+    /** Changes divider colour if dark/light mode is toggled. */
+    fun onUiModeChange(isDarkMode: Boolean) {
+        tilingDividerView?.onUiModeChange(isDarkMode)
+    }
+
+    /** Notifies the divider view of task info change and possible color change. */
+    fun onThemeChange() {
+        tilingDividerView?.onThemeChanged()
     }
 
     /** Hides the divider bar. */
@@ -178,18 +210,51 @@ class DesktopTilingDividerWindowManager(
         if (!dividerShown) {
             return
         }
+        logD("Hiding tiling divider bar.")
+        cancelAnimation()
         val t = transactionSupplier.get()
         t.hide(leash)
         t.apply()
         dividerShown = false
     }
 
+    fun cancelAnimation() {
+        runningAnimator?.removeAllUpdateListeners()
+        runningAnimator?.cancel()
+        runningAnimator = null
+    }
+
     /** Shows the divider bar. */
-    fun showDividerBar() {
-        if (dividerShown) return
-        val t = transactionSupplier.get()
-        t.show(leash)
-        t.apply()
+    fun showDividerBar(isTilingVisibleAfterRecents: Boolean) {
+        if (dividerShown || runningAnimator != null) return
+        logD("Showing tiling divider bar.")
+        val dividerAnimatorT = transactionSupplier.get()
+        val dividerAnimDuration =
+            if (isTilingVisibleAfterRecents) {
+                DIVIDER_FADE_IN_ALPHA_SLOW_DURATION
+            } else {
+                DIVIDER_FADE_IN_ALPHA_DURATION
+            }
+        runningAnimator =
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = dividerAnimDuration
+                addUpdateListener {
+                    dividerAnimatorT.setAlpha(leash, animatedValue as Float).apply()
+                }
+                addListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationStart(animation: Animator) {
+                            dividerAnimatorT.setAlpha(leash, 0f).show(leash).apply()
+                        }
+
+                        override fun onAnimationEnd(animation: Animator) {
+                            dividerAnimatorT.setAlpha(leash, 1f).apply()
+                            runningAnimator = null
+                        }
+                    }
+                )
+            }
+        runningAnimator?.start()
         dividerShown = true
     }
 
@@ -202,8 +267,32 @@ class DesktopTilingDividerWindowManager(
     }
 
     override fun onDividerMoveStart(pos: Int, motionEvent: MotionEvent) {
+        logD("Tiling divider move start.")
         setSlippery(false)
+        beginJankMonitoring()
         transitionHandler.onDividerHandleDragStart(motionEvent)
+    }
+
+    private fun beginJankMonitoring() {
+        val dividerView =
+            tilingDividerView
+                ?: run {
+                    logE(
+                        "Attempting to monitor tiling jank without a tiling divider is not possible."
+                    )
+                    return
+                }
+        interactionJankMonitor.begin(
+            InteractionJankMonitor.Configuration.Builder.withView(
+                    CUJ_DESKTOP_MODE_TILE_RESIZING,
+                    dividerView,
+                )
+                .setTimeout(LONG_CUJ_TIMEOUT_MS)
+        )
+    }
+
+    private fun endJankMonitoring() {
+        interactionJankMonitor.end(CUJ_DESKTOP_MODE_TILE_RESIZING)
     }
 
     /**
@@ -223,7 +312,9 @@ class DesktopTilingDividerWindowManager(
      * WindowContainerTransactions if the sizes of the tiled tasks changed.
      */
     override fun onDividerMovedEnd(pos: Int, motionEvent: MotionEvent) {
+        logD("Tiling divider move end.")
         setSlippery(true)
+        endJankMonitoring()
         val t = transactionSupplier.get()
         t.setPosition(leash, pos.toFloat() - maxRoundedCornerRadius, dividerBounds.top.toFloat())
         val dividerWidth = dividerBounds.width()
@@ -240,7 +331,6 @@ class DesktopTilingDividerWindowManager(
                 FLAG_NOT_FOCUSABLE or
                     FLAG_NOT_TOUCH_MODAL or
                     FLAG_WATCH_OUTSIDE_TOUCH or
-                    FLAG_SPLIT_TOUCH or
                     FLAG_SLIPPERY,
                 PixelFormat.TRANSLUCENT,
             )
@@ -256,6 +346,7 @@ class DesktopTilingDividerWindowManager(
      * hierarchy.y.
      */
     fun release() {
+        cancelAnimation()
         tilingDividerView = null
         viewHost.release()
         transactionSupplier.get().hide(leash).remove(leash).apply()
@@ -280,7 +371,7 @@ class DesktopTilingDividerWindowManager(
 
     private fun updateTouchRegion() {
         val startX = -handleRegionSize.width / 2
-        val handle = Rect(startX, 0, startX + handleRegionSize.width, dividerBounds.height())
+        val handle = Rect(startX, 0, startX + handleRegionSize.width, handleRegionSize.height)
         setTouchRegion(handle, dividerBounds, maxRoundedCornerRadius.toFloat())
     }
 
@@ -298,13 +389,29 @@ class DesktopTilingDividerWindowManager(
     }
 
     private fun getMaxRoundedCornerRadius(): Int {
-        val display = displayContext.display
-        return listOf(
-                RoundedCorner.POSITION_TOP_LEFT,
-                RoundedCorner.POSITION_TOP_RIGHT,
-                RoundedCorner.POSITION_BOTTOM_RIGHT,
-                RoundedCorner.POSITION_BOTTOM_LEFT,
-            )
-            .maxOf { position -> display.getRoundedCorner(position)?.getRadius() ?: 0 }
+        return displayContext.resources.getDimensionPixelSize(
+            com.android.wm.shell.shared.R.dimen.desktop_windowing_freeform_rounded_corner_radius
+        )
+    }
+
+    companion object {
+        private const val DIVIDER_FADE_IN_ALPHA_DURATION = 300L
+        private const val DIVIDER_FADE_IN_ALPHA_SLOW_DURATION = 900L
+        // Timeout used for resize and drag CUJs, this is longer than the default timeout to avoid
+        // timing out in the middle of a resize or drag action.
+        private val LONG_CUJ_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10L)
+        private val TAG = DesktopTilingDividerWindowManager::class.java.simpleName
+    }
+
+    private fun logD(msg: String, vararg arguments: Any?) {
+        ProtoLog.d(WM_SHELL_DESKTOP_MODE, "%s: $msg", TAG, *arguments)
+    }
+
+    private fun logV(msg: String, vararg arguments: Any?) {
+        ProtoLog.v(WM_SHELL_DESKTOP_MODE, "%s: $msg", TAG, *arguments)
+    }
+
+    private fun logE(msg: String, vararg arguments: Any?) {
+        ProtoLog.e(WM_SHELL_DESKTOP_MODE, "%s: $msg", TAG, *arguments)
     }
 }

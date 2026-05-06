@@ -17,12 +17,11 @@
 package com.android.systemui.deviceentry.domain.interactor
 
 import android.content.res.mainResources
+import com.android.systemui.accessibility.domain.interactor.accessibilityInteractor
 import com.android.systemui.biometrics.domain.interactor.fingerprintPropertyInteractor
 import com.android.systemui.keyguard.domain.interactor.devicePostureInteractor
 import com.android.systemui.kosmos.Kosmos
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
-@ExperimentalCoroutinesApi
 val Kosmos.biometricMessageInteractor by
     Kosmos.Fixture {
         BiometricMessageInteractor(
@@ -33,5 +32,6 @@ val Kosmos.biometricMessageInteractor by
             biometricSettingsInteractor = deviceEntryBiometricSettingsInteractor,
             faceHelpMessageDeferralInteractor = faceHelpMessageDeferralInteractor,
             devicePostureInteractor = devicePostureInteractor,
+            accessibilityInteractor = accessibilityInteractor,
         )
     }

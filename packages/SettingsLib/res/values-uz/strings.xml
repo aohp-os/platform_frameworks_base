@@ -87,6 +87,8 @@
     <string name="bluetooth_connecting" msgid="5871702668260192755">"Ulanmoqda…"</string>
     <string name="bluetooth_connected" msgid="8065345572198502293">"<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g> ulandi"</string>
     <string name="bluetooth_pairing" msgid="4269046942588193600">"Juftlanmoqda…"</string>
+    <string name="bluetooth_pairing_failure" msgid="6914444518793157913">"Ulanmadi"</string>
+    <string name="bluetooth_connection_failure" msgid="384203214661155324">"Ulanilmadi"</string>
     <string name="bluetooth_connected_no_headset" msgid="2224101138659967604">"<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g> ulandi (telefondan tashqari)"</string>
     <string name="bluetooth_connected_no_a2dp" msgid="8566874395813947092">"<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g> ulandi (mediadan tashqari)"</string>
     <string name="bluetooth_connected_no_headset_no_a2dp" msgid="2893204819854215433">"<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g> ulandi (telefon yoki mediadan tashqari)"</string>
@@ -103,6 +105,11 @@
     <string name="bluetooth_battery_level_untethered" msgid="1616774716076301755">"Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)."</string>
     <string name="bluetooth_battery_level_untethered_left" msgid="5725764679536058365">"Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> (chap)"</string>
     <string name="bluetooth_battery_level_untethered_right" msgid="8377995536997790142">"Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> (oʻng)."</string>
+    <string name="bluetooth_battery_level_untethered_case" msgid="6783758530890124772">"Gʻilof batareyasi: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_case" msgid="7676759299091682229">"Qoldi: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Gʻilof batareyasi: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_right_case" msgid="1299184574560442389">"Oʻng: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Gʻilof batareyasi: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_right" msgid="6953449613092012043">"Chap: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Oʻng: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_case_right" msgid="5434524614259536880">"Chap: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Gʻilof: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>, Oʻng: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_2">%3$s</xliff:g>"</string>
     <string name="tv_bluetooth_battery_level_untethered_left" msgid="337629670583744410">"Chapda: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="tv_bluetooth_battery_level_untethered_right" msgid="8610019317279155595">"Oʻngda: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="bluetooth_active_no_battery_level" msgid="4155462233006205630">"Faol"</string>
@@ -110,15 +117,28 @@
     <string name="bluetooth_hearing_aid_left_active" msgid="8330226430756799572">"Faol (faqat chap)"</string>
     <string name="bluetooth_hearing_aid_right_active" msgid="2244728507170385397">"Faol (faqat oʻng)"</string>
     <string name="bluetooth_hearing_aid_left_and_right_active" msgid="4294571497939983181">"Faol (chap va oʻng)"</string>
+    <string name="bluetooth_hearing_device_ambient_error" msgid="6035857289108813878">"Atrof-muhit yangilanmadi"</string>
+    <string name="bluetooth_hearing_aids_presets_error" msgid="4523942574698610976">"Andoza yangilanmadi"</string>
+    <string name="hearing_device_spinner_item_selected" msgid="3884049360428514878">"Tanlangan"</string>
     <string name="bluetooth_active_media_only_battery_level" msgid="7772517511061834073">"Faol (faqat media uchun) Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
     <string name="bluetooth_active_media_only_battery_level_untethered" msgid="7444753133664620926">"Faol (faqat media uchun), quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)"</string>
+    <string name="bluetooth_guest_battery_level" msgid="2820003593899467676">"Mehmon qurilma. Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_battery_level_untethered" msgid="5404013822067644960">"Mehmon qurilma. Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)."</string>
+    <string name="bluetooth_guest_media_only_battery_level" msgid="7928347900623812299">"Mehmon qurilma (faqat multimedia). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_media_only_battery_level_untethered" msgid="4458143141394300892">"Mehmon qurilma (faqat multimedia). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)."</string>
     <string name="bluetooth_battery_level_lea_support" msgid="5968584103507988820">"Ulangan (audio yuborish mumkin), quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="bluetooth_battery_level_untethered_lea_support" msgid="803110681688633362">"Ulangan (audio yuborish mumkin), quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)"</string>
     <string name="bluetooth_battery_level_untethered_left_lea_support" msgid="7707464334346454950">"Ulangan (audio yuborish mumkin). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> (chap)."</string>
     <string name="bluetooth_battery_level_untethered_right_lea_support" msgid="8941549024377771038">"Ulangan (audio yuborish mumkin). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> (oʻng)."</string>
     <string name="bluetooth_no_battery_level_lea_support" msgid="5721725041048434075">"Ulangan (audio yuborish mumkin)"</string>
+    <string name="bluetooth_guest_battery_level_lea_support" msgid="8098327939585013928">"Mehmon qurilma (audio ulashuvni dastaklaydi). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_battery_level_untethered_lea_support" msgid="3701035025565668360">"Mehmon qurilma (audio ulashuvni dastaklaydi). Quvvat: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g> (L), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> (R)."</string>
+    <string name="bluetooth_guest_no_battery_level_lea_support" msgid="2977038548753103470">"Mehmon qurilma (audio ulashuvni dastaklaydi)"</string>
     <string name="bluetooth_active_media_only_no_battery_level" msgid="71106861912593126">"Faol (faqat media uchun)"</string>
+    <string name="bluetooth_guest_no_battery_level" msgid="9122974160381136920">"Mehmon qurilma"</string>
+    <string name="bluetooth_guest_media_only_no_battery_level" msgid="7666347601796705721">"Mehmon qurilma (faqat multimedia)"</string>
     <string name="bluetooth_saved_device_lea_support" msgid="7231323139968285768">"Audio yuborishi mumkin"</string>
+    <string name="bluetooth_guest_saved_device_lea_support" msgid="5621291599518569876">"Mehmon qurilma. Audio ulashishi mumkin"</string>
     <string name="bluetooth_hearing_aid_media_only_left_active" msgid="1632152540901488645">"Faol (faqat media uchun), faqat chap"</string>
     <string name="bluetooth_hearing_aid_media_only_right_active" msgid="3854140683042617230">"Faol (faqat media uchun), faqat oʻng"</string>
     <string name="bluetooth_hearing_aid_media_only_left_and_right_active" msgid="1299913413062528417">"Faol (faqat media uchun), chap va oʻng"</string>
@@ -127,7 +147,7 @@
     <string name="bluetooth_profile_opp" msgid="6692618568149493430">"Fayl uzatish"</string>
     <string name="bluetooth_profile_hid" msgid="2969922922664315866">"Kiritish qurilmasi"</string>
     <string name="bluetooth_profile_pan" msgid="1006235139308318188">"Internetga ulanish"</string>
-    <string name="bluetooth_profile_pbap" msgid="2103406516858653017">"Chaqiruv va kontaktlarga ruxsat berilsinmi?"</string>
+    <string name="bluetooth_profile_pbap" msgid="2103406516858653017">"Kontaktlar va chaqiruv tarixiga ruxsat berish"</string>
     <string name="bluetooth_profile_pbap_summary" msgid="402819589201138227">"Maʼlumotlar chaqiruvlar haqida xabar berish uchun ishlatiladi"</string>
     <string name="bluetooth_profile_pan_nap" msgid="7871974753822470050">"Internet aloqasi ulashmasi"</string>
     <string name="bluetooth_profile_map" msgid="8907204701162107271">"SMS xabarlari"</string>
@@ -249,11 +269,11 @@
     <string name="enable_adb" msgid="8072776357237289039">"USB orqali nosozliklarni aniqlash"</string>
     <string name="enable_adb_summary" msgid="3711526030096574316">"USB orqali kompyuterga ulanganda tuzatish rejimi yoqilsin"</string>
     <string name="clear_adb_keys" msgid="3010148733140369917">"USB orqali nosozliklarni tuzatishni taqiqlash"</string>
-    <string name="enable_adb_wireless" msgid="6973226350963971018">"Wi-Fi orqali debagging"</string>
+    <string name="enable_adb_wireless" msgid="6973226350963971018">"Wi-Fi orqali debaging"</string>
     <string name="enable_adb_wireless_summary" msgid="7344391423657093011">"Wi‑Fi tarmoqqa ulanganda nosozliklarni aniqlash rejimi"</string>
     <string name="adb_wireless_error" msgid="721958772149779856">"Xato"</string>
-    <string name="adb_wireless_settings" msgid="2295017847215680229">"Wi-Fi orqali debagging"</string>
-    <string name="adb_wireless_list_empty_off" msgid="1713707973837255490">"Mavjud qurilmalarni koʻrish va ulardan foydalanish uchun Wi-Fi orqali debagging funksiyasini yoqing"</string>
+    <string name="adb_wireless_settings" msgid="2295017847215680229">"Wi-Fi orqali debaging"</string>
+    <string name="adb_wireless_list_empty_off" msgid="1713707973837255490">"Mavjud qurilmalarni koʻrish va ulardan foydalanish uchun Wi-Fi orqali debaging funksiyasini yoqing"</string>
     <string name="adb_pair_method_qrcode_title" msgid="6982904096137468634">"Qurilmani QR kod orqali ulash"</string>
     <string name="adb_pair_method_qrcode_summary" msgid="7130694277228970888">"QR kod skaneri yordamida yangi qurilmalarni ulang"</string>
     <string name="adb_pair_method_code_title" msgid="1122590300445142904">"Qurilmani ulanish kodi orqali ulash"</string>
@@ -329,7 +349,7 @@
     <string name="wifi_non_persistent_mac_randomization_summary" msgid="2159794543105053930">"Bu rejim yoqilganda qurilmaning MAC manzili tasodifiy MAC manzillar yaratish imkoniyati mavjud tarmoqqa har safar ulanganda almashishi mumkin."</string>
     <string name="wifi_metered_label" msgid="8737187690304098638">"Trafik hisoblanadigan tarmoq"</string>
     <string name="wifi_unmetered_label" msgid="6174142840934095093">"Trafik hisobi yuritilmaydigan tarmoq"</string>
-    <string name="select_logd_size_title" msgid="1604578195914595173">"Jurnal buferi hajmi"</string>
+    <string name="select_logd_size_title" msgid="4393502933789367691">"Jurnal bufer hajmi"</string>
     <string name="select_logd_size_dialog_title" msgid="2105401994681013578">"Jurnal xotirasi hajmini tanlang"</string>
     <string name="dev_logpersist_clear_warning_title" msgid="8631859265777337991">"Jurnalning doimiy xotirasi tozalansinmi?"</string>
     <string name="dev_logpersist_clear_warning_message" msgid="6447590867594287413">"Qachon doimiy jurnal nazorat qilinmasa, uning ma’lumotlarini qurilmadan o‘chirib tashlanadi."</string>
@@ -344,8 +364,8 @@
     <string name="tethering_hardware_offload_summary" msgid="7801345335142803029">"Modem rejimida apparatli tezlatishdan foydalanish (mavjud bo‘lsa)."</string>
     <string name="adb_warning_title" msgid="7708653449506485728">"USB orqali nosozliklarni tuzatishga ruxsat berilsinmi?"</string>
     <string name="adb_warning_message" msgid="8145270656419669221">"USB orqali nosozliklarni aniqlash faqat dasturlash maqsadlarida yoqiladi. Undan maʼlumotlarni qurilmangiz va kompyuter o‘rtasida ko‘chirish, ilovalarni xabarnomasiz o‘rnatish va jurnal maʼlumotlarini o‘qish uchun foydalaniladi."</string>
-    <string name="adbwifi_warning_title" msgid="727104571653031865">"Wi-Fi orqali debagging uchun ruxsat berilsinmi?"</string>
-    <string name="adbwifi_warning_message" msgid="8005936574322702388">"Wi-Fi orqali debagging faqat dasturlash maqsadlarida yoqiladi. Undan maʼlumotlarni qurilmangiz va kompyuter oʻrtasida koʻchirish, ilovalarni bildirishnomasiz oʻrnatish va jurnal maʼlumotlarini oʻqish uchun foydalaniladi."</string>
+    <string name="adbwifi_warning_title" msgid="727104571653031865">"Wi-Fi orqali debaging uchun ruxsat berilsinmi?"</string>
+    <string name="adbwifi_warning_message" msgid="8005936574322702388">"Wi-Fi orqali debaging faqat dasturlash maqsadlarida yoqiladi. Undan maʼlumotlarni qurilmangiz va kompyuter oʻrtasida koʻchirish, ilovalarni bildirishnomasiz oʻrnatish va jurnal maʼlumotlarini oʻqish uchun foydalaniladi."</string>
     <string name="adb_keys_warning_message" msgid="2968555274488101220">"USB orqali nosozliklarni tuzatishga berilgan ruxsat siz hisobingizga kirgan barcha kompyuterlar uchun bekor qilinsinmi?"</string>
     <string name="dev_settings_warning_title" msgid="8251234890169074553">"Dasturlash sozlamalariga ruxsat berilsinmi?"</string>
     <string name="dev_settings_warning_message" msgid="37741686486073668">"Bu sozlamalar faqat dasturlash maqsadlariga mo‘ljallangan. Shuning uchun, ular qurilmangizga va undagi ilovalariga shikast yetkazib, noto‘g‘ri ishlashiga sabab bo‘lishi mumkin."</string>
@@ -375,6 +395,7 @@
     <string name="debug_hw_drawing_category" msgid="5830815169336975162">"Vizualizatsiyani apparatli tezlatish"</string>
     <string name="media_category" msgid="8122076702526144053">"Multimedia"</string>
     <string name="debug_monitoring_category" msgid="1597387133765424994">"Monitoring"</string>
+    <string name="window_management_category" msgid="2015535427098365170">"Oyna boshqaruvi"</string>
     <string name="strict_mode" msgid="889864762140862437">"Qat’iy rejim yoqilgan"</string>
     <string name="strict_mode_summary" msgid="1838248687233554654">"Uzun amallar vaqtida ekranni miltillatish"</string>
     <string name="pointer_location" msgid="7516929526199520173">"Kursor joylashuvi"</string>
@@ -423,6 +444,7 @@
     <string name="transition_animation_scale_title" msgid="1278477690695439337">"O‘tish animatsiyasi"</string>
     <string name="animator_duration_scale_title" msgid="7082913931326085176">"Animatsiya tezligi"</string>
     <string name="overlay_display_devices_title" msgid="5411894622334469607">"Qo‘shimcha ekran simulyatsiyasi"</string>
+    <string name="shade_display_awareness_title" msgid="8000009404669495876">"Soya displeyi holati"</string>
     <string name="debug_applications_category" msgid="5394089406638954196">"Ilovalar"</string>
     <string name="immediately_destroy_activities" msgid="1826287490705167403">"Faollik ma’lumoti saqlanmasin"</string>
     <string name="immediately_destroy_activities_summary" msgid="6289590341144557614">"Amal tugagach, uning tarixi tozalansin"</string>
@@ -468,6 +490,9 @@
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView ta’minotchisi"</string>
     <string name="select_webview_provider_dialog_title" msgid="2444261109877277714">"WebView ta’minotchisini sozlash"</string>
     <string name="select_webview_provider_toast_text" msgid="8512254949169359848">"Bu variant endi yaroqsiz. Qaytadan urining."</string>
+    <string name="webview_launch_devtools_title" msgid="8009687433555367112">"WebView DevTools"</string>
+    <string name="webview_launch_devtools_no_package" msgid="3182544553665113721">"WebView paketi topilmadi."</string>
+    <string name="webview_launch_devtools_no_activity" msgid="4066006313619617140">"DevTools ishga tushirilmadi."</string>
     <string name="picture_color_mode" msgid="1013807330552931903">"Rang rejimi"</string>
     <string name="picture_color_mode_desc" msgid="151780973768136200">"sRGB ranglaridan foydalanish"</string>
     <string name="daltonizer_mode_disabled" msgid="403424372812399228">"Oʻchiq"</string>
@@ -521,7 +546,9 @@
     <string name="battery_info_status_charging_fast_v2" msgid="1825439848151256589">"Tezkor quvvatlash"</string>
     <string name="disabled_by_admin_summary_text" msgid="5343911767402923057">"Administrator tomonidan boshqariladi"</string>
     <string name="disabled_by_app_ops_text" msgid="8373595926549098012">"Cheklangan sozlama tomonidan boshqariladi"</string>
+    <string name="disabled_in_phone_call_text" msgid="6568931334337318320">"Chaqiruv vaqtida ishlamaydi"</string>
     <string name="disabled" msgid="8017887509554714950">"Oʻchiq"</string>
+    <string name="enabled" msgid="3997122818554810678">"Yoniq"</string>
     <string name="external_source_trusted" msgid="1146522036773132905">"Ruxsat berilgan"</string>
     <string name="external_source_untrusted" msgid="5037891688911672227">"Ruxsat berilmagan"</string>
     <string name="install_other_apps" msgid="3232595082023199454">"Notanish ilovalarni o‘rnatish"</string>
@@ -533,11 +560,15 @@
   </string-array>
     <string name="charge_length_format" msgid="6941645744588690932">"<xliff:g id="ID_1">%1$s</xliff:g> oldin"</string>
     <string name="remaining_length_format" msgid="4310625772926171089">"<xliff:g id="ID_1">%1$s</xliff:g> qoldi"</string>
+    <string name="screen_zoom_summary_smallest" msgid="1042159093382395789">"Eng kichik"</string>
+    <string name="screen_zoom_summary_smaller" msgid="7452722393802683776">"Kichikroq"</string>
     <string name="screen_zoom_summary_small" msgid="6050633151263074260">"Kichkina"</string>
     <string name="screen_zoom_summary_default" msgid="1888865694033865408">"Standart"</string>
     <string name="screen_zoom_summary_large" msgid="4706951482598978984">"Katta"</string>
-    <string name="screen_zoom_summary_very_large" msgid="7317423942896999029">"Kattaroq"</string>
-    <string name="screen_zoom_summary_extremely_large" msgid="1438045624562358554">"Eng katta"</string>
+    <string name="screen_zoom_summary_larger" msgid="7346406528348409139">"Kattaroq"</string>
+    <string name="screen_zoom_summary_very_large" msgid="6853699118427019538">"Juda yirik"</string>
+    <string name="screen_zoom_summary_extra_large" msgid="4898389280769475551">"Juda katta"</string>
+    <string name="screen_zoom_summary_largest" msgid="5120290329622591371">"Eng katta"</string>
     <string name="screen_zoom_summary_custom" msgid="3468154096832912210">"Moslashtirilgan (<xliff:g id="DENSITYDPI">%d</xliff:g>)"</string>
     <string name="content_description_menu_button" msgid="6254844309171779931">"Menyu"</string>
     <string name="retail_demo_reset_message" msgid="5392824901108195463">"Demo rejimda zavod holatiga qaytarish uchun parolni kiriting"</string>
@@ -556,6 +587,7 @@
     <string name="wifi_tether_connected_summary" msgid="5100712926640492336">"{count,plural, =1{1 ta qurilma ulangan}other{# ta qurilma ulangan}}"</string>
     <string name="accessibility_manual_zen_more_time" msgid="5141801092071134235">"Ko‘proq vaqt."</string>
     <string name="accessibility_manual_zen_less_time" msgid="6828877595848229965">"Kamroq vaqt."</string>
+    <string name="accessibility_screen_magnification_title" msgid="4981096059561256342">"Kattalashtirish"</string>
     <string name="cancel" msgid="5665114069455378395">"Bekor qilish"</string>
     <string name="next" msgid="2699398661093607009">"Keyingisi"</string>
     <string name="back" msgid="5554327870352703710">"Orqaga"</string>
@@ -609,6 +641,7 @@
     <string name="tv_media_transfer_internal_speakers" msgid="4662765121700213785">"Ichki karnay"</string>
     <string name="tv_media_transfer_hdmi_title" msgid="6715658310934507444">"TV Audio"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Ulanishda muammo yuz berdi. Qurilmani oʻchiring va yoqing"</string>
+    <string name="bluetooth_key_missing_subtext" msgid="1003639333895028298">"Ulanmadi"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Simli audio qurilma"</string>
     <string name="help_label" msgid="3528360748637781274">"Yordam/fikr-mulohaza"</string>
     <string name="storage_category" msgid="2287342585424631813">"Xotira"</string>
@@ -658,12 +691,12 @@
     <string name="guest_new_guest" msgid="3482026122932643557">"Mehmon kiritish"</string>
     <string name="guest_exit_guest" msgid="5908239569510734136">"Mehmonni olib tashlash"</string>
     <string name="guest_reset_guest" msgid="6110013010356013758">"Mehmon seansini tiklash"</string>
-    <string name="guest_reset_guest_dialog_title" msgid="8047270010895437534">"Mehmon seansi tiklansinmi?"</string>
+    <string name="guest_reset_guest_dialog_title" msgid="8047270010895437534">"Mehmon seansi tozalansinmi?"</string>
     <string name="guest_remove_guest_dialog_title" msgid="4548511006624088072">"Mehmon olib tashlansinmi?"</string>
     <string name="guest_reset_guest_confirm_button" msgid="2989915693215617237">"Tiklash"</string>
     <string name="guest_remove_guest_confirm_button" msgid="7858123434954143879">"Olib tashlash"</string>
     <string name="guest_resetting" msgid="7822120170191509566">"Mehmon seansi tiklanmoqda…"</string>
-    <string name="guest_reset_and_restart_dialog_title" msgid="3396657008451616041">"Mehmon seansi tiklansinmi?"</string>
+    <string name="guest_reset_and_restart_dialog_title" msgid="3396657008451616041">"Mehmon seansi tozalansinmi?"</string>
     <string name="guest_reset_and_restart_dialog_message" msgid="2764425635305200790">"Bunda yangi mehmon seansi ishga tushadi va joriy seans ilova va maʼlumotlari tozalanadi"</string>
     <string name="guest_exit_dialog_title" msgid="1846494656849381804">"Mehmon rejimidan chiqasizmi?"</string>
     <string name="guest_exit_dialog_message" msgid="1743218864242719783">"Bunda joriy mehmon seansidagi ilova va ularning maʼlumotlari tozalanadi"</string>
@@ -735,9 +768,6 @@
     <string name="bt_le_audio_broadcast_dialog_sub_title" msgid="268234802198852753">"Agar <xliff:g id="SWITCHAPP">%1$s</xliff:g> ilovasiga translatsiya qilsangiz yoki ovoz chiqishini oʻzgartirsangiz, joriy translatsiya toʻxtab qoladi"</string>
     <string name="bt_le_audio_broadcast_dialog_switch_app" msgid="5749813313369517812">"<xliff:g id="SWITCHAPP">%1$s</xliff:g> ilovasiga translatsiya"</string>
     <string name="bt_le_audio_broadcast_dialog_different_output" msgid="2638402023060391333">"Ovoz chiqishini oʻzgartirish"</string>
-    <string name="back_navigation_animation" msgid="8105467568421689484">"Taxminiy qaytish animatsiyalari"</string>
-    <string name="back_navigation_animation_summary" msgid="741292224121599456">"Taxminiy qaytish uchun tizim animatsiyalarini yoqish."</string>
-    <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Bu sozlamalar taxminiy qaytish animatsiyalari uchun tizim animatsiyalarini faollashtiradi. Buning uchun har bir ilovaning manifest faylida enableOnBackInvokedCallback parametri “true” qiymatida boʻlishi lozim."</string>
     <string name="font_scale_percentage" msgid="2624057443622817886">"<xliff:g id="PERCENTAGE">%1$d</xliff:g>%%"</string>
     <string name="not_specified" msgid="5423502443185110328">"Koʻrsatilmagan"</string>
     <string name="neuter" msgid="2075249330106127310">"Oʻrta"</string>

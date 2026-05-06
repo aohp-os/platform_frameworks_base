@@ -64,8 +64,6 @@ public final class JobSchedulerShellCommand extends BasicShellCommandHandler {
                     return disableFlexPolicy(pw);
                 case "enable-flex-policy":
                     return enableFlexPolicy(pw);
-                case "get-aconfig-flag-state":
-                    return getAconfigFlagState(pw);
                 case "get-battery-seq":
                     return getBatterySeq(pw);
                 case "get-battery-charging":
@@ -86,6 +84,8 @@ public final class JobSchedulerShellCommand extends BasicShellCommandHandler {
                     return getTransferredNetworkBytes(pw, BYTE_OPTION_DOWNLOAD);
                 case "get-transferred-upload-bytes":
                     return getTransferredNetworkBytes(pw, BYTE_OPTION_UPLOAD);
+                case "get-job-wakelock-tag":
+                    return getJobWakelockTag(pw);
                 case "get-job-state":
                     return getJobState(pw);
                 case "heartbeat":
@@ -412,43 +412,6 @@ public final class JobSchedulerShellCommand extends BasicShellCommandHandler {
         }
     }
 
-    private int getAconfigFlagState(PrintWriter pw) throws Exception {
-        checkPermission("get aconfig flag state", Manifest.permission.DUMP);
-
-        final String flagName = getNextArgRequired();
-
-        switch (flagName) {
-            case android.app.job.Flags.FLAG_ENFORCE_MINIMUM_TIME_WINDOWS:
-                pw.println(android.app.job.Flags.enforceMinimumTimeWindows());
-                break;
-            case android.app.job.Flags.FLAG_JOB_DEBUG_INFO_APIS:
-                pw.println(android.app.job.Flags.jobDebugInfoApis());
-                break;
-            case com.android.server.job.Flags.FLAG_BATCH_ACTIVE_BUCKET_JOBS:
-                pw.println(com.android.server.job.Flags.batchActiveBucketJobs());
-                break;
-            case com.android.server.job.Flags.FLAG_BATCH_CONNECTIVITY_JOBS_PER_NETWORK:
-                pw.println(com.android.server.job.Flags.batchConnectivityJobsPerNetwork());
-                break;
-            case com.android.server.job.Flags.FLAG_DO_NOT_FORCE_RUSH_EXECUTION_AT_BOOT:
-                pw.println(com.android.server.job.Flags.doNotForceRushExecutionAtBoot());
-                break;
-            case android.app.job.Flags.FLAG_IGNORE_IMPORTANT_WHILE_FOREGROUND:
-                pw.println(android.app.job.Flags.ignoreImportantWhileForeground());
-                break;
-            case android.app.job.Flags.FLAG_GET_PENDING_JOB_REASONS_API:
-                pw.println(android.app.job.Flags.getPendingJobReasonsApi());
-                break;
-            case android.app.job.Flags.FLAG_GET_PENDING_JOB_REASONS_HISTORY_API:
-                pw.println(android.app.job.Flags.getPendingJobReasonsHistoryApi());
-                break;
-            default:
-                pw.println("Unknown flag: " + flagName);
-                break;
-        }
-        return 0;
-    }
-
     private int getBatterySeq(PrintWriter pw) {
         int seq = mInternal.getBatterySeq();
         pw.println(seq);
@@ -574,6 +537,49 @@ public final class JobSchedulerShellCommand extends BasicShellCommandHandler {
         try {
             int ret = mInternal.getTransferredNetworkBytes(pw, pkgName, userId, namespace,
                     jobId, byteOption);
+            printError(ret, pkgName, userId, namespace, jobId);
+            return ret;
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    private int getJobWakelockTag(PrintWriter pw) throws Exception {
+        checkPermission("get job wakelock tag");
+
+        int userId = UserHandle.USER_SYSTEM;
+        String namespace = null;
+
+        String opt;
+        while ((opt = getNextOption()) != null) {
+            switch (opt) {
+                case "-u":
+                case "--user":
+                    userId = UserHandle.parseUserArg(getNextArgRequired());
+                    break;
+
+                case "-n":
+                case "--namespace":
+                    namespace = getNextArgRequired();
+                    break;
+
+                default:
+                    pw.println("Error: unknown option '" + opt + "'");
+                    return -1;
+            }
+        }
+
+        if (userId == UserHandle.USER_CURRENT) {
+            userId = ActivityManager.getCurrentUser();
+        }
+
+        final String pkgName = getNextArgRequired();
+        final String jobIdStr = getNextArgRequired();
+        final int jobId = Integer.parseInt(jobIdStr);
+
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            int ret = mInternal.getJobWakelockTag(pw, pkgName, userId, namespace, jobId);
             printError(ret, pkgName, userId, namespace, jobId);
             return ret;
         } finally {
@@ -867,9 +873,6 @@ public final class JobSchedulerShellCommand extends BasicShellCommandHandler {
         pw.println("    Turn off flex policy so that it does not affect job execution.");
         pw.println("  reset-flex-policy");
         pw.println("    Resets the flex policy to its default state.");
-        pw.println("  get-aconfig-flag-state FULL_FLAG_NAME");
-        pw.println("    Return the state of the specified aconfig flag, if known. The flag name");
-        pw.println("         must be fully qualified.");
         pw.println("  get-battery-seq");
         pw.println("    Return the last battery update sequence number that was received.");
         pw.println("  get-battery-charging");

@@ -25,24 +25,28 @@ import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.operations.TextData;
 import com.android.internal.widget.remotecompose.core.operations.layout.modifiers.ModifierOperation;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.ArrayList;
+import java.util.Vector;
 
 public abstract class ListActionsOperation extends PaintOperation
-        implements ModifierOperation, DecoratorComponent {
+        implements Container, ModifierOperation, DecoratorComponent {
 
-    String mOperationName;
+    @NonNull String mOperationName;
     protected float mWidth = 0;
     protected float mHeight = 0;
 
     private final float[] mLocationInWindow = new float[2];
 
-    public ListActionsOperation(String operationName) {
+    public ListActionsOperation(@NonNull String operationName) {
         mOperationName = operationName;
     }
 
-    public ArrayList<Operation> mList = new ArrayList<>();
+    public @NonNull ArrayList<Operation> mList = new ArrayList<>();
 
+    @NonNull
+    @Override
     public ArrayList<Operation> getList() {
         return mList;
     }
@@ -53,7 +57,7 @@ public abstract class ListActionsOperation extends PaintOperation
     }
 
     @Override
-    public void apply(RemoteContext context) {
+    public void apply(@NonNull RemoteContext context) {
         for (Operation op : mList) {
             if (op instanceof TextData) {
                 op.apply(context);
@@ -69,16 +73,20 @@ public abstract class ListActionsOperation extends PaintOperation
     }
 
     @Override
-    public void paint(PaintContext context) {}
+    public void paint(@NonNull PaintContext context) {}
 
     @Override
-    public void layout(RemoteContext context, Component component, float width, float height) {
+    public void layout(
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         mWidth = width;
         mHeight = height;
     }
 
     @Override
-    public void serializeToString(int indent, StringSerializer serializer) {
+    public void serializeToString(int indent, @NonNull StringSerializer serializer) {
         serializer.append(indent, mOperationName);
         for (Operation o : mList) {
             if (o instanceof ActionOperation) {
@@ -87,10 +95,22 @@ public abstract class ListActionsOperation extends PaintOperation
         }
     }
 
+    /**
+     * Execute the list of actions
+     *
+     * @param context the RemoteContext
+     * @param document the current document
+     * @param component the component we belong to
+     * @param x the x touch down coordinate
+     * @param y the y touch down coordinate
+     * @param force if true, will apply the actions even if the component is not visible / not
+     *     containing the touch down coordinates
+     * @return true if we applied the actions, false otherwise
+     */
     public boolean applyActions(
-            RemoteContext context,
-            CoreDocument document,
-            Component component,
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
             float x,
             float y,
             boolean force) {
@@ -109,5 +129,11 @@ public abstract class ListActionsOperation extends PaintOperation
             }
         }
         return true;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        // TODO: Pass in the list once all operations implement Serializable
+        serializer.add("actions", new Vector<>());
     }
 }

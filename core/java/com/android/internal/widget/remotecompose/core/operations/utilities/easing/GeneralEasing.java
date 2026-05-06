@@ -19,20 +19,25 @@ import android.annotation.NonNull;
 
 /** Provides and interface to create easing functions */
 public class GeneralEasing extends Easing {
-    @NonNull float[] mEasingData = new float[0];
+    @NonNull float [] mEasingData = new float[0];
     @NonNull Easing mEasingCurve = new CubicEasing(CUBIC_STANDARD);
 
     /**
      * Set the curve based on the float encoding of it
      *
-     * @param data
+     * @param data the float encoding of the curve
      */
-    public void setCurveSpecification(@NonNull float[] data) {
+    public void setCurveSpecification(@NonNull float [] data) {
         mEasingData = data;
         createEngine();
     }
 
-    public @NonNull float[] getCurveSpecification() {
+    /**
+     * Get the float encoding of the curve
+     *
+     * @return the float encoding of the curve
+     */
+    public @NonNull float [] getCurveSpecification() {
         return mEasingData;
     }
 

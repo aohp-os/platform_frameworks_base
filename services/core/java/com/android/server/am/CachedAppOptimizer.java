@@ -21,16 +21,20 @@ import static android.app.ActivityManager.UidFrozenStateChangedCallback.UID_FROZ
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_ACTIVITY;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_ALLOWLIST;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_BACKUP;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_BATCH_UPDATE_REQUEST;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_BIND_SERVICE;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_COMPONENT_DISABLED;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_EXECUTING_SERVICE;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_FINISH_RECEIVER;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_FOLLOW_UP;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_GET_PROVIDER;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_BEGIN;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_END;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_RECONFIGURATION;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_REMOVE_PROVIDER;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_REMOVE_TASK;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_RESTRICTION_CHANGE;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_SERVICE_BINDER_CALL;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_SHELL;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_SHORT_FGS_TIMEOUT;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_START_RECEIVER;
@@ -83,6 +87,8 @@ import com.android.internal.os.BinderfsStatsReader;
 import com.android.internal.os.ProcLocksReader;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.ServiceThread;
+import com.android.server.am.compaction.CompactionStatsManager;
+import com.android.server.am.compaction.SingleCompactionStats;
 
 import dalvik.annotation.optimization.NeverCompile;
 
@@ -94,9 +100,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -203,6 +206,14 @@ public class CachedAppOptimizer {
             FrameworkStatsLog.APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_RESTRICTION_CHANGE;
     static final int UNFREEZE_REASON_COMPONENT_DISABLED =
             FrameworkStatsLog.APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_COMPONENT_DISABLED;
+    static final int UNFREEZE_REASON_OOM_ADJ_FOLLOW_UP =
+            FrameworkStatsLog.APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_OOM_ADJ_FOLLOW_UP;
+    static final int UNFREEZE_REASON_OOM_ADJ_RECONFIGURATION =
+            FrameworkStatsLog.APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_OOM_ADJ_RECONFIGURATION;
+    static final int UNFREEZE_REASON_OOM_ADJ_SERVICE_BINDER_CALL = FrameworkStatsLog
+            .APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_OOM_ADJ_REASON_SERVICE_BINDER_CALL;
+    static final int UNFREEZE_REASON_OOM_ADJ_BATCH_UPDATE_REQUEST = FrameworkStatsLog
+            .APP_FREEZE_CHANGED__UNFREEZE_REASON_V2__UFR_OOM_ADJ_REASON_BATCH_UPDATE_REQUEST;
 
     @IntDef(prefix = {"UNFREEZE_REASON_"}, value = {
         UNFREEZE_REASON_NONE,
@@ -234,6 +245,10 @@ public class CachedAppOptimizer {
         UNFREEZE_REASON_EXECUTING_SERVICE,
         UNFREEZE_REASON_RESTRICTION_CHANGE,
         UNFREEZE_REASON_COMPONENT_DISABLED,
+        UNFREEZE_REASON_OOM_ADJ_FOLLOW_UP,
+        UNFREEZE_REASON_OOM_ADJ_RECONFIGURATION,
+        UNFREEZE_REASON_OOM_ADJ_SERVICE_BINDER_CALL,
+        UNFREEZE_REASON_OOM_ADJ_BATCH_UPDATE_REQUEST,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UnfreezeReason {}
@@ -277,6 +292,12 @@ public class CachedAppOptimizer {
     // Format of this string should be a comma separated list of integers.
     @VisibleForTesting static final String DEFAULT_COMPACT_PROC_STATE_THROTTLE =
             String.valueOf(ActivityManager.PROCESS_STATE_RECEIVER);
+    // The debounce timeout is a grace period for apps that run background cleanup operations
+    // outside their valid lifecycles.  A too-aggressive value (that is, a too-low value) may
+    // freeze these apps before the operations complete.  The default has been found to work on
+    // phones.  (A lower default has been found to work on Wear).  However, once these apps have
+    // been corrected to honor their valid lifecycles, this debounce default may be lowerered or
+    // set to zero.
     @VisibleForTesting static final long DEFAULT_FREEZER_DEBOUNCE_TIMEOUT = 10_000L;
     @VisibleForTesting static final boolean DEFAULT_FREEZER_EXEMPT_INST_PKG = false;
     @VisibleForTesting static final boolean DEFAULT_FREEZER_BINDER_ENABLED = true;
@@ -301,7 +322,9 @@ public class CachedAppOptimizer {
     @VisibleForTesting
     interface ProcessDependencies {
         long[] getRss(int pid);
-        void performCompaction(CompactProfile action, int pid) throws IOException;
+        void performCompaction(CompactProfile action, int pid) throws IOException; // deprecated
+        void performMemcgCompaction(CompactProfile action, int uid, int pid) throws IOException;
+        void performNativeCompaction(CompactProfile action, int pid) throws IOException;
     }
 
     // This indicates the compaction we want to perform
@@ -334,12 +357,6 @@ public class CachedAppOptimizer {
     // compactions will be downgraded to file only compactions to reduce pressure
     // on swap resources as file.
     static final double COMPACT_DOWNGRADE_FREE_SWAP_THRESHOLD = 0.2;
-
-    // Size of history for the last 20 compactions for any process
-    static final int LAST_COMPACTED_ANY_PROCESS_STATS_HISTORY_SIZE = 20;
-
-    // Amount of processes supported to record for their last compaction.
-    static final int LAST_COMPACTION_FOR_PROCESS_STATS_SIZE = 256;
 
     static final int DO_FREEZE = 1;
     static final int REPORT_UNFREEZE = 2;
@@ -513,6 +530,9 @@ public class CachedAppOptimizer {
     // Handler on which compaction runs.
     @VisibleForTesting
     Handler mCompactionHandler;
+    @VisibleForTesting
+    CompactionStatsManager mCompactStatsManager;
+
     private Handler mFreezeHandler;
     @GuardedBy("mProcLock")
     private boolean mFreezerOverride = false;
@@ -520,147 +540,6 @@ public class CachedAppOptimizer {
 
     @VisibleForTesting volatile long mFreezerDebounceTimeout = DEFAULT_FREEZER_DEBOUNCE_TIMEOUT;
     @VisibleForTesting volatile boolean mFreezerExemptInstPkg = DEFAULT_FREEZER_EXEMPT_INST_PKG;
-
-    // Maps process ID to last compaction statistics for processes that we've fully compacted. Used
-    // when evaluating throttles that we only consider for "full" compaction, so we don't store
-    // data for "some" compactions. Uses LinkedHashMap to ensure insertion order is kept and
-    // facilitate removal of the oldest entry.
-    @VisibleForTesting
-    @GuardedBy("mProcLock")
-    LinkedHashMap<Integer, SingleCompactionStats> mLastCompactionStats =
-            new LinkedHashMap<Integer, SingleCompactionStats>() {
-                @Override
-                protected boolean removeEldestEntry(Map.Entry eldest) {
-                    return size() > LAST_COMPACTION_FOR_PROCESS_STATS_SIZE;
-                }
-            };
-
-    LinkedList<SingleCompactionStats> mCompactionStatsHistory =
-            new LinkedList<SingleCompactionStats>() {
-                @Override
-                public boolean add(SingleCompactionStats e) {
-                    if (size() >= LAST_COMPACTED_ANY_PROCESS_STATS_HISTORY_SIZE) {
-                        this.remove();
-                    }
-                    return super.add(e);
-                }
-            };
-
-    class AggregatedCompactionStats {
-        // Throttling stats
-        public long mFullCompactRequested;
-        public long mSomeCompactRequested;
-        public long mFullCompactPerformed;
-        public long mSomeCompactPerformed;
-        public long mProcCompactionsNoPidThrottled;
-        public long mProcCompactionsOomAdjThrottled;
-        public long mProcCompactionsTimeThrottled;
-        public long mProcCompactionsRSSThrottled;
-        public long mProcCompactionsMiscThrottled;
-
-        // Memory stats
-        public long mTotalDeltaAnonRssKBs;
-        public long mTotalZramConsumedKBs;
-        public long mTotalAnonMemFreedKBs;
-        public long mSumOrigAnonRss;
-        public double mMaxCompactEfficiency;
-
-        // Cpu time
-        public long mTotalCpuTimeMillis;
-
-        public long getThrottledSome() { return mSomeCompactRequested - mSomeCompactPerformed; }
-
-        public long getThrottledFull() { return mFullCompactRequested - mFullCompactPerformed; }
-
-        public void addMemStats(long anonRssSaved, long zramConsumed, long memFreed,
-                long origAnonRss, long totalCpuTimeMillis) {
-            final double compactEfficiency = memFreed / (double) origAnonRss;
-            if (compactEfficiency > mMaxCompactEfficiency) {
-                mMaxCompactEfficiency = compactEfficiency;
-            }
-            mTotalDeltaAnonRssKBs += anonRssSaved;
-            mTotalZramConsumedKBs += zramConsumed;
-            mTotalAnonMemFreedKBs += memFreed;
-            mSumOrigAnonRss += origAnonRss;
-            mTotalCpuTimeMillis += totalCpuTimeMillis;
-        }
-
-        @NeverCompile
-        public void dump(PrintWriter pw) {
-            long totalCompactRequested = mSomeCompactRequested + mFullCompactRequested;
-            long totalCompactPerformed = mSomeCompactPerformed + mFullCompactPerformed;
-            pw.println("    Performed / Requested:");
-            pw.println("      Some: (" + mSomeCompactPerformed + "/" + mSomeCompactRequested + ")");
-            pw.println("      Full: (" + mFullCompactPerformed + "/" + mFullCompactRequested + ")");
-
-            long throttledSome = getThrottledSome();
-            long throttledFull = getThrottledFull();
-
-            if (throttledSome > 0 || throttledFull > 0) {
-                pw.println("    Throttled:");
-                pw.println("       Some: " + throttledSome + " Full: " + throttledFull);
-                pw.println("    Throttled by Type:");
-                final long compactionsThrottled = totalCompactRequested - totalCompactPerformed;
-                // Any throttle that was not part of the previous categories
-                final long unaccountedThrottled = compactionsThrottled
-                        - mProcCompactionsNoPidThrottled - mProcCompactionsOomAdjThrottled
-                        - mProcCompactionsTimeThrottled - mProcCompactionsRSSThrottled
-                        - mProcCompactionsMiscThrottled;
-                pw.println("       NoPid: " + mProcCompactionsNoPidThrottled
-                        + " OomAdj: " + mProcCompactionsOomAdjThrottled + " Time: "
-                        + mProcCompactionsTimeThrottled + " RSS: " + mProcCompactionsRSSThrottled
-                        + " Misc: " + mProcCompactionsMiscThrottled
-                        + " Unaccounted: " + unaccountedThrottled);
-                final double compactThrottlePercentage =
-                        (compactionsThrottled / (double) totalCompactRequested) * 100.0;
-                pw.println("    Throttle Percentage: " + compactThrottlePercentage);
-            }
-
-            if (mFullCompactPerformed > 0) {
-                pw.println("    -----Memory Stats----");
-                pw.println("    Total Delta Anon RSS (KB) : " + mTotalDeltaAnonRssKBs);
-                pw.println("    Total Physical ZRAM Consumed (KB): " + mTotalZramConsumedKBs);
-                pw.println("    Total Anon Memory Freed (KB): " + mTotalAnonMemFreedKBs);
-                // This tells us how much anon memory we were able to free thanks to running
-                // compaction
-                pw.println("    Avg Compaction Efficiency (Anon Freed/Anon RSS): "
-                        + (mTotalAnonMemFreedKBs / (double) mSumOrigAnonRss));
-                pw.println("    Max Compaction Efficiency: " + mMaxCompactEfficiency);
-                // This tells us how effective is the compression algorithm in physical memory
-                pw.println("    Avg Compression Ratio (1 - ZRAM Consumed/DeltaAnonRSS): "
-                        + (1.0 - mTotalZramConsumedKBs / (double) mTotalDeltaAnonRssKBs));
-                long avgKBsPerProcCompact = mFullCompactPerformed > 0
-                        ? (mTotalAnonMemFreedKBs / mFullCompactPerformed)
-                        : 0;
-                pw.println("    Avg Anon Mem Freed/Compaction (KB) : " + avgKBsPerProcCompact);
-                double compactionCost =
-                        mTotalCpuTimeMillis / (mTotalAnonMemFreedKBs / 1024.0); // ms/MB
-                pw.println("    Compaction Cost (ms/MB): " + compactionCost);
-            }
-        }
-    }
-
-    class AggregatedProcessCompactionStats extends AggregatedCompactionStats {
-        public final String processName;
-
-        AggregatedProcessCompactionStats(String processName) { this.processName = processName; }
-    }
-
-    class AggregatedSourceCompactionStats extends AggregatedCompactionStats {
-        public final CompactSource sourceType;
-
-        AggregatedSourceCompactionStats(CompactSource sourceType) { this.sourceType = sourceType; }
-    }
-
-    private final LinkedHashMap<String, AggregatedProcessCompactionStats> mPerProcessCompactStats =
-            new LinkedHashMap<>(256);
-    private final EnumMap<CompactSource, AggregatedSourceCompactionStats> mPerSourceCompactStats =
-            new EnumMap<>(CompactSource.class);
-    private long mTotalCompactionDowngrades;
-    private long mSystemCompactionsPerformed;
-    private long mSystemTotalMemFreed;
-    private EnumMap<CancelCompactReason, Integer> mTotalCompactionsCancelled =
-            new EnumMap<>(CancelCompactReason.class);
 
     private final ProcessDependencies mProcessDependencies;
     private final ProcLocksReader mProcLocksReader;
@@ -732,19 +611,15 @@ public class CachedAppOptimizer {
         }
     }
 
-    /**
-     * Returns whether freezer exempts INSTALL_PACKAGES.
-     */
-    public boolean freezerExemptInstPkg() {
-        synchronized (mPhenotypeFlagLock) {
-            return mUseFreezer && mFreezerExemptInstPkg;
-        }
-    }
-
-    @GuardedBy("mProcLock")
     @NeverCompile
     void dump(PrintWriter pw) {
-        pw.println("CachedAppOptimizer settings");
+        dumpCompact(pw);
+        dumpFreezer(pw);
+    }
+
+    @NeverCompile
+    void dumpCompact(PrintWriter pw) {
+        pw.println("Compaction settings");
         synchronized (mPhenotypeFlagLock) {
             pw.println("  " + KEY_USE_COMPACTION + "=" + mUseCompaction);
             pw.println("  " + KEY_COMPACT_THROTTLE_1 + "=" + mCompactThrottleSomeSome);
@@ -758,64 +633,33 @@ public class CachedAppOptimizer {
                     + mFullAnonRssThrottleKb);
             pw.println("  " + KEY_COMPACT_FULL_DELTA_RSS_THROTTLE_KB + "="
                     + mFullDeltaRssThrottleKb);
-            pw.println("  "  + KEY_COMPACT_PROC_STATE_THROTTLE + "="
+            pw.println("  " + KEY_COMPACT_PROC_STATE_THROTTLE + "="
                     + Arrays.toString(mProcStateThrottle.toArray(new Integer[0])));
+        }
 
-            pw.println(" Per-Process Compaction Stats");
-            long totalCompactPerformedSome = 0;
-            long totalCompactPerformedFull = 0;
-            for (AggregatedProcessCompactionStats stats : mPerProcessCompactStats.values()) {
-                pw.println("-----" + stats.processName + "-----");
-                totalCompactPerformedSome += stats.mSomeCompactPerformed;
-                totalCompactPerformedFull += stats.mFullCompactPerformed;
-                stats.dump(pw);
-                pw.println();
-            }
-            pw.println();
-            pw.println(" Per-Source Compaction Stats");
-            for (AggregatedSourceCompactionStats stats : mPerSourceCompactStats.values()) {
-                pw.println("-----" + stats.sourceType + "-----");
-                stats.dump(pw);
-                pw.println();
-            }
-            pw.println();
+        if (mCompactStatsManager != null) {
+            // Compaction stats manager only exists when compaction is enabled.
+            mCompactStatsManager.dump(pw);
+        }
 
-            pw.println("Total Compactions Performed by profile: " + totalCompactPerformedSome
-                    + " some, " + totalCompactPerformedFull + " full");
-            pw.println("Total compactions downgraded: " + mTotalCompactionDowngrades);
-            pw.println("Total compactions cancelled by reason: ");
-            for (CancelCompactReason reason : mTotalCompactionsCancelled.keySet()) {
-                pw.println("    " + reason + ": " + mTotalCompactionsCancelled.get(reason));
+        synchronized (mProcLock) {
+            if (!mPendingCompactionProcesses.isEmpty()) {
+                pw.println("  Pending compactions:");
+                int size = mPendingCompactionProcesses.size();
+                for (int i = 0; i < size; i++) {
+                    ProcessRecord app = mPendingCompactionProcesses.get(i);
+                    pw.println("    pid: " + app.getPid() + ". name: " + app.processName
+                            + ". hasPendingCompact: " + app.mOptRecord.hasPendingCompact());
+                }
             }
-            pw.println();
+        }
+        pw.println();
+    }
 
-            pw.println(" System Compaction Memory Stats");
-            pw.println("    Compactions Performed: " + mSystemCompactionsPerformed);
-            pw.println("    Total Memory Freed (KB): " + mSystemTotalMemFreed);
-            double avgKBsPerSystemCompact = mSystemCompactionsPerformed > 0
-                    ? mSystemTotalMemFreed / mSystemCompactionsPerformed
-                    : 0;
-            pw.println("    Avg Mem Freed per Compact (KB): " + avgKBsPerSystemCompact);
-            pw.println();
-            pw.println("  Tracking last compaction stats for " + mLastCompactionStats.size()
-                    + " processes.");
-            pw.println("Last Compaction per process stats:");
-            pw.println("    (ProcessName,Source,DeltaAnonRssKBs,ZramConsumedKBs,AnonMemFreedKBs,"
-                    + "CompactEfficiency,CompactCost(ms/MB),procState,oomAdj,oomAdjReason)");
-            for (Map.Entry<Integer, SingleCompactionStats> entry :
-                    mLastCompactionStats.entrySet()) {
-                SingleCompactionStats stats = entry.getValue();
-                stats.dump(pw);
-            }
-            pw.println();
-            pw.println("Last 20 Compactions Stats:");
-            pw.println("    (ProcessName,Source,DeltaAnonRssKBs,ZramConsumedKBs,AnonMemFreedKBs,"
-                    + "CompactEfficiency,CompactCost(ms/MB),procState,oomAdj,oomAdjReason)");
-            for (SingleCompactionStats stats : mCompactionStatsHistory) {
-                stats.dump(pw);
-            }
-            pw.println();
-
+    @NeverCompile
+    void dumpFreezer(PrintWriter pw) {
+        pw.println("Freezer settings");
+        synchronized (mPhenotypeFlagLock) {
             pw.println("  " + KEY_USE_FREEZER + "=" + mUseFreezer);
             pw.println("  " + KEY_FREEZER_STATSD_SAMPLE_RATE + "=" + mFreezerStatsdSampleRate);
             pw.println("  " + KEY_FREEZER_DEBOUNCE_TIMEOUT + "=" + mFreezerDebounceTimeout);
@@ -839,16 +683,6 @@ public class CachedAppOptimizer {
                             + " " + app.processName
                             + (app.mOptRecord.isFreezeSticky() ? " (sticky)" : ""));
                 }
-
-                if (!mPendingCompactionProcesses.isEmpty()) {
-                    pw.println("  Pending compactions:");
-                    size = mPendingCompactionProcesses.size();
-                    for (int i = 0; i < size; i++) {
-                        ProcessRecord app = mPendingCompactionProcesses.get(i);
-                        pw.println("    pid: " + app.getPid() + ". name: " + app.processName
-                                + ". hasPendingCompact: " + app.mOptRecord.hasPendingCompact());
-                    }
-                }
             }
         }
     }
@@ -858,26 +692,17 @@ public class CachedAppOptimizer {
             ProcessRecord app, CompactProfile compactProfile, CompactSource source, boolean force) {
         app.mOptRecord.setReqCompactSource(source);
         app.mOptRecord.setReqCompactProfile(compactProfile);
-        AggregatedSourceCompactionStats perSourceStats = getPerSourceAggregatedCompactStat(source);
-        AggregatedCompactionStats perProcStats =
-                getPerProcessAggregatedCompactStat(app.processName);
-        switch (compactProfile) {
-            case SOME:
-                ++perProcStats.mSomeCompactRequested;
-                ++perSourceStats.mSomeCompactRequested;
-                break;
-            case FULL:
-                ++perProcStats.mFullCompactRequested;
-                ++perSourceStats.mFullCompactRequested;
-                break;
-            default:
-                Slog.e(TAG_AM,
-                        "Unimplemented compaction type, consider adding it.");
-                return false;
+
+        if(compactProfile == null || compactProfile.equals(CompactProfile.NONE)) {
+            return false;
         }
+        if (mCompactionHandler == null) {
+            return false;
+        }
+        final String processName = (app.processName != null ? app.processName : "");
+        mCompactStatsManager.logCompactionRequested(source, compactProfile, processName);
 
         if (!app.mOptRecord.hasPendingCompact()) {
-            final String processName = (app.processName != null ? app.processName : "");
             if (DEBUG_COMPACTION) {
                 Slog.d(TAG_AM,
                         "compactApp " + app.mOptRecord.getReqCompactSource().name() + " "
@@ -887,7 +712,7 @@ public class CachedAppOptimizer {
             app.mOptRecord.setForceCompact(force);
             mPendingCompactionProcesses.add(app);
             mCompactionHandler.sendMessage(mCompactionHandler.obtainMessage(
-                    COMPACT_PROCESS_MSG, app.mState.getCurAdj(), app.mState.getSetProcState()));
+                    COMPACT_PROCESS_MSG, app.getCurAdj(), app.getSetProcState()));
             return true;
         }
 
@@ -902,31 +727,10 @@ public class CachedAppOptimizer {
     }
 
     void compactNative(CompactProfile compactProfile, int pid) {
-        mCompactionHandler.sendMessage(mCompactionHandler.obtainMessage(
-                COMPACT_NATIVE_MSG, pid, compactProfile.ordinal()));
-    }
-
-    private AggregatedProcessCompactionStats getPerProcessAggregatedCompactStat(
-            String processName) {
-        if (processName == null) {
-            processName = "";
+        if (useCompaction()) {
+            mCompactionHandler.sendMessage(mCompactionHandler.obtainMessage(
+                    COMPACT_NATIVE_MSG, pid, compactProfile.ordinal()));
         }
-        AggregatedProcessCompactionStats stats = mPerProcessCompactStats.get(processName);
-        if (stats == null) {
-            stats = new AggregatedProcessCompactionStats(processName);
-            mPerProcessCompactStats.put(processName, stats);
-        }
-        return stats;
-    }
-
-    private AggregatedSourceCompactionStats getPerSourceAggregatedCompactStat(
-            CompactSource source) {
-        AggregatedSourceCompactionStats stats = mPerSourceCompactStats.get(source);
-        if (stats == null) {
-            stats = new AggregatedSourceCompactionStats(source);
-            mPerSourceCompactStats.put(source, stats);
-        }
-        return stats;
     }
 
     void compactAllSystem() {
@@ -949,7 +753,10 @@ public class CachedAppOptimizer {
      * @param compactionFlags selects the compaction type as defined by COMPACT_ACTION_{TYPE}_FLAG
      *         constants
      */
-    static private native void compactProcess(int pid, int compactionFlags);
+    private static native void compactProcess(int pid, int compactionFlags);
+    private static native void performNativeMemcgCompaction(int uid, int pid, int compactionFlags);
+    private static native void compactNativeProcess(int pid, int compactionFlags);
+    private static native boolean compactionFlagsValidForMemcg(int compactionFlags);
 
     static private native void cancelCompaction();
 
@@ -989,6 +796,7 @@ public class CachedAppOptimizer {
             }
 
             mCompactionHandler = new MemCompactionHandler();
+            mCompactStatsManager = CompactionStatsManager.getInstance();
 
             Process.setThreadGroupAndCpuset(mCachedAppOptimizerThread.getThreadId(),
                     Process.THREAD_GROUP_SYSTEM);
@@ -1036,7 +844,9 @@ public class CachedAppOptimizer {
 
                     final ProcessCachedOptimizerRecord opt = process.mOptRecord;
                     if (enable && opt.hasFreezerOverride()) {
-                        freezeAppAsyncLSP(process);
+                        if (OomAdjuster.getFreezePolicy(process)) {
+                            freezeAppAsyncLSP(process);
+                        }
                         opt.setFreezerOverride(false);
                     }
 
@@ -1386,7 +1196,7 @@ public class CachedAppOptimizer {
             return;
         }
 
-        if (app.mState.getSetAdj() >= ProcessList.CACHED_APP_MIN_ADJ) {
+        if (app.getSetAdj() >= ProcessList.CACHED_APP_MIN_ADJ) {
             final IApplicationThread thread = app.getThread();
             if (thread != null) {
                 try {
@@ -1648,12 +1458,7 @@ public class CachedAppOptimizer {
             cancelled = true;
         }
         if (cancelled) {
-            if (mTotalCompactionsCancelled.containsKey(cancelReason)) {
-                int count = mTotalCompactionsCancelled.get(cancelReason);
-                mTotalCompactionsCancelled.put(cancelReason, count + 1);
-            } else {
-                mTotalCompactionsCancelled.put(cancelReason, 1);
-            }
+            mCompactStatsManager.logCompactionCancelled(cancelReason);
             if (DEBUG_COMPACTION) {
                 Slog.d(TAG_AM,
                         "Cancelled pending or running compactions for process: " +
@@ -1680,7 +1485,10 @@ public class CachedAppOptimizer {
     void onProcessFrozen(ProcessRecord frozenProc) {
         if (useCompaction()) {
             synchronized (mProcLock) {
-                compactApp(frozenProc, CompactProfile.FULL, CompactSource.APP, false);
+                // only full-compact if process is cached
+                if (frozenProc.getSetAdj() >= mCompactThrottleMinOomAdj) {
+                    compactApp(frozenProc, CompactProfile.FULL, CompactSource.APP, false);
+                }
             }
         }
         frozenProc.onProcessFrozen();
@@ -1703,8 +1511,7 @@ public class CachedAppOptimizer {
             // Downgrade compaction under swap memory pressure
             if (swapFreePercent < COMPACT_DOWNGRADE_FREE_SWAP_THRESHOLD) {
                 profile = CompactProfile.SOME;
-
-                ++mTotalCompactionDowngrades;
+                mCompactStatsManager.logCompactionDowngrade();
                 if (DEBUG_COMPACTION) {
                     Slog.d(TAG_AM,
                             "Downgraded compaction to "+ profile +" due to low swap."
@@ -1734,67 +1541,15 @@ public class CachedAppOptimizer {
         }
     }
 
-    @VisibleForTesting
-    static final class SingleCompactionStats {
-        private static final float STATSD_SAMPLE_RATE = 0.1f;
-        private static final Random mRandom = new Random();
-        private final long[] mRssAfterCompaction;
-        public CompactSource mSourceType;
-        public String mProcessName;
-        public final int mUid;
-        public long mDeltaAnonRssKBs;
-        public long mZramConsumedKBs;
-        public long mAnonMemFreedKBs;
-        public float mCpuTimeMillis;
-        public long mOrigAnonRss;
-        public int mProcState;
-        public int mOomAdj;
-        public @OomAdjReason int mOomAdjReason;
-
-        SingleCompactionStats(long[] rss, CompactSource source, String processName,
-                long deltaAnonRss, long zramConsumed, long anonMemFreed, long origAnonRss,
-                long cpuTimeMillis, int procState, int oomAdj,
-                @OomAdjReason int oomAdjReason, int uid) {
-            mRssAfterCompaction = rss;
-            mSourceType = source;
-            mProcessName = processName;
-            mUid = uid;
-            mDeltaAnonRssKBs = deltaAnonRss;
-            mZramConsumedKBs = zramConsumed;
-            mAnonMemFreedKBs = anonMemFreed;
-            mCpuTimeMillis = cpuTimeMillis;
-            mOrigAnonRss = origAnonRss;
-            mProcState = procState;
-            mOomAdj = oomAdj;
-            mOomAdjReason = oomAdjReason;
+    private static int getCompactionFlags(CompactProfile profile) {
+        if (profile == CompactProfile.FULL) {
+            return COMPACT_ACTION_FILE_FLAG | COMPACT_ACTION_ANON_FLAG;
+        } else if (profile == CompactProfile.SOME) {
+            return COMPACT_ACTION_FILE_FLAG;
+        } else if (profile == CompactProfile.ANON) {
+            return COMPACT_ACTION_ANON_FLAG;
         }
-
-        double getCompactEfficiency() { return mAnonMemFreedKBs / (double) mOrigAnonRss; }
-
-        double getCompactCost() {
-            // mCpuTimeMillis / (anonMemFreedKBs/1024) and metric is in (ms/MB)
-            return mCpuTimeMillis / (double) mAnonMemFreedKBs * 1024;
-        }
-
-        long[] getRssAfterCompaction() {
-            return mRssAfterCompaction;
-        }
-
-        @NeverCompile
-        void dump(PrintWriter pw) {
-            pw.println("    (" + mProcessName + "," + mSourceType.name() + "," + mDeltaAnonRssKBs
-                    + "," + mZramConsumedKBs + "," + mAnonMemFreedKBs + "," + getCompactEfficiency()
-                    + "," + getCompactCost() + "," + mProcState + "," + mOomAdj + ","
-                    + OomAdjuster.oomAdjReasonToString(mOomAdjReason) + ")");
-        }
-
-        void sendStat() {
-            if (mRandom.nextFloat() < STATSD_SAMPLE_RATE) {
-                FrameworkStatsLog.write(FrameworkStatsLog.APP_COMPACTED_V2, mUid, mProcState,
-                        mOomAdj, mDeltaAnonRssKBs, mZramConsumedKBs, mCpuTimeMillis, mOrigAnonRss,
-                        mOomAdjReason);
-            }
-        }
+        return 0;
     }
 
     private final class MemCompactionHandler extends Handler {
@@ -1807,7 +1562,7 @@ public class CachedAppOptimizer {
 
             // don't compact if the process has returned to perceptible
             // and this is only a cached/home/prev compaction
-            if (proc.mState.getSetAdj() <= ProcessList.PERCEPTIBLE_APP_ADJ) {
+            if (proc.getSetAdj() <= ProcessList.PERCEPTIBLE_APP_ADJ) {
                 if (DEBUG_COMPACTION) {
                     Slog.d(TAG_AM,
                             "Skipping compaction as process " + name + " is "
@@ -1887,7 +1642,8 @@ public class CachedAppOptimizer {
         private boolean shouldRssThrottleCompaction(
                 CompactProfile profile, int pid, String name, long[] rssBefore) {
             long anonRssBefore = rssBefore[RSS_ANON_INDEX];
-            SingleCompactionStats lastCompactionStats = mLastCompactionStats.get(pid);
+            SingleCompactionStats lastCompactionStats =
+                    mCompactStatsManager.getLastCompactionStats(pid);
 
             if (rssBefore[RSS_TOTAL_INDEX] == 0 && rssBefore[RSS_FILE_INDEX] == 0
                     && rssBefore[RSS_ANON_INDEX] == 0 && rssBefore[RSS_SWAP_INDEX] == 0) {
@@ -1928,6 +1684,21 @@ public class CachedAppOptimizer {
             return false;
         }
 
+        private EnumMap<CompactProfile, Boolean> mProfileValidForMemcgMap =
+                new EnumMap<>(CompactProfile.class);
+
+        private boolean profileValidForMemcg(CompactProfile profile) {
+            Boolean valid = mProfileValidForMemcgMap.get(profile);
+
+            if (valid == null) {
+                // Use JNI only once
+                valid = new Boolean(compactionFlagsValidForMemcg(getCompactionFlags(profile)));
+                mProfileValidForMemcgMap.put(profile, valid);
+            }
+
+            return valid.booleanValue();
+        }
+
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
@@ -1935,6 +1706,7 @@ public class CachedAppOptimizer {
                     long start = SystemClock.uptimeMillis();
                     ProcessRecord proc;
                     final ProcessCachedOptimizerRecord opt;
+                    int uid;
                     int pid;
                     final String name;
                     CompactProfile lastCompactProfile;
@@ -1956,6 +1728,7 @@ public class CachedAppOptimizer {
                         opt = proc.mOptRecord;
                         forceCompaction = opt.isForceCompact();
                         opt.setForceCompact(false); // since this is a one-shot operation
+                        uid = proc.uid;
                         pid = proc.getPid();
                         name = proc.processName;
                         opt.setHasPendingCompact(false);
@@ -1966,43 +1739,43 @@ public class CachedAppOptimizer {
                         oomAdjReason = opt.getLastOomAdjChangeReason();
                     }
 
-                    AggregatedSourceCompactionStats perSourceStats =
-                            getPerSourceAggregatedCompactStat(opt.getReqCompactSource());
-                    AggregatedProcessCompactionStats perProcessStats =
-                            getPerProcessAggregatedCompactStat(name);
-
                     long[] rssBefore;
                     if (pid == 0) {
                         // not a real process, either one being launched or one being killed
                         if (DEBUG_COMPACTION) {
                             Slog.d(TAG_AM, "Compaction failed, pid is 0");
                         }
-                        ++perSourceStats.mProcCompactionsNoPidThrottled;
-                        ++perProcessStats.mProcCompactionsNoPidThrottled;
+                        mCompactStatsManager.logCompactionThrottled(
+                                CompactionStatsManager.COMPACT_THROTTLE_REASON_NO_PID,
+                                compactSource, name);
                         return;
                     }
 
                     if (!forceCompaction) {
                         if (shouldOomAdjThrottleCompaction(proc)) {
-                            ++perProcessStats.mProcCompactionsOomAdjThrottled;
-                            ++perSourceStats.mProcCompactionsOomAdjThrottled;
+                            mCompactStatsManager.logCompactionThrottled(
+                                    CompactionStatsManager.COMPACT_THROTTLE_REASON_OOM_ADJ,
+                                    compactSource, name);
                             return;
                         }
                         if (shouldTimeThrottleCompaction(
                                     proc, start, requestedProfile, compactSource)) {
-                            ++perProcessStats.mProcCompactionsTimeThrottled;
-                            ++perSourceStats.mProcCompactionsTimeThrottled;
+                            mCompactStatsManager.logCompactionThrottled(
+                                    CompactionStatsManager.COMPACT_THROTTLE_REASON_TIME_TOO_SOON,
+                                    compactSource, name);
                             return;
                         }
                         if (shouldThrottleMiscCompaction(proc, procState)) {
-                            ++perProcessStats.mProcCompactionsMiscThrottled;
-                            ++perSourceStats.mProcCompactionsMiscThrottled;
+                            mCompactStatsManager.logCompactionThrottled(
+                                    CompactionStatsManager.COMPACT_THROTTLE_REASON_PROC_STATE,
+                                    compactSource, name);
                             return;
                         }
                         rssBefore = mProcessDependencies.getRss(pid);
                         if (shouldRssThrottleCompaction(requestedProfile, pid, name, rssBefore)) {
-                            ++perProcessStats.mProcCompactionsRSSThrottled;
-                            ++perSourceStats.mProcCompactionsRSSThrottled;
+                            mCompactStatsManager.logCompactionThrottled(
+                                    CompactionStatsManager.COMPACT_THROTTLE_REASON_DELTA_RSS,
+                                    compactSource, name);
                             return;
                         }
                     } else {
@@ -2030,7 +1803,14 @@ public class CachedAppOptimizer {
                                         + " source: " + compactSource.name());
                         long zramUsedKbBefore = getUsedZramMemory();
                         long startCpuTime = threadCpuTimeNs();
-                        mProcessDependencies.performCompaction(resolvedProfile, pid);
+
+                        if (Flags.useMemcgForCompaction() &&
+                                profileValidForMemcg(resolvedProfile)) {
+                            mProcessDependencies.performMemcgCompaction(resolvedProfile, uid, pid);
+                        } else {
+                            mProcessDependencies.performCompaction(resolvedProfile, pid);
+                        }
+
                         long endCpuTime = threadCpuTimeNs();
                         long[] rssAfter = mProcessDependencies.getRss(pid);
                         long end = SystemClock.uptimeMillis();
@@ -2043,40 +1823,19 @@ public class CachedAppOptimizer {
                         long deltaSwapRss = rssAfter[RSS_SWAP_INDEX] - rssBefore[RSS_SWAP_INDEX];
                         switch (opt.getReqCompactProfile()) {
                             case SOME:
-                                ++perSourceStats.mSomeCompactPerformed;
-                                ++perProcessStats.mSomeCompactPerformed;
+                                mCompactStatsManager.logSomeCompactionPerformed(compactSource,
+                                    name);
                                 break;
                             case FULL:
-                                ++perSourceStats.mFullCompactPerformed;
-                                ++perProcessStats.mFullCompactPerformed;
                                 long anonRssSavings = -deltaAnonRss;
                                 long zramConsumed = zramUsedKbAfter - zramUsedKbBefore;
                                 long memFreed = anonRssSavings - zramConsumed;
                                 long totalCpuTimeMillis = deltaCpuTimeNanos / 1000000;
                                 long origAnonRss = rssBefore[RSS_ANON_INDEX];
-
-                                // Negative stats would skew averages and will likely be due to
-                                // noise of system doing other things so we put a floor at 0 to
-                                // avoid negative values.
-                                anonRssSavings = anonRssSavings > 0 ? anonRssSavings : 0;
-                                zramConsumed = zramConsumed > 0 ? zramConsumed : 0;
-                                memFreed = memFreed > 0 ? memFreed : 0;
-
-                                perProcessStats.addMemStats(anonRssSavings, zramConsumed, memFreed,
-                                        origAnonRss, totalCpuTimeMillis);
-                                perSourceStats.addMemStats(anonRssSavings, zramConsumed, memFreed,
-                                        origAnonRss, totalCpuTimeMillis);
-                                SingleCompactionStats memStats = new SingleCompactionStats(rssAfter,
-                                        compactSource, name, anonRssSavings, zramConsumed, memFreed,
-                                        origAnonRss, totalCpuTimeMillis, procState, newOomAdj,
-                                        oomAdjReason, proc.uid);
-                                mLastCompactionStats.remove(pid);
-                                mLastCompactionStats.put(pid, memStats);
-                                mCompactionStatsHistory.add(memStats);
-                                if (!forceCompaction) {
-                                    // Avoid polluting field metrics with forced compactions.
-                                    memStats.sendStat();
-                                }
+                                mCompactStatsManager.logFullCompactionPerformed(compactSource, name,
+                                        anonRssSavings, zramConsumed, memFreed, origAnonRss,
+                                        totalCpuTimeMillis, rssAfter, procState, newOomAdj,
+                                        oomAdjReason, proc.uid, pid, !forceCompaction);
                                 break;
                             default:
                                 // We likely missed adding this category, it needs to be added
@@ -2107,12 +1866,12 @@ public class CachedAppOptimizer {
                     break;
                 }
                 case COMPACT_SYSTEM_MSG: {
-                    ++mSystemCompactionsPerformed;
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "compactSystem");
                     long memFreedBefore = getMemoryFreedCompaction();
                     compactSystem();
                     long memFreedAfter = getMemoryFreedCompaction();
-                    mSystemTotalMemFreed += memFreedAfter - memFreedBefore;
+                    long memFreed = memFreedAfter - memFreedBefore;
+                    mCompactStatsManager.logSystemCompactionPerformed(memFreed);
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 }
@@ -2124,7 +1883,11 @@ public class CachedAppOptimizer {
                                     + " type=" + compactProfile.name());
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "compactNative");
                     try {
-                        mProcessDependencies.performCompaction(compactProfile, pid);
+                        if (Flags.useMemcgForCompaction()) {
+                            mProcessDependencies.performNativeCompaction(compactProfile, pid);
+                        } else {
+                            mProcessDependencies.performCompaction(compactProfile, pid);
+                        }
                     } catch (Exception e) {
                         Slog.d(TAG_AM, "Failed compacting native pid= " + pid);
                     }
@@ -2290,7 +2053,7 @@ public class CachedAppOptimizer {
          */
         @GuardedBy({"mAm"})
         private void freezeProcess(final ProcessRecord proc) {
-            int pid = proc.getPid(); // Unlocked intentionally
+            final int pid;
             final String name = proc.processName;
             final long unfrozenDuration;
             final boolean frozen;
@@ -2307,12 +2070,12 @@ public class CachedAppOptimizer {
                 if (mFreezerOverride) {
                     opt.setFreezerOverride(true);
                     Slog.d(TAG_AM, "Skipping freeze for process " + pid
-                            + " " + name + " curAdj = " + proc.mState.getCurAdj()
+                            + " " + name + " curAdj = " + proc.getCurAdj()
                             + "(override)");
                     return;
                 }
 
-                if (opt.shouldNotFreeze()) {
+                if (opt.shouldNotFreeze() && !Flags.cpuTimeCapabilityBasedFreezePolicy()) {
                     if (DEBUG_FREEZER) {
                         Slog.d(TAG_AM, "Skipping freeze because process is marked "
                                 + "should not be frozen");
@@ -2451,11 +2214,10 @@ public class CachedAppOptimizer {
                             synchronized (mAm.mPidsSelfLocked) {
                                 pr = mAm.mPidsSelfLocked.get(blocked);
                             }
-                            if (pr != null
-                                    && pr.mState.getCurAdj() < ProcessList.FREEZER_CUTOFF_ADJ) {
+                            if (pr != null && !pr.isFreezable()) {
                                 Slog.d(TAG_AM, app.processName + " (" + pid + ") blocks "
                                         + pr.processName + " (" + blocked + ")");
-                                // Found at least one blocked non-cached process
+                                // Found at least one blocked unfrozen process
                                 unfreezeAppLSP(app, UNFREEZE_REASON_FILE_LOCKS);
                                 break;
                             }
@@ -2467,7 +2229,7 @@ public class CachedAppOptimizer {
     }
 
     /**
-     * Default implementation for ProcessDependencies, public vor visibility to OomAdjuster class.
+     * Default implementation for ProcessDependencies, public for visibility to OomAdjuster class.
      */
     private static final class DefaultProcessDependencies implements ProcessDependencies {
         public static volatile int mPidCompacting = -1;
@@ -2489,6 +2251,34 @@ public class CachedAppOptimizer {
             } else if (profile == CompactProfile.ANON) {
                 compactProcess(pid, COMPACT_ACTION_ANON_FLAG);
             }
+            mPidCompacting = -1;
+        }
+
+        @Override
+        public void performMemcgCompaction(CompactProfile profile, int uid, int pid)
+                throws IOException {
+            int compactionFlags = getCompactionFlags(profile);
+            mPidCompacting = pid;
+            performNativeMemcgCompaction(uid, pid, compactionFlags);
+            mPidCompacting = -1;
+        }
+
+        // Compaction normally requires the UID to identify the correct cgroup path for the process
+        // so that we can use memory cgroup reclaim without looking up its cgroup placement. Most
+        // of the time the (real/effective/saved) UID of the process matches its UID cgroup
+        // placement, but that is not true for native processes launched under adb shells which have
+        // UIDs of 2000 but live under the adbd cgroup in uid_0 as a child or grandchild of adbd.
+        // Both the UID and the PID would cause the generated cgroup path to be incorrect for shell
+        // processes in this case. So here we do not attempt to use cgroup reclaim, and always scan
+        // all VMAs and madvise the individual process.
+        // An alternative would be to reclaim the adbd cgroup, but this would compact *all* shells
+        // (and any running commands under them) which could be more than just the specified pid.
+        @Override
+        public void performNativeCompaction(CompactProfile profile, int pid)
+                throws IOException {
+            int compactionFlags = getCompactionFlags(profile);
+            mPidCompacting = pid;
+            compactNativeProcess(pid, compactionFlags);
             mPidCompacting = -1;
         }
     }
@@ -2539,6 +2329,14 @@ public class CachedAppOptimizer {
                 return UNFREEZE_REASON_RESTRICTION_CHANGE;
             case OOM_ADJ_REASON_COMPONENT_DISABLED:
                 return UNFREEZE_REASON_COMPONENT_DISABLED;
+            case OOM_ADJ_REASON_FOLLOW_UP:
+                return UNFREEZE_REASON_OOM_ADJ_FOLLOW_UP;
+            case OOM_ADJ_REASON_RECONFIGURATION:
+                return UNFREEZE_REASON_OOM_ADJ_RECONFIGURATION;
+            case OOM_ADJ_REASON_SERVICE_BINDER_CALL:
+                return UNFREEZE_REASON_OOM_ADJ_SERVICE_BINDER_CALL;
+            case OOM_ADJ_REASON_BATCH_UPDATE_REQUEST:
+                return UNFREEZE_REASON_OOM_ADJ_BATCH_UPDATE_REQUEST;
             default:
                 return UNFREEZE_REASON_NONE;
         }
@@ -2591,8 +2389,7 @@ public class CachedAppOptimizer {
      */
     public void binderError(int debugPid, ProcessRecord app, int code, int flags, int err) {
         Slog.w(TAG_AM, "pid " + debugPid + " " + (app == null ? "null" : app.processName)
-                + " sent binder code " + code + " with flags " + flags
-                + " to frozen apps and got error " + err);
+                + " sent binder code " + code + " with flags " + flags + " and got error " + err);
 
         // Do nothing if the binder error callback is not enabled.
         // That means the frozen apps in a wrong state will be killed when they are unfrozen later.

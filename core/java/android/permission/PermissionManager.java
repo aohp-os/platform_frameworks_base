@@ -16,6 +16,7 @@
 
 package android.permission;
 
+import static android.companion.virtual.VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT;
 import static android.content.pm.PackageManager.FLAG_PERMISSION_GRANTED_BY_DEFAULT;
 import static android.content.pm.PackageManager.FLAG_PERMISSION_GRANTED_BY_ROLE;
 import static android.content.pm.PackageManager.FLAG_PERMISSION_POLICY_FIXED;
@@ -24,7 +25,6 @@ import static android.content.pm.PackageManager.FLAG_PERMISSION_USER_FIXED;
 import static android.content.pm.PackageManager.FLAG_PERMISSION_USER_SET;
 import static android.os.Build.VERSION_CODES.S;
 import static android.permission.flags.Flags.FLAG_SHOULD_REGISTER_ATTRIBUTION_SOURCE;
-import static android.permission.flags.Flags.serverSideAttributionRegistration;
 
 import android.Manifest;
 import android.annotation.CheckResult;
@@ -61,7 +61,6 @@ import android.content.pm.PermissionGroupInfo;
 import android.content.pm.PermissionInfo;
 import android.content.pm.permission.SplitPermissionInfoParcelable;
 import android.media.AudioManager;
-import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -85,7 +84,6 @@ import android.util.Slog;
 import com.android.internal.R;
 import com.android.internal.annotations.Immutable;
 import com.android.internal.util.CollectionUtils;
-import com.android.modules.utils.build.SdkLevel;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -187,13 +185,6 @@ public final class PermissionManager {
     @ChangeId
     @EnabledAfter(targetSdkVersion = S)
     public static final long CANNOT_INSTALL_WITH_BAD_PERMISSION_GROUPS = 146211400;
-
-    /**
-     * Whether to use the new {@link com.android.server.permission.access.AccessCheckingService}.
-     *
-     * @hide
-     */
-    public static final boolean USE_ACCESS_CHECKING_SERVICE = SdkLevel.isAtLeastV();
 
     /**
      * The time to wait in between refreshing the exempted indicator role packages
@@ -1338,7 +1329,7 @@ public final class PermissionManager {
         // Lazily initialize the usage helper
         initializeUsageHelper();
         boolean includeMicrophoneUsage = !micMuted;
-        return mUsageHelper.getOpUsageDataByDevice(includeMicrophoneUsage,
+        return mUsageHelper.getOpUsageDataForIndicatorsByDevice(includeMicrophoneUsage,
                 VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT);
     }
 
@@ -1639,14 +1630,8 @@ public final class PermissionManager {
         // only used for process death detection. If we are about to use the source for security
         // enforcement we need to replace the binder with a unique one.
         try {
-            if (serverSideAttributionRegistration()) {
-                IBinder newToken = mPermissionManager.registerAttributionSource(source.asState());
-                return source.withToken(newToken);
-            } else {
-                AttributionSource registeredSource = source.withToken(new Binder());
-                mPermissionManager.registerAttributionSource(registeredSource.asState());
-                return registeredSource;
-            }
+            IBinder newToken = mPermissionManager.registerAttributionSource(source.asState());
+            return source.withToken(newToken);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
         }
@@ -1716,10 +1701,6 @@ public final class PermissionManager {
 
     private static int checkPermissionUncached(@Nullable String permission, int pid, int uid,
             int deviceId) {
-        final int appId = UserHandle.getAppId(uid);
-        if (appId == Process.ROOT_UID || appId == Process.SYSTEM_UID) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
         final IActivityManager am = ActivityManager.getService();
         if (am == null) {
             // We don't have an active ActivityManager instance and the calling UID is not root or
@@ -1731,6 +1712,16 @@ public final class PermissionManager {
         try {
             sShouldWarnMissingActivityManager = true;
             return am.checkPermissionForDevice(permission, pid, uid, deviceId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    private static int getPermissionRequestStateUncached(String packageName, String permission,
+            int deviceId) {
+        try {
+            return AppGlobals.getPermissionManager().getPermissionRequestState(
+                    packageName, permission, deviceId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1789,40 +1780,52 @@ public final class PermissionManager {
         }
     }
 
-    // The legacy system property "package_info" had two purposes: to invalidate PIC caches and to
-    // signal that package information, and therefore permissions, might have changed.
-    // AudioSystem is the only client of the signaling behavior.  The "separate permissions
-    // notification" feature splits the two behaviors into two system property names.
-    //
-    // If the feature is disabled (legacy behavior) then the two system property names have the
-    // same value.  This means there is only one system property in use.
-    //
-    // If the feature is enabled, then the two system property names have different values, which
-    // means there is a system property used by PIC and a system property used for signaling.  The
-    // legacy value is hard-coded in native code that relies on the signaling behavior, so the
-    // system property name for signaling is the legacy property name, and the system property
-    // name for PIC is new.
-    private static String getPackageInfoCacheKey() {
-        if (PropertyInvalidatedCache.separatePermissionNotificationsEnabled()) {
-            return PropertyInvalidatedCache.createSystemCacheKey("package_info_cache");
-        } else {
-            return CACHE_KEY_PACKAGE_INFO_NOTIFY;
+    private static final class PermissionRequestStateQuery {
+        final String mPackageName;
+        final String mPermission;
+        final int mDeviceId;
+
+        PermissionRequestStateQuery(@NonNull String packageName, @NonNull String permission,
+                int deviceId) {
+            mPackageName = packageName;
+            mPermission = permission;
+            mDeviceId = deviceId;
+        }
+
+        @Override
+        public String toString() {
+            return TextUtils.formatSimple("PermissionRequestStateQuery(package=\"%s\","
+                            + " permission=\"%s\", " + "deviceId=%d)",
+                    mPackageName, mPermission, mDeviceId);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(mPackageName, mPermission, mDeviceId);
+        }
+
+        @Override
+        public boolean equals(@Nullable Object rval) {
+            if (rval == null) {
+                return false;
+            }
+            PermissionRequestStateQuery other;
+            try {
+                other = (PermissionRequestStateQuery) rval;
+            } catch (ClassCastException ex) {
+                return false;
+            }
+            return mDeviceId == other.mDeviceId && Objects.equals(mPackageName, other.mPackageName)
+                    && Objects.equals(mPermission, other.mPermission);
         }
     }
 
     /**
-     * The system property that is used to notify clients that package information, and therefore
-     * permissions, may have changed.
+     * The PropertyInvalidatedCache key for invalidating caches.
      * @hide
      */
-    public static final String CACHE_KEY_PACKAGE_INFO_NOTIFY =
-            PropertyInvalidatedCache.createSystemCacheKey("package_info");
-
-    /**
-     * The system property that is used to invalidate PIC caches.
-     * @hide
-     */
-    public static final String CACHE_KEY_PACKAGE_INFO_CACHE = getPackageInfoCacheKey();
+    public static final String CACHE_KEY_PACKAGE_INFO_CACHE =
+            PropertyInvalidatedCache.createSystemCacheKey("package_info_cache");
 
     /** @hide */
     private static final PropertyInvalidatedCache<PermissionQuery, Integer> sPermissionCache =
@@ -1836,8 +1839,35 @@ public final class PermissionManager {
             };
 
     /** @hide */
+    private static final PropertyInvalidatedCache<PermissionRequestStateQuery, Integer>
+            sPermissionRequestStateCache =
+            new PropertyInvalidatedCache<>(
+                    512, CACHE_KEY_PACKAGE_INFO_CACHE, "getPermissionRequestState") {
+                @Override
+                public Integer recompute(PermissionRequestStateQuery query) {
+                    return getPermissionRequestStateUncached(query.mPackageName, query.mPermission,
+                            query.mDeviceId);
+                }
+            };
+
+    /** @hide */
     public static int checkPermission(@Nullable String permission, int pid, int uid, int deviceId) {
+        // Short-circuit the cache for unconditionally granted permissions. This was previously
+        // behind the cache, but placing here avoids marginal cache query overhead in system server.
+        final int appId = UserHandle.getAppId(uid);
+        if (appId == Process.SYSTEM_UID || appId == Process.ROOT_UID) {
+            return PackageManager.PERMISSION_GRANTED;
+        }
         return sPermissionCache.query(new PermissionQuery(permission, pid, uid, deviceId));
+    }
+
+    /** @hide */
+    @Context.PermissionRequestState
+    public int getPermissionRequestState(@NonNull String packageName, @NonNull String permission,
+            int deviceId) {
+        int resolvedDeviceId = resolveDeviceIdForPermissionCheck(mContext, deviceId, permission);
+        return sPermissionRequestStateCache.query(
+                new PermissionRequestStateQuery(packageName, permission, resolvedDeviceId));
     }
 
     /**
@@ -1964,9 +1994,47 @@ public final class PermissionManager {
      */
     public int checkPackageNamePermission(String permName, String pkgName,
             int deviceId, @UserIdInt int userId) {
-        String persistentDeviceId = getPersistentDeviceId(deviceId);
+        int resolvedDeviceId = resolveDeviceIdForPermissionCheck(mContext, deviceId, permName);
+        String persistentDeviceId = getPersistentDeviceId(resolvedDeviceId);
         return sPackageNamePermissionCache.query(
                 new PackageNamePermissionQuery(permName, pkgName, persistentDeviceId, userId));
+    }
+
+    /**
+     * When checking a device-aware permission on a remote device, if the permission is CAMERA
+     * or RECORD_AUDIO we need to check remote device's corresponding capability. If the remote
+     * device doesn't have capability fall back to checking permission on the default device.
+     *
+     * @hide
+     */
+    public static int resolveDeviceIdForPermissionCheck(@NonNull Context context, int deviceId,
+            @Nullable String permission) {
+        if (deviceId == Context.DEVICE_ID_DEFAULT || permission == null
+                || !DEVICE_AWARE_PERMISSIONS.contains(permission)) {
+            return Context.DEVICE_ID_DEFAULT;
+        }
+
+        VirtualDeviceManager virtualDeviceManager =
+                context.getSystemService(VirtualDeviceManager.class);
+        if (virtualDeviceManager == null) {
+            Slog.e(LOG_TAG, "VDM is not enabled when device id is not default. deviceId = "
+                    + deviceId);
+        } else {
+            VirtualDevice virtualDevice = virtualDeviceManager.getVirtualDevice(deviceId);
+            if (virtualDevice != null) {
+                if ((Objects.equals(permission, Manifest.permission.RECORD_AUDIO)
+                        && !virtualDevice.hasCustomAudioInputSupport())
+                        || (Objects.equals(permission, Manifest.permission.CAMERA)
+                        && !virtualDevice.hasCustomCameraSupport())) {
+                    deviceId = Context.DEVICE_ID_DEFAULT;
+                }
+            } else {
+                Slog.e(LOG_TAG,
+                        "virtualDevice is not found when device id is not default. deviceId = "
+                                + deviceId);
+            }
+        }
+        return deviceId;
     }
 
     @Nullable
@@ -1974,8 +2042,8 @@ public final class PermissionManager {
         String persistentDeviceId = null;
 
         if (deviceId == Context.DEVICE_ID_DEFAULT) {
-            persistentDeviceId = VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT;
-        } else if (android.companion.virtual.flags.Flags.vdmPublicApis()) {
+            persistentDeviceId = PERSISTENT_DEVICE_ID_DEFAULT;
+        } else {
             VirtualDeviceManager virtualDeviceManager = mContext.getSystemService(
                     VirtualDeviceManager.class);
             if (virtualDeviceManager != null) {
@@ -1989,9 +2057,6 @@ public final class PermissionManager {
                     Slog.e(LOG_TAG, "Cannot find persistent device Id for " + deviceId);
                 }
             }
-        } else {
-            Slog.e(LOG_TAG, "vdmPublicApis flag is not enabled when device Id " + deviceId
-                    + "is not default.");
         }
         return persistentDeviceId;
     }

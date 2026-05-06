@@ -20,8 +20,10 @@ import android.os.HandlerThread;
 
 import androidx.annotation.Nullable;
 
+import com.android.wm.shell.appzoomout.AppZoomOut;
 import com.android.wm.shell.back.BackAnimation;
 import com.android.wm.shell.bubbles.Bubbles;
+import com.android.wm.shell.bubbles.bar.BubbleBarExpandedView;
 import com.android.wm.shell.desktopmode.DesktopMode;
 import com.android.wm.shell.displayareahelper.DisplayAreaHelper;
 import com.android.wm.shell.keyguard.KeyguardTransitions;
@@ -34,11 +36,12 @@ import com.android.wm.shell.splitscreen.SplitScreen;
 import com.android.wm.shell.startingsurface.StartingSurface;
 import com.android.wm.shell.sysui.ShellInterface;
 import com.android.wm.shell.taskview.TaskViewFactory;
+import com.android.wm.shell.windowdecor.viewholder.AppHandles;
+
+import java.util.Optional;
 
 import dagger.BindsInstance;
 import dagger.Subcomponent;
-
-import java.util.Optional;
 
 /**
  * Dagger Subcomponent for WindowManager.  This class explicitly describes the interfaces exported
@@ -70,6 +73,8 @@ public interface WMComponent {
     default void init() {
         getShell().onInit();
     }
+
+    // Interfaces provided to SysUI
 
     @WMSingleton
     ShellInterface getShell();
@@ -112,4 +117,15 @@ public interface WMComponent {
      */
     @WMSingleton
     Optional<DesktopMode> getDesktopMode();
+
+    @WMSingleton
+    Optional<AppZoomOut> getAppZoomOut();
+
+    @WMSingleton
+    Optional<AppHandles> getAppHandles();
+
+    // Injector methods to support field injection
+
+    /** Injector method for {@link BubbleBarExpandedView}. */
+    void inject(BubbleBarExpandedView bubbleBarExpandedView);
 }

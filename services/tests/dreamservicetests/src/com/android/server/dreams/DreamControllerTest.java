@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
@@ -37,6 +38,7 @@ import android.content.Context;
 import android.content.ServiceConnection;
 import android.content.res.Resources;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.IPowerManager;
@@ -44,13 +46,18 @@ import android.os.IRemoteCallback;
 import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.test.TestLooper;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.flag.junit.SetFlagsRule;
+import android.service.dreams.DreamService;
+import android.service.dreams.Flags;
 import android.service.dreams.IDreamService;
 
-import androidx.test.filters.FlakyTest;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -86,6 +93,9 @@ public class DreamControllerTest {
     @Captor
     private ArgumentCaptor<IRemoteCallback> mRemoteCallbackCaptor;
 
+    @Rule
+    public SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
     private final TestLooper mLooper = new TestLooper();
     private final Handler mHandler = new Handler(mLooper.getLooper());
 
@@ -108,10 +118,8 @@ public class DreamControllerTest {
                 .thenReturn(Context.ACTIVITY_TASK_SERVICE);
 
         final PowerManager powerManager = new PowerManager(mContext, mPowerManager, null, null);
-        when(mContext.getSystemService(Context.POWER_SERVICE))
+        when(mContext.getSystemService(PowerManager.class))
                 .thenReturn(powerManager);
-        when(mContext.getSystemServiceName(PowerManager.class))
-                .thenReturn(Context.POWER_SERVICE);
         when(mContext.getResources()).thenReturn(mResources);
 
         mToken = new Binder();
@@ -136,8 +144,31 @@ public class DreamControllerTest {
                 eq(false) /*preview*/, any());
     }
 
+    @EnableFlags(Flags.FLAG_ALLOW_DREAM_ATTACH_FAILURE)
     @Test
-    public void startDream_dreamListenerNotified() {
+    public void startDream_flagEnabled_dreamListenerNotified() throws RemoteException {
+        // Call dream controller to start dreaming.
+        mDreamController.startDream(mToken, mDreamName, false /*isPreview*/, false /*doze*/,
+                0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
+
+        // Mock service connected.
+        final ServiceConnection serviceConnection = captureServiceConnection();
+        serviceConnection.onServiceConnected(mDreamName, mIBinder);
+        mLooper.dispatchAll();
+
+        // Mock dream started callback.
+        verify(mIDreamService).attach(eq(mToken), eq(false), eq(false),
+                mRemoteCallbackCaptor.capture());
+        mRemoteCallbackCaptor.getValue().sendResult(null);
+        mLooper.dispatchAll();
+
+        // Verify that dream listener is notified.
+        verify(mListener).onDreamStarted(any());
+    }
+
+    @DisableFlags(Flags.FLAG_ALLOW_DREAM_ATTACH_FAILURE)
+    @Test
+    public void startDream_flagDisabled_dreamListenerNotified() {
         // Call dream controller to start dreaming.
         mDreamController.startDream(mToken, mDreamName, false /*isPreview*/, false /*doze*/,
                 0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
@@ -234,8 +265,13 @@ public class DreamControllerTest {
     }
 
     @Test
-    @FlakyTest(bugId = 293109503)
     public void serviceDisconnect_resetsScreenTimeout() throws RemoteException {
+        when(mResources.getBoolean(
+                com.android.internal.R.bool.config_resetScreenTimeoutOnUnexpectedDreamExit))
+                .thenReturn(true);
+        // Recreate DreamManager because the configuration gets retrieved in the constructor
+        mDreamController = new DreamController(mContext, mHandler, mListener);
+
         // Start dream.
         mDreamController.startDream(mToken, mDreamName, false /*isPreview*/, false /*doze*/,
                 0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
@@ -254,8 +290,13 @@ public class DreamControllerTest {
     }
 
     @Test
-    @FlakyTest(bugId = 293109503)
     public void binderDied_resetsScreenTimeout() throws RemoteException {
+        when(mResources.getBoolean(
+                com.android.internal.R.bool.config_resetScreenTimeoutOnUnexpectedDreamExit))
+                .thenReturn(true);
+        // Recreate DreamManager because the configuration gets retrieved in the constructor
+        mDreamController = new DreamController(mContext, mHandler, mListener);
+
         // Start dream.
         mDreamController.startDream(mToken, mDreamName, false /*isPreview*/, false /*doze*/,
                 0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
@@ -303,6 +344,34 @@ public class DreamControllerTest {
                 0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
 
         assertTrue(mDreamController.dreamIsFrontmost());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ALLOW_DREAM_ATTACH_FAILURE)
+    public void startDream_attachReturnsError_stopsDream() throws RemoteException {
+        // Call dream controller to start dreaming.
+        mDreamController.startDream(mToken, mDreamName, false /*isPreview*/, false /*doze*/,
+                0 /*userId*/, null /*wakeLock*/, mOverlayName, "test" /*reason*/);
+
+        // Mock service connected.
+        final ServiceConnection serviceConnection = captureServiceConnection();
+        serviceConnection.onServiceConnected(mDreamName, mIBinder);
+        mLooper.dispatchAll();
+
+        // Verify that dream service is called to attach.
+        verify(mIDreamService).attach(eq(mToken), eq(false) /*doze*/,
+                eq(false) /*preview*/, mRemoteCallbackCaptor.capture());
+
+        // Mock attach returning an error.
+        final Bundle bundle = new Bundle();
+        bundle.putBoolean(DreamService.BUNDLE_KEY_ATTACH_ERROR, true);
+        mRemoteCallbackCaptor.getValue().sendResult(bundle);
+        mLooper.dispatchAll();
+
+        // Verify that the dream is stopped.
+        verify(mIDreamService).detach();
+        verify(mListener).onDreamStopped(any());
+        verify(mListener, never()).onDreamStarted(any());
     }
 
     private ServiceConnection captureServiceConnection() {

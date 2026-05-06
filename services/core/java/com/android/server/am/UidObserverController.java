@@ -31,6 +31,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
+import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -82,7 +83,7 @@ public class UidObserverController {
 
     UidObserverController(@NonNull Handler handler) {
         mHandler = handler;
-        mValidateUids = new ActiveUids(null /* service */, false /* postChangesToAtm */);
+        mValidateUids = new ActiveUids(null);
     }
 
     IBinder register(@NonNull IUidObserver observer, int which, int cutpoint,
@@ -91,10 +92,12 @@ public class UidObserverController {
                 + UUID.randomUUID().toString());
 
         synchronized (mLock) {
+            final boolean canInteractAcrossUsers = ActivityManager.checkComponentPermission(
+                    INTERACT_ACROSS_USERS_FULL, callingUid, Process.INVALID_UID, true)
+                            == PackageManager.PERMISSION_GRANTED;
             mUidObservers.register(observer, new UidObserverRegistration(callingUid,
                     callingPackage, which, cutpoint,
-                    ActivityManager.checkUidPermission(INTERACT_ACROSS_USERS_FULL, callingUid)
-                    == PackageManager.PERMISSION_GRANTED, uids, token));
+                    canInteractAcrossUsers, uids, token));
         }
 
         return token;

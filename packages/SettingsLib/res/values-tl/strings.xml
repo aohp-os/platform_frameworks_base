@@ -87,6 +87,8 @@
     <string name="bluetooth_connecting" msgid="5871702668260192755">"Kumukonekta…"</string>
     <string name="bluetooth_connected" msgid="8065345572198502293">"Nakakonekta<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
     <string name="bluetooth_pairing" msgid="4269046942588193600">"Pinapares…"</string>
+    <string name="bluetooth_pairing_failure" msgid="6914444518793157913">"Hindi maipares"</string>
+    <string name="bluetooth_connection_failure" msgid="384203214661155324">"Hindi makakonekta"</string>
     <string name="bluetooth_connected_no_headset" msgid="2224101138659967604">"Nakakonekta (walang telepono)<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
     <string name="bluetooth_connected_no_a2dp" msgid="8566874395813947092">"Nakakonekta (walang media)<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
     <string name="bluetooth_connected_no_headset_no_a2dp" msgid="2893204819854215433">"Nakakonekta (walang telepono o media)<xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
@@ -103,6 +105,11 @@
     <string name="bluetooth_battery_level_untethered" msgid="1616774716076301755">"L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
     <string name="bluetooth_battery_level_untethered_left" msgid="5725764679536058365">"Kaliwa: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya"</string>
     <string name="bluetooth_battery_level_untethered_right" msgid="8377995536997790142">"Kanan: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya"</string>
+    <string name="bluetooth_battery_level_untethered_case" msgid="6783758530890124772">"Case: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya"</string>
+    <string name="bluetooth_battery_level_untethered_left_case" msgid="7676759299091682229">"Kaliwa: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Case: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya"</string>
+    <string name="bluetooth_battery_level_untethered_right_case" msgid="1299184574560442389">"Kanan: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Case: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya"</string>
+    <string name="bluetooth_battery_level_untethered_left_right" msgid="6953449613092012043">"Kaliwa: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, Kanan: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya"</string>
+    <string name="bluetooth_battery_level_untethered_left_case_right" msgid="5434524614259536880">"L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, C: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_2">%3$s</xliff:g> baterya"</string>
     <string name="tv_bluetooth_battery_level_untethered_left" msgid="337629670583744410">"Kaliwa <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="tv_bluetooth_battery_level_untethered_right" msgid="8610019317279155595">"Kanan <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="bluetooth_active_no_battery_level" msgid="4155462233006205630">"Aktibo"</string>
@@ -110,15 +117,28 @@
     <string name="bluetooth_hearing_aid_left_active" msgid="8330226430756799572">"Aktibo (kaliwa lang)"</string>
     <string name="bluetooth_hearing_aid_right_active" msgid="2244728507170385397">"Aktibo (kanan lang)"</string>
     <string name="bluetooth_hearing_aid_left_and_right_active" msgid="4294571497939983181">"Aktibo (kaliwa at kanan)"</string>
+    <string name="bluetooth_hearing_device_ambient_error" msgid="6035857289108813878">"Hindi ma-update ang paligid"</string>
+    <string name="bluetooth_hearing_aids_presets_error" msgid="4523942574698610976">"Hindi ma-update ang preset"</string>
+    <string name="hearing_device_spinner_item_selected" msgid="3884049360428514878">"Napili"</string>
     <string name="bluetooth_active_media_only_battery_level" msgid="7772517511061834073">"Aktibo (media lang). <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
     <string name="bluetooth_active_media_only_battery_level_untethered" msgid="7444753133664620926">"Aktibo (media lang). L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_battery_level" msgid="2820003593899467676">"Device ng bisita. <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_battery_level_untethered" msgid="5404013822067644960">"Device ng bisita. L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_media_only_battery_level" msgid="7928347900623812299">"Device ng bisita (media lang). <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_media_only_battery_level_untethered" msgid="4458143141394300892">"Device ng bisita (media lang). L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
     <string name="bluetooth_battery_level_lea_support" msgid="5968584103507988820">"Nakakonekta (sinusuportahan ang pag-share ng audio), <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
     <string name="bluetooth_battery_level_untethered_lea_support" msgid="803110681688633362">"Nakakonekta (sinusuportahan ang pag-share ng audio). L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
     <string name="bluetooth_battery_level_untethered_left_lea_support" msgid="7707464334346454950">"Nakakonekta (sinusuportahan ang pag-share ng audio). Kaliwa: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
     <string name="bluetooth_battery_level_untethered_right_lea_support" msgid="8941549024377771038">"Nakakonekta (sinusuportahan ang pag-share ng audio). Kanan: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
     <string name="bluetooth_no_battery_level_lea_support" msgid="5721725041048434075">"Nakakonekta (sinusuportahan ang pag-share ng audio)"</string>
+    <string name="bluetooth_guest_battery_level_lea_support" msgid="8098327939585013928">"Device ng bisita (sinusuportahan ang pag-share ng audio). <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_battery_level_untethered_lea_support" msgid="3701035025565668360">"Device ng bisita (sinusuportahan ang pag-share ng audio). L: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, R: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g> baterya."</string>
+    <string name="bluetooth_guest_no_battery_level_lea_support" msgid="2977038548753103470">"Device ng bisita (sinusuportahan ang pag-share ng audio)"</string>
     <string name="bluetooth_active_media_only_no_battery_level" msgid="71106861912593126">"Aktibo (media lang)"</string>
+    <string name="bluetooth_guest_no_battery_level" msgid="9122974160381136920">"Device ng bisita"</string>
+    <string name="bluetooth_guest_media_only_no_battery_level" msgid="7666347601796705721">"Device ng bisita (media lang)"</string>
     <string name="bluetooth_saved_device_lea_support" msgid="7231323139968285768">"Sinusuportahan ang pag-share ng audio"</string>
+    <string name="bluetooth_guest_saved_device_lea_support" msgid="5621291599518569876">"Device ng bisita. Sinusuportahan ang pag-share ng audio"</string>
     <string name="bluetooth_hearing_aid_media_only_left_active" msgid="1632152540901488645">"Aktibo (media lang), kaliwa lang"</string>
     <string name="bluetooth_hearing_aid_media_only_right_active" msgid="3854140683042617230">"Aktibo (media lang), kanan lang"</string>
     <string name="bluetooth_hearing_aid_media_only_left_and_right_active" msgid="1299913413062528417">"Aktibo (media lang), kaliwa at kanan"</string>
@@ -219,7 +239,7 @@
     <string name="tts_status_checking" msgid="8026559918948285013">"Sinusuri…"</string>
     <string name="tts_engine_settings_title" msgid="7849477533103566291">"Mga setting para sa <xliff:g id="TTS_ENGINE_NAME">%s</xliff:g>"</string>
     <string name="tts_engine_settings_button" msgid="477155276199968948">"Ilunsad ang mga setting ng engine"</string>
-    <string name="tts_engine_preference_section_title" msgid="3861562305498624904">"Ginustong engine"</string>
+    <string name="tts_engine_preference_section_title" msgid="3861562305498624904">"Prefer na engine"</string>
     <string name="tts_general_section_title" msgid="8919671529502364567">"Pangkalahatan"</string>
     <string name="tts_reset_speech_pitch_title" msgid="7149398585468413246">"I-reset ang pitch ng pagsasalita"</string>
     <string name="tts_reset_speech_pitch_summary" msgid="6822904157021406449">"I-reset ang pitch sa default na pagbigkas ng text."</string>
@@ -329,7 +349,7 @@
     <string name="wifi_non_persistent_mac_randomization_summary" msgid="2159794543105053930">"Kapag naka-enable ang mode na ito, puwedeng magbago ang MAC address ng device na ito sa tuwing kokonekta ito sa isang network na may naka-enable na pag-randomize ng MAC."</string>
     <string name="wifi_metered_label" msgid="8737187690304098638">"Nakametro"</string>
     <string name="wifi_unmetered_label" msgid="6174142840934095093">"Hindi Nakametro"</string>
-    <string name="select_logd_size_title" msgid="1604578195914595173">"Mga laki ng buffer ng Logger"</string>
+    <string name="select_logd_size_title" msgid="4393502933789367691">"Laki ng buffer ng logger"</string>
     <string name="select_logd_size_dialog_title" msgid="2105401994681013578">"Pumili ng mga laki ng Logger bawat log buffer"</string>
     <string name="dev_logpersist_clear_warning_title" msgid="8631859265777337991">"I-clear ang tuluy-tuloy na storage ng logger?"</string>
     <string name="dev_logpersist_clear_warning_message" msgid="6447590867594287413">"Kapag hindi na namin sinusubaybayan ang tuluy-tuloy na logger, kailangan naming burahin ang data ng logger na nanatili sa iyong device."</string>
@@ -375,6 +395,7 @@
     <string name="debug_hw_drawing_category" msgid="5830815169336975162">"Pag-render na pinapabilis ng hardware"</string>
     <string name="media_category" msgid="8122076702526144053">"Media"</string>
     <string name="debug_monitoring_category" msgid="1597387133765424994">"Pagsubaybay"</string>
+    <string name="window_management_category" msgid="2015535427098365170">"Pamamahala sa Window"</string>
     <string name="strict_mode" msgid="889864762140862437">"Enabled ang strict mode"</string>
     <string name="strict_mode_summary" msgid="1838248687233554654">"I-flash ang screen pag may long ops ang app sa main thread"</string>
     <string name="pointer_location" msgid="7516929526199520173">"Lokasyon ng pointer"</string>
@@ -423,6 +444,7 @@
     <string name="transition_animation_scale_title" msgid="1278477690695439337">"Scale ng transition animation"</string>
     <string name="animator_duration_scale_title" msgid="7082913931326085176">"Scale ng tagal ng animator"</string>
     <string name="overlay_display_devices_title" msgid="5411894622334469607">"I-simulate, ika-2 display"</string>
+    <string name="shade_display_awareness_title" msgid="8000009404669495876">"Posisyon ng display ng shade"</string>
     <string name="debug_applications_category" msgid="5394089406638954196">"Mga App"</string>
     <string name="immediately_destroy_activities" msgid="1826287490705167403">"Huwag magtago ng mga aktibidad"</string>
     <string name="immediately_destroy_activities_summary" msgid="6289590341144557614">"Burahin ang aktibidad kapag iniwan na ito ng user"</string>
@@ -468,6 +490,9 @@
     <string name="select_webview_provider_title" msgid="3917815648099445503">"Pagpapatupad sa WebView"</string>
     <string name="select_webview_provider_dialog_title" msgid="2444261109877277714">"Itakda ang pagpapatupad sa WebView"</string>
     <string name="select_webview_provider_toast_text" msgid="8512254949169359848">"Wala nang bisa ang napiling ito. Subukang muli."</string>
+    <string name="webview_launch_devtools_title" msgid="8009687433555367112">"DevTools ng WebView"</string>
+    <string name="webview_launch_devtools_no_package" msgid="3182544553665113721">"Hindi nakita ang WebView package."</string>
+    <string name="webview_launch_devtools_no_activity" msgid="4066006313619617140">"Hindi mailunsad ang DevTools."</string>
     <string name="picture_color_mode" msgid="1013807330552931903">"Mode ng kulay ng larawan"</string>
     <string name="picture_color_mode_desc" msgid="151780973768136200">"Gamitin ang sRGB"</string>
     <string name="daltonizer_mode_disabled" msgid="403424372812399228">"Naka-disable"</string>
@@ -521,7 +546,9 @@
     <string name="battery_info_status_charging_fast_v2" msgid="1825439848151256589">"Fast charging"</string>
     <string name="disabled_by_admin_summary_text" msgid="5343911767402923057">"Pinapamahalaan ng admin"</string>
     <string name="disabled_by_app_ops_text" msgid="8373595926549098012">"Kinokontrol ng Pinaghihigpitang Setting"</string>
+    <string name="disabled_in_phone_call_text" msgid="6568931334337318320">"Hindi available habang may tawag"</string>
     <string name="disabled" msgid="8017887509554714950">"Naka-disable"</string>
+    <string name="enabled" msgid="3997122818554810678">"Naka-enable"</string>
     <string name="external_source_trusted" msgid="1146522036773132905">"Pinapayagan"</string>
     <string name="external_source_untrusted" msgid="5037891688911672227">"Hindi pinapayagan"</string>
     <string name="install_other_apps" msgid="3232595082023199454">"Mag-install ng di-kilalang app"</string>
@@ -533,11 +560,15 @@
   </string-array>
     <string name="charge_length_format" msgid="6941645744588690932">"<xliff:g id="ID_1">%1$s</xliff:g> na ang nakalipas"</string>
     <string name="remaining_length_format" msgid="4310625772926171089">"<xliff:g id="ID_1">%1$s</xliff:g> na lang"</string>
+    <string name="screen_zoom_summary_smallest" msgid="1042159093382395789">"Pinakamaliit"</string>
+    <string name="screen_zoom_summary_smaller" msgid="7452722393802683776">"Mas maliit"</string>
     <string name="screen_zoom_summary_small" msgid="6050633151263074260">"Maliit"</string>
     <string name="screen_zoom_summary_default" msgid="1888865694033865408">"Default"</string>
     <string name="screen_zoom_summary_large" msgid="4706951482598978984">"Malaki"</string>
-    <string name="screen_zoom_summary_very_large" msgid="7317423942896999029">"Mas malaki"</string>
-    <string name="screen_zoom_summary_extremely_large" msgid="1438045624562358554">"Pinakamalaki"</string>
+    <string name="screen_zoom_summary_larger" msgid="7346406528348409139">"Mas malaki"</string>
+    <string name="screen_zoom_summary_very_large" msgid="6853699118427019538">"Napakalaki"</string>
+    <string name="screen_zoom_summary_extra_large" msgid="4898389280769475551">"Sobrang Laki"</string>
+    <string name="screen_zoom_summary_largest" msgid="5120290329622591371">"Pinakamalaki"</string>
     <string name="screen_zoom_summary_custom" msgid="3468154096832912210">"Custom (<xliff:g id="DENSITYDPI">%d</xliff:g>)"</string>
     <string name="content_description_menu_button" msgid="6254844309171779931">"Menu"</string>
     <string name="retail_demo_reset_message" msgid="5392824901108195463">"Ilagay ang password upang mag-factory reset sa demo mode"</string>
@@ -556,6 +587,7 @@
     <string name="wifi_tether_connected_summary" msgid="5100712926640492336">"{count,plural, =1{May nakakonektang 1 device}one{May nakakonektang # device}other{May nakakonektang # na device}}"</string>
     <string name="accessibility_manual_zen_more_time" msgid="5141801092071134235">"Dagdagan ang oras."</string>
     <string name="accessibility_manual_zen_less_time" msgid="6828877595848229965">"Bawasan ang oras."</string>
+    <string name="accessibility_screen_magnification_title" msgid="4981096059561256342">"Pag-magnify"</string>
     <string name="cancel" msgid="5665114069455378395">"Kanselahin"</string>
     <string name="next" msgid="2699398661093607009">"Susunod"</string>
     <string name="back" msgid="5554327870352703710">"Bumalik"</string>
@@ -609,11 +641,12 @@
     <string name="tv_media_transfer_internal_speakers" msgid="4662765121700213785">"Built-in na speaker"</string>
     <string name="tv_media_transfer_hdmi_title" msgid="6715658310934507444">"Audio ng TV"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Nagkaproblema sa pagkonekta. I-off at pagkatapos ay i-on ang device"</string>
+    <string name="bluetooth_key_missing_subtext" msgid="1003639333895028298">"Hindi makakonekta"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Wired na audio device"</string>
     <string name="help_label" msgid="3528360748637781274">"Tulong at feedback"</string>
     <string name="storage_category" msgid="2287342585424631813">"Storage"</string>
-    <string name="shared_data_title" msgid="1017034836800864953">"Pinaghahatiang data"</string>
-    <string name="shared_data_summary" msgid="5516326713822885652">"Tingnan at baguhin ang pinaghahatiang data"</string>
+    <string name="shared_data_title" msgid="1017034836800864953">"Naka-share na data"</string>
+    <string name="shared_data_summary" msgid="5516326713822885652">"Tingnan at baguhin ang naka-share na data"</string>
     <string name="shared_data_no_blobs_text" msgid="3108114670341737434">"Walang nakabahaging data para sa user na ito."</string>
     <string name="shared_data_query_failure_text" msgid="3489828881998773687">"Nagka-error sa pag-fetch ng nakabahaging data. Subukan ulit."</string>
     <string name="blob_id_text" msgid="8680078988996308061">"ID ng pinaghahatiang data: <xliff:g id="BLOB_ID">%d</xliff:g>"</string>
@@ -735,9 +768,6 @@
     <string name="bt_le_audio_broadcast_dialog_sub_title" msgid="268234802198852753">"Kung magbo-broadcast ka ng <xliff:g id="SWITCHAPP">%1$s</xliff:g> o babaguhin mo ang output, hihinto ang iyong kasalukuyang broadcast"</string>
     <string name="bt_le_audio_broadcast_dialog_switch_app" msgid="5749813313369517812">"I-broadcast ang <xliff:g id="SWITCHAPP">%1$s</xliff:g>"</string>
     <string name="bt_le_audio_broadcast_dialog_different_output" msgid="2638402023060391333">"Baguhin ang output"</string>
-    <string name="back_navigation_animation" msgid="8105467568421689484">"Mga animation ng predictive na pagbalik"</string>
-    <string name="back_navigation_animation_summary" msgid="741292224121599456">"I-enable ang mga animation ng system para sa predictive na pagbalik."</string>
-    <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Ine-enable ng setting na ito ang mga animation ng system para sa animation ng predictive na galaw. Kinakailangan nitong itakda sa true ang enableOnBackInvokedCallback sa bawat app sa manifest file."</string>
     <string name="font_scale_percentage" msgid="2624057443622817886">"<xliff:g id="PERCENTAGE">%1$d</xliff:g> %%"</string>
     <string name="not_specified" msgid="5423502443185110328">"Hindi tinukoy"</string>
     <string name="neuter" msgid="2075249330106127310">"Walang Kasarian"</string>

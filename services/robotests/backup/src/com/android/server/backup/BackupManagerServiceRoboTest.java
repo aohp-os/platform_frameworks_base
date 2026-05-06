@@ -37,6 +37,7 @@ import static org.testng.Assert.expectThrows;
 
 import android.annotation.UserIdInt;
 import android.app.Application;
+import android.app.backup.BackupManagerInternal;
 import android.app.backup.IBackupManagerMonitor;
 import android.app.backup.IBackupObserver;
 import android.app.backup.IFullBackupRestoreObserver;
@@ -48,17 +49,17 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.UserHandle;
-import android.os.UserManager;
 import android.platform.test.annotations.Presubmit;
 import android.util.SparseArray;
 
+import com.android.server.LocalServices;
 import com.android.server.SystemService.TargetUser;
 import com.android.server.backup.testing.TransportData;
+import com.android.server.pm.UserManagerInternal;
 import com.android.server.testing.shadows.ShadowApplicationPackageManager;
 import com.android.server.testing.shadows.ShadowBinder;
 import com.android.server.testing.shadows.ShadowEnvironment;
 import com.android.server.testing.shadows.ShadowSystemServiceRegistry;
-import com.android.server.testing.shadows.ShadowUserManager;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -68,7 +69,6 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
-import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowContextWrapper;
 
 import java.io.File;
@@ -80,7 +80,6 @@ import java.io.IOException;
         shadows = {
                 ShadowApplicationPackageManager.class,
                 ShadowBinder.class,
-                ShadowUserManager.class,
                 ShadowEnvironment.class,
                 ShadowSystemServiceRegistry.class
         })
@@ -92,13 +91,14 @@ public class BackupManagerServiceRoboTest {
 
     private Context mContext;
     private ShadowContextWrapper mShadowContext;
-    private ShadowUserManager mShadowUserManager;
     @UserIdInt private int mUserOneId;
     @UserIdInt private int mUserTwoId;
     @Mock private UserBackupManagerService mUserSystemService;
     @Mock private UserBackupManagerService mUserOneService;
     @Mock private BackupAgentConnectionManager mUserOneBackupAgentConnectionManager;
     @Mock private UserBackupManagerService mUserTwoService;
+    @Mock private UserManagerInternal mUserManagerInternal;
+    @Mock private UserInfo mUserInfoMock;
 
     /** Setup */
     @Before
@@ -108,15 +108,20 @@ public class BackupManagerServiceRoboTest {
         Application application = RuntimeEnvironment.application;
         mContext = application;
         mShadowContext = shadowOf(application);
-        mShadowUserManager = Shadow.extract(UserManager.get(application));
 
         mUserOneId = UserHandle.USER_SYSTEM + 1;
         mUserTwoId = mUserOneId + 1;
-        mShadowUserManager.addUser(mUserOneId, "mUserOneId", 0);
-        mShadowUserManager.addUser(mUserTwoId, "mUserTwoId", 0);
 
         mShadowContext.grantPermissions(BACKUP);
         mShadowContext.grantPermissions(INTERACT_ACROSS_USERS_FULL);
+
+        LocalServices.removeServiceForTest(UserManagerInternal.class);
+        LocalServices.addService(UserManagerInternal.class, mUserManagerInternal);
+
+        when(mUserManagerInternal.getUserInfo(UserHandle.USER_SYSTEM)).thenReturn(mUserInfoMock);
+        when(mUserManagerInternal.getUserInfo(mUserOneId)).thenReturn(mUserInfoMock);
+        when(mUserManagerInternal.getUserInfo(mUserTwoId)).thenReturn(mUserInfoMock);
+        when(mUserInfoMock.isManagedProfile()).thenReturn(false);
 
         when(mUserOneService.getBackupAgentConnectionManager()).thenReturn(
                 mUserOneBackupAgentConnectionManager);
@@ -229,7 +234,7 @@ public class BackupManagerServiceRoboTest {
         setCallerAndGrantInteractUserPermission(mUserOneId, /* shouldGrantPermission */ false);
         IBinder agentBinder = mock(IBinder.class);
 
-        backupManagerService.agentConnected(mUserOneId, TEST_PACKAGE, agentBinder);
+        backupManagerService.agentConnectedForUser(TEST_PACKAGE, mUserOneId, agentBinder);
 
         verify(mUserOneBackupAgentConnectionManager).agentConnected(TEST_PACKAGE, agentBinder);
     }
@@ -242,7 +247,7 @@ public class BackupManagerServiceRoboTest {
         setCallerAndGrantInteractUserPermission(mUserTwoId, /* shouldGrantPermission */ false);
         IBinder agentBinder = mock(IBinder.class);
 
-        backupManagerService.agentConnected(mUserTwoId, TEST_PACKAGE, agentBinder);
+        backupManagerService.agentConnectedForUser(TEST_PACKAGE, mUserTwoId, agentBinder);
 
         verify(mUserOneBackupAgentConnectionManager, never()).agentConnected(TEST_PACKAGE,
                 agentBinder);
@@ -1516,14 +1521,13 @@ public class BackupManagerServiceRoboTest {
     }
 
     /**
-     * Test verifying that {@link BackupManagerService#MORE_DEBUG} is set to {@code false}. This is
+     * Test verifying that {@link BackupManagerService#DEBUG} is set to {@code false}. This is
      * specifically to prevent overloading the logs in production.
      */
     @Test
-    public void testMoreDebug_isFalse() throws Exception {
-        boolean moreDebug = BackupManagerService.MORE_DEBUG;
-
-        assertThat(moreDebug).isFalse();
+    public void testDebug_isFalse() {
+        boolean debug = BackupManagerService.DEBUG;
+        assertThat(debug).isFalse();
     }
 
     /** Test that the constructor handles {@code null} parameters. */
@@ -1549,6 +1553,7 @@ public class BackupManagerServiceRoboTest {
     @Test
     public void testOnStart_publishesService() {
         BackupManagerService backupManagerService = mock(BackupManagerService.class);
+        LocalServices.removeServiceForTest(BackupManagerInternal.class);
         BackupManagerService.Lifecycle lifecycle =
                 spy(new BackupManagerService.Lifecycle(mContext, backupManagerService));
         doNothing().when(lifecycle).publishService(anyString(), any());

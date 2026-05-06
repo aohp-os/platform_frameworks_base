@@ -22,10 +22,18 @@ import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.gui.BorderSettings;
+import android.gui.BoxShadowSettings;
 import android.view.Choreographer;
 import android.view.SurfaceControl;
 
+import androidx.annotation.Nullable;
+
+import com.android.wm.shell.Flags;
 import com.android.wm.shell.R;
+import com.android.wm.shell.common.BoxShadowHelper;
+import com.android.wm.shell.common.pip.IPipAnimationListener.PipResources;
+import com.android.wm.shell.common.pip.PipUtils;
 import com.android.wm.shell.transition.Transitions;
 
 /**
@@ -42,8 +50,25 @@ public class PipSurfaceTransactionHelper {
     private int mCornerRadius;
     private int mShadowRadius;
 
+    private BoxShadowSettings mBoxShadowSettings;
+    private BorderSettings mBorderSettings;
+
     public PipSurfaceTransactionHelper(Context context) {
         onDensityOrFontScaleChanged(context);
+        onThemeChanged(context);
+    }
+
+    /**
+     * Operates the alpha on a given transaction and leash
+     * @return resources used by PiP
+     */
+    public PipResources getResources() {
+        PipResources res = new PipResources();
+        res.cornerRadius = mCornerRadius;
+        res.shadowRadius = mShadowRadius;
+        res.boxShadowSettings = mBoxShadowSettings;
+        res.borderSettings = mBorderSettings;
+        return res;
     }
 
     /**
@@ -224,12 +249,17 @@ public class PipSurfaceTransactionHelper {
     /**
      * Operates the rotation according to the given degrees and scale (setMatrix) according to the
      * source bounds and rotated destination bounds. The crop will be the unscaled source bounds.
+     *
+     * @param relativeEndWindowFrame specified if
+     *   {@link android.app.TaskInfo#topActivityMainWindowFrame} is provided. It's only applied for
+     *   the animation that {@code isExpanding} PIP to original task.
      * @return same {@link PipSurfaceTransactionHelper} instance for method chaining
      */
-    public PipSurfaceTransactionHelper rotateAndScaleWithCrop(SurfaceControl.Transaction tx,
-            SurfaceControl leash, Rect sourceBounds, Rect destinationBounds, Rect insets,
+    public PipSurfaceTransactionHelper rotateAndScaleWithCrop(
+            @NonNull SurfaceControl.Transaction tx, @NonNull SurfaceControl leash,
+            @NonNull Rect sourceBounds, @NonNull Rect destinationBounds, @NonNull Rect insets,
             float degrees, float positionX, float positionY, boolean isExpanding,
-            boolean clockwise) {
+            boolean clockwise, @Nullable Rect relativeEndWindowFrame) {
         mTmpDestinationRect.set(sourceBounds);
         mTmpDestinationRect.inset(insets);
         final int srcW = mTmpDestinationRect.width();
@@ -240,23 +270,31 @@ public class PipSurfaceTransactionHelper {
         // destination are different.
         final float scale = srcW <= srcH ? (float) destW / srcW : (float) destH / srcH;
         final Rect crop = mTmpDestinationRect;
-        crop.set(0, 0, Transitions.SHELL_TRANSITIONS_ROTATION ? destH
-                : destW, Transitions.SHELL_TRANSITIONS_ROTATION ? destW : destH);
-        // Inverse scale for crop to fit in screen coordinates.
-        crop.scale(1 / scale);
-        crop.offset(insets.left, insets.top);
-        if (isExpanding) {
-            // Expand bounds (shrink insets) in source orientation.
-            positionX -= insets.left * scale;
-            positionY -= insets.top * scale;
+        if (isExpanding && relativeEndWindowFrame != null) {
+            // If relative end window frame is provided, it usually means the top activity chooses
+            // a customized layout which may not match parent. In this case, we should crop the
+            // task surface with the window frame. Note that we don't need to consider the insets
+            // because the main window frame excludes the insets.
+            crop.set(relativeEndWindowFrame);
         } else {
-            // Shrink bounds (expand insets) in destination orientation.
-            if (clockwise) {
-                positionX -= insets.top * scale;
-                positionY += insets.left * scale;
+            crop.set(0, 0, Transitions.SHELL_TRANSITIONS_ROTATION ? destH
+                    : destW, Transitions.SHELL_TRANSITIONS_ROTATION ? destW : destH);
+            // Inverse scale for crop to fit in screen coordinates.
+            crop.scale(1 / scale);
+            crop.offset(insets.left, insets.top);
+            if (isExpanding) {
+                // Expand bounds (shrink insets) in source orientation.
+                positionX -= insets.left * scale;
+                positionY -= insets.top * scale;
             } else {
-                positionX += insets.top * scale;
-                positionY -= insets.left * scale;
+                // Shrink bounds (expand insets) in destination orientation.
+                if (clockwise) {
+                    positionX -= insets.top * scale;
+                    positionY += insets.left * scale;
+                } else {
+                    positionX += insets.top * scale;
+                    positionY -= insets.left * scale;
+                }
             }
         }
         mTmpTransform.setScale(scale, scale);
@@ -307,8 +345,50 @@ public class PipSurfaceTransactionHelper {
      */
     public PipSurfaceTransactionHelper shadow(SurfaceControl.Transaction tx, SurfaceControl leash,
             boolean applyShadowRadius) {
-        tx.setShadowRadius(leash, applyShadowRadius ? mShadowRadius : 0);
+        if (Flags.enablePipBoxShadows()) {
+            // Override and disable elevation shadows set by freeform transition.
+            //
+            // PiP uses box shadows but freeform windows use
+            // elevation shadows (i.e. setShadowRadius).
+            // To avoid having double shadows applied, disable the shadows set by freeform.
+            //
+            // TODO(b/367464660): Remove this once freeform box shadows are enabled
+            tx.setShadowRadius(leash, 0);
+
+            if (applyShadowRadius) {
+                tx.setBoxShadowSettings(leash, mBoxShadowSettings);
+                tx.setBorderSettings(leash, mBorderSettings);
+            } else {
+                tx.setBoxShadowSettings(leash, new BoxShadowSettings());
+                tx.setBorderSettings(leash, new BorderSettings());
+            }
+        } else {
+            tx.setShadowRadius(leash, applyShadowRadius ? mShadowRadius : 0);
+        }
         return this;
+    }
+
+    /**
+     * Called when theme changes.
+     *
+     * @param context the current context
+     */
+    public void onThemeChanged(Context context) {
+        if (PipUtils.isDarkSystemTheme(context)) {
+            mBoxShadowSettings = BoxShadowHelper.getBoxShadowSettings(context,
+                    new int[]{R.style.BoxShadowParamsPIPDark1,
+                            R.style.BoxShadowParamsPIPDark2});
+            mBorderSettings = BoxShadowHelper.getBorderSettings(context,
+                    R.style.BorderSettingsPIPDark);
+        } else {
+
+            mBoxShadowSettings = BoxShadowHelper.getBoxShadowSettings(context,
+                    new int[]{R.style.BoxShadowParamsPIPLight1,
+                            R.style.BoxShadowParamsPIPLight2});
+
+            mBorderSettings = BoxShadowHelper.getBorderSettings(context,
+                    R.style.BorderSettingsPIPLight);
+        }
     }
 
     public interface SurfaceControlTransactionFactory {

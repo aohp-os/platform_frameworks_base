@@ -23,6 +23,7 @@ import android.util.Log;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A wrapper of IExecuteAppFunctionCallback which swallows the {@link RemoteException}. This
@@ -38,15 +39,22 @@ public class SafeOneTimeExecuteAppFunctionCallback {
 
     @NonNull private final IExecuteAppFunctionCallback mCallback;
 
-    @Nullable CompletionCallback mCompletionCallback;
+    @Nullable private final CompletionCallback mCompletionCallback;
+
+    @Nullable private final BeforeCompletionCallback mBeforeCompletionCallback;
+
+    private final AtomicLong mExecutionStartTimeAfterBindMillis = new AtomicLong();
 
     public SafeOneTimeExecuteAppFunctionCallback(@NonNull IExecuteAppFunctionCallback callback) {
-        this(callback, /* completionCallback= */ null);
+        this(callback, /* beforeCompletionCallback= */ null, /* completionCallback= */ null);
     }
 
-    public SafeOneTimeExecuteAppFunctionCallback(@NonNull IExecuteAppFunctionCallback callback,
+    public SafeOneTimeExecuteAppFunctionCallback(
+            @NonNull IExecuteAppFunctionCallback callback,
+            @Nullable BeforeCompletionCallback beforeCompletionCallback,
             @Nullable CompletionCallback completionCallback) {
         mCallback = Objects.requireNonNull(callback);
+        mBeforeCompletionCallback = beforeCompletionCallback;
         mCompletionCallback = completionCallback;
     }
 
@@ -57,9 +65,13 @@ public class SafeOneTimeExecuteAppFunctionCallback {
             return;
         }
         try {
+            if (mBeforeCompletionCallback != null) {
+                mBeforeCompletionCallback.beforeOnSuccess(result);
+            }
             mCallback.onSuccess(result);
             if (mCompletionCallback != null) {
-                mCompletionCallback.finalizeOnSuccess(result);
+                mCompletionCallback.finalizeOnSuccess(
+                        result, mExecutionStartTimeAfterBindMillis.get());
             }
         } catch (RemoteException ex) {
             // Failed to notify the other end. Ignore.
@@ -76,7 +88,8 @@ public class SafeOneTimeExecuteAppFunctionCallback {
         try {
             mCallback.onError(error);
             if (mCompletionCallback != null) {
-                mCompletionCallback.finalizeOnError(error);
+                mCompletionCallback.finalizeOnError(
+                        error, mExecutionStartTimeAfterBindMillis.get());
             }
         } catch (RemoteException ex) {
             // Failed to notify the other end. Ignore.
@@ -93,14 +106,40 @@ public class SafeOneTimeExecuteAppFunctionCallback {
     }
 
     /**
+     * Sets the execution start time of the request. Used to calculate the overhead latency of
+     * requests.
+     */
+    public void setExecutionStartTimeAfterBindMillis(long executionStartTimeAfterBindMillis) {
+        if (!mExecutionStartTimeAfterBindMillis.compareAndSet(
+                0, executionStartTimeAfterBindMillis)) {
+            Log.w(TAG, "Ignore subsequent calls to setExecutionStartTimeAfterBindMillis()");
+        }
+    }
+
+    /**
      * Provides a hook to execute additional actions after the {@link IExecuteAppFunctionCallback}
      * has been invoked.
      */
     public interface CompletionCallback {
         /** Called after {@link IExecuteAppFunctionCallback#onSuccess}. */
-        void finalizeOnSuccess(@NonNull ExecuteAppFunctionResponse result);
+        void finalizeOnSuccess(
+                @NonNull ExecuteAppFunctionResponse result, long executionStartTimeMillis);
 
         /** Called after {@link IExecuteAppFunctionCallback#onError}. */
-        void finalizeOnError(@NonNull AppFunctionException error);
+        void finalizeOnError(@NonNull AppFunctionException error, long executionStartTimeMillis);
+    }
+
+    /**
+     * Provides a hook to execute additional actions before the {@link IExecuteAppFunctionCallback}
+     * has been invoked.
+     */
+    public interface BeforeCompletionCallback {
+        /**
+         * Called before {@link IExecuteAppFunctionCallback#onSuccess(ExecuteAppFunctionResponse)}
+         * is invoked.
+         *
+         * @param result The result that will be passed to the main callback.
+         */
+        void beforeOnSuccess(@NonNull ExecuteAppFunctionResponse result);
     }
 }

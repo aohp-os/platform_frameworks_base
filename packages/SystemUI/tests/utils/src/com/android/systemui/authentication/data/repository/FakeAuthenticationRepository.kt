@@ -28,7 +28,6 @@ import com.android.systemui.dagger.SysUISingleton
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -214,6 +213,7 @@ class FakeAuthenticationRepository(private val currentTime: () -> Long) : Authen
         const val LOCKOUT_DURATION_MS = LOCKOUT_DURATION_SECONDS * 1000
         const val HINTING_PIN_LENGTH = 6
         val DEFAULT_PIN = buildList { repeat(HINTING_PIN_LENGTH) { add(it + 1) } }
+        val WRONG_PIN = buildList { repeat(HINTING_PIN_LENGTH) { add(9 - it) } }
 
         private fun AuthenticationMethodModel.toSecurityMode(): SecurityMode {
             return when (this) {
@@ -222,6 +222,7 @@ class FakeAuthenticationRepository(private val currentTime: () -> Long) : Authen
                 is AuthenticationMethodModel.Pattern -> SecurityMode.Pattern
                 is AuthenticationMethodModel.None -> SecurityMode.None
                 is AuthenticationMethodModel.Sim -> SecurityMode.SimPin
+                is AuthenticationMethodModel.Biometric -> SecurityMode.SecureLockDeviceBiometricAuth
             }
         }
 
@@ -260,7 +261,6 @@ class FakeAuthenticationRepository(private val currentTime: () -> Long) : Authen
     }
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @Module(includes = [FakeAuthenticationRepositoryModule.Bindings::class])
 object FakeAuthenticationRepositoryModule {
     @Provides

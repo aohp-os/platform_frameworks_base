@@ -46,19 +46,47 @@ android_library {
     name: "PrintSpoolerLib",
     resource_dirs: ["res"],
     srcs: [
+        ":statslog-printspooler-java-gen",
         "src/**/*.java",
-        "src/com/android/printspooler/renderer/IPdfRenderer.aidl",
+        "src/**/*.kt",
         "src/com/android/printspooler/renderer/IPdfEditor.aidl",
+        "src/com/android/printspooler/renderer/IPdfRenderer.aidl",
     ],
     platform_apis: true,
     static_libs: [
-        "android-support-v7-recyclerview",
-        "android-support-compat",
-        "android-support-media-compat",
-        "android-support-core-utils",
-        "android-support-core-ui",
-        "android-support-fragment",
         "android-support-annotations",
+        "android-support-compat",
+        "android-support-core-ui",
+        "android-support-core-utils",
+        "android-support-fragment",
+        "android-support-media-compat",
+        "android-support-v7-recyclerview",
+        "androidx.annotation_annotation",
+        "printspooler_aconfig_flags_java_lib",
+    ],
+    flags_packages: [
+        "printspooler_aconfig_declarations",
     ],
     manifest: "AndroidManifest.xml",
+}
+
+aconfig_declarations {
+    name: "printspooler_aconfig_declarations",
+    package: "com.android.printspooler.flags",
+    container: "system",
+    srcs: [
+        "flags/flags.aconfig",
+    ],
+}
+
+java_aconfig_library {
+    name: "printspooler_aconfig_flags_java_lib",
+    aconfig_declarations: "printspooler_aconfig_declarations",
+}
+
+genrule {
+    name: "statslog-printspooler-java-gen",
+    tools: ["stats-log-api-gen"],
+    cmd: "$(location stats-log-api-gen) --java $(out) --module printspooler --javaPackage com.android.printspooler.stats --javaClass PrintSpoolerStatsLog",
+    out: ["com/android/PrintSooler/PrintSpoolerStatsLog.java"],
 }

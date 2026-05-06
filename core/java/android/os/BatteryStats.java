@@ -69,16 +69,19 @@ import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.Formatter;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TimeZone;
 
 /**
  * A class providing access to battery usage statistics, including information on
@@ -799,18 +802,12 @@ public abstract class BatteryStats {
         @UnsupportedAppUsage
         public abstract ArrayMap<String, ? extends Pkg> getPackageStats();
 
-        /**
-         * Returns the proportion of power consumed by the System Service
-         * calls made by this UID.
-         */
-        public abstract double getProportionalSystemServiceUsage();
-
         public abstract ControllerActivityCounter getWifiControllerActivity();
         public abstract ControllerActivityCounter getBluetoothControllerActivity();
         public abstract ControllerActivityCounter getModemControllerActivity();
 
         /**
-         * {@hide}
+         * @hide
          */
         @UnsupportedAppUsage
         public abstract int getUid();
@@ -1051,130 +1048,6 @@ public abstract class BatteryStats {
          * @param which one of STATS_*
          */
         public abstract void getDeferredJobsLineLocked(StringBuilder sb, int which);
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of bluetooth for this uid,
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#BLUETOOTH} bucket
-         * provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getBluetoothEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's bluetooth usage
-         * when in the specified process state.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getBluetoothEnergyConsumptionUC(
-                @BatteryConsumer.ProcessState int processState);
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's cpu usage, derived from
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#CPU} bucket
-         * provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getCpuEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's cpu usage when in the
-         * specified process state.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getCpuEnergyConsumptionUC(
-                @BatteryConsumer.ProcessState int processState);
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's GNSS usage, derived from
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#GNSS} bucket
-         * provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getGnssEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's radio usage, derived from
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#MOBILE_RADIO}
-         * bucket provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getMobileRadioEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's radio usage when in the
-         * specified process state.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getMobileRadioEnergyConsumptionUC(
-                @BatteryConsumer.ProcessState int processState);
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the screen while on and uid active,
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#DISPLAY} bucket
-         * provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getScreenOnEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of wifi for this uid,
-         * derived from {@link android.hardware.power.stats.EnergyConsumerType#WIFI} bucket
-         * provided by the PowerStats service.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getWifiEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of the uid's wifi usage when in the
-         * specified process state.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getWifiEnergyConsumptionUC(
-                @BatteryConsumer.ProcessState int processState);
-
-
-
-        /**
-         * Returns the battery consumption (in microcoulombs) of UID's camera usage, derived from
-         * on-device power measurement data.
-         * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-         *
-         * {@hide}
-         */
-        public abstract long getCameraEnergyConsumptionUC();
-
-        /**
-         * Returns the battery consumption (in microcoulombs) used by this uid for each
-         * {@link android.hardware.power.stats.EnergyConsumer.ordinal} of (custom) energy consumer
-         * type {@link android.hardware.power.stats.EnergyConsumerType#OTHER}).
-         *
-         * @return charge (in microcoulombs) consumed since last reset for each (custom) energy
-         *         consumer of type OTHER, indexed by their ordinal. Returns null if no energy
-         *         reporting is supported.
-         *
-         * {@hide}
-         */
-        public abstract @Nullable long[] getCustomEnergyConsumerBatteryConsumptionUC();
 
         public static abstract class Sensor {
 
@@ -1777,7 +1650,7 @@ public abstract class BatteryStats {
             out.writeInt(statIrqTime);
             out.writeInt(statSoftIrqTime);
             out.writeInt(statIdlTime);
-            out.writeString(statSubsystemPowerState);
+            out.writeString8(statSubsystemPowerState);
         }
 
         public void readFromParcel(Parcel in) {
@@ -1798,7 +1671,15 @@ public abstract class BatteryStats {
             statIrqTime = in.readInt();
             statSoftIrqTime = in.readInt();
             statIdlTime = in.readInt();
-            statSubsystemPowerState = in.readString();
+            statSubsystemPowerState = in.readString8();
+        }
+
+
+        public boolean isEmpty() {
+            return userTime == 0 && systemTime == 0 && appCpuUid1 == Process.INVALID_UID
+                    && appCpuUid2 == Process.INVALID_UID && appCpuUid3 == Process.INVALID_UID
+                    && statSystemTime == 0 && statIOWaitTime == 0 && statIrqTime == 0
+                    && statSoftIrqTime == 0 && statIdlTime == 0 && statSubsystemPowerState == null;
         }
     }
 
@@ -1867,6 +1748,11 @@ public abstract class BatteryStats {
         // The time of this event in milliseconds, as per MonotonicClock.monotonicTime().
         @UnsupportedAppUsage
         public long time;
+
+        // Wall clock time of the event, GMT. Unlike `time`, this timestamp is affected
+        // by changes in the clock setting.  When the wall clock is adjusted, BatteryHistory
+        // records an event of type `CMD_CURRENT_TIME` or `CMD_RESET`.
+        public long currentTime;
 
         @UnsupportedAppUsage
         public static final byte CMD_UPDATE = 0;        // These can be written as deltas
@@ -2108,9 +1994,6 @@ public abstract class BatteryStats {
         public int eventCode;
         public HistoryTag eventTag;
 
-        // Only set for CMD_CURRENT_TIME or CMD_RESET, as per System.currentTimeMillis().
-        public long currentTime;
-
         // Meta-data when reading.
         public int numReadInts;
 
@@ -2233,6 +2116,7 @@ public abstract class BatteryStats {
             tagsFirstOccurrence = false;
             powerStats = null;
             processStateChange = null;
+            stepDetails = null;
         }
 
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P)
@@ -2284,6 +2168,7 @@ public abstract class BatteryStats {
             currentTime = o.currentTime;
             powerStats = o.powerStats;
             processStateChange = o.processStateChange;
+            stepDetails = o.stepDetails;
         }
 
         public boolean sameNonEvent(HistoryItem o) {
@@ -2461,7 +2346,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the screen has been on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getScreenOnTime(long elapsedRealtimeUs, int which);
@@ -2469,7 +2354,7 @@ public abstract class BatteryStats {
     /**
      * Returns the number of times the screen was turned on.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getScreenOnCount(int which);
 
@@ -2477,14 +2362,14 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the screen has been dozing while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getScreenDozeTime(long elapsedRealtimeUs, int which);
 
     /**
      * Returns the number of times the screen was turned dozing.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getScreenDozeCount(int which);
 
@@ -2511,7 +2396,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the screen has been on with
      * the given brightness
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getScreenBrightnessTime(int brightnessBin,
@@ -2520,14 +2405,14 @@ public abstract class BatteryStats {
     /**
      * Returns the {@link Timer} object that tracks the given screen brightness.
      *
-     * {@hide}
+     * @hide
      */
     public abstract Timer getScreenBrightnessTimer(int brightnessBin);
 
     /**
      * Returns the number of physical displays on the device.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getDisplayCount();
 
@@ -2535,7 +2420,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the screen has been on for a display while the
      * device was running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getDisplayScreenOnTime(int display, long elapsedRealtimeUs);
 
@@ -2543,7 +2428,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that a display has been dozing while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getDisplayScreenDozeTime(int display, long elapsedRealtimeUs);
 
@@ -2551,7 +2436,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that a display has been on with the given brightness
      * level while the device was running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getDisplayScreenBrightnessTime(int display, int brightnessBin,
             long elapsedRealtimeUs);
@@ -2560,14 +2445,14 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that power save mode has been enabled while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getPowerSaveModeEnabledTime(long elapsedRealtimeUs, int which);
 
     /**
      * Returns the number of times that power save mode was enabled.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getPowerSaveModeEnabledCount(int which);
 
@@ -2590,14 +2475,14 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that device has been in idle mode while
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getDeviceIdleModeTime(int mode, long elapsedRealtimeUs, int which);
 
     /**
      * Returns the number of times that the devie has gone in to idle mode.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getDeviceIdleModeCount(int mode, int which);
 
@@ -2613,21 +2498,21 @@ public abstract class BatteryStats {
      * counts all of the time that we consider the device to be idle, whether or not
      * it is currently in the actual device idle mode.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getDeviceIdlingTime(int mode, long elapsedRealtimeUs, int which);
 
     /**
      * Returns the number of times that the device has started idling.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getDeviceIdlingCount(int mode, int which);
 
     /**
      * Returns the number of times that connectivity state changed.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getNumConnectivityChange(int which);
 
@@ -2636,7 +2521,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone has been running with
      * the given GPS signal quality level
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getGpsSignalQualityTime(int strengthBin,
         long elapsedRealtimeUs, int which);
@@ -2644,7 +2529,7 @@ public abstract class BatteryStats {
     /**
      * Returns the GPS battery drain in mA-ms
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getGpsBatteryDrainMaMs();
 
@@ -2652,7 +2537,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone has been on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getPhoneOnTime(long elapsedRealtimeUs, int which);
@@ -2660,7 +2545,7 @@ public abstract class BatteryStats {
     /**
      * Returns the number of times a phone call was activated.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getPhoneOnCount(int which);
 
@@ -2668,7 +2553,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone has been running with
      * the given signal strength.
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getPhoneSignalStrengthTime(int strengthBin,
@@ -2678,7 +2563,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone has been trying to
      * acquire a signal.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getPhoneSignalScanningTime(
             long elapsedRealtimeUs, int which);
@@ -2687,14 +2572,14 @@ public abstract class BatteryStats {
      * Returns the {@link Timer} object that tracks how much the phone has been trying to
      * acquire a signal.
      *
-     * {@hide}
+     * @hide
      */
     public abstract Timer getPhoneSignalScanningTimer();
 
     /**
      * Returns the number of times the phone has entered the given signal strength.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getPhoneSignalStrengthCount(int strengthBin, int which);
 
@@ -2708,7 +2593,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the mobile network has been active
      * (in a high power state).
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P)
     public abstract long getMobileRadioActiveTime(long elapsedRealtimeUs, int which);
@@ -2717,7 +2602,7 @@ public abstract class BatteryStats {
      * Returns the number of times that the mobile network has transitioned to the
      * active state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getMobileRadioActiveCount(int which);
 
@@ -2726,7 +2611,7 @@ public abstract class BatteryStats {
      * time we saw based on the elapsed timestamp when going down vs. the given time stamp
      * from the radio.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getMobileRadioActiveAdjustedTime(int which);
 
@@ -2734,14 +2619,14 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the mobile network has been active
      * (in a high power state) but not being able to blame on an app.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getMobileRadioActiveUnknownTime(int which);
 
     /**
      * Return count of number of times radio was up that could not be blamed on apps.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getMobileRadioActiveUnknownCount(int which);
 
@@ -2780,7 +2665,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone has been running with
      * the given data connection.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getPhoneDataConnectionTime(int dataType,
             long elapsedRealtimeUs, int which);
@@ -2789,7 +2674,7 @@ public abstract class BatteryStats {
      * Returns the number of times the phone has entered the given data
      * connection type.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getPhoneDataConnectionCount(int dataType, int which);
 
@@ -2802,7 +2687,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the phone's data connection was in NR NSA mode while
      * on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getNrNsaTime(long elapsedRealtimeUs);
 
@@ -2901,116 +2786,23 @@ public abstract class BatteryStats {
     /**
      * Returned value if power data is unavailable.
      *
-     * {@hide}
+     * @hide
      */
-    public static final long POWER_DATA_UNAVAILABLE = -1L;
+//    public static final long POWER_DATA_UNAVAILABLE = -1L;
 
     /**
      * Returned value if duration data is unavailable.
      *
-     * {@hide}
+     * @hide
      */
     public static final long DURATION_UNAVAILABLE = -1L;
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of bluetooth, derived from on
-     * device power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getBluetoothEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the cpu, derived from on device power
-     * measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getCpuEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the GNSS, derived from on device power
-     * measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getGnssEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the radio, derived from on device power
-     * measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getMobileRadioEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the phone calls, derived from on device
-     * power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getPhoneEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the screen while on, derived from on
-     * device power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getScreenOnEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of the screen in doze, derived from on
-     * device power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getScreenDozeEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of wifi, derived from on
-     * device power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getWifiEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) of camera, derived from on
-     * device power measurement data.
-     * Will return {@link #POWER_DATA_UNAVAILABLE} if data is unavailable.
-     *
-     * {@hide}
-     */
-    public abstract long getCameraEnergyConsumptionUC();
-
-    /**
-     * Returns the battery consumption (in microcoulombs) that each
-     * {@link android.hardware.power.stats.EnergyConsumer.ordinal} of (custom) energy consumer
-     * type {@link android.hardware.power.stats.EnergyConsumerType#OTHER}) consumed.
-     *
-     * @return charge (in microcoulombs) used by each (custom) energy consumer of type OTHER,
-     * indexed by their ordinal. Returns null if no energy reporting is supported.
-     *
-     * {@hide}
-     */
-    public abstract @Nullable long[] getCustomEnergyConsumerBatteryConsumptionUC();
 
     /**
      * Returns the names of all {@link android.hardware.power.stats.EnergyConsumer}'s
      * of (custom) energy consumer type
      * {@link android.hardware.power.stats.EnergyConsumerType#OTHER}).
      *
-     * {@hide}
+     * @hide
      */
     public abstract @NonNull String[] getCustomEnergyConsumerNames();
 
@@ -3112,7 +2904,7 @@ public abstract class BatteryStats {
      * Returns total time for WiFi Multicast Wakelock timer.
      * Note that this may be different from the sum of per uid timer values.
      *
-     *  {@hide}
+     * @hide
      */
     public abstract long getWifiMulticastWakelockTime(long elapsedRealtimeUs, int which);
 
@@ -3120,7 +2912,7 @@ public abstract class BatteryStats {
      * Returns total time for WiFi Multicast Wakelock timer
      * Note that this may be different from the sum of per uid timer values.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getWifiMulticastWakelockCount(int which);
 
@@ -3128,7 +2920,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that wifi has been on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getWifiOnTime(long elapsedRealtimeUs, int which);
@@ -3137,7 +2929,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that wifi has been active while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getWifiActiveTime(long elapsedRealtimeUs, int which);
 
@@ -3145,7 +2937,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that wifi has been on and the driver has
      * been in the running state while the device was running on battery.
      *
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     public abstract long getGlobalWifiRunningTime(long elapsedRealtimeUs, int which);
@@ -3158,7 +2950,7 @@ public abstract class BatteryStats {
     /**
      * Returns the time in microseconds that WiFi has been running in the given state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getWifiStateTime(@WifiState int wifiState,
             long elapsedRealtimeUs, @StatName int which);
@@ -3166,14 +2958,14 @@ public abstract class BatteryStats {
     /**
      * Returns the number of times that WiFi has entered the given state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getWifiStateCount(@WifiState int wifiState, @StatName int which);
 
     /**
      * Returns the {@link Timer} object that tracks the given WiFi state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract Timer getWifiStateTimer(@WifiState int wifiState);
 
@@ -3181,7 +2973,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the wifi supplicant has been
      * in a given state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getWifiSupplStateTime(@WifiSupplState int state, long elapsedRealtimeUs,
             @StatName int which);
@@ -3190,14 +2982,14 @@ public abstract class BatteryStats {
      * Returns the number of times that the wifi supplicant has transitioned
      * to a given state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getWifiSupplStateCount(@WifiSupplState int state, @StatName int which);
 
     /**
      * Returns the {@link Timer} object that tracks the given wifi supplicant state.
      *
-     * {@hide}
+     * @hide
      */
     public abstract Timer getWifiSupplStateTimer(@WifiSupplState int state);
 
@@ -3207,7 +2999,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that WIFI has been running with
      * the given signal strength.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getWifiSignalStrengthTime(int strengthBin,
             long elapsedRealtimeUs, int which);
@@ -3215,14 +3007,14 @@ public abstract class BatteryStats {
     /**
      * Returns the number of times WIFI has entered the given signal strength.
      *
-     * {@hide}
+     * @hide
      */
     public abstract int getWifiSignalStrengthCount(int strengthBin, int which);
 
     /**
      * Returns the {@link Timer} object that tracks the given WIFI signal strength.
      *
-     * {@hide}
+     * @hide
      */
     public abstract Timer getWifiSignalStrengthTimer(int strengthBin);
 
@@ -3230,7 +3022,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the flashlight has been on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getFlashlightOnTime(long elapsedRealtimeUs, int which);
 
@@ -3238,7 +3030,7 @@ public abstract class BatteryStats {
      * Returns the number of times that the flashlight has been turned on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getFlashlightOnCount(int which);
 
@@ -3246,7 +3038,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that the camera has been on while the device was
      * running on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getCameraOnTime(long elapsedRealtimeUs, int which);
 
@@ -3254,7 +3046,7 @@ public abstract class BatteryStats {
      * Returns the time in microseconds that bluetooth scans were running while the device was
      * on battery.
      *
-     * {@hide}
+     * @hide
      */
     public abstract long getBluetoothScanTime(long elapsedRealtimeUs, int which);
 
@@ -3431,20 +3223,6 @@ public abstract class BatteryStats {
      * since the last time the device was charged.
      */
     public abstract int getDischargeAmountScreenDozeSinceCharge();
-
-    /**
-     * Returns the approximate CPU time (in microseconds) spent by the system server handling
-     * incoming service calls from apps.  The result is returned as an array of longs,
-     * organized as a sequence like this:
-     * <pre>
-     *     cluster1-speed1, cluster1-speed2, ..., cluster2-speed1, cluster2-speed2, ...
-     * </pre>
-     *
-     * @see com.android.internal.os.CpuScalingPolicies#getPolicies
-     * @see com.android.internal.os.CpuScalingPolicies#getFrequencies
-     */
-    @Nullable
-    public abstract long[] getSystemServiceTimeAtCpuSpeeds();
 
     /**
      * Returns the total, last, or current battery uptime in microseconds.
@@ -6890,7 +6668,9 @@ public abstract class BatteryStats {
                                 || wakelockTag.poolIdx == HistoryTag.HISTORY_TAG_POOL_OVERFLOW) {
                             UserHandle.formatUid(sb, wakelockTag.uid);
                             sb.append(":\"");
-                            sb.append(wakelockTag.string.replace("\"", "\"\""));
+                            if (wakelockTag.string != null) {
+                                sb.append(wakelockTag.string.replace("\"", "\"\""));
+                            }
                             sb.append("\"");
                         } else {
                             sb.append(wakelockTag.poolIdx);
@@ -6926,6 +6706,27 @@ public abstract class BatteryStats {
     }
 
     public static class HistoryPrinter {
+        private static final int FORMAT_LEGACY = 1;
+
+        // This constant MUST be incremented whenever the history dump format changes.
+        private static final int FORMAT_VERSION = 2;
+
+        private static final boolean DEBUG_TIMELINE = false;
+
+        private final boolean mPerformanceBaseline;
+        private final HistoryLogTimeFormatter mHistoryLogTimeFormatter;
+        private final SimpleDateFormat mHistoryItemTimestampFormat;
+        private final SimpleDateFormat mCurrentTimeEventTimeFormat =
+                new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US);
+
+        // This API is error prone, but we are making an exception here to avoid excessive
+        // object allocations.
+        @SuppressWarnings("JavaUtilDate")
+        private final Date mDate = new Date();
+
+        private final int mFormatVersion;
+
+        private final StringBuilder mStringBuilder = new StringBuilder();
         int oldState = 0;
         int oldState2 = 0;
         int oldLevel = -1;
@@ -6938,6 +6739,32 @@ public abstract class BatteryStats {
         double oldModemRailChargeMah = -1;
         double oldWifiRailChargeMah = -1;
         long lastTime = -1;
+
+        public HistoryPrinter() {
+            this(0);
+        }
+
+        public HistoryPrinter(int flags) {
+            this(TimeZone.getDefault(), flags);
+        }
+
+        public HistoryPrinter(TimeZone timeZone, int flags) {
+            this(FORMAT_VERSION, timeZone, flags);
+        }
+
+        private HistoryPrinter(int formatVersion, TimeZone timeZone, int flags) {
+            mFormatVersion = formatVersion;
+            mPerformanceBaseline = (flags & DUMP_DEBUG_PERF_BASELINE) != 0;
+            if (mPerformanceBaseline) {
+                mHistoryItemTimestampFormat = new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US);
+                mHistoryItemTimestampFormat.getCalendar().setTimeZone(timeZone);
+                mHistoryLogTimeFormatter = null;
+            } else {
+                mHistoryItemTimestampFormat = null;
+                mHistoryLogTimeFormatter = new HistoryLogTimeFormatter(timeZone);
+            }
+            mCurrentTimeEventTimeFormat.getCalendar().setTimeZone(timeZone);
+        }
 
         void reset() {
             oldState = oldState2 = 0;
@@ -6966,16 +6793,34 @@ public abstract class BatteryStats {
             }
         }
 
+        @SuppressWarnings("JavaUtilDate")
         private String printNextItem(HistoryItem rec, long baseTime, boolean checkin,
                 boolean verbose) {
-            StringBuilder item = new StringBuilder();
+            StringBuilder item = mStringBuilder;
+            item.setLength(0);
             if (!checkin) {
                 item.append("  ");
-                TimeUtils.formatDuration(
-                        rec.time - baseTime, item, TimeUtils.HUNDRED_DAY_FIELD_LEN);
-                item.append(" (");
-                item.append(rec.numReadInts);
-                item.append(") ");
+                if (mFormatVersion == FORMAT_LEGACY) {
+                    TimeUtils.formatDuration(
+                            rec.time - baseTime, item, TimeUtils.HUNDRED_DAY_FIELD_LEN);
+                    item.append(" (");
+                    item.append(rec.numReadInts);
+                    item.append(") ");
+                } else {
+                    if (mPerformanceBaseline) {
+                        mDate.setTime(rec.currentTime);
+                        item.append(mHistoryItemTimestampFormat.format(mDate)).append(' ');
+                    } else {
+                        mHistoryLogTimeFormatter.append(item, rec.currentTime);
+                        item.append(' ');
+                        if (DEBUG_TIMELINE) {
+                            if (rec.time < lastTime) {
+                                item.append("[Earlier timestamp by ")
+                                        .append(rec.time - lastTime).append("] ");
+                            }
+                        }
+                    }
+                }
             } else {
                 item.append(BATTERY_STATS_CHECKIN_VERSION); item.append(',');
                 item.append(HISTORY_DATA); item.append(',');
@@ -6984,8 +6829,8 @@ public abstract class BatteryStats {
                 } else {
                     item.append(rec.time - lastTime);
                 }
-                lastTime = rec.time;
             }
+            lastTime = rec.time;
             if (rec.cmd == HistoryItem.CMD_START) {
                 if (checkin) {
                     item.append(":");
@@ -7007,8 +6852,8 @@ public abstract class BatteryStats {
                     item.append("\n");
                 } else {
                     item.append(" ");
-                    item.append(DateFormat.format("yyyy-MM-dd-HH-mm-ss",
-                            rec.currentTime).toString());
+                    mDate.setTime(rec.currentTime);
+                    item.append(mCurrentTimeEventTimeFormat.format(mDate));
                     item.append("\n");
                 }
             } else if (rec.cmd == HistoryItem.CMD_SHUTDOWN) {
@@ -7113,6 +6958,9 @@ public abstract class BatteryStats {
                             break;
                         case BatteryManager.BATTERY_PLUGGED_WIRELESS:
                             item.append(checkin ? "w" : "wireless");
+                            break;
+                        case BatteryManager.BATTERY_PLUGGED_DOCK:
+                            item.append(checkin ? "d" : "dock");
                             break;
                         default:
                             item.append(oldPlug);
@@ -7272,7 +7120,8 @@ public abstract class BatteryStats {
                         }
 
                         item.append(", SubsystemPowerState ");
-                        item.append(rec.stepDetails.statSubsystemPowerState);
+                        item.append(rec.stepDetails.statSubsystemPowerState != null
+                                ? rec.stepDetails.statSubsystemPowerState : "Empty");
                         item.append("\n");
                     } else {
                         item.append(BATTERY_STATS_CHECKIN_VERSION); item.append(',');
@@ -7341,6 +7190,64 @@ public abstract class BatteryStats {
             sb.append(utime);
             sb.append(":");
             sb.append(stime);
+        }
+
+        /**
+         * In essence, this is a wrapper over SimpleDateFormat that takes advantage
+         * of the fact that events in battery history are closely spaced, which allows it
+         * to reuse the results of the most expensive formatting work.
+         */
+        private static class HistoryLogTimeFormatter {
+            private static final long HOUR_MILLIS = 3600000L;
+            private static final long MINUTE_MILLIS = 60000L;
+            private final SimpleDateFormat mDateFormat =
+                    new SimpleDateFormat("MM-dd HH:", Locale.US);
+            private final Date mDate = new Date();
+
+            private final long mTimeZoneOffset;
+            private long mCachedHour;
+            private String mCachedHourFormatted;
+
+            private HistoryLogTimeFormatter(TimeZone timeZone) {
+                mTimeZoneOffset = timeZone.getRawOffset();
+                mDateFormat.getCalendar().setTimeZone(timeZone);
+            }
+
+            /* Appends timestampMs formatted as  "MM-dd HH:mm:ss.SSS" */
+            void append(StringBuilder sb, long timestampMs) {
+                long localTime = timestampMs + mTimeZoneOffset;
+                long hour = localTime / HOUR_MILLIS;
+                if (hour != mCachedHour) {
+                    mDate.setTime(timestampMs);
+                    mCachedHourFormatted = mDateFormat.format(mDate);
+                    mCachedHour = hour;
+                }
+                sb.append(mCachedHourFormatted);
+
+                long remainder = localTime % HOUR_MILLIS;
+
+                long minutes = remainder / MINUTE_MILLIS;
+                if (minutes < 10) {
+                    sb.append('0');
+                }
+                sb.append(minutes).append(':');
+
+                remainder = remainder % MINUTE_MILLIS;
+                long seconds = remainder / 1000;
+                if (seconds < 10) {
+                    sb.append('0');
+                }
+                sb.append(seconds).append('.');
+
+                long millis = remainder % 1000;
+                if (millis < 100) {
+                    sb.append('0');
+                    if (millis < 10) {
+                        sb.append('0');
+                    }
+                }
+                sb.append(millis);
+            }
         }
     }
 
@@ -7527,19 +7434,42 @@ public abstract class BatteryStats {
     public static final int DUMP_INCLUDE_HISTORY = 1<<4;
     public static final int DUMP_VERBOSE = 1<<5;
     public static final int DUMP_DEVICE_WIFI_ONLY = 1<<6;
+    public static final int DUMP_DEBUG_PERF_BASELINE = 1 << 7;
 
-    private void dumpHistory(PrintWriter pw, int flags, long histStart, boolean checkin) {
+    private void dumpHistory(PrintWriter pw, int flags, long histStart, boolean checkin,
+                              long monotonicClockStart) {
+        final HistoryPrinter hprinter = new HistoryPrinter(flags);
         synchronized (this) {
-            dumpHistoryTagPoolLocked(pw, checkin);
+            if (!checkin) {
+                final long historyTotalSize = getHistoryTotalSize();
+                final long historyUsedSize = getHistoryUsedSize();
+                pw.print("Battery History");
+                if (hprinter.mFormatVersion != HistoryPrinter.FORMAT_LEGACY) {
+                    pw.print(" [Format: " + hprinter.mFormatVersion + "]");
+                }
+                pw.print(" (");
+                pw.print((100 * historyUsedSize) / historyTotalSize);
+                pw.print("% used, ");
+                printSizeValue(pw, historyUsedSize);
+                pw.print(" used of ");
+                printSizeValue(pw, historyTotalSize);
+                pw.print(", ");
+                pw.print(getHistoryStringPoolSize());
+                pw.print(" strings using ");
+                printSizeValue(pw, getHistoryStringPoolBytes());
+                pw.println("):");
+            } else {
+                dumpHistoryTagPoolLocked(pw, checkin);
+            }
         }
 
-        final HistoryPrinter hprinter = new HistoryPrinter();
         long lastTime = -1;
         long baseTime = -1;
         boolean printed = false;
         HistoryEventTracker tracker = null;
         try (BatteryStatsHistoryIterator iterator =
-                     iterateBatteryStatsHistory(0, MonotonicClock.UNDEFINED)) {
+                     iterateBatteryStatsHistory(monotonicClockStart,
+                         MonotonicClock.UNDEFINED)) {
             HistoryItem rec;
             while ((rec = iterator.next()) != null) {
                 try {
@@ -7645,20 +7575,6 @@ public abstract class BatteryStats {
                 pw.print("\"");
                 pw.println();
             }
-        } else {
-            final long historyTotalSize = getHistoryTotalSize();
-            final long historyUsedSize = getHistoryUsedSize();
-            pw.print("Battery History (");
-            pw.print((100 * historyUsedSize) / historyTotalSize);
-            pw.print("% used, ");
-            printSizeValue(pw, historyUsedSize);
-            pw.print(" used of ");
-            printSizeValue(pw, historyTotalSize);
-            pw.print(", ");
-            pw.print(getHistoryStringPoolSize());
-            pw.print(" strings using ");
-            printSizeValue(pw, getHistoryStringPoolBytes());
-            pw.println("):");
         }
     }
 
@@ -7716,7 +7632,7 @@ public abstract class BatteryStats {
      */
     @SuppressWarnings("unused")
     public void dump(Context context, PrintWriter pw, int flags, int reqUid, long histStart,
-            BatteryStatsDumpHelper dumpHelper) {
+            BatteryStatsDumpHelper dumpHelper, long monotonicClockStart) {
         synchronized (this) {
             prepareForDumpLocked();
         }
@@ -7725,7 +7641,7 @@ public abstract class BatteryStats {
                 & (DUMP_HISTORY_ONLY|DUMP_CHARGED_ONLY|DUMP_DAILY_ONLY)) != 0;
 
         if ((flags&DUMP_HISTORY_ONLY) != 0 || !filtering) {
-            dumpHistory(pw, flags, histStart, false);
+            dumpHistory(pw, flags, histStart, false, monotonicClockStart);
             pw.println();
         }
 
@@ -7882,7 +7798,7 @@ public abstract class BatteryStats {
     // This is called from BatteryStatsService.
     @SuppressWarnings("unused")
     public void dumpCheckin(Context context, PrintWriter pw, List<ApplicationInfo> apps, int flags,
-            long histStart, BatteryStatsDumpHelper dumpHelper) {
+            long histStart, BatteryStatsDumpHelper dumpHelper, long monotonicCheckinStartTime) {
         synchronized (this) {
             prepareForDumpLocked();
 
@@ -7892,7 +7808,7 @@ public abstract class BatteryStats {
         }
 
         if ((flags & (DUMP_INCLUDE_HISTORY | DUMP_HISTORY_ONLY)) != 0) {
-            dumpHistory(pw, flags, histStart, true);
+            dumpHistory(pw, flags, histStart, true, monotonicCheckinStartTime);
         }
 
         if ((flags & DUMP_HISTORY_ONLY) != 0) {
@@ -8459,7 +8375,7 @@ public abstract class BatteryStats {
             }
 
         // History data (HISTORY_DATA)
-        final HistoryPrinter hprinter = new HistoryPrinter();
+        final HistoryPrinter hprinter = new HistoryPrinter(flags);
         long lastTime = -1;
         long baseTime = -1;
         boolean printed = false;

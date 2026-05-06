@@ -17,7 +17,7 @@
 package com.android.systemui.keyguard.domain.interactor
 
 import android.app.admin.alarmManager
-import android.content.mockedContext
+import android.content.testableContext
 import com.android.internal.widget.lockPatternUtils
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.kosmos.Kosmos
@@ -27,11 +27,11 @@ import com.android.systemui.user.domain.interactor.selectedUserInteractor
 import com.android.systemui.util.settings.fakeSettings
 import com.android.systemui.util.time.systemClock
 
-val Kosmos.keyguardWakeDirectlyToGoneInteractor by
+val Kosmos.keyguardWakeDirectlyToGoneInteractor: KeyguardWakeDirectlyToGoneInteractor by
     Kosmos.Fixture {
         KeyguardWakeDirectlyToGoneInteractor(
             applicationCoroutineScope,
-            mockedContext,
+            testableContext,
             fakeKeyguardRepository,
             systemClock,
             alarmManager,
@@ -42,6 +42,7 @@ val Kosmos.keyguardWakeDirectlyToGoneInteractor by
             fakeSettings,
             selectedUserInteractor,
             keyguardEnabledInteractor,
-            keyguardServiceLockNowInteractor,
+            keyguardServiceShowLockscreenInteractor,
+            keyguardInteractor,
         )
     }

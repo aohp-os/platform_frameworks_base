@@ -34,6 +34,7 @@
         <permission name="android.permission.LOCATION_HARDWARE"/>
         <permission name="android.permission.MANAGE_DEBUGGING"/>
         <permission name="android.permission.MANAGE_GAME_MODE" />
+        <permission name="android.permission.MANAGE_SECURE_LOCK_DEVICE"/>
         <permission name="android.permission.MANAGE_SENSOR_PRIVACY"/>
         <permission name="android.permission.MANAGE_USB"/>
         <permission name="android.permission.MANAGE_USERS"/>
@@ -46,6 +47,7 @@
         <permission name="android.permission.MOUNT_UNMOUNT_FILESYSTEMS"/>
         <permission name="android.permission.OBSERVE_NETWORK_POLICY"/>
         <permission name="android.permission.OBSERVE_GRANT_REVOKE_PERMISSIONS" />
+        <permission name="android.permission.OBSERVE_ROLE_HOLDERS" />
         <permission name="android.permission.OVERRIDE_WIFI_CONFIG"/>
         <permission name="android.permission.PACKAGE_USAGE_STATS" />
         <permission name="android.permission.READ_DREAM_STATE"/>
@@ -94,5 +96,7 @@
         <permission name="android.permission.CONTROL_UI_TRACING" />
         <permission name="android.permission.START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
         <permission name="android.permission.OVERRIDE_SYSTEM_KEY_BEHAVIOR_IN_FOCUSED_WINDOW"/>
+        <permission name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE" />
+        <permission name="android.permission.SET_UNRESTRICTED_GESTURE_EXCLUSION" />
     </privapp-permissions>
 </permissions>

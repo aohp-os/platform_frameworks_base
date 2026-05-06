@@ -33,7 +33,7 @@ public class MonotonicSpline {
      * @param time the point along the curve
      * @param y the parameter at those points
      */
-    public MonotonicSpline(@Nullable float[] time, @NonNull float[] y) {
+    public MonotonicSpline(@Nullable float [] time, @NonNull float [] y) {
         if (time == null) { // if time  is null assume even 0 to 1;
             time = new float[y.length];
             for (int i = 0; i < time.length; i++) {
@@ -76,14 +76,19 @@ public class MonotonicSpline {
         mTangent = tangent;
     }
 
-    public float[] getArray() {
+    /**
+     * Get the value point used in the interpolator.
+     *
+     * @return the value points
+     */
+    public @Nullable float [] getArray() {
         return mY;
     }
 
     /**
      * Get the position of all curves at time t
      *
-     * @param t
+     * @param t the position along spline
      * @return position at t
      */
     public float getPos(float t) {
@@ -139,7 +144,7 @@ public class MonotonicSpline {
     /**
      * Get the slope of the curve at position t
      *
-     * @param t
+     * @param t the position along spline
      * @return slope at t
      */
     public float getSlope(float t) {
@@ -167,7 +172,12 @@ public class MonotonicSpline {
         return v;
     }
 
-    public float[] getTimePoints() {
+    /**
+     * Get the time points used in the interpolator.
+     *
+     * @return the time points
+     */
+    public @Nullable float [] getTimePoints() {
         return mT;
     }
 

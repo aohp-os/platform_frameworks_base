@@ -16,6 +16,9 @@
 
 package com.android.internal.pm.pkg.component;
 
+import static android.provider.flags.Flags.newStoragePublicApi;
+import static android.provider.flags.Flags.publicInternalReadApi;
+
 import static com.android.internal.pm.pkg.parsing.ParsingUtils.ANDROID_RES_NAMESPACE;
 
 import android.aconfig.DeviceProtos;
@@ -27,6 +30,7 @@ import android.annotation.Nullable;
 import android.content.res.Flags;
 import android.os.Environment;
 import android.os.Process;
+import android.os.flagging.AconfigPackage;
 import android.util.ArrayMap;
 import android.util.Slog;
 import android.util.Xml;
@@ -43,6 +47,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A class that manages a cache of all device feature flags and their default + override values.
@@ -52,13 +57,15 @@ import java.util.Map;
  * own copy of the code here.
  * @hide
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class AconfigFlags {
     private static final boolean DEBUG = false;
     private static final String LOG_TAG = "AconfigFlags";
     private static final String OVERRIDE_PREFIX = "device_config_overrides/";
     private static final String STAGED_PREFIX = "staged/";
 
-    private final ArrayMap<String, Boolean> mFlagValues = new ArrayMap<>();
+    private final Map<String, Boolean> mFlagValues = new ArrayMap<>();
+    private final Map<String, AconfigPackage> mAconfigPackages = new ConcurrentHashMap<>();
 
     public AconfigFlags() {
         if (!Flags.manifestFlagging()) {
@@ -67,21 +74,35 @@ public class AconfigFlags {
             }
             return;
         }
-        final var defaultFlagProtoFiles =
-                (Process.myUid() == Process.SYSTEM_UID) ? DeviceProtos.parsedFlagsProtoPaths()
-                        : Arrays.asList(DeviceProtos.PATHS);
-        for (String fileName : defaultFlagProtoFiles) {
-            try (var inputStream = new FileInputStream(fileName)) {
-                loadAconfigDefaultValues(inputStream.readAllBytes());
-            } catch (IOException e) {
-                Slog.e(LOG_TAG, "Failed to read Aconfig values from " + fileName, e);
+
+        if (useNewStorage()) {
+            Slog.i(LOG_TAG, "Using new flag storage");
+        } else {
+            Slog.i(LOG_TAG, "Using OLD proto flag storage");
+            final var defaultFlagProtoFiles =
+                    (Process.myUid() == Process.SYSTEM_UID) ? DeviceProtos.parsedFlagsProtoPaths()
+                            : Arrays.asList(DeviceProtos.PATHS);
+            for (String fileName : defaultFlagProtoFiles) {
+                final File protoFile = new File(fileName);
+                if (!protoFile.isFile() || !protoFile.canRead()) {
+                    continue;
+                }
+                try (var inputStream = new FileInputStream(protoFile)) {
+                    loadAconfigDefaultValues(inputStream.readAllBytes());
+                } catch (IOException e) {
+                    Slog.w(LOG_TAG, "Failed to read Aconfig values from " + fileName, e);
+                }
+            }
+            if (Process.myUid() == Process.SYSTEM_UID) {
+                // Server overrides are only accessible to the system, no need to even try loading
+                // them in user processes.
+                loadServerOverrides();
             }
         }
-        if (Process.myUid() == Process.SYSTEM_UID) {
-            // Server overrides are only accessible to the system, no need to even try loading them
-            // in user processes.
-            loadServerOverrides();
-        }
+    }
+
+    private static boolean useNewStorage() {
+        return newStoragePublicApi() && Flags.useNewAconfigStorage();
     }
 
     private void loadServerOverrides() {
@@ -106,6 +127,9 @@ public class AconfigFlags {
 
         final var settingsFile = new File(Environment.getUserSystemDirectory(0),
                 "settings_config.xml");
+        if (!settingsFile.isFile() || !settingsFile.canRead()) {
+            return;
+        }
         try (var inputStream = new FileInputStream(settingsFile)) {
             TypedXmlPullParser parser = Xml.resolvePullParser(inputStream);
             if (parser.next() != XmlPullParser.END_TAG && "settings".equals(parser.getName())) {
@@ -172,7 +196,7 @@ public class AconfigFlags {
                 }
             }
         } catch (IOException | XmlPullParserException e) {
-            Slog.e(LOG_TAG, "Failed to read Aconfig values from settings_config.xml", e);
+            Slog.w(LOG_TAG, "Failed to read Aconfig values from settings_config.xml", e);
         }
     }
 
@@ -200,7 +224,64 @@ public class AconfigFlags {
      */
     @Nullable
     public Boolean getFlagValue(@NonNull String flagPackageAndName) {
-        Boolean value = mFlagValues.get(flagPackageAndName);
+        if (useNewStorage()) {
+            return getFlagValueFromNewStorage(flagPackageAndName);
+        } else {
+            Boolean value = mFlagValues.get(flagPackageAndName);
+            if (DEBUG) {
+                Slog.v(LOG_TAG, "Aconfig flag value for " + flagPackageAndName + " = " + value);
+            }
+            return value;
+        }
+    }
+
+    private Boolean getFlagValueFromNewStorage(String flagPackageAndName) {
+        // We still need to check mFlagValues in case addFlagValuesForTesting() was called for
+        // testing purposes.
+        if (!mFlagValues.isEmpty() && mFlagValues.containsKey(flagPackageAndName)) {
+            Boolean value = mFlagValues.get(flagPackageAndName);
+            if (DEBUG) {
+                Slog.v(
+                        LOG_TAG,
+                        "Aconfig flag value (FOR TESTING) for "
+                                + flagPackageAndName
+                                + " = "
+                                + value);
+            }
+            return value;
+        }
+
+        int index = flagPackageAndName.lastIndexOf('.');
+        if (index < 0) {
+            Slog.e(LOG_TAG, "Unable to parse package name from " + flagPackageAndName);
+            return null;
+        }
+        String flagPackage = flagPackageAndName.substring(0, index);
+        String flagName = flagPackageAndName.substring(index + 1);
+        Boolean value = null;
+        AconfigPackage aconfigPackage = mAconfigPackages.computeIfAbsent(flagPackage, p -> {
+            try {
+                return AconfigPackage.load(p);
+            } catch (Exception e) {
+                Slog.e(LOG_TAG, "Failed to load aconfig package " + p, e);
+                return null;
+            }
+        });
+        if (aconfigPackage != null) {
+            // Default value is false for when the flag is not found.
+            // Note: Unlike with the old storage, with AconfigPackage, we don't have a way to
+            // know if the flag is not found or if it's found but the value is false.
+            try {
+                if (publicInternalReadApi()) {
+                    value = aconfigPackage.getBooleanFlagValueInternal(flagName, false);
+                } else {
+                    value = aconfigPackage.getBooleanFlagValue(flagName, false);
+                }
+            } catch (Exception e) {
+                Slog.e(LOG_TAG, "Failed to read Aconfig flag value for " + flagPackageAndName, e);
+                return null;
+            }
+        }
         if (DEBUG) {
             Slog.v(LOG_TAG, "Aconfig flag value for " + flagPackageAndName + " = " + value);
         }
@@ -246,6 +327,18 @@ public class AconfigFlags {
             negated = true;
             featureFlag = featureFlag.substring(1).strip();
         }
+        return skip(pkg, featureFlag, negated);
+    }
+
+    /**
+     * Check if whatever is behind this flag should be skipped
+     *
+     * @param pkg The package being parsed
+     * @param featureFlag The name of the flag being checked
+     * @param negated Whether that flag is negated
+     * @return true if the resource is disabled because of its feature flag
+     */
+    public boolean skip(@Nullable ParsingPackage pkg, String featureFlag, boolean negated) {
         Boolean flagValue = getFlagValue(featureFlag);
         boolean isUndefined = false;
         if (flagValue == null) {

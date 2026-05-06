@@ -22,8 +22,10 @@ import android.provider.Settings
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.android.internal.logging.UiEventLogger
+import com.android.systemui.compose.modifiers.sysUiResTagContainer
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
@@ -40,7 +42,6 @@ import com.android.systemui.volume.panel.ui.viewmodel.VolumePanelViewModel
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -49,7 +50,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class VolumeNavigator
 @Inject
@@ -120,7 +120,8 @@ constructor(
 
                 val coroutineScope = rememberCoroutineScope()
                 VolumePanelRoot(
-                    remember(coroutineScope) { viewModelFactory.create(coroutineScope) }
+                    remember(coroutineScope) { viewModelFactory.create(coroutineScope) },
+                    Modifier.sysUiResTagContainer(),
                 )
             },
             isDraggable = false,

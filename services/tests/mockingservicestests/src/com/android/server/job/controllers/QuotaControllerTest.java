@@ -16,6 +16,8 @@
 
 package com.android.server.job.controllers;
 
+import static android.app.usage.UsageStatsManager.REASON_MAIN_DEFAULT;
+
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
@@ -24,7 +26,6 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.mock;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
-import static com.android.server.job.Flags.FLAG_COUNT_QUOTA_FIX;
 import static com.android.server.job.JobSchedulerService.ACTIVE_INDEX;
 import static com.android.server.job.JobSchedulerService.EXEMPTED_INDEX;
 import static com.android.server.job.JobSchedulerService.FREQUENT_INDEX;
@@ -76,10 +77,10 @@ import android.os.BatteryManagerInternal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
-import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.platform.test.flag.junit.SetFlagsRule;
@@ -93,6 +94,7 @@ import androidx.test.runner.AndroidJUnit4;
 import com.android.internal.util.ArrayUtils;
 import com.android.server.LocalServices;
 import com.android.server.PowerAllowlistInternal;
+import com.android.server.compat.PlatformCompat;
 import com.android.server.job.Flags;
 import com.android.server.job.JobSchedulerInternal;
 import com.android.server.job.JobSchedulerService;
@@ -103,8 +105,6 @@ import com.android.server.job.controllers.QuotaController.ShrinkableDebits;
 import com.android.server.job.controllers.QuotaController.TimedEvent;
 import com.android.server.job.controllers.QuotaController.TimingSession;
 import com.android.server.usage.AppStandbyInternal;
-
-import libcore.junit.util.compat.CoreCompatChangeRule.EnableCompatChanges;
 
 import org.junit.After;
 import org.junit.Before;
@@ -168,6 +168,8 @@ public class QuotaControllerTest {
     private PowerAllowlistInternal mPowerAllowlistInternal;
     @Mock
     private UsageStatsManagerInternal mUsageStatsManager;
+    @Mock
+    private PlatformCompat mPlatformCompat;
 
     @Rule
     public final CheckFlagsRule mCheckFlagsRule =
@@ -182,6 +184,7 @@ public class QuotaControllerTest {
                 .strictness(Strictness.LENIENT)
                 .spyStatic(DeviceConfig.class)
                 .mockStatic(LocalServices.class)
+                .mockStatic(ServiceManager.class)
                 .startMocking();
 
         // Called in StateController constructor.
@@ -198,6 +201,7 @@ public class QuotaControllerTest {
         }
         when(mContext.getMainLooper()).thenReturn(Looper.getMainLooper());
         when(mContext.getSystemService(AlarmManager.class)).thenReturn(mAlarmManager);
+
         doReturn(mActivityMangerInternal)
                 .when(() -> LocalServices.getService(ActivityManagerInternal.class));
         doReturn(mock(AppStandbyInternal.class))
@@ -253,6 +257,8 @@ public class QuotaControllerTest {
                 ArgumentCaptor.forClass(PowerAllowlistInternal.TempAllowlistChangeListener.class);
         ArgumentCaptor<UsageStatsManagerInternal.UsageEventListener> ueListenerCaptor =
                 ArgumentCaptor.forClass(UsageStatsManagerInternal.UsageEventListener.class);
+        doReturn(mPlatformCompat)
+                .when(() -> ServiceManager.getService(Context.PLATFORM_COMPAT_SERVICE));
         mQuotaController = new QuotaController(mJobSchedulerService,
                 mock(BackgroundJobsController.class), mock(ConnectivityController.class));
 
@@ -295,15 +301,15 @@ public class QuotaControllerTest {
     }
 
     private void setCharging() {
-        doReturn(true).when(mJobSchedulerService).isBatteryCharging();
         synchronized (mQuotaController.mLock) {
+            doReturn(true).when(mJobSchedulerService).isBatteryCharging();
             mQuotaController.onBatteryStateChangedLocked();
         }
     }
 
     private void setDischarging() {
-        doReturn(false).when(mJobSchedulerService).isBatteryCharging();
         synchronized (mQuotaController.mLock) {
+            doReturn(false).when(mJobSchedulerService).isBatteryCharging();
             mQuotaController.onBatteryStateChangedLocked();
         }
     }
@@ -367,13 +373,14 @@ public class QuotaControllerTest {
     private void setStandbyBucket(int bucketIndex) {
         when(mUsageStatsManager.getAppStandbyBucket(eq(SOURCE_PACKAGE), eq(SOURCE_USER_ID),
                 anyLong())).thenReturn(bucketIndexToUsageStatsBucket(bucketIndex));
-        mQuotaController.updateStandbyBucket(SOURCE_USER_ID, SOURCE_PACKAGE, bucketIndex);
+        mQuotaController.updateStandbyBucket(SOURCE_USER_ID, SOURCE_PACKAGE, bucketIndex,
+                REASON_MAIN_DEFAULT);
     }
 
     private void setStandbyBucket(int bucketIndex, JobStatus... jobs) {
         setStandbyBucket(bucketIndex);
         for (JobStatus job : jobs) {
-            job.setStandbyBucket(bucketIndex);
+            job.setStandbyBucket(bucketIndex, REASON_MAIN_DEFAULT);
             when(mUsageStatsManager.getAppStandbyBucket(
                     eq(job.getSourcePackageName()), eq(job.getSourceUserId()), anyLong()))
                     .thenReturn(bucketIndexToUsageStatsBucket(bucketIndex));
@@ -415,7 +422,7 @@ public class QuotaControllerTest {
                 jobInfo, callingUid, packageName, SOURCE_USER_ID, "QCTest", testTag);
         js.serviceProcessName = "testProcess";
         // Make sure tests aren't passing just because the default bucket is likely ACTIVE.
-        js.setStandbyBucket(FREQUENT_INDEX);
+        js.setStandbyBucket(FREQUENT_INDEX, UsageStatsManager.REASON_MAIN_PREDICTED);
         // Make sure Doze and background-not-restricted don't affect tests.
         js.setDeviceNotDozingConstraintSatisfied(/* nowElapsed */ sElapsedRealtimeClock.millis(),
                 /* state */ true, /* allowlisted */false);
@@ -1043,11 +1050,11 @@ public class QuotaControllerTest {
         ExecutionStats expectedStats = new ExecutionStats();
 
         // Exempted
-        expectedStats.allowedTimePerPeriodMs = mQcConstants.ALLOWED_TIME_PER_PERIOD_ACTIVE_MS;
+        expectedStats.allowedTimePerPeriodMs = mQcConstants.ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS;
         expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_EXEMPTED_MS;
         expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_EXEMPTED;
         expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_EXEMPTED;
-        expectedStats.expirationTimeElapsed = now + 14 * MINUTE_IN_MILLIS;
+        expectedStats.expirationTimeElapsed = now + 34 * MINUTE_IN_MILLIS;
         expectedStats.executionTimeInWindowMs = 3 * MINUTE_IN_MILLIS;
         expectedStats.bgJobCountInWindow = 5;
         expectedStats.executionTimeInMaxPeriodMs = 33 * MINUTE_IN_MILLIS;
@@ -1060,70 +1067,17 @@ public class QuotaControllerTest {
         }
 
         // Active
+        expectedStats.allowedTimePerPeriodMs = mQcConstants.ALLOWED_TIME_PER_PERIOD_ACTIVE_MS;
         expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_ACTIVE_MS;
         expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_ACTIVE;
         expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_ACTIVE;
         // There is only one session in the past active bucket window, the empty time for this
         // window is the bucket window size - duration of the session.
-        expectedStats.expirationTimeElapsed = now + 24 * MINUTE_IN_MILLIS;
+        expectedStats.expirationTimeElapsed = now + 54 * MINUTE_IN_MILLIS;
         synchronized (mQuotaController.mLock) {
             assertEquals(expectedStats,
                     mQuotaController.getExecutionStatsLocked(0, "com.android.test",
                             ACTIVE_INDEX));
-        }
-
-        // Working
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_WORKING_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_WORKING;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_WORKING;
-        expectedStats.expirationTimeElapsed = now + HOUR_IN_MILLIS;
-        expectedStats.executionTimeInWindowMs = 13 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInWindow = 10;
-        expectedStats.executionTimeInMaxPeriodMs = 33 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInMaxPeriod = 20;
-        expectedStats.sessionCountInWindow = 2;
-        expectedStats.inQuotaTimeElapsed = now + 2 * HOUR_IN_MILLIS + 3 * MINUTE_IN_MILLIS
-                + mQcConstants.IN_QUOTA_BUFFER_MS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(0, "com.android.test",
-                            WORKING_INDEX));
-        }
-
-        // Frequent
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_FREQUENT_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_FREQUENT;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_FREQUENT;
-        expectedStats.expirationTimeElapsed = now + HOUR_IN_MILLIS;
-        expectedStats.executionTimeInWindowMs = 23 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInWindow = 15;
-        expectedStats.executionTimeInMaxPeriodMs = 33 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInMaxPeriod = 20;
-        expectedStats.sessionCountInWindow = 3;
-        expectedStats.inQuotaTimeElapsed = now + 10 * HOUR_IN_MILLIS + 3 * MINUTE_IN_MILLIS
-                + mQcConstants.IN_QUOTA_BUFFER_MS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(
-                            0, "com.android.test", FREQUENT_INDEX));
-        }
-
-        // Rare
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_RARE_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_RARE;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_RARE;
-        expectedStats.expirationTimeElapsed = now + HOUR_IN_MILLIS;
-        expectedStats.executionTimeInWindowMs = 33 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInWindow = 20;
-        expectedStats.executionTimeInMaxPeriodMs = 33 * MINUTE_IN_MILLIS;
-        expectedStats.bgJobCountInMaxPeriod = 20;
-        expectedStats.sessionCountInWindow = 4;
-        expectedStats.inQuotaTimeElapsed = now + 22 * HOUR_IN_MILLIS + 3 * MINUTE_IN_MILLIS
-                + mQcConstants.IN_QUOTA_BUFFER_MS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(0, "com.android.test",
-                            RARE_INDEX));
         }
     }
 
@@ -1206,11 +1160,11 @@ public class QuotaControllerTest {
         ExecutionStats expectedStats = new ExecutionStats();
 
         // Exempted
-        expectedStats.allowedTimePerPeriodMs = mQcConstants.ALLOWED_TIME_PER_PERIOD_ACTIVE_MS;
+        expectedStats.allowedTimePerPeriodMs = mQcConstants.ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS;
         expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_EXEMPTED_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_ACTIVE;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_ACTIVE;
-        expectedStats.expirationTimeElapsed = 10 * MINUTE_IN_MILLIS + 11 * MINUTE_IN_MILLIS;
+        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_EXEMPTED;
+        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_EXEMPTED;
+        expectedStats.expirationTimeElapsed = 30 * MINUTE_IN_MILLIS + 11 * MINUTE_IN_MILLIS;
         expectedStats.executionTimeInWindowMs = MINUTE_IN_MILLIS;
         expectedStats.bgJobCountInWindow = 2;
         expectedStats.executionTimeInMaxPeriodMs = MINUTE_IN_MILLIS;
@@ -1227,44 +1181,11 @@ public class QuotaControllerTest {
         expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_ACTIVE_MS;
         expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_ACTIVE;
         expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_ACTIVE;
-        expectedStats.expirationTimeElapsed = 20 * MINUTE_IN_MILLIS + 11 * MINUTE_IN_MILLIS;
+        expectedStats.expirationTimeElapsed = 50 * MINUTE_IN_MILLIS + 11 * MINUTE_IN_MILLIS;
         synchronized (mQuotaController.mLock) {
             assertEquals(expectedStats,
                     mQuotaController.getExecutionStatsLocked(0, "com.android.test",
                             ACTIVE_INDEX));
-        }
-
-        // Working
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_WORKING_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_WORKING;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_WORKING;
-        expectedStats.expirationTimeElapsed = 4 * HOUR_IN_MILLIS + MINUTE_IN_MILLIS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(0, "com.android.test",
-                            WORKING_INDEX));
-        }
-
-        // Frequent
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_FREQUENT_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_FREQUENT;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_FREQUENT;
-        expectedStats.expirationTimeElapsed = 12 * HOUR_IN_MILLIS + MINUTE_IN_MILLIS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(
-                            0, "com.android.test", FREQUENT_INDEX));
-        }
-
-        // Rare
-        expectedStats.windowSizeMs = mQcConstants.WINDOW_SIZE_RARE_MS;
-        expectedStats.jobCountLimit = mQcConstants.MAX_JOB_COUNT_RARE;
-        expectedStats.sessionCountLimit = mQcConstants.MAX_SESSION_COUNT_RARE;
-        expectedStats.expirationTimeElapsed = 24 * HOUR_IN_MILLIS + MINUTE_IN_MILLIS;
-        synchronized (mQuotaController.mLock) {
-            assertEquals(expectedStats,
-                    mQuotaController.getExecutionStatsLocked(0, "com.android.test",
-                            RARE_INDEX));
         }
     }
 
@@ -1458,7 +1379,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(16, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(64, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1472,7 +1393,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(11, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             // WINDOW_SIZE_WORKING_MS * 5 TimingSessions are coalesced
             assertEquals(44, mQuotaController.getExecutionStatsLocked(
@@ -1489,7 +1410,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(11, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(44, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1504,7 +1425,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(7, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             // WINDOW_SIZE_WORKING_MS * 9 TimingSessions are coalesced
             assertEquals(28, mQuotaController.getExecutionStatsLocked(
@@ -1523,7 +1444,7 @@ public class QuotaControllerTest {
         // Only two TimingSessions there for every hour.
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(2, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(8, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1539,7 +1460,7 @@ public class QuotaControllerTest {
         // Only one TimingSessions there for every hour
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(1, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(4, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1554,7 +1475,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(1, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(4, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1570,7 +1491,7 @@ public class QuotaControllerTest {
 
         synchronized (mQuotaController.mLock) {
             mQuotaController.invalidateAllExecutionStatsLocked();
-            assertEquals(0, mQuotaController.getExecutionStatsLocked(
+            assertEquals(1, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", ACTIVE_INDEX).sessionCountInWindow);
             assertEquals(4, mQuotaController.getExecutionStatsLocked(
                     0, "com.android.test", WORKING_INDEX).sessionCountInWindow);
@@ -1721,34 +1642,6 @@ public class QuotaControllerTest {
                     mQuotaController.getMaxJobExecutionTimeMsLocked((jobHigh)));
         }
 
-        // Top-started job
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-stared jobs are out of quota enforcement.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            trackJobs(job, jobHigh);
-            mQuotaController.prepareForExecutionLocked(job);
-            mQuotaController.prepareForExecutionLocked(jobHigh);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((job)));
-            assertEquals(JobSchedulerService.Constants.DEFAULT_RUNTIME_FREE_QUOTA_MAX_LIMIT_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobHigh)));
-            mQuotaController.maybeStopTrackingJobLocked(job, null);
-            mQuotaController.maybeStopTrackingJobLocked(jobHigh, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(jobHigh));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Quota is enforced for top-started job after the process leaves TOP/BTOP state.
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -1784,69 +1677,6 @@ public class QuotaControllerTest {
         JobStatus job = createJobStatus("testGetMaxJobExecutionTimeLocked", 0);
         //noinspection deprecation
         JobStatus jobDefIWF;
-        mSetFlagsRule.disableFlags(android.app.job.Flags.FLAG_IGNORE_IMPORTANT_WHILE_FOREGROUND);
-        jobDefIWF = createJobStatus("testGetMaxJobExecutionTimeLocked_IWF",
-                createJobInfoBuilder(1)
-                        .setImportantWhileForeground(true)
-                        .setPriority(JobInfo.PRIORITY_DEFAULT)
-                        .build());
-
-        setStandbyBucket(RARE_INDEX, jobDefIWF);
-        setCharging();
-        synchronized (mQuotaController.mLock) {
-            assertEquals(JobSchedulerService.Constants.DEFAULT_RUNTIME_FREE_QUOTA_MAX_LIMIT_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobDefIWF)));
-        }
-
-        setDischarging();
-        setProcessState(getProcessStateQuotaFreeThreshold());
-        synchronized (mQuotaController.mLock) {
-            assertEquals(JobSchedulerService.Constants.DEFAULT_RUNTIME_FREE_QUOTA_MAX_LIMIT_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobDefIWF)));
-        }
-
-        // Top-started job
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-stared jobs are out of quota enforcement.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            trackJobs(jobDefIWF);
-            mQuotaController.prepareForExecutionLocked(jobDefIWF);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(JobSchedulerService.Constants.DEFAULT_RUNTIME_FREE_QUOTA_MAX_LIMIT_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobDefIWF)));
-            mQuotaController.maybeStopTrackingJobLocked(jobDefIWF, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(jobDefIWF));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Quota is enforced for top-started job after the process leaves TOP/BTOP state.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            trackJobs(jobDefIWF);
-            mQuotaController.prepareForExecutionLocked(jobDefIWF);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobDefIWF)));
-            mQuotaController.maybeStopTrackingJobLocked(jobDefIWF, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(jobDefIWF));
-        }
-
-        mSetFlagsRule.enableFlags(android.app.job.Flags.FLAG_IGNORE_IMPORTANT_WHILE_FOREGROUND);
         jobDefIWF = createJobStatus("testGetMaxJobExecutionTimeLocked_IWF",
                 createJobInfoBuilder(1)
                         .setImportantWhileForeground(true)
@@ -1868,27 +1698,6 @@ public class QuotaControllerTest {
         }
 
         // Top-started job
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-stared jobs are out of quota enforcement.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            trackJobs(jobDefIWF);
-            mQuotaController.prepareForExecutionLocked(jobDefIWF);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked((jobDefIWF)));
-            mQuotaController.maybeStopTrackingJobLocked(jobDefIWF, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(timeUntilQuotaConsumedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(jobDefIWF));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Quota is enforced for top-started job after the process leaves TOP/BTOP state.
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -1976,27 +1785,6 @@ public class QuotaControllerTest {
                     mQuotaController.getMaxJobExecutionTimeMsLocked(job));
         }
 
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-started job
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(job);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            // Top-started job is out of quota enforcement.
-            assertEquals(mQcConstants.EJ_LIMIT_ACTIVE_MS / 2,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-            mQuotaController.maybeStopTrackingJobLocked(job, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(mQcConstants.EJ_LIMIT_RARE_MS - timeUsedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Top-started job
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -2032,28 +1820,6 @@ public class QuotaControllerTest {
                     mQuotaController.getMaxJobExecutionTimeMsLocked(job));
         }
 
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-started job
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStartTrackingJobLocked(job, null);
-            mQuotaController.prepareForExecutionLocked(job);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            // Top-started job is out of quota enforcement.
-            assertEquals(mQcConstants.EJ_LIMIT_ACTIVE_MS / 2,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-            mQuotaController.maybeStopTrackingJobLocked(job, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(mQcConstants.EJ_LIMIT_RARE_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Top-started job
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -2102,27 +1868,6 @@ public class QuotaControllerTest {
                     mQuotaController.getMaxJobExecutionTimeMsLocked(job));
         }
 
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-started job
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(job);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            // Top-started job is out of quota enforcement.
-            assertEquals(mQcConstants.EJ_LIMIT_ACTIVE_MS / 2,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-            mQuotaController.maybeStopTrackingJobLocked(job, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(mQcConstants.EJ_LIMIT_RARE_MS - timeUsedMs,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Top-started job
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -2158,28 +1903,6 @@ public class QuotaControllerTest {
                     mQuotaController.getMaxJobExecutionTimeMsLocked(job));
         }
 
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-        // Top-started job
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStartTrackingJobLocked(job, null);
-            mQuotaController.prepareForExecutionLocked(job);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND);
-        synchronized (mQuotaController.mLock) {
-            // Top-started job is out of quota enforcement.
-            assertEquals(mQcConstants.EJ_LIMIT_ACTIVE_MS / 2,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-            mQuotaController.maybeStopTrackingJobLocked(job, null);
-        }
-
-        setProcessState(ActivityManager.PROCESS_STATE_RECEIVER);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(mQcConstants.EJ_LIMIT_RARE_MS,
-                    mQuotaController.getMaxJobExecutionTimeMsLocked(job));
-        }
-
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
         // Top-started job
         setProcessState(ActivityManager.PROCESS_STATE_TOP);
         synchronized (mQuotaController.mLock) {
@@ -2223,32 +1946,6 @@ public class QuotaControllerTest {
         setStandbyBucket(EXEMPTED_INDEX);
         synchronized (mQuotaController.mLock) {
             assertEquals(0,
-                    mQuotaController.getRemainingExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(mQcConstants.MAX_EXECUTION_TIME_MS - 30 * MINUTE_IN_MILLIS,
-                    mQuotaController.getTimeUntilQuotaConsumedLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ADJUST_QUOTA_DEFAULT_CONSTANTS)
-    public void testGetTimeUntilQuotaConsumedLocked_AllowedEqualsWindow_NewDefaultBucketWindowSizes() {
-        final long now = JobSchedulerService.sElapsedRealtimeClock.millis();
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (8 * HOUR_IN_MILLIS), 20 * MINUTE_IN_MILLIS, 5), false);
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (10 * MINUTE_IN_MILLIS), 10 * MINUTE_IN_MILLIS, 5),
-                false);
-
-        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS,
-                20 * MINUTE_IN_MILLIS);
-        setDeviceConfigLong(QcConstants.KEY_WINDOW_SIZE_EXEMPTED_MS, 20 * MINUTE_IN_MILLIS);
-        // window size = allowed time, so jobs can essentially run non-stop until they reach the
-        // max execution time.
-        setStandbyBucket(EXEMPTED_INDEX);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(10 * MINUTE_IN_MILLIS,
                     mQuotaController.getRemainingExecutionTimeLocked(
                             SOURCE_USER_ID, SOURCE_PACKAGE));
             assertEquals(mQcConstants.MAX_EXECUTION_TIME_MS - 30 * MINUTE_IN_MILLIS,
@@ -2329,60 +2026,53 @@ public class QuotaControllerTest {
     @EnableFlags(Flags.FLAG_ADJUST_QUOTA_DEFAULT_CONSTANTS)
     public void testGetTimeUntilQuotaConsumedLocked_BucketWindow_NewDefaultBucketWindowSizes() {
         final long now = JobSchedulerService.sElapsedRealtimeClock.millis();
-        // Close to RARE boundary.
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (mQcConstants.WINDOW_SIZE_RARE_MS - 30 * SECOND_IN_MILLIS),
-                        30 * SECOND_IN_MILLIS, 5), false);
-        // Far away from FREQUENT boundary.
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (mQcConstants.WINDOW_SIZE_FREQUENT_MS -  HOUR_IN_MILLIS),
-                        3 * MINUTE_IN_MILLIS, 5), false);
-        // Overlap WORKING_SET boundary.
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (mQcConstants.WINDOW_SIZE_WORKING_MS + MINUTE_IN_MILLIS),
-                        3 * MINUTE_IN_MILLIS, 5), false);
         // Close to ACTIVE boundary.
         mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
                 createTimingSession(now - (mQcConstants.WINDOW_SIZE_ACTIVE_MS -  MINUTE_IN_MILLIS),
                         3 * MINUTE_IN_MILLIS, 5), false);
 
-        setStandbyBucket(RARE_INDEX);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(30 * SECOND_IN_MILLIS,
-                    mQuotaController.getRemainingExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(MINUTE_IN_MILLIS,
-                    mQuotaController.getTimeUntilQuotaConsumedLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-
-        setStandbyBucket(FREQUENT_INDEX);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(MINUTE_IN_MILLIS,
-                    mQuotaController.getRemainingExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(MINUTE_IN_MILLIS,
-                    mQuotaController.getTimeUntilQuotaConsumedLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-
-        setStandbyBucket(WORKING_INDEX);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(5 * MINUTE_IN_MILLIS,
-                    mQuotaController.getRemainingExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(7 * MINUTE_IN_MILLIS,
-                    mQuotaController.getTimeUntilQuotaConsumedLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-
         // ACTIVE window != allowed time.
         setStandbyBucket(ACTIVE_INDEX);
         synchronized (mQuotaController.mLock) {
-            assertEquals(7 * MINUTE_IN_MILLIS,
+            assertEquals(17 * MINUTE_IN_MILLIS,
                     mQuotaController.getRemainingExecutionTimeLocked(
                             SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(10 * MINUTE_IN_MILLIS,
+            assertEquals(20 * MINUTE_IN_MILLIS,
+                    mQuotaController.getTimeUntilQuotaConsumedLocked(
+                            SOURCE_USER_ID, SOURCE_PACKAGE));
+        }
+    }
+
+
+    @Test
+    @EnableFlags(Flags.FLAG_ADJUST_QUOTA_DEFAULT_CONSTANTS)
+    public void testGetTimeUntilQuotaConsumedLocked_Installer_Tuning() {
+        PackageInfo pi = new PackageInfo();
+        pi.packageName = SOURCE_PACKAGE;
+        pi.requestedPermissions = new String[]{Manifest.permission.INSTALL_PACKAGES};
+        pi.requestedPermissionsFlags = new int[]{PackageInfo.REQUESTED_PERMISSION_GRANTED};
+        pi.applicationInfo = new ApplicationInfo();
+        pi.applicationInfo.uid = mSourceUid;
+        doReturn(List.of(pi)).when(mPackageManager).getInstalledPackagesAsUser(anyInt(), anyInt());
+        doReturn(PackageManager.PERMISSION_GRANTED).when(mContext).checkPermission(
+                eq(Manifest.permission.INSTALL_PACKAGES), anyInt(), eq(mSourceUid));
+        mQuotaController.onSystemServicesReady();
+
+        final long now = JobSchedulerService.sElapsedRealtimeClock.millis();
+        // Close to EXEMPTED boundary.
+        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
+                createTimingSession(
+                        now - (mQcConstants.WINDOW_SIZE_EXEMPTED_MS - MINUTE_IN_MILLIS),
+                        2 * MINUTE_IN_MILLIS, 5), false);
+
+        // Additional quota for the system installer when the app is in EXEMPTED bucket.
+        // EXEMPTED window == allowed time.
+        setStandbyBucket(EXEMPTED_INDEX);
+        synchronized (mQuotaController.mLock) {
+            assertEquals(38 * MINUTE_IN_MILLIS,
+                    mQuotaController.getRemainingExecutionTimeLocked(
+                            SOURCE_USER_ID, SOURCE_PACKAGE));
+            assertEquals(mQcConstants.MAX_EXECUTION_TIME_MS - 2 * MINUTE_IN_MILLIS,
                     mQuotaController.getTimeUntilQuotaConsumedLocked(
                             SOURCE_USER_ID, SOURCE_PACKAGE));
         }
@@ -2534,33 +2224,6 @@ public class QuotaControllerTest {
                     mQuotaController.getRemainingExecutionTimeLocked(
                             SOURCE_USER_ID, SOURCE_PACKAGE));
             assertEquals(mQcConstants.MAX_EXECUTION_TIME_MS - 10 * MINUTE_IN_MILLIS,
-                    mQuotaController.getTimeUntilQuotaConsumedLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ADJUST_QUOTA_DEFAULT_CONSTANTS)
-    public void testGetTimeUntilQuotaConsumedLocked_EdgeOfWindow_AllowedEqualsWindow_NewDefaultBucketWindowSizes() {
-        final long now = JobSchedulerService.sElapsedRealtimeClock.millis();
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (24 * HOUR_IN_MILLIS),
-                        mQcConstants.MAX_EXECUTION_TIME_MS - 20 * MINUTE_IN_MILLIS, 5),
-                false);
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(now - (20 * MINUTE_IN_MILLIS), 20 * MINUTE_IN_MILLIS, 5),
-                false);
-
-        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS,
-                20 * MINUTE_IN_MILLIS);
-        setDeviceConfigLong(QcConstants.KEY_WINDOW_SIZE_EXEMPTED_MS, 20 * MINUTE_IN_MILLIS);
-        // window size != allowed time.
-        setStandbyBucket(EXEMPTED_INDEX);
-        synchronized (mQuotaController.mLock) {
-            assertEquals(0,
-                    mQuotaController.getRemainingExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-            assertEquals(mQcConstants.MAX_EXECUTION_TIME_MS - 20 * MINUTE_IN_MILLIS,
                     mQuotaController.getTimeUntilQuotaConsumedLocked(
                             SOURCE_USER_ID, SOURCE_PACKAGE));
         }
@@ -2928,7 +2591,6 @@ public class QuotaControllerTest {
     }
 
     @Test
-    @RequiresFlagsEnabled(FLAG_COUNT_QUOTA_FIX)
     public void testIsWithinQuotaLocked_UnderDuration_OverJobCountInWindow() {
         setDischarging();
 
@@ -4119,6 +3781,11 @@ public class QuotaControllerTest {
         assertEquals(85 * SECOND_IN_MILLIS, mQuotaController.getEJRewardNotificationSeenMs());
         assertEquals(84 * SECOND_IN_MILLIS, mQuotaController.getEJGracePeriodTempAllowlistMs());
         assertEquals(83 * SECOND_IN_MILLIS, mQuotaController.getEJGracePeriodTopAppMs());
+
+        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_ADDITION_INSTALLER_MS,
+                6 * MINUTE_IN_MILLIS);
+        assertEquals(6 * MINUTE_IN_MILLIS,
+                mQuotaController.getAllowedTimePeriodAdditionInstallerMs());
     }
 
     @Test
@@ -4222,6 +3889,11 @@ public class QuotaControllerTest {
         assertEquals(0, mQuotaController.getEJGracePeriodTempAllowlistMs());
         assertEquals(0, mQuotaController.getEJGracePeriodTopAppMs());
 
+        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_ADDITION_INSTALLER_MS,
+                -MINUTE_IN_MILLIS);
+        assertEquals(0,
+                mQuotaController.getAllowedTimePeriodAdditionInstallerMs());
+
         // Invalid configurations.
         // In_QUOTA_BUFFER should never be greater than ALLOWED_TIME_PER_PERIOD
         setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS,
@@ -4237,8 +3909,15 @@ public class QuotaControllerTest {
                 10 * MINUTE_IN_MILLIS);
         setDeviceConfigLong(QcConstants.KEY_IN_QUOTA_BUFFER_MS, 5 * MINUTE_IN_MILLIS);
 
-        assertTrue(mQuotaController.getInQuotaBufferMs()
+        assertTrue(mQuotaController.getAllowedTimePeriodAdditionInstallerMs()
                 <= mQuotaController.getAllowedTimePerPeriodMs()[FREQUENT_INDEX]);
+
+        // ALLOWED_TIME_PER_PERIOD_ADDITION_INSTALLER should never be greater than
+        // ALLOWED_TIME_PER_PERIOD.
+        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_ADDITION_INSTALLER_MS,
+                 15 * MINUTE_IN_MILLIS);
+        assertTrue(mQuotaController.getInQuotaBufferMs()
+                <= mQuotaController.getAllowedTimePerPeriodMs()[EXEMPTED_INDEX]);
 
         // Test larger than a day. Controller should cap at one day.
         setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_EXEMPTED_MS,
@@ -4318,6 +3997,10 @@ public class QuotaControllerTest {
         assertEquals(5 * MINUTE_IN_MILLIS, mQuotaController.getEJRewardNotificationSeenMs());
         assertEquals(HOUR_IN_MILLIS, mQuotaController.getEJGracePeriodTempAllowlistMs());
         assertEquals(HOUR_IN_MILLIS, mQuotaController.getEJGracePeriodTopAppMs());
+
+        setDeviceConfigLong(QcConstants.KEY_ALLOWED_TIME_PER_PERIOD_ADDITION_INSTALLER_MS,
+                25 * HOUR_IN_MILLIS);
+        assertEquals(0, mQuotaController.getAllowedTimePeriodAdditionInstallerMs());
     }
 
     /** Tests that TimingSessions aren't saved when the device is charging. */
@@ -4606,7 +4289,6 @@ public class QuotaControllerTest {
 
     /** Tests that Timers count FOREGROUND_SERVICE jobs. */
     @Test
-    @EnableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_FGS_JOBS)
     public void testTimerTracking_Fgs() {
         setDischarging();
 
@@ -4855,91 +4537,6 @@ public class QuotaControllerTest {
         assertEquals(expected, mQuotaController.getTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
 
         advanceElapsedClock(SECOND_IN_MILLIS);
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-
-        // Bg job starts while inactive, spans an entire active session, and ends after the
-        // active session.
-        // App switching to top state then fg job starts.
-        // App remains in top state after coming to top, so there should only be one
-        // session.
-        start = JobSchedulerService.sElapsedRealtimeClock.millis();
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStartTrackingJobLocked(jobBg2, null);
-            mQuotaController.prepareForExecutionLocked(jobBg2);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        expected.add(createTimingSession(start, 10 * SECOND_IN_MILLIS, 1));
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobTop, null);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobBg2, null);
-        }
-        assertEquals(expected, mQuotaController.getTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
-
-        advanceElapsedClock(SECOND_IN_MILLIS);
-
-        // Bg job 1 starts, then top job starts. Bg job 1 job ends. Then app goes to
-        // foreground_service and a new job starts. Shortly after, uid goes
-        // "inactive" and then bg job 2 starts. Then top job ends, followed by bg and fg jobs.
-        // This should result in two TimingSessions:
-        //  * The first should have a count of 1
-        //  * The second should have a count of 2, which accounts for the bg2 and fg, but not top
-        //    jobs.
-        start = JobSchedulerService.sElapsedRealtimeClock.millis();
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStartTrackingJobLocked(jobBg1, null);
-            mQuotaController.maybeStartTrackingJobLocked(jobBg2, null);
-            mQuotaController.maybeStartTrackingJobLocked(jobTop, null);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_LAST_ACTIVITY);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg1);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        expected.add(createTimingSession(start, 10 * SECOND_IN_MILLIS, 1));
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobBg1, jobBg1);
-        }
-        advanceElapsedClock(5 * SECOND_IN_MILLIS);
-        setProcessState(getProcessStateQuotaFreeThreshold());
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobFg1);
-        }
-        advanceElapsedClock(5 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        advanceElapsedClock(10 * SECOND_IN_MILLIS); // UID "inactive" now
-        start = JobSchedulerService.sElapsedRealtimeClock.millis();
-        setProcessState(ActivityManager.PROCESS_STATE_TOP_SLEEPING);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg2);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobTop, null);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobBg2, null);
-            mQuotaController.maybeStopTrackingJobLocked(jobFg1, null);
-        }
-        // jobBg2 and jobFg1 are counted, jobTop is not counted.
-        expected.add(createTimingSession(start, 20 * SECOND_IN_MILLIS, 2));
-        assertEquals(expected, mQuotaController.getTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
-
-        advanceElapsedClock(SECOND_IN_MILLIS);
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
 
         // Bg job 1 starts, then top job starts. Bg job 1 job ends. Then app goes to
         // foreground_service and a new job starts. Shortly after, uid goes
@@ -5109,108 +4706,15 @@ public class QuotaControllerTest {
                 mQuotaController.getTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
     }
 
-    /**
-     * Tests that TOP jobs aren't stopped when an app runs out of quota.
-     */
     @Test
-    @DisableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS)
-    public void testTracking_OutOfQuota_ForegroundAndBackground_DisableTopStartedJobsThrottling() {
-        setDischarging();
-
-        JobStatus jobBg = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 1);
-        JobStatus jobTop = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 2);
-        trackJobs(jobBg, jobTop);
-        setStandbyBucket(WORKING_INDEX, jobTop, jobBg); // 2 hour window
-        // Now the package only has 20 seconds to run.
-        final long remainingTimeMs = 20 * SECOND_IN_MILLIS;
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(
-                        JobSchedulerService.sElapsedRealtimeClock.millis() - HOUR_IN_MILLIS,
-                        10 * MINUTE_IN_MILLIS - remainingTimeMs, 1), false);
-
-        InOrder inOrder = inOrder(mJobSchedulerService);
-
-        // UID starts out inactive.
-        setProcessState(ActivityManager.PROCESS_STATE_SERVICE);
-        // Start the job.
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg);
-        }
-        advanceElapsedClock(remainingTimeMs / 2);
-        // New job starts after UID is in the foreground. Since the app is now in the foreground, it
-        // should continue to have remainingTimeMs / 2 time remaining.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        advanceElapsedClock(remainingTimeMs);
-
-        // Wait for some extra time to allow for job processing.
-        inOrder.verify(mJobSchedulerService,
-                        timeout(remainingTimeMs + 2 * SECOND_IN_MILLIS).times(0))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() > 0));
-        synchronized (mQuotaController.mLock) {
-            assertEquals(remainingTimeMs / 2,
-                    mQuotaController.getRemainingExecutionTimeLocked(jobBg));
-            assertEquals(remainingTimeMs / 2,
-                    mQuotaController.getRemainingExecutionTimeLocked(jobTop));
-        }
-        // Go to a background state.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP_SLEEPING);
-        advanceElapsedClock(remainingTimeMs / 2 + 1);
-        // Only Bg job will be changed from in-quota to out-of-quota.
-        inOrder.verify(mJobSchedulerService,
-                        timeout(remainingTimeMs / 2 + 2 * SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 1));
-        // Top job should still be allowed to run.
-        assertFalse(jobBg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertTrue(jobTop.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-
-        // New jobs to run.
-        JobStatus jobBg2 = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 3);
-        JobStatus jobTop2 = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 4);
-        JobStatus jobFg = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 5);
-        setStandbyBucket(WORKING_INDEX, jobBg2, jobTop2, jobFg);
-
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        inOrder.verify(mJobSchedulerService, timeout(SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 1));
-        trackJobs(jobFg, jobTop);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        assertTrue(jobTop.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertTrue(jobFg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertTrue(jobBg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-
-        // App still in foreground so everything should be in quota.
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(getProcessStateQuotaFreeThreshold());
-        assertTrue(jobTop.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertTrue(jobFg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertTrue(jobBg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_SERVICE);
-        inOrder.verify(mJobSchedulerService, timeout(SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 2));
-        // App is now in background and out of quota. Fg should now change to out of quota since it
-        // wasn't started. Top should remain in quota since it started when the app was in TOP.
-        assertTrue(jobTop.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertFalse(jobFg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        assertFalse(jobBg.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-        trackJobs(jobBg2);
-        assertFalse(jobBg2.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA));
-    }
-
-    @Test
-    @EnableCompatChanges({QuotaController.OVERRIDE_QUOTA_ENFORCEMENT_TO_TOP_STARTED_JOBS,
-            QuotaController.OVERRIDE_QUOTA_ENFORCEMENT_TO_FGS_JOBS})
-    @RequiresFlagsEnabled({Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS,
-            Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_FGS_JOBS})
     public void testTracking_OutOfQuota_ForegroundAndBackground_CompactChangeOverrides() {
         setDischarging();
+
+        // Mock the OVERRIDE_QUOTA_ENFORCEMENT_TO_TOP_STARTED_JOBS compat change overrides.
+        doReturn(true).when(mPlatformCompat).isChangeEnabledByUid(
+                eq(QuotaController.OVERRIDE_QUOTA_ENFORCEMENT_TO_TOP_STARTED_JOBS), anyInt());
+        doReturn(true).when(mPlatformCompat).isChangeEnabledByUid(
+                eq(QuotaController.OVERRIDE_QUOTA_ENFORCEMENT_TO_FGS_JOBS), anyInt());
 
         JobStatus jobBg = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 1);
         JobStatus jobTop = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 2);
@@ -5303,8 +4807,7 @@ public class QuotaControllerTest {
      * Tests that TOP jobs are stopped when an app runs out of quota.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS)
-    public void testTracking_OutOfQuota_ForegroundAndBackground_EnableTopStartedJobsThrottling() {
+    public void testTracking_OutOfQuota_ForegroundAndBackground() {
         setDischarging();
 
         JobStatus jobBg = createJobStatus("testTracking_OutOfQuota_ForegroundAndBackground", 1);
@@ -6782,63 +6285,6 @@ public class QuotaControllerTest {
                 mQuotaController.getEJTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
 
         advanceElapsedClock(SECOND_IN_MILLIS);
-        mSetFlagsRule.disableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
-
-        // Bg job 1 starts, then top job starts. Bg job 1 job ends. Then app goes to
-        // foreground_service and a new job starts. Shortly after, uid goes
-        // "inactive" and then bg job 2 starts. Then top job ends, followed by bg and fg jobs.
-        // This should result in two TimingSessions:
-        //  * The first should have a count of 1
-        //  * The second should have a count of 2, which accounts for the bg2 and fg, but not top
-        //    jobs.
-        start = JobSchedulerService.sElapsedRealtimeClock.millis();
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStartTrackingJobLocked(jobBg1, null);
-            mQuotaController.maybeStartTrackingJobLocked(jobBg2, null);
-            mQuotaController.maybeStartTrackingJobLocked(jobTop, null);
-        }
-        setProcessState(ActivityManager.PROCESS_STATE_LAST_ACTIVITY);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg1);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        expected.add(createTimingSession(start, 10 * SECOND_IN_MILLIS, 1));
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobBg1, jobBg1);
-        }
-        advanceElapsedClock(5 * SECOND_IN_MILLIS);
-        setProcessState(getProcessStateQuotaFreeThreshold());
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobFg1);
-        }
-        advanceElapsedClock(5 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        advanceElapsedClock(10 * SECOND_IN_MILLIS); // UID "inactive" now
-        start = JobSchedulerService.sElapsedRealtimeClock.millis();
-        setProcessState(ActivityManager.PROCESS_STATE_TOP_SLEEPING);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg2);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobTop, null);
-        }
-        advanceElapsedClock(10 * SECOND_IN_MILLIS);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.maybeStopTrackingJobLocked(jobBg2, null);
-            mQuotaController.maybeStopTrackingJobLocked(jobFg1, null);
-        }
-        expected.add(createTimingSession(start, 20 * SECOND_IN_MILLIS, 2));
-        assertEquals(expected,
-                mQuotaController.getEJTimingSessions(SOURCE_USER_ID, SOURCE_PACKAGE));
-
-        advanceElapsedClock(SECOND_IN_MILLIS);
-        mSetFlagsRule.enableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS);
 
         // Bg job 1 starts, then top job starts. Bg job 1 job ends. Then app goes to
         // foreground_service and a new job starts. Shortly after, uid goes
@@ -7258,127 +6704,10 @@ public class QuotaControllerTest {
     }
 
     /**
-     * Tests that expedited jobs aren't stopped when an app runs out of quota.
-     */
-    @Test
-    @DisableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS)
-    public void testEJTracking_OutOfQuota_ForegroundAndBackground_DisableTopStartedJobsThrottling() {
-        setDischarging();
-        setDeviceConfigLong(QcConstants.KEY_EJ_GRACE_PERIOD_TOP_APP_MS, 0);
-
-        JobStatus jobBg =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 1);
-        JobStatus jobTop =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 2);
-        JobStatus jobUnstarted =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 3);
-        trackJobs(jobBg, jobTop, jobUnstarted);
-        setStandbyBucket(WORKING_INDEX, jobTop, jobBg, jobUnstarted);
-        // Now the package only has 20 seconds to run.
-        final long remainingTimeMs = 20 * SECOND_IN_MILLIS;
-        mQuotaController.saveTimingSession(SOURCE_USER_ID, SOURCE_PACKAGE,
-                createTimingSession(
-                        JobSchedulerService.sElapsedRealtimeClock.millis() - HOUR_IN_MILLIS,
-                        mQcConstants.EJ_LIMIT_WORKING_MS - remainingTimeMs, 1), true);
-
-        InOrder inOrder = inOrder(mJobSchedulerService);
-
-        // UID starts out inactive.
-        setProcessState(ActivityManager.PROCESS_STATE_SERVICE);
-        // Start the job.
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobBg);
-        }
-        advanceElapsedClock(remainingTimeMs / 2);
-        // New job starts after UID is in the foreground. Since the app is now in the foreground, it
-        // should continue to have remainingTimeMs / 2 time remaining.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop);
-        }
-        advanceElapsedClock(remainingTimeMs);
-
-        // Wait for some extra time to allow for job processing.
-        inOrder.verify(mJobSchedulerService,
-                        timeout(remainingTimeMs + 2 * SECOND_IN_MILLIS).times(0))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() > 0));
-        synchronized (mQuotaController.mLock) {
-            assertEquals(remainingTimeMs / 2,
-                    mQuotaController.getRemainingEJExecutionTimeLocked(
-                            SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-        // Go to a background state.
-        setProcessState(ActivityManager.PROCESS_STATE_TOP_SLEEPING);
-        advanceElapsedClock(remainingTimeMs / 2 + 1);
-        inOrder.verify(mJobSchedulerService,
-                        timeout(remainingTimeMs / 2 + 2 * SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 2));
-        // Top should still be "in quota" since it started before the app ran on top out of quota.
-        assertFalse(jobBg.isExpeditedQuotaApproved());
-        assertTrue(jobTop.isExpeditedQuotaApproved());
-        assertFalse(jobUnstarted.isExpeditedQuotaApproved());
-        synchronized (mQuotaController.mLock) {
-            assertTrue(
-                    0 >= mQuotaController
-                            .getRemainingEJExecutionTimeLocked(SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-
-        // New jobs to run.
-        JobStatus jobBg2 =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 4);
-        JobStatus jobTop2 =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 5);
-        JobStatus jobFg =
-                createExpeditedJobStatus("testEJTracking_OutOfQuota_ForegroundAndBackground", 6);
-        setStandbyBucket(WORKING_INDEX, jobBg2, jobTop2, jobFg);
-
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_TOP);
-        // Confirm QC recognizes that jobUnstarted has changed from out-of-quota to in-quota.
-        inOrder.verify(mJobSchedulerService, timeout(SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 2));
-        trackJobs(jobTop2, jobFg);
-        synchronized (mQuotaController.mLock) {
-            mQuotaController.prepareForExecutionLocked(jobTop2);
-        }
-        assertTrue(jobTop2.isExpeditedQuotaApproved());
-        assertTrue(jobFg.isExpeditedQuotaApproved());
-        assertTrue(jobBg.isExpeditedQuotaApproved());
-        assertTrue(jobUnstarted.isExpeditedQuotaApproved());
-
-        // App still in foreground so everything should be in quota.
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(getProcessStateQuotaFreeThreshold());
-        assertTrue(jobTop2.isExpeditedQuotaApproved());
-        assertTrue(jobFg.isExpeditedQuotaApproved());
-        assertTrue(jobBg.isExpeditedQuotaApproved());
-        assertTrue(jobUnstarted.isExpeditedQuotaApproved());
-
-        advanceElapsedClock(20 * SECOND_IN_MILLIS);
-        setProcessState(ActivityManager.PROCESS_STATE_SERVICE);
-        inOrder.verify(mJobSchedulerService, timeout(SECOND_IN_MILLIS).times(1))
-                .onControllerStateChanged(argThat(jobs -> jobs.size() == 3));
-        // App is now in background and out of quota. Fg should now change to out of quota since it
-        // wasn't started. Top should remain in quota since it started when the app was in TOP.
-        assertTrue(jobTop2.isExpeditedQuotaApproved());
-        assertFalse(jobFg.isExpeditedQuotaApproved());
-        assertFalse(jobBg.isExpeditedQuotaApproved());
-        trackJobs(jobBg2);
-        assertFalse(jobBg2.isExpeditedQuotaApproved());
-        assertFalse(jobUnstarted.isExpeditedQuotaApproved());
-        synchronized (mQuotaController.mLock) {
-            assertTrue(
-                    0 >= mQuotaController
-                            .getRemainingEJExecutionTimeLocked(SOURCE_USER_ID, SOURCE_PACKAGE));
-        }
-    }
-
-    /**
      * Tests that expedited jobs are stopped when an app runs out of quota.
      */
     @Test
-    @EnableFlags(Flags.FLAG_ENFORCE_QUOTA_POLICY_TO_TOP_STARTED_JOBS)
-    public void testEJTracking_OutOfQuota_ForegroundAndBackground_EnableTopStartedJobsThrottling() {
+    public void testEJTracking_OutOfQuota_ForegroundAndBackground() {
         setDischarging();
         setDeviceConfigLong(QcConstants.KEY_EJ_GRACE_PERIOD_TOP_APP_MS, 0);
 

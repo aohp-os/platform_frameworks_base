@@ -24,10 +24,10 @@ import android.util.AttributeSet
 import android.util.Size
 import android.view.MotionEvent
 import android.view.PointerIcon
-import android.view.RoundedCorner
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import com.android.internal.R as InternalR
 import com.android.internal.annotations.VisibleForTesting
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags
 import com.android.wm.shell.R
@@ -44,7 +44,6 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
     private lateinit var callback: DividerMoveCallback
     private lateinit var handle: DividerHandleView
     private lateinit var corners: DividerRoundedCorner
-    private var cornersRadius: Int = 0
     private var touchElevation = 0
 
     private var moving = false
@@ -55,6 +54,8 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
     @VisibleForTesting var handleY: IntRange = 0..0
     private var canResize = false
     private var resized = false
+    private var isDarkMode = false
+
     /**
      * Tracks divider bar visible bounds in screen-based coordination. Used to calculate with
      * insets.
@@ -85,15 +86,22 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
         dividerMoveCallback: DividerMoveCallback,
         dividerBounds: Rect,
         handleRegionSize: Size,
+        isDarkMode: Boolean,
     ) {
         callback = dividerMoveCallback
         this.dividerBounds.set(dividerBounds)
+        this.isDarkMode = isDarkMode
+        paint.color = getDividerColor()
         handle.setIsLeftRightSplit(true)
+        handle.setColor(getTilingHandleColor(isDarkMode), /* invalidateView= */ false)
+        handle.alpha = HANDLE_ALPHA
         corners.setIsLeftRightSplit(true)
+        corners.setRadiusResource(
+            com.android.wm.shell.shared.R.dimen.desktop_windowing_freeform_rounded_corner_radius
+        )
+        corners.setRoundCornerColor(paint.color, /* invalidateView= */ false)
         handleRegionHeight = handleRegionSize.height
         handleRegionWidth = handleRegionSize.width
-        cornersRadius =
-            context.display.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius ?: 0
         initHandleYCoordinates()
         dragDetector =
             DragDetector(
@@ -101,6 +109,23 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
                 /* holdToDragMinDurationMs= */ 0,
                 ViewConfiguration.get(mContext).scaledTouchSlop,
             )
+    }
+
+    fun onUiModeChange(isDarkMode: Boolean) {
+        this.isDarkMode = isDarkMode
+        handle.setColor(getTilingHandleColor(isDarkMode), /* invalidateView= */ true)
+        paint.color = getDividerColor()
+        corners.setRoundCornerColor(paint.color, /* invalidateView= */ true)
+        invalidate()
+    }
+
+    fun onThemeChanged() {
+        val newColor = getDividerColor()
+        if (paint.color != newColor) {
+            paint.color = newColor
+            corners.setRoundCornerColor(paint.color, /* invalidateView= */ true)
+            invalidate()
+        }
     }
 
     override fun onFinishInflate() {
@@ -112,7 +137,7 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
             resources.getDimensionPixelSize(R.dimen.docked_stack_divider_lift_elevation)
         setOnTouchListener(this)
         setWillNotDraw(false)
-        paint.color = resources.getColor(R.color.split_divider_background, null)
+        paint.color = getDividerColor()
         paint.isAntiAlias = true
         paint.style = Paint.Style.FILL
     }
@@ -129,8 +154,12 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
         }
     }
 
-    override fun onResolvePointerIcon(event: MotionEvent, pointerIndex: Int): PointerIcon =
-        PointerIcon.getSystemIcon(context, PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW)
+    override fun onResolvePointerIcon(event: MotionEvent, pointerIndex: Int): PointerIcon {
+        if (isWithinHandleRegion(event.y.toInt())) {
+            return PointerIcon.getSystemIcon(context, PointerIcon.TYPE_HORIZONTAL_DOUBLE_ARROW)
+        }
+        return PointerIcon.getSystemIcon(context, PointerIcon.TYPE_ARROW)
+    }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean =
         dragDetector.onMotionEvent(v, event)
@@ -145,6 +174,25 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
             .setDuration(TOUCH_ANIMATION_DURATION)
             .translationZ(touchElevation.toFloat())
             .start()
+    }
+
+    private fun getDividerColor(): Int =
+        context.resources.getColor(InternalR.color.customColorOverviewBackground, context.theme)
+
+    /**
+     * Retrieves the tiling handle background color based on the current dark mode status.
+     *
+     * @param isDarkMode A boolean indicating whether dark mode is currently active.
+     * @return The integer color value for the tiling handle background.
+     */
+    private fun getTilingHandleColor(isDarkMode: Boolean): Int {
+        val colorResId =
+            if (isDarkMode) {
+                R.color.tiling_handle_background_dark
+            } else {
+                R.color.tiling_handle_background_light
+            }
+        return resources.getColor(colorResId, /* theme= */ null)
     }
 
     private fun releaseTouching() {
@@ -257,6 +305,7 @@ class TilingDividerView : FrameLayout, View.OnTouchListener, DragDetector.Motion
     companion object {
         const val TOUCH_ANIMATION_DURATION: Long = 150
         const val TOUCH_RELEASE_ANIMATION_DURATION: Long = 200
+        const val HANDLE_ALPHA = 0.9f
         private val TAG = TilingDividerView::class.java.simpleName
     }
 }

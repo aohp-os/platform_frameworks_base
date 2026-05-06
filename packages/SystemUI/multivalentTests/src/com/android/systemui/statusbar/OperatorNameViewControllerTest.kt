@@ -26,24 +26,23 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.keyguard.keyguardUpdateMonitor
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.kosmos.testScope
 import com.android.systemui.plugins.DarkIconDispatcher
 import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.fakeMobileConnectionsRepository
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeSubscriptionManagerProxy
 import com.android.systemui.statusbar.pipeline.shared.data.repository.FakeConnectivityRepository
+import com.android.systemui.testKosmos
 import com.android.systemui.tuner.TunerService
 import com.android.systemui.util.CarrierConfigTracker
-import com.android.systemui.util.kotlin.JavaAdapter
+import com.android.systemui.util.kotlin.javaAdapter
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import junit.framework.Assert.assertTrue
 import kotlin.test.Test
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -51,18 +50,16 @@ import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class OperatorNameViewControllerTest : SysuiTestCase() {
     private lateinit var underTest: OperatorNameViewController
     private lateinit var airplaneModeInteractor: AirplaneModeInteractor
 
-    private val kosmos = Kosmos()
-    private val testScope = TestScope()
+    private val kosmos = testKosmos()
+    private val testScope = kosmos.testScope
 
     private val view = OperatorNameView(mContext)
-    private val javaAdapter = JavaAdapter(testScope.backgroundScope)
 
     @Mock private lateinit var darkIconDispatcher: DarkIconDispatcher
     @Mock private lateinit var tunerService: TunerService
@@ -84,7 +81,8 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
         testableResources = mContext.getOrCreateTestableResources()
         testableResources.addOverride(
             com.android.internal.R.integer.config_showOperatorNameDefault,
-                1)
+            1,
+        )
 
         airplaneModeInteractor =
             AirplaneModeInteractor(
@@ -101,7 +99,7 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
                     carrierConfigTracker,
                     airplaneModeInteractor,
                     subscriptionManagerProxy,
-                    javaAdapter,
+                    kosmos.javaAdapter,
                 )
                 .create(view, darkIconDispatcher)
     }
@@ -118,7 +116,7 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
                 }
             whenever(keyguardUpdateMonitor.getSubscriptionInfoForSubId(any()))
                 .thenReturn(mockSubInfo)
-            whenever(keyguardUpdateMonitor.getSimState(any()))
+            whenever(keyguardUpdateMonitor.getSimStateForSlotId(any()))
                 .thenReturn(TelephonyManager.SIM_STATE_READY)
             whenever(keyguardUpdateMonitor.getServiceState(any()))
                 .thenReturn(ServiceState().also { it.state = ServiceState.STATE_IN_SERVICE })
@@ -143,7 +141,7 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
                 }
             whenever(keyguardUpdateMonitor.getSubscriptionInfoForSubId(any()))
                 .thenReturn(mockSubInfo)
-            whenever(keyguardUpdateMonitor.getSimState(any()))
+            whenever(keyguardUpdateMonitor.getSimStateForSlotId(any()))
                 .thenReturn(TelephonyManager.SIM_STATE_READY)
             whenever(keyguardUpdateMonitor.getServiceState(any()))
                 .thenReturn(ServiceState().also { it.state = ServiceState.STATE_IN_SERVICE })
@@ -167,7 +165,7 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
                 }
             whenever(keyguardUpdateMonitor.getSubscriptionInfoForSubId(any()))
                 .thenReturn(mockSubInfo)
-            whenever(keyguardUpdateMonitor.getSimState(any()))
+            whenever(keyguardUpdateMonitor.getSimStateForSlotId(any()))
                 .thenReturn(TelephonyManager.SIM_STATE_READY)
             whenever(keyguardUpdateMonitor.getServiceState(any()))
                 .thenReturn(ServiceState().also { it.state = ServiceState.STATE_IN_SERVICE })
@@ -194,7 +192,7 @@ class OperatorNameViewControllerTest : SysuiTestCase() {
                 }
             whenever(keyguardUpdateMonitor.getSubscriptionInfoForSubId(any()))
                 .thenReturn(mockSubInfo)
-            whenever(keyguardUpdateMonitor.getSimState(any()))
+            whenever(keyguardUpdateMonitor.getSimStateForSlotId(any()))
                 .thenReturn(TelephonyManager.SIM_STATE_READY)
 
             // Not in service

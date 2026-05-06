@@ -70,20 +70,23 @@ import android.view.SurfaceControl;
 import android.view.displayhash.DisplayHash;
 import android.view.displayhash.VerifiedDisplayHash;
 import android.window.AddToSurfaceSyncGroupResult;
+import android.window.ConfigurationChangeSetting;
 import android.window.IGlobalDragListener;
+import android.window.IScreenCaptureCallback;
 import android.window.IScreenRecordingCallback;
 import android.window.ISurfaceSyncGroupCompletedListener;
 import android.window.ITaskFpsCallback;
 import android.window.ITrustedPresentationListener;
 import android.window.InputTransferToken;
 import android.window.ScreenCapture;
+import android.window.ScreenCaptureInternal;
 import android.window.TrustedPresentationThresholds;
 import android.window.WindowContextInfo;
 
 /**
  * System private interface to the window manager.
  *
- * {@hide}
+ * @hide
  */
 interface IWindowManager
 {
@@ -134,8 +137,46 @@ interface IWindowManager
     int getDisplayIdByUniqueId(String uniqueId);
     @EnforcePermission("WRITE_SECURE_SETTINGS")
     void setForcedDisplayDensityForUser(int displayId, int density, int userId);
+    /**
+    * Clears forced density and forced density ratio in DisplayWindowSettings for the given
+    * displayId.
+    *
+    * @param displayId Id of the display.
+    * @param userId Id of the user.
+    */
     @EnforcePermission("WRITE_SECURE_SETTINGS")
     void clearForcedDisplayDensityForUser(int displayId, int userId);
+    /**
+    * Sets display forced density ratio and forced density in DisplayWindowSettings for
+    * the given displayId. Ratio is used to update forced density to persist display size when
+    * resolution change happens. Use {@link #setForcedDisplayDensityForUser} when there is no need
+    * to handle resolution changes for the display. If setForcedDisplayDensityForUser is used after
+    * this, the ratio will be reset. Use {@link #clearForcedDisplayDensityForUser} to reset.
+    *
+    * @param displayId Id of the display.
+    * @param ratio The ratio of forced density to the default density.
+    * @param userId Id of the user.
+    */
+    @EnforcePermission("WRITE_SECURE_SETTINGS")
+    void setForcedDisplayDensityRatio(int displayId, float ratio, int userId);
+
+    /**
+     * Sets settings for a specific user in a batch to minimize configuration updates.
+     *
+     * <p>This method allows for applying multiple settings changes as a batch, which can
+     * help avoid multiple configuration updates.
+     *
+     * @param settings list of {@link android.window.ConfigurationChangeSetting} objects
+     *                 representing the settings to be applied.
+     * @param userId   the ID of the user whose settings should be applied.
+     * @throws SecurityException if the caller does not have the {@link WRITE_SECURE_SETTINGS}
+     *                           permission.
+     * @hide
+     */
+    @EnforcePermission("WRITE_SECURE_SETTINGS")
+    void setConfigurationChangeSettingsForUser(
+            in List<ConfigurationChangeSetting> settings, int userId);
+
     @EnforcePermission("WRITE_SECURE_SETTINGS")
     void setForcedDisplayScalingMode(int displayId, int mode); // 0 = auto, 1 = disable
 
@@ -207,9 +248,6 @@ interface IWindowManager
       */
     @UnsupportedAppUsage(maxTargetSdk = 30, trackingBug = 170729553)
     void endProlongedAnimations();
-
-    void startFreezingScreen(int exitAnim, int enterAnim);
-    void stopFreezingScreen();
 
     // these require DISABLE_KEYGUARD permission
     /** @deprecated use Activity.setShowWhenLocked instead. */
@@ -326,6 +364,12 @@ interface IWindowManager
     int getPreferredOptionsPanelGravity(int displayId);
 
     /**
+     * Requests to update value of setting key {@link Settings.Secure#DEVICE_STATE_ROTATION_LOCK} to
+     * {@link autoRotate} for {@link deviceState}.
+     */
+    oneway void setDeviceStateAutoRotateSetting(int deviceState, boolean autoRotate);
+
+    /**
      * Equivalent to calling {@link #freezeDisplayRotation(int, int)} with {@link
      * android.view.Display#DEFAULT_DISPLAY} and given rotation.
      */
@@ -344,6 +388,11 @@ interface IWindowManager
      * android.view.Display#DEFAULT_DISPLAY}.
      */
     boolean isRotationFrozen();
+
+    /**
+    * Sets display rotation to {@link rotation} if auto-rotate is OFF.
+    */
+    void setRotationAtAngleIfAllowed(int rotation, String caller);
 
     /**
      * Lock the display orientation to the specified rotation, or to the current
@@ -423,8 +472,9 @@ interface IWindowManager
 
     /**
      * Used only for assist -- request a screenshot of the current application.
+     * @deprecated. Use WindowManagerInternal#requestAssistScreenshot instead.
      */
-    boolean requestAssistScreenshot(IAssistDataReceiver receiver);
+    void requestAssistScreenshot(IAssistDataReceiver receiver);
 
     /**
      * Called by System UI to notify Window Manager to hide transient bars.
@@ -683,7 +733,7 @@ interface IWindowManager
     /**
      * Indicates the display should show system decors.
      * <p>
-     * System decors include status bar, navigation bar, launcher.
+     * System decors include status bar, navigation bar, launcher, and wallpaper.
      * </p>
      *
      * @param displayId The id of the display.
@@ -692,15 +742,21 @@ interface IWindowManager
     boolean shouldShowSystemDecors(int displayId);
 
     /**
-     * Sets that the display should show system decors.
+     * Indicates that the display is eligible for the desktop mode from WindowManager's perspective.
+     * This includes:
+     * - The default display;
+     * - Any display that is allowed to switch the content mode between extended and mirroring
+     * (which means it can dynamically add or remove system decors), and it is now in extended mode
+     * (should currently show system decors).
      * <p>
-     * System decors include status bar, navigation bar, launcher.
+     * System decors include status bar, navigation bar, launcher, and wallpaper.
      * </p>
      *
      * @param displayId The id of the display.
-     * @param shouldShow Indicates that the display should show system decors.
+     * @return {@code true} if the display is eligible for the desktop mode from WindowManager's
+     * perspective.
      */
-    void setShouldShowSystemDecors(int displayId, boolean shouldShow);
+    boolean isEligibleForDesktopMode(int displayId);
 
     /**
      * Indicates the policy for how the display should show IME.
@@ -721,6 +777,9 @@ interface IWindowManager
      * @see KeyguardManager#isDeviceLocked()
      */
     void setDisplayImePolicy(int displayId, int imePolicy);
+
+    /** Called when the expanded state of notification shade is changed. */
+    void onNotificationShadeExpanded(IBinder token, boolean expanded);
 
     /**
      * Waits until input information has been sent from WindowManager to native InputManager,
@@ -770,11 +829,16 @@ interface IWindowManager
             in @nullable ImeTracker.Token statsToken);
 
     /**
-     * Called to get the expected window insets.
-     *
-     * @return {@code true} if system bars are always consumed.
+     * Updates the currently animating insets types of a remote process.
      */
-    boolean getWindowInsets(int displayId, in IBinder token, out InsetsState outInsetsState);
+    @EnforcePermission("MANAGE_APP_TOKENS")
+    void updateDisplayWindowAnimatingTypes(int displayId, int animatingTypes,
+            in @nullable ImeTracker.Token statsToken);
+
+    /**
+     * Called to get the expected window insets.
+     */
+    void getWindowInsets(int displayId, in IBinder token, out InsetsState outInsetsState);
 
     /**
      * Returns a list of {@link android.view.DisplayInfo} for the logical display. This is not
@@ -930,7 +994,7 @@ interface IWindowManager
      *
      * @param clientToken the window context's token
      */
-    void detachWindowContext(IBinder clientToken);
+    oneway void detachWindowContext(IBinder clientToken);
 
     /**
      * Reparents the {@link android.window.WindowContext} to the
@@ -1042,8 +1106,14 @@ interface IWindowManager
      * Captures the entire display specified by the displayId using the args provided. If the args
      * are null or if the sourceCrop is invalid or null, the entire display bounds will be captured.
      */
-    oneway void captureDisplay(int displayId, in @nullable ScreenCapture.CaptureArgs captureArgs,
-            in ScreenCapture.ScreenCaptureListener listener);
+    oneway void captureDisplay(int displayId, in @nullable ScreenCaptureInternal.CaptureArgs captureArgs,
+            in ScreenCaptureInternal.ScreenCaptureListener listener);
+
+    /**
+     * Implements the ScreenCapture system API.
+     */
+    oneway void screenCapture(in ScreenCapture.ScreenCaptureParams params,
+                              in IScreenCaptureCallback callback);
 
     /**
      * Returns {@code true} if the key will be handled globally and not forwarded to all apps.
@@ -1126,4 +1196,9 @@ interface IWindowManager
      * @param deviceId The id of the {@link InputDevice} that will handle the shortcut.
      */
     KeyboardShortcutGroup getApplicationLaunchKeyboardShortcuts(int deviceId);
+
+    /**
+     * Returns whether the display with {@code displayId} ignores orientation request.
+     */
+    boolean getIgnoreOrientationRequest(int displayId);
 }

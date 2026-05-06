@@ -16,6 +16,7 @@
 
 package com.android.server.rollback;
 
+import static com.android.crashrecovery.flags.Flags.FLAG_CONFIGURE_PACKAGE_HEALTH_OBSERVER_ROLLBACK_TIMEOUT;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -43,11 +44,13 @@ import android.content.pm.VersionedPackage;
 import android.content.rollback.PackageRollbackInfo;
 import android.content.rollback.RollbackInfo;
 import android.content.rollback.RollbackManager;
-import android.crashrecovery.flags.Flags;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.MessageQueue;
 import android.os.SystemProperties;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.SetFlagsRule;
+import android.util.SparseArray;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.AndroidJUnit4;
@@ -55,6 +58,7 @@ import androidx.test.runner.AndroidJUnit4;
 import com.android.dx.mockito.inline.extended.ExtendedMockito;
 import com.android.server.PackageWatchdog;
 import com.android.server.SystemConfig;
+import com.android.server.crashrecovery.CrashRecoveryUtils;
 import com.android.server.pm.ApexManager;
 
 import org.junit.After;
@@ -70,7 +74,11 @@ import org.mockito.MockitoSession;
 import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -88,9 +96,13 @@ public class RollbackPackageHealthObserverTest {
     @Mock
     RollbackInfo mRollbackInfo;
     @Mock
+    RollbackInfo mRollbackInfo2;
+    @Mock
     PackageRollbackInfo mPackageRollbackInfo;
     @Mock
     PackageManager mMockPackageManager;
+    @Mock
+    File mCacheDir;
 
     @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private ApexManager mApexManager;
@@ -105,6 +117,8 @@ public class RollbackPackageHealthObserverTest {
     private static final long VERSION_CODE = 1L;
     private static final long VERSION_CODE_2 = 2L;
     private static final String LOG_TAG = "RollbackPackageHealthObserverTest";
+    private static final long DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS =
+            TimeUnit.DAYS.toMillis(14);
 
     private static final String PROP_DISABLE_HIGH_IMPACT_ROLLBACK_FLAG =
             "persist.device_config.configuration.disable_high_impact_rollback";
@@ -117,6 +131,7 @@ public class RollbackPackageHealthObserverTest {
         mSession = ExtendedMockito.mockitoSession()
                 .initMocks(this)
                 .strictness(Strictness.LENIENT)
+                .spyStatic(Environment.class)
                 .spyStatic(PackageWatchdog.class)
                 .spyStatic(SystemProperties.class)
                 .startMocking();
@@ -161,12 +176,19 @@ public class RollbackPackageHealthObserverTest {
         when(mMockContext.getUser()).thenReturn(testContext.getUser());
         when(mMockContext.getPackageName()).thenReturn(testContext.getPackageName());
 
+        mCacheDir = testContext.getCacheDir();
+        doAnswer((Answer<File>) invocationOnMock -> {
+                    return mCacheDir;
+                }
+        ).when(() -> Environment.getDataDirectory());
+
         SystemProperties.set(PROP_DISABLE_HIGH_IMPACT_ROLLBACK_FLAG, Boolean.toString(false));
     }
 
     @After
     public void tearDown() throws Exception {
         mSession.finishMocking();
+        deleteRollbackTimestampsTempFile();
     }
 
     /**
@@ -273,7 +295,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void healthCheckFailed_impactLevelLow_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -304,7 +325,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void healthCheckFailed_impactLevelHigh_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -335,7 +355,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void healthCheckFailed_impactLevelManualOnly_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -365,7 +384,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void healthCheckFailed_impactLevelLowAndHigh_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -404,7 +422,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelLow_nativeCrash_rollback()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -438,7 +455,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelLow_rollbackFailedPackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -483,7 +499,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelLow_rollbackAll()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -525,12 +540,67 @@ public class RollbackPackageHealthObserverTest {
     }
 
     /**
+     * Rollback other available rollbacks if the rollback for failing package is dated older than
+     * DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS.
+     */
+    @Test
+    @EnableFlags({FLAG_CONFIGURE_PACKAGE_HEALTH_OBSERVER_ROLLBACK_TIMEOUT})
+    public void execute_impactLevelLow_rollbackOtherWithinDefaultRollbackAvailabilityDuration()
+            throws PackageManager.NameNotFoundException, IOException {
+        deleteRollbackTimestampsTempFile();
+
+        int rollbackId1 = 1;
+        VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
+        VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
+        PackageRollbackInfo packageRollbackInfoA = new PackageRollbackInfo(appAFrom, appATo,
+                null, null , false, false,
+                null);
+        RollbackInfo rollbackInfo1 = new RollbackInfo(rollbackId1, List.of(packageRollbackInfoA),
+                false, null, 111,
+                PackageManager.ROLLBACK_USER_IMPACT_LOW);
+        int rollbackId2 = 2;
+        VersionedPackage appBFrom = new VersionedPackage(APP_B, VERSION_CODE_2);
+        VersionedPackage appBTo = new VersionedPackage(APP_B, VERSION_CODE);
+        PackageRollbackInfo packageRollbackInfoB = new PackageRollbackInfo(appBFrom, appBTo,
+                null, null , false, false,
+                null);
+        RollbackInfo rollbackInfo2 = new RollbackInfo(rollbackId2, List.of(packageRollbackInfoB),
+                false, null, 222,
+                PackageManager.ROLLBACK_USER_IMPACT_LOW);
+        RollbackPackageHealthObserver observer =
+                spy(new RollbackPackageHealthObserver(mMockContext));
+        ArgumentCaptor<Integer> argument = ArgumentCaptor.forClass(Integer.class);
+
+        when(mMockContext.getSystemService(RollbackManager.class)).thenReturn(mRollbackManager);
+        // Make the rollbacks available
+        when(mRollbackManager.getAvailableRollbacks()).thenReturn(
+                List.of(rollbackInfo1, rollbackInfo2));
+        when(mMockContext.getPackageManager()).thenReturn(mMockPackageManager);
+        when(mMockPackageManager.getModuleInfo(any(), eq(0))).thenReturn(null);
+
+        Instant expired =
+                Instant.now().minusMillis(DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS)
+                        .minusMillis(5184000); // 1 day
+        // Record timestamp for B to exceed DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS
+        // (expired for on-device automatic rollback).
+        observer.recordRollbackTimestamp(rollbackInfo2, expired);
+
+        observer.onExecuteHealthCheckMitigation(appBFrom,
+                PackageWatchdog.FAILURE_REASON_APP_CRASH, 1);
+        waitForIdleHandler(observer.getHandler(), Duration.ofSeconds(10));
+
+        verify(mRollbackManager).commitRollback(argument.capture(), any(), any());
+        // Rollback A when the rollback for B (failing package) is dated beyond
+        // DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS.
+        assertThat(argument.getValue()).isEqualTo(rollbackId1);
+    }
+
+    /**
      * rollback low impact package if both low and high impact packages are available
      */
     @Test
     public void execute_impactLevelLowAndHigh_rollbackLow()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -578,7 +648,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelHigh_rollbackHigh()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId2 = 2;
         VersionedPackage appBFrom = new VersionedPackage(APP_B, VERSION_CODE_2);
         VersionedPackage appBTo = new VersionedPackage(APP_B, VERSION_CODE);
@@ -612,7 +681,6 @@ public class RollbackPackageHealthObserverTest {
      */
     @Test
     public void onBootLoop_impactLevelLow_onePackage() throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -637,7 +705,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void onBootLoop_impactLevelHigh_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -662,7 +729,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void onBootLoop_impactLevelHighDisableHighImpactRollback_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         SystemProperties.set(PROP_DISABLE_HIGH_IMPACT_ROLLBACK_FLAG, Boolean.toString(true));
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -692,7 +758,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void onBootLoop_impactLevelManualOnly_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -720,7 +785,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void onBootLoop_impactLevelLowAndHigh_onePackage()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
         PackageRollbackInfo packageRollbackInfo = new PackageRollbackInfo(appAFrom, appATo,
@@ -757,7 +821,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void executeBootLoopMitigation_impactLevelLow_rollbackAll()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -802,7 +865,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void executeBootLoopMitigation_impactLevelLowAndHigh_rollbackLow()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -847,7 +909,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void executeBootLoopMitigation_impactLevelHigh_rollbackHigh()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId2 = 2;
         VersionedPackage appBFrom = new VersionedPackage(APP_B, VERSION_CODE_2);
         VersionedPackage appBTo = new VersionedPackage(APP_B, VERSION_CODE);
@@ -882,7 +943,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelLowAndManual_rollbackLowImpactOnly()
             throws PackageManager.NameNotFoundException, InterruptedException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -928,7 +988,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void execute_impactLevelManual_rollbackLowImpactOnly()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appAFrom = new VersionedPackage(APP_A, VERSION_CODE_2);
         VersionedPackage appATo = new VersionedPackage(APP_A, VERSION_CODE);
@@ -962,7 +1021,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void executeBootLoopMitigation_impactLevelHighMultiplePackage_rollbackHigh()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         int rollbackId1 = 1;
         VersionedPackage appBFrom = new VersionedPackage(APP_B, VERSION_CODE_2);
         VersionedPackage appBTo = new VersionedPackage(APP_B, VERSION_CODE);
@@ -1008,7 +1066,6 @@ public class RollbackPackageHealthObserverTest {
     @Test
     public void executeBootLoopMitigation_impactLevelHighKillSwitchTrue_rollbackHigh()
             throws PackageManager.NameNotFoundException {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RECOVERABILITY_DETECTION);
         SystemProperties.set(PROP_DISABLE_HIGH_IMPACT_ROLLBACK_FLAG, Boolean.toString(true));
         int rollbackId1 = 1;
         VersionedPackage appBFrom = new VersionedPackage(APP_B, VERSION_CODE_2);
@@ -1046,6 +1103,77 @@ public class RollbackPackageHealthObserverTest {
                 argument.capture(), any(), any());
     }
 
+    /**
+     * The rollback becomes unavailable for RollbackPackageHealthObserver after exceeding
+     * DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS period.
+     */
+    @Test
+    @EnableFlags({FLAG_CONFIGURE_PACKAGE_HEALTH_OBSERVER_ROLLBACK_TIMEOUT})
+    public void testExpiredRollback() throws IOException {
+        deleteRollbackTimestampsTempFile();
+
+        RollbackPackageHealthObserver observer =
+                spy(new RollbackPackageHealthObserver(mMockContext));
+
+        when(mMockContext.getSystemService(RollbackManager.class)).thenReturn(mRollbackManager);
+
+        when(mRollbackManager.getAvailableRollbacks())
+                .thenReturn(List.of(mRollbackInfo, mRollbackInfo2));
+        when(mRollbackInfo.getRollbackId()).thenReturn(111);
+        when(mRollbackInfo2.getRollbackId()).thenReturn(222);
+        Instant notExpired =
+                Instant.now().minusMillis(DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS)
+                        .plusMillis(5184000); // 1 day
+        Instant expired =
+                Instant.now().minusMillis(DEFAULT_ROLLBACK_AVAILABILITY_DURATION_MILLIS)
+                        .minusMillis(5184000); // 1 day
+
+        observer.recordRollbackTimestamp(mRollbackInfo, notExpired);
+        observer.recordRollbackTimestamp(mRollbackInfo2, expired);
+
+        List<RollbackInfo> availableRollbacks = observer.getAvailableRollbacks();
+        assertThat(availableRollbacks.size()).isEqualTo(1);
+        assertThat(availableRollbacks.getFirst().getRollbackId()).isEqualTo(111);
+    }
+
+    /**
+     * The rollback timestamps are updated correctly after time change.
+     */
+    @Test
+    public void testUpdateRollbackTimestampFile() throws IOException {
+        deleteRollbackTimestampsTempFile();
+
+        RollbackPackageHealthObserver observer =
+                spy(new RollbackPackageHealthObserver(mMockContext));
+
+        Instant bootTimestamp = Instant.now();
+        when(mRollbackInfo.getRollbackId()).thenReturn(111);
+        when(mRollbackInfo2.getRollbackId()).thenReturn(222);
+        Instant rollbackTimestamp = bootTimestamp.plusMillis(5184000); // 1 day
+        Instant rollbackTimestamp2 = bootTimestamp.plusMillis(10368000); // 2 days
+
+        observer.recordRollbackTimestamp(mRollbackInfo, rollbackTimestamp);
+        observer.recordRollbackTimestamp(mRollbackInfo2, rollbackTimestamp2);
+
+        // Change the referenced boot timestamp
+        long offset = 51840000; // 10 days
+        when(observer.getBootTimestamp()).thenReturn(bootTimestamp.toEpochMilli());
+        when(observer.updateBootTimestamp())
+                .thenReturn(bootTimestamp.plusMillis(offset).toEpochMilli());
+
+        observer.updateRollbackTimestampFile();
+        final SparseArray<String> updatedRollbackTimestamps =
+                CrashRecoveryUtils.readAllKeyValues(getTimestampsTempFile());
+
+        assertThat(updatedRollbackTimestamps.size()).isEqualTo(2);
+        assertTrue(updatedRollbackTimestamps.contains(111));
+        assertTrue(updatedRollbackTimestamps.contains(222));
+        assertThat(Duration.between(rollbackTimestamp,
+                Instant.parse(updatedRollbackTimestamps.get(111))).toMillis()).isEqualTo(offset);
+        assertThat(Duration.between(rollbackTimestamp2,
+                Instant.parse(updatedRollbackTimestamps.get(222))).toMillis()).isEqualTo(offset);
+    }
+
     private void waitForIdleHandler(Handler handler, Duration timeout) {
         final MessageQueue queue = handler.getLooper().getQueue();
         final CountDownLatch latch = new CountDownLatch(1);
@@ -1059,5 +1187,13 @@ public class RollbackPackageHealthObserverTest {
         } catch (InterruptedException e) {
             fail("Interrupted unexpectedly: " + e);
         }
+    }
+
+    private void deleteRollbackTimestampsTempFile() throws IOException {
+        Files.deleteIfExists(getTimestampsTempFile().toPath());
+    }
+
+    private File getTimestampsTempFile() {
+        return new File(mCacheDir + "/rollback-observer", "rollback-timestamps");
     }
 }

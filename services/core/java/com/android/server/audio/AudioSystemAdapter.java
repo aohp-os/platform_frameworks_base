@@ -23,11 +23,12 @@ import android.media.AudioDeviceAttributes;
 import android.media.AudioMixerAttributes;
 import android.media.AudioSystem;
 import android.media.IDevicesForAttributesCallback;
+import android.media.INativeAudioVolumeGroupCallback;
 import android.media.ISoundDose;
 import android.media.ISoundDoseCallback;
 import android.media.audiopolicy.AudioMix;
 import android.media.audiopolicy.AudioMixingRule;
-import android.media.audiopolicy.Flags;
+import android.media.audiopolicy.AudioProductStrategy;
 import android.os.IBinder;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -83,6 +84,11 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
             mDevicesForAttrCache;
     @GuardedBy("sDeviceCacheLock")
     private long mDevicesForAttributesCacheClearTimeMs = System.currentTimeMillis();
+    private static final Object sAudioProductStrategiesLock = new Object();
+    @GuardedBy("sAudioProductStrategiesLock")
+    private static List<AudioProductStrategy> sAudioProductStrategies;
+    @GuardedBy("sAudioProductStrategiesLock")
+    private static List<AudioProductStrategy> sAudioProductStrategiesWithoutInternal;
     private int[] mMethodCacheHit;
     /**
      * Map that stores all attributes + forVolume pairs that are registered for
@@ -367,9 +373,9 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
      * @return
      */
     public int setDeviceConnectionState(AudioDeviceAttributes attributes, int state,
-            int codecFormat) {
+            int codecFormat, boolean deviceSwitch) {
         invalidateRoutingCache();
-        return AudioSystem.setDeviceConnectionState(attributes, state, codecFormat);
+        return AudioSystem.setDeviceConnectionState(attributes, state, codecFormat, deviceSwitch);
     }
 
     /**
@@ -557,6 +563,36 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
         return AudioSystem.setVolumeIndexForAttributes(attributes, index, muted, device);
     }
 
+    /** Same as {@link AudioSystem#setVolumeIndexForGroup(int, int, boolean, int)} */
+    public int setVolumeIndexForGroup(int groupId, int index, boolean muted, int device) {
+        return AudioSystem.setVolumeIndexForGroup(groupId, index, muted, device);
+    }
+
+    /** Same as {@link AudioSystem#getVolumeIndexForGroup(int, int)} */
+    public int getVolumeIndexForGroup(int groupId, int device) {
+        return AudioSystem.getVolumeIndexForGroup(groupId, device);
+    }
+
+    /** Same as {@link AudioSystem#getMinVolumeIndexForGroup(int)} */
+    public int getMinVolumeIndexForGroup(int groupId) {
+        return AudioSystem.getMinVolumeIndexForGroup(groupId);
+    }
+
+    /** Same as {@link AudioSystem#setMinVolumeIndexForGroup(int, int)} */
+    public int setMinVolumeIndexForGroup(int groupId, int index) {
+        return AudioSystem.setMinVolumeIndexForGroup(groupId, index);
+    }
+
+    /** Same as {@link AudioSystem#getMaxVolumeIndexForGroup(int)} */
+    public int getMaxVolumeIndexForGroup(int groupId) {
+        return AudioSystem.getMaxVolumeIndexForGroup(groupId);
+    }
+
+    /** Same as {@link AudioSystem#setMaxVolumeIndexForGroup(int, int)} */
+    public int setMaxVolumeIndexForGroup(int groupId, int index) {
+        return AudioSystem.setMaxVolumeIndexForGroup(groupId, index);
+    }
+
     /**
      * Same as {@link AudioSystem#setPhoneState(int, int)}
      * @param state
@@ -628,10 +664,6 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
      * @return a list of AudioMixes that are registered in the audio policy manager.
      */
     public List<AudioMix> getRegisteredPolicyMixes() {
-        if (!Flags.audioMixTestApi()) {
-            return Collections.emptyList();
-        }
-
         List<AudioMix> audioMixes = new ArrayList<>();
         int result = AudioSystem.getRegisteredPolicyMixes(audioMixes);
         if (result != AudioSystem.SUCCESS) {
@@ -711,6 +743,53 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
     }
 
     /**
+     * Returns list audio product strategies
+     *
+     * @param filterInternal if true the internal strategies will be removed from the returned list
+     *
+     * <p>Internal strategies are the strategy reserved for use by native audio service
+     * (e.g. patch and rerouting strategies).
+     *
+     * @return the non-internal {@link AudioProductStrategy} discovered from the platform
+     * configuration file if {@code filterInternal} is {@code true}, returns all product strategies
+     * otherwise.
+     */
+    public List<AudioProductStrategy> getAudioProductStrategies(boolean filterInternal) {
+        if (filterInternal) {
+            synchronized (sAudioProductStrategiesLock) {
+                if (sAudioProductStrategiesWithoutInternal == null) {
+                    sAudioProductStrategiesWithoutInternal = AudioProductStrategy
+                            .filterNonInternalStrategies(getAllProductStrategies());
+                }
+            }
+            return sAudioProductStrategiesWithoutInternal;
+        }
+        return getAllProductStrategies();
+    }
+
+    /**
+     * Returns all audio product strategies
+     *
+     * @return the {@link AudioProductStrategy} discovered from the platform configuration file
+     */
+    private List<AudioProductStrategy> getAllProductStrategies() {
+        synchronized (sAudioProductStrategiesLock) {
+            if (sAudioProductStrategies == null) {
+                ArrayList<AudioProductStrategy> strategies = new ArrayList<>();
+                int status = AudioProductStrategy.native_list_audio_product_strategies(strategies);
+                if (status != AudioSystem.SUCCESS) {
+                    Log.e(TAG, "Error while getting audio product strategies "
+                            + AudioSystem.audioSystemErrorToString(status));
+                    return Collections.emptyList();
+                }
+                sAudioProductStrategies = Collections.unmodifiableList(strategies);
+            }
+        }
+
+        return sAudioProductStrategies;
+    }
+
+    /**
      * Same as
      * {@link AudioSystem#setPreferredMixerAttributes(
      *        AudioAttributes, int, int, AudioMixerAttributes)}
@@ -755,6 +834,29 @@ public class AudioSystemAdapter implements AudioSystem.RoutingUpdateCallback,
 
     public void triggerSystemPropertyUpdate(long handle) {
         AudioSystem.triggerSystemPropertyUpdate(handle);
+    }
+
+    /**
+     * Same as {@link AudioSystem#registerAudioVolumeGroupCallback(INativeAudioVolumeGroupCallback)}
+     * @param callback to register
+     * @return {@link #SUCCESS} if successfully registered.
+     *
+     * @hide
+     */
+    public int registerAudioVolumeGroupCallback(INativeAudioVolumeGroupCallback callback) {
+        return AudioSystem.registerAudioVolumeGroupCallback(callback);
+    }
+
+    /**
+     * Same as
+     * {@link AudioSystem#unregisterAudioVolumeGroupCallback(INativeAudioVolumeGroupCallback)}.
+     * @param callback to register
+     * @return {@link #SUCCESS} if successfully registered.
+     *
+     * @hide
+     */
+    public int unregisterAudioVolumeGroupCallback(INativeAudioVolumeGroupCallback callback) {
+        return AudioSystem.unregisterAudioVolumeGroupCallback(callback);
     }
 
     /**

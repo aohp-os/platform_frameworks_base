@@ -16,8 +16,6 @@
 
 package com.android.systemui.scene.ui.viewmodel
 
-import android.platform.test.annotations.DisableFlags
-import android.platform.test.annotations.EnableFlags
 import android.testing.TestableLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
@@ -26,105 +24,91 @@ import com.android.compose.animation.scene.Swipe
 import com.android.compose.animation.scene.UserAction
 import com.android.compose.animation.scene.UserActionResult
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.EnableSceneContainer
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.runTest
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.lifecycle.activateIn
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.scene.shared.model.TransitionKeys.ToSplitShade
-import com.android.systemui.shade.data.repository.shadeRepository
-import com.android.systemui.shade.domain.interactor.shadeInteractor
-import com.android.systemui.shade.shared.flag.DualShade
+import com.android.systemui.shade.domain.interactor.enableDualShade
+import com.android.systemui.shade.domain.interactor.enableSingleShade
+import com.android.systemui.shade.domain.interactor.enableSplitShade
+import com.android.systemui.shade.domain.interactor.shadeModeInteractor
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @TestableLooper.RunWithLooper
 @EnableSceneContainer
 class GoneUserActionsViewModelTest : SysuiTestCase() {
 
-    private val kosmos = testKosmos()
-    private val testScope = kosmos.testScope
-    private val shadeRepository by lazy { kosmos.shadeRepository }
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
     private lateinit var underTest: GoneUserActionsViewModel
 
     @Before
     fun setUp() {
-        underTest = GoneUserActionsViewModel(shadeInteractor = kosmos.shadeInteractor)
-        underTest.activateIn(testScope)
+        underTest = GoneUserActionsViewModel(shadeModeInteractor = kosmos.shadeModeInteractor)
+        underTest.activateIn(kosmos.testScope)
     }
 
     @Test
-    @DisableFlags(DualShade.FLAG_NAME)
     fun downTransitionKey_splitShadeEnabled_isGoneToSplitShade() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            shadeRepository.setShadeLayoutWide(true)
-            runCurrent()
+            enableSplitShade()
 
             assertThat(userActions?.get(Swipe.Down)?.transitionKey).isEqualTo(ToSplitShade)
         }
 
     @Test
-    @DisableFlags(DualShade.FLAG_NAME)
     fun downTransitionKey_splitShadeDisabled_isNull() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            shadeRepository.setShadeLayoutWide(false)
-            runCurrent()
+            enableSingleShade()
 
             assertThat(userActions?.get(Swipe.Down)?.transitionKey).isNull()
         }
 
     @Test
-    @EnableFlags(DualShade.FLAG_NAME)
     fun downTransitionKey_dualShadeEnabled_isNull() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            shadeRepository.setShadeLayoutWide(true)
-            runCurrent()
+            enableDualShade(wideLayout = true)
 
             assertThat(userActions?.get(Swipe.Down)?.transitionKey).isNull()
         }
 
     @Test
-    @DisableFlags(DualShade.FLAG_NAME)
     fun swipeDownWithTwoFingers_singleShade_goesToQuickSettings() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            shadeRepository.setShadeLayoutWide(false)
-            runCurrent()
+            enableSingleShade()
 
             assertThat(userActions?.get(swipeDownFromTopWithTwoFingers()))
                 .isEqualTo(UserActionResult(Scenes.QuickSettings))
         }
 
     @Test
-    @DisableFlags(DualShade.FLAG_NAME)
     fun swipeDownWithTwoFingers_splitShade_goesToShade() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            shadeRepository.setShadeLayoutWide(true)
-            runCurrent()
+            enableSplitShade()
 
             assertThat(userActions?.get(swipeDownFromTopWithTwoFingers()))
                 .isEqualTo(UserActionResult(Scenes.Shade, ToSplitShade))
         }
 
     @Test
-    @EnableFlags(DualShade.FLAG_NAME)
     fun swipeDownWithTwoFingers_dualShadeEnabled_isNull() =
-        testScope.runTest {
+        kosmos.runTest {
             val userActions by collectLastValue(underTest.actions)
-            runCurrent()
+            enableDualShade()
 
             assertThat(userActions?.get(swipeDownFromTopWithTwoFingers())).isNull()
         }

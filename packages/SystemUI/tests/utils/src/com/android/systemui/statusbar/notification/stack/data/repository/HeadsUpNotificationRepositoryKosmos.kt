@@ -20,9 +20,11 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.statusbar.notification.data.repository.HeadsUpRepository
 import com.android.systemui.statusbar.notification.data.repository.HeadsUpRowRepository
+import com.android.systemui.statusbar.notification.headsup.PinnedStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.forEach
 import kotlinx.coroutines.flow.map
 
 val Kosmos.headsUpNotificationRepository by Fixture { FakeHeadsUpNotificationRepository() }
@@ -35,6 +37,10 @@ class FakeHeadsUpNotificationRepository : HeadsUpRepository {
         orderedHeadsUpRows.map { it.firstOrNull() }.distinctUntilChanged()
     override val activeHeadsUpRows: Flow<Set<HeadsUpRowRepository>> =
         orderedHeadsUpRows.map { it.toSet() }.distinctUntilChanged()
+    override val isTrackingHeadsUp: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    override fun isHeadsUpEntry(key: String): Boolean =
+        orderedHeadsUpRows.value.any { it.key == key }
 
     override fun setHeadsUpAnimatingAway(animatingAway: Boolean) {
         isHeadsUpAnimatingAway.value = animatingAway
@@ -45,7 +51,9 @@ class FakeHeadsUpNotificationRepository : HeadsUpRepository {
     }
 
     override fun unpinAll(userUnPinned: Boolean) {
-        // do nothing
+        orderedHeadsUpRows.value.forEach { row ->
+            (row.pinnedStatus as? MutableStateFlow<PinnedStatus>)?.value = PinnedStatus.NotPinned
+        }
     }
 
     override fun releaseAfterExpansion() {

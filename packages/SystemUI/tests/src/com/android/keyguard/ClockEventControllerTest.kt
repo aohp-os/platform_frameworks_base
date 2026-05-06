@@ -16,21 +16,19 @@
 package com.android.keyguard
 
 import android.content.BroadcastReceiver
-import android.platform.test.annotations.DisableFlags
-import android.platform.test.annotations.EnableFlags
-import android.provider.Settings
+import android.icu.util.TimeZone as IcuTimeZone
 import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
-import com.android.settingslib.notification.modes.TestModeBuilder.MANUAL_DND_INACTIVE
-import com.android.systemui.Flags as AConfigFlags
+import com.android.settingslib.notification.modes.TestModeBuilder.MANUAL_DND
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.flags.Flags
+import com.android.systemui.flags.fakeFeatureFlagsClassic
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractorFactory
+import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.AOD
@@ -40,20 +38,23 @@ import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.KeyguardState.OCCLUDED
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
+import com.android.systemui.keyguard.ui.viewmodel.DozingToLockscreenTransitionViewModel
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.log.LogcatOnlyMessageBuffer
 import com.android.systemui.log.core.LogLevel
-import com.android.systemui.log.core.LogcatOnlyMessageBuffer
-import com.android.systemui.plugins.clocks.ClockAnimations
-import com.android.systemui.plugins.clocks.ClockController
-import com.android.systemui.plugins.clocks.ClockEvents
-import com.android.systemui.plugins.clocks.ClockFaceConfig
-import com.android.systemui.plugins.clocks.ClockFaceController
-import com.android.systemui.plugins.clocks.ClockFaceEvents
-import com.android.systemui.plugins.clocks.ClockMessageBuffers
-import com.android.systemui.plugins.clocks.ClockTickRate
-import com.android.systemui.plugins.clocks.ThemeConfig
-import com.android.systemui.plugins.clocks.ZenData
-import com.android.systemui.plugins.clocks.ZenData.ZenMode
+import com.android.systemui.plugins.keyguard.data.model.ZenData
+import com.android.systemui.plugins.keyguard.data.model.ZenData.ZenMode
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockAnimations
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockController
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockEventListeners
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockEvents
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceConfig
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceController
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceEvents
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockMessageBuffers
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockTickRate
+import com.android.systemui.plugins.keyguard.ui.clocks.ThemeConfig
+import com.android.systemui.plugins.keyguard.ui.clocks.TimeFormatKind
 import com.android.systemui.res.R
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.policy.BatteryController
@@ -72,6 +73,7 @@ import java.util.TimeZone
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
@@ -94,12 +96,12 @@ import org.mockito.kotlin.clearInvocations
 
 @RunWith(AndroidJUnit4::class)
 @SmallTest
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ClockEventControllerTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
-    private val zenModeRepository = kosmos.fakeZenModeRepository
     private val testScope = kosmos.testScope
+    private val zenModeRepository by lazy { kosmos.fakeZenModeRepository }
+    private val zenModeInteractor by lazy { kosmos.zenModeInteractor }
 
     @JvmField @Rule val mockito = MockitoJUnit.rule()
 
@@ -107,7 +109,6 @@ class ClockEventControllerTest : SysuiTestCase() {
     private lateinit var repository: FakeKeyguardRepository
     private val clockBuffers = ClockMessageBuffers(LogcatOnlyMessageBuffer(LogLevel.DEBUG))
     private lateinit var underTest: ClockEventController
-    private lateinit var dndModeId: String
 
     @Mock private lateinit var broadcastDispatcher: BroadcastDispatcher
     @Mock private lateinit var batteryController: BatteryController
@@ -130,14 +131,17 @@ class ClockEventControllerTest : SysuiTestCase() {
     @Mock private lateinit var parentView: View
     @Mock private lateinit var keyguardTransitionInteractor: KeyguardTransitionInteractor
     @Mock private lateinit var userTracker: UserTracker
+    @Mock private lateinit var dozingToLockscreenViewModel: DozingToLockscreenTransitionViewModel
 
     @Mock private lateinit var zenModeController: ZenModeController
     private var zenModeControllerCallback: ZenModeController.Callback? = null
+    private var bindHandle: DisposableHandle? = null
 
     @Before
     fun setUp() {
         whenever(clock.smallClock).thenReturn(smallClockController)
         whenever(clock.largeClock).thenReturn(largeClockController)
+        whenever(clock.eventListeners).thenReturn(ClockEventListeners())
         whenever(smallClockController.view).thenReturn(smallClockView)
         whenever(smallClockView.parent).thenReturn(smallClockFrame)
         whenever(smallClockView.viewTreeObserver).thenReturn(smallClockViewTreeObserver)
@@ -153,21 +157,15 @@ class ClockEventControllerTest : SysuiTestCase() {
             .thenReturn(ClockFaceConfig(tickRate = ClockTickRate.PER_MINUTE))
         whenever(largeClockController.config)
             .thenReturn(ClockFaceConfig(tickRate = ClockTickRate.PER_MINUTE))
-        whenever(smallClockController.theme).thenReturn(ThemeConfig(true, null))
-        whenever(largeClockController.theme).thenReturn(ThemeConfig(true, null))
+        whenever(smallClockController.theme).thenReturn(ThemeConfig(false, null))
+        whenever(largeClockController.theme).thenReturn(ThemeConfig(false, null))
         whenever(userTracker.userId).thenReturn(1)
 
-        dndModeId = MANUAL_DND_INACTIVE.id
-        zenModeRepository.addMode(MANUAL_DND_INACTIVE)
+        repository = kosmos.fakeKeyguardRepository
 
-        repository = FakeKeyguardRepository()
-
-        val withDeps = KeyguardInteractorFactory.create(repository = repository)
-
-        withDeps.featureFlags.apply { set(Flags.REGION_SAMPLING, false) }
+        kosmos.fakeFeatureFlagsClassic.set(Flags.REGION_SAMPLING, false)
         underTest =
             ClockEventController(
-                withDeps.keyguardInteractor,
                 keyguardTransitionInteractor,
                 broadcastDispatcher,
                 batteryController,
@@ -178,18 +176,18 @@ class ClockEventControllerTest : SysuiTestCase() {
                 mainExecutor,
                 bgExecutor,
                 clockBuffers,
-                withDeps.featureFlags,
+                kosmos.fakeFeatureFlagsClassic,
                 zenModeController,
-                kosmos.zenModeInteractor,
+                zenModeInteractor,
                 userTracker,
+                { dozingToLockscreenViewModel },
             )
         underTest.clock = clock
 
         runBlocking(IMMEDIATE) {
-            underTest.registerListeners(parentView)
-
+            underTest.registerListeners()
+            bindHandle = underTest.bind(parentView)
             repository.setIsDozing(true)
-            repository.setDozeAmount(1f)
         }
 
         val zenCallbackCaptor = argumentCaptor<ZenModeController.Callback>()
@@ -299,38 +297,23 @@ class ClockEventControllerTest : SysuiTestCase() {
         }
 
     @Test
-    @DisableFlags(AConfigFlags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
-    fun keyguardCallback_visibilityChanged_clockDozeCalled() =
-        runBlocking(IMMEDIATE) {
-            val captor = argumentCaptor<KeyguardUpdateMonitorCallback>()
-            verify(keyguardUpdateMonitor).registerCallback(capture(captor))
-
-            captor.value.onKeyguardVisibilityChanged(true)
-            verify(animations, never()).doze(0f)
-
-            captor.value.onKeyguardVisibilityChanged(false)
-            verify(animations, times(2)).doze(0f)
-        }
-
-    @Test
     fun keyguardCallback_timeFormat_clockNotified() =
         runBlocking(IMMEDIATE) {
             val captor = argumentCaptor<KeyguardUpdateMonitorCallback>()
             verify(keyguardUpdateMonitor).registerCallback(capture(captor))
             captor.value.onTimeFormatChanged("12h")
 
-            verify(events).onTimeFormatChanged(false)
+            verify(events).onTimeFormatChanged(TimeFormatKind.HALF_DAY)
         }
 
     @Test
     fun keyguardCallback_timezoneChanged_clockNotified() =
         runBlocking(IMMEDIATE) {
-            val mockTimeZone = mock<TimeZone>()
             val captor = argumentCaptor<KeyguardUpdateMonitorCallback>()
             verify(keyguardUpdateMonitor).registerCallback(capture(captor))
-            captor.value.onTimeZoneChanged(mockTimeZone)
+            captor.value.onTimeZoneChanged(TimeZone.getTimeZone("GMT"))
 
-            verify(events).onTimeZoneChanged(mockTimeZone)
+            verify(events).onTimeZoneChanged(IcuTimeZone.getTimeZone("GMT"))
         }
 
     @Test
@@ -340,20 +323,7 @@ class ClockEventControllerTest : SysuiTestCase() {
             verify(keyguardUpdateMonitor).registerCallback(capture(captor))
             captor.value.onUserSwitchComplete(10)
 
-            verify(events).onTimeFormatChanged(false)
-        }
-
-    @Test
-    fun keyguardCallback_verifyKeyguardChanged() =
-        runBlocking(IMMEDIATE) {
-            val job = underTest.listenForDozeAmount(this)
-            repository.setDozeAmount(0.4f)
-
-            yield()
-
-            verify(animations, times(2)).doze(0.4f)
-
-            job.cancel()
+            verify(events).onTimeFormatChanged(TimeFormatKind.HALF_DAY)
         }
 
     @Test
@@ -403,6 +373,7 @@ class ClockEventControllerTest : SysuiTestCase() {
             val transitionStep = MutableStateFlow(TransitionStep())
             whenever(keyguardTransitionInteractor.transition(Edge.create(to = LOCKSCREEN)))
                 .thenReturn(transitionStep)
+            clearInvocations(animations)
 
             val job = underTest.listenForAnyStateToLockscreenTransition(this)
             transitionStep.value =
@@ -445,6 +416,7 @@ class ClockEventControllerTest : SysuiTestCase() {
             val transitionStep = MutableStateFlow(TransitionStep())
             whenever(keyguardTransitionInteractor.transition(Edge.create(to = LOCKSCREEN)))
                 .thenReturn(transitionStep)
+            clearInvocations(animations)
 
             val job = underTest.listenForAnyStateToLockscreenTransition(this)
             transitionStep.value =
@@ -525,14 +497,13 @@ class ClockEventControllerTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_MODES_UI)
     fun listenForDnd_onDndChange_updatesClockZenMode() =
         testScope.runTest {
             underTest.listenForDnd(testScope.backgroundScope)
             runCurrent()
             clearInvocations(events)
 
-            zenModeRepository.activateMode(dndModeId)
+            zenModeRepository.activateMode(MANUAL_DND)
             runCurrent()
 
             verify(events)
@@ -540,26 +511,8 @@ class ClockEventControllerTest : SysuiTestCase() {
                     eq(ZenData(ZenMode.IMPORTANT_INTERRUPTIONS, R.string::dnd_is_on.name))
                 )
 
-            zenModeRepository.deactivateMode(dndModeId)
+            zenModeRepository.deactivateMode(MANUAL_DND)
             runCurrent()
-
-            verify(events).onZenDataChanged(eq(ZenData(ZenMode.OFF, R.string::dnd_is_off.name)))
-        }
-
-    @Test
-    @DisableFlags(android.app.Flags.FLAG_MODES_UI)
-    fun zenModeControllerCallback_onDndChange_updatesClockZenMode() =
-        runBlocking(IMMEDIATE) {
-            zenModeControllerCallback!!.onZenChanged(
-                Settings.Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS
-            )
-
-            verify(events)
-                .onZenDataChanged(
-                    eq(ZenData(ZenMode.IMPORTANT_INTERRUPTIONS, R.string::dnd_is_on.name))
-                )
-
-            zenModeControllerCallback!!.onZenChanged(Settings.Global.ZEN_MODE_OFF)
 
             verify(events).onZenDataChanged(eq(ZenData(ZenMode.OFF, R.string::dnd_is_off.name)))
         }

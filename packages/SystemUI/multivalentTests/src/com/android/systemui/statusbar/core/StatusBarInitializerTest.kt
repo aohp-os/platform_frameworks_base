@@ -30,6 +30,7 @@ import com.android.systemui.statusbar.data.repository.fakeStatusBarModePerDispla
 import com.android.systemui.statusbar.phone.fragment.CollapsedStatusBarFragment
 import com.android.systemui.statusbar.phone.fragment.dagger.HomeStatusBarComponent
 import com.android.systemui.statusbar.pipeline.shared.ui.composable.StatusBarRootFactory
+import com.android.systemui.statusbar.policy.statusBarConfigurationController
 import com.android.systemui.statusbar.window.StatusBarWindowController
 import com.android.systemui.statusbar.window.StatusBarWindowControllerStore
 import com.android.systemui.testKosmos
@@ -75,8 +76,9 @@ class StatusBarInitializerTest : SysuiTestCase() {
             collapsedStatusBarFragmentProvider = { mock(CollapsedStatusBarFragment::class.java) },
             statusBarRootFactory = mock(StatusBarRootFactory::class.java),
             componentFactory = mock(HomeStatusBarComponent.Factory::class.java),
-            creationListeners = setOf(),
+            lifecycleListeners = setOf(),
             statusBarModePerDisplayRepository = statusBarModePerDisplayRepository,
+            statusBarConfigurationController = kosmos.statusBarConfigurationController,
         )
 
     @Test

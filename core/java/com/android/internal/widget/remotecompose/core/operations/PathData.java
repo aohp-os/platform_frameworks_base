@@ -28,22 +28,27 @@ import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.Arrays;
 import java.util.List;
 
-public class PathData extends Operation implements VariableSupport {
+public class PathData extends Operation implements VariableSupport, Serializable {
     private static final int OP_CODE = Operations.DATA_PATH;
     private static final String CLASS_NAME = "PathData";
+    private static final int MAX_PATH_LENGTH = 20000;
     int mInstanceId;
     float[] mFloatPath;
     float[] mOutputPath;
+    int mWinding;
     private boolean mPathChanged = true;
 
-    PathData(int instanceId, float[] floatPath) {
+    PathData(int instanceId, float[] floatPath, int winding) {
         mInstanceId = instanceId;
         mFloatPath = floatPath;
         mOutputPath = Arrays.copyOf(mFloatPath, mFloatPath.length);
+        mWinding = winding;
     }
 
     @Override
@@ -131,7 +136,14 @@ public class PathData extends Operation implements VariableSupport {
         return OP_CODE;
     }
 
-    public static void apply(@NonNull WireBuffer buffer, int id, @NonNull float[] data) {
+    /**
+     * add a create path operation
+     *
+     * @param buffer buffer to add to
+     * @param id the id of the path
+     * @param data the path
+     */
+    public static void apply(@NonNull WireBuffer buffer, int id, @NonNull float [] data) {
         buffer.start(Operations.DATA_PATH);
         buffer.writeInt(id);
         buffer.writeInt(data.length);
@@ -148,12 +160,17 @@ public class PathData extends Operation implements VariableSupport {
      */
     public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         int imageId = buffer.readInt();
+        int winding = imageId >> 24;
+        imageId &= 0xffffff;
         int len = buffer.readInt();
+        if (len > MAX_PATH_LENGTH) {
+            throw new RuntimeException("Path too long");
+        }
         float[] data = new float[len];
         for (int i = 0; i < data.length; i++) {
             data[i] = buffer.readFloat();
         }
-        operations.add(new PathData(imageId, data));
+        operations.add(new PathData(imageId, data, winding));
     }
 
     /**
@@ -176,7 +193,7 @@ public class PathData extends Operation implements VariableSupport {
      * @return string describing the path
      */
     @NonNull
-    public static String pathString(@Nullable float[] path) {
+    public static String pathString(@Nullable float [] path) {
         if (path == null) {
             return "null";
         }
@@ -227,8 +244,13 @@ public class PathData extends Operation implements VariableSupport {
     @Override
     public void apply(@NonNull RemoteContext context) {
         if (mPathChanged) {
-            context.loadPathData(mInstanceId, mOutputPath);
+            context.loadPathData(mInstanceId, mWinding, mOutputPath);
         }
         mPathChanged = false;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer.addType(CLASS_NAME).add("id", mInstanceId).addPath("path", mFloatPath);
     }
 }

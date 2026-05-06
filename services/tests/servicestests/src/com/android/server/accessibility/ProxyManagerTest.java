@@ -253,9 +253,8 @@ public class ProxyManagerTest {
 
         // The virtual device has been updated with the streamed app's UID, so the proxy is
         // updated.
-        mProxyManager.notifyProxyOfRunningAppsChange(runningUids);
+        mProxyManager.notifyProxyOfRunningAppsChange(DEVICE_ID, runningUids);
 
-        verify(localVdm).getDeviceIdsForUid(STREAMED_CALLING_UID);
         verify(mMockProxySystemSupport).getCurrentUserClientsLocked();
         verify(mMockProxySystemSupport).getGlobalClientsLocked();
         // Messages to notify IAccessibilityManagerClients should be posted.
@@ -425,7 +424,6 @@ public class ProxyManagerTest {
 
     @Test
     public void testRegisterProxy_registersVirtualDeviceListener() throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
 
         verify(mMockIVirtualDeviceManager, times(1)).registerVirtualDeviceListener(any());
@@ -434,7 +432,6 @@ public class ProxyManagerTest {
     @Test
     public void testRegisterMultipleProxies_registersOneVirtualDeviceListener()
             throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
         registerProxy(DISPLAY_2_ID);
 
@@ -443,7 +440,6 @@ public class ProxyManagerTest {
 
     @Test
     public void testUnregisterProxy_unregistersVirtualDeviceListener() throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
 
         mProxyManager.unregisterProxy(DISPLAY_ID);
@@ -454,7 +450,6 @@ public class ProxyManagerTest {
     @Test
     public void testUnregisterProxy_onlyUnregistersVirtualDeviceListenerOnLastProxyRemoval()
             throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
         registerProxy(DISPLAY_2_ID);
 
@@ -468,7 +463,6 @@ public class ProxyManagerTest {
     @Test
     public void testRegisteredProxy_virtualDeviceClosed_proxyClosed()
             throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
 
         assertThat(mProxyManager.isProxyedDeviceId(DEVICE_ID)).isTrue();
@@ -490,7 +484,6 @@ public class ProxyManagerTest {
     @Test
     public void testRegisteredProxy_unrelatedVirtualDeviceClosed_proxyNotClosed()
             throws RemoteException {
-        mSetFlagsRule.enableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
         registerProxy(DISPLAY_ID);
 
         assertThat(mProxyManager.isProxyedDeviceId(DEVICE_ID)).isTrue();
@@ -505,17 +498,6 @@ public class ProxyManagerTest {
 
         assertThat(mProxyManager.isProxyedDeviceId(DEVICE_ID)).isTrue();
         assertThat(mProxyManager.isProxyedDisplay(DISPLAY_ID)).isTrue();
-    }
-
-    @Test
-    public void testRegisterProxy_doesNotRegisterVirtualDeviceListener_flagDisabled()
-            throws RemoteException {
-        mSetFlagsRule.disableFlags(android.companion.virtual.flags.Flags.FLAG_VDM_PUBLIC_APIS);
-        registerProxy(DISPLAY_ID);
-        mProxyManager.unregisterProxy(DISPLAY_ID);
-
-        verify(mMockIVirtualDeviceManager, never()).registerVirtualDeviceListener(any());
-        verify(mMockIVirtualDeviceManager, never()).unregisterVirtualDeviceListener(any());
     }
 
     private void registerProxy(int displayId) {

@@ -1,10 +1,11 @@
 package com.android.server.policy.keyguard;
 
-import static com.android.server.wm.KeyguardServiceDelegateProto.INTERACTIVE_STATE;
-import static com.android.server.wm.KeyguardServiceDelegateProto.OCCLUDED;
-import static com.android.server.wm.KeyguardServiceDelegateProto.SCREEN_STATE;
-import static com.android.server.wm.KeyguardServiceDelegateProto.SECURE;
-import static com.android.server.wm.KeyguardServiceDelegateProto.SHOWING;
+import static android.internal.perfetto.protos.Windowmanagerservice.KeyguardServiceDelegateProto.INTERACTIVE_STATE;
+import static android.internal.perfetto.protos.Windowmanagerservice.KeyguardServiceDelegateProto.OCCLUDED;
+import static android.internal.perfetto.protos.Windowmanagerservice.KeyguardServiceDelegateProto.SCREEN_STATE;
+import static android.internal.perfetto.protos.Windowmanagerservice.KeyguardServiceDelegateProto.SECURE;
+import static android.internal.perfetto.protos.Windowmanagerservice.KeyguardServiceDelegateProto.SHOWING;
+import static com.android.internal.policy.IKeyguardService.SCREEN_TURNING_ON_REASON_UNKNOWN;
 
 import android.app.ActivityTaskManager;
 import android.content.ComponentName;
@@ -92,6 +93,8 @@ public class KeyguardServiceDelegate {
         public boolean bootCompleted;
         public int screenState;
         public int interactiveState;
+        boolean doKeyguardTimeoutRequested;
+        Bundle doKeyguardTimeoutRequestedOptions;
 
         private void reset() {
             // Assume keyguard is showing and secure until we know for sure. This is here in
@@ -198,14 +201,14 @@ public class KeyguardServiceDelegate {
                 if (mKeyguardState.interactiveState == INTERACTIVE_STATE_AWAKE
                         || mKeyguardState.interactiveState == INTERACTIVE_STATE_WAKING) {
                     mKeyguardService.onStartedWakingUp(PowerManager.WAKE_REASON_UNKNOWN,
-                            false /* cameraGestureTriggered */);
+                            false /* powerButtonLaunchGestureTriggered */);
                 }
                 if (mKeyguardState.interactiveState == INTERACTIVE_STATE_AWAKE) {
                     mKeyguardService.onFinishedWakingUp();
                 }
                 if (mKeyguardState.screenState == SCREEN_STATE_ON
                         || mKeyguardState.screenState == SCREEN_STATE_TURNING_ON) {
-                    mKeyguardService.onScreenTurningOn(
+                    mKeyguardService.onScreenTurningOn(SCREEN_TURNING_ON_REASON_UNKNOWN,
                             new KeyguardShowDelegate(mDrawnListenerWhenConnect));
                 }
                 if (mKeyguardState.screenState == SCREEN_STATE_ON) {
@@ -224,6 +227,12 @@ public class KeyguardServiceDelegate {
             }
             if (mKeyguardState.dreaming) {
                 mKeyguardService.onDreamingStarted();
+            }
+            if (mKeyguardState.doKeyguardTimeoutRequested) {
+                mKeyguardService.doKeyguardTimeout(
+                        mKeyguardState.doKeyguardTimeoutRequestedOptions);
+                mKeyguardState.doKeyguardTimeoutRequested = false;
+                mKeyguardState.doKeyguardTimeoutRequestedOptions = null;
             }
         }
 
@@ -319,10 +328,10 @@ public class KeyguardServiceDelegate {
     }
 
     public void onStartedWakingUp(
-            @PowerManager.WakeReason int pmWakeReason, boolean cameraGestureTriggered) {
+            @PowerManager.WakeReason int pmWakeReason, boolean powerButtonLaunchGestureTriggered) {
         if (mKeyguardService != null) {
             if (DEBUG) Log.v(TAG, "onStartedWakingUp()");
-            mKeyguardService.onStartedWakingUp(pmWakeReason, cameraGestureTriggered);
+            mKeyguardService.onStartedWakingUp(pmWakeReason, powerButtonLaunchGestureTriggered);
         }
         mKeyguardState.interactiveState = INTERACTIVE_STATE_WAKING;
     }
@@ -351,10 +360,11 @@ public class KeyguardServiceDelegate {
         mKeyguardState.screenState = SCREEN_STATE_OFF;
     }
 
-    public void onScreenTurningOn(final DrawnListener drawnListener) {
+    public void onScreenTurningOn(int reason, final DrawnListener drawnListener) {
         if (mKeyguardService != null) {
-            if (DEBUG) Log.v(TAG, "onScreenTurnedOn(showListener = " + drawnListener + ")");
-            mKeyguardService.onScreenTurningOn(new KeyguardShowDelegate(drawnListener));
+            if (DEBUG) Log.v(TAG, "onScreenTurnedOn(reason = " + reason
+                    + ", showListener = " + drawnListener + ")");
+            mKeyguardService.onScreenTurningOn(reason,  new KeyguardShowDelegate(drawnListener));
         } else {
             // try again when we establish a connection
             Slog.w(TAG, "onScreenTurningOn(): no keyguard service!");
@@ -383,9 +393,11 @@ public class KeyguardServiceDelegate {
     }
 
     public void onFinishedGoingToSleep(
-            @PowerManager.GoToSleepReason int pmSleepReason, boolean cameraGestureTriggered) {
+            @PowerManager.GoToSleepReason int pmSleepReason,
+            boolean powerButtonLaunchGestureTriggered) {
         if (mKeyguardService != null) {
-            mKeyguardService.onFinishedGoingToSleep(pmSleepReason, cameraGestureTriggered);
+            mKeyguardService.onFinishedGoingToSleep(pmSleepReason,
+                    powerButtonLaunchGestureTriggered);
         }
         mKeyguardState.interactiveState = INTERACTIVE_STATE_SLEEP;
     }
@@ -408,6 +420,11 @@ public class KeyguardServiceDelegate {
     public void doKeyguardTimeout(Bundle options) {
         if (mKeyguardService != null) {
             mKeyguardService.doKeyguardTimeout(options);
+        } else {
+            mKeyguardState.doKeyguardTimeoutRequested = true;
+            if (options != null) {
+                mKeyguardState.doKeyguardTimeoutRequestedOptions = options;
+            }
         }
     }
 

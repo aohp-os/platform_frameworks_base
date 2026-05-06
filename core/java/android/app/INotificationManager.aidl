@@ -44,7 +44,7 @@ import android.app.AutomaticZenRule;
 import android.service.notification.ZenModeConfig;
 import android.service.notification.ZenDeviceEffects;
 
-/** {@hide} */
+/** @hide */
 interface INotificationManager
 {
     @UnsupportedAppUsage
@@ -84,8 +84,9 @@ interface INotificationManager
     boolean isImportanceLocked(String pkg, int uid);
 
     List<String> getAllowedAssistantAdjustments(String pkg);
-    void allowAssistantAdjustment(String adjustmentType);
-    void disallowAssistantAdjustment(String adjustmentType);
+    List<String> getAllowedAssistantAdjustmentsForUser(int userId);
+    void allowAssistantAdjustment(int userId, String adjustmentType);
+    void disallowAssistantAdjustment(int userId, String adjustmentType);
 
     boolean shouldHideSilentStatusIcons(String callingPkg);
     void setHideSilentStatusIcons(boolean hide);
@@ -121,10 +122,12 @@ interface INotificationManager
     void deleteNotificationChannelGroup(String pkg, String channelGroupId);
     NotificationChannelGroup getNotificationChannelGroup(String pkg, String channelGroupId);
     ParceledListSlice getNotificationChannelGroups(String pkg);
+    ParceledListSlice getNotificationChannelGroupsWithoutChannels(String pkg);
     boolean onlyHasDefaultChannel(String pkg, int uid);
     boolean areChannelsBypassingDnd();
     ParceledListSlice getNotificationChannelsBypassingDnd(String pkg, int uid);
     ParceledListSlice getPackagesBypassingDnd(int userId);
+    List<String> getPackagesWithAnyChannels(int userId);
     boolean isPackagePaused(String pkg);
     void deleteNotificationHistoryItem(String pkg, int uid, long postedTime);
     boolean isPermissionFixed(String pkg, int userId);
@@ -176,7 +179,6 @@ interface INotificationManager
     void setInterruptionFilter(String pkg, int interruptionFilter, boolean fromUser);
 
     NotificationChannel createConversationNotificationChannelForPackageFromPrivilegedListener(in INotificationListener token, String pkg, in UserHandle user, String parentChannelId, String conversationId);
-    void updateNotificationChannelGroupFromPrivilegedListener(in INotificationListener token, String pkg, in UserHandle user, in NotificationChannelGroup group);
     void updateNotificationChannelFromPrivilegedListener(in INotificationListener token, String pkg, in UserHandle user, in NotificationChannel channel);
     ParceledListSlice getNotificationChannelsFromPrivilegedListener(in INotificationListener token, String pkg, in UserHandle user);
     ParceledListSlice getNotificationChannelGroupsFromPrivilegedListener(in INotificationListener token, String pkg, in UserHandle user);
@@ -222,9 +224,7 @@ interface INotificationManager
     void setNotificationPolicyAccessGrantedForUser(String pkg, int userId, boolean granted);
     ZenPolicy getDefaultZenPolicy();
     AutomaticZenRule getAutomaticZenRule(String id);
-    Map<String, AutomaticZenRule> getAutomaticZenRules();
-    // TODO: b/310620812 - Remove getZenRules() when MODES_API is inlined.
-    List<ZenModeConfig.ZenRule> getZenRules();
+    ParceledListSlice getAutomaticZenRules();
     String addAutomaticZenRule(in AutomaticZenRule automaticZenRule, String pkg, boolean fromUser);
     boolean updateAutomaticZenRule(String id, in AutomaticZenRule automaticZenRule, boolean fromUser);
     boolean removeAutomaticZenRule(String id, boolean fromUser);
@@ -268,8 +268,9 @@ interface INotificationManager
     void setAdjustmentTypeSupportedState(in INotificationListener token, String key, boolean supported);
     List<String> getUnsupportedAdjustmentTypes();
 
-    int[] getAllowedAdjustmentKeyTypes();
-    void setAssistantAdjustmentKeyTypeState(int type, boolean enabled);
-    String[] getTypeAdjustmentDeniedPackages();
-    void setTypeAdjustmentForPackageState(String pkg, boolean enabled);
+    int[] getAllowedClassificationTypes();
+    void setAssistantClassificationTypeState(int type, boolean enabled);
+    String[] getAdjustmentDeniedPackages(int userId, String key);
+    boolean isAdjustmentSupportedForPackage(int userId, String key, String pkg);
+    void setAdjustmentSupportedForPackage(int userId, String key, String pkg, boolean enabled);
 }

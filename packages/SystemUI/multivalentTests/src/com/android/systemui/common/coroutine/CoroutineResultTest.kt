@@ -19,14 +19,14 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /** atest SystemUITests:CoroutineResultTest */
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class CoroutineResultTest : SysuiTestCase() {
@@ -45,8 +45,12 @@ class CoroutineResultTest : SysuiTestCase() {
         assertThat(actual.exceptionOrNull()).isInstanceOf(Exception::class.java)
     }
 
-    @Test(expected = CancellationException::class)
-    fun suspendRunCatching_whenCancelled_shouldResumeWithException() = runTest {
-        suspendRunCatching { cancel() }
+    @Test
+    fun suspendRunCatching_whenCancelled_shouldResumeWithException() {
+        assertThrows(CancellationException::class.java) {
+            runTest {
+                suspendRunCatching { cancel() }
+            }
+        }
     }
 }

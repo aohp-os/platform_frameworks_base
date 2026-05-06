@@ -39,15 +39,16 @@ import com.android.systemui.keyguard.ui.view.DeviceEntryIconView
 import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerDependencies
 import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerUdfpsIconViewModel
 import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerWindowViewModel
+import com.android.systemui.lifecycle.WindowLifecycleState
 import com.android.systemui.lifecycle.repeatWhenAttached
-import com.android.systemui.log.LongPressHandlingViewLogger
+import com.android.systemui.lifecycle.viewModel
+import com.android.systemui.log.TouchHandlingViewLogger
 import com.android.systemui.res.R
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.scrim.ScrimView
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
  * When necessary, adds the alternate bouncer window above most other windows (including the
@@ -56,7 +57,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
  *
  * For devices that support UDFPS, this view includes a UDFPS view.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class AlternateBouncerViewBinder
 @Inject
@@ -217,11 +217,21 @@ constructor(
                 }
             }
         }
+
+        view.repeatWhenAttached {
+            view.viewModel(
+                traceName = "AlternateBouncerViewBinderViewModel",
+                minWindowLifecycleState = WindowLifecycleState.ATTACHED,
+                factory = { alternateBouncerDependencies.viewModel },
+            ) {
+                // no-op - currently used to activate viewModel
+            }
+        }
     }
 
     private fun optionallyAddUdfpsViews(
         view: ConstraintLayout,
-        logger: LongPressHandlingViewLogger,
+        logger: TouchHandlingViewLogger,
         udfpsIconViewModel: AlternateBouncerUdfpsIconViewModel,
         udfpsA11yOverlayViewModel: Lazy<AlternateBouncerUdfpsAccessibilityOverlayViewModel>,
     ) {

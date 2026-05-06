@@ -30,11 +30,6 @@ import static android.view.WindowInsets.Type.statusBars;
 import static android.view.WindowInsets.Type.systemOverlays;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
-import static android.view.WindowManager.TRANSIT_CLOSE;
-import static android.view.WindowManager.TRANSIT_OLD_TASK_CLOSE;
-import static android.view.WindowManager.TRANSIT_OLD_TASK_FRAGMENT_CHANGE;
-import static android.view.WindowManager.TRANSIT_OLD_TASK_OPEN;
-import static android.view.WindowManager.TRANSIT_OPEN;
 import static android.window.DisplayAreaOrganizer.FEATURE_DEFAULT_TASK_CONTAINER;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.any;
@@ -56,7 +51,6 @@ import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_APP_TRANSITIO
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_SCREEN_ROTATION;
 import static com.android.server.wm.WindowContainer.AnimationFlags.CHILDREN;
 import static com.android.server.wm.WindowContainer.AnimationFlags.PARENTS;
-import static com.android.server.wm.WindowContainer.AnimationFlags.TRANSITION;
 import static com.android.server.wm.WindowContainer.POSITION_BOTTOM;
 import static com.android.server.wm.WindowContainer.POSITION_TOP;
 
@@ -64,7 +58,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -74,6 +67,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
+import android.graphics.Insets;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.os.DeadObjectException;
@@ -85,14 +79,9 @@ import android.os.ResultReceiver;
 import android.os.ShellCallback;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
-import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.util.ArraySet;
-import android.view.IRemoteAnimationFinishedCallback;
-import android.view.IRemoteAnimationRunner;
 import android.view.InsetsFrameProvider;
 import android.view.InsetsSource;
-import android.view.RemoteAnimationAdapter;
-import android.view.RemoteAnimationTarget;
 import android.view.SurfaceControl;
 import android.view.SurfaceSession;
 import android.view.WindowInsets;
@@ -417,17 +406,6 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
-    public void testIsAnimating_TransitionFlag() {
-        final TestWindowContainerBuilder builder = new TestWindowContainerBuilder(mWm);
-        final TestWindowContainer root = builder.setLayer(0).build();
-        final TestWindowContainer child1 = root.addChildWindow(
-                builder.setWaitForTransitionStart(true));
-
-        assertFalse(root.isAnimating(TRANSITION));
-        assertTrue(child1.isAnimating(TRANSITION));
-    }
-
-    @Test
     public void testIsAnimating_ParentsFlag() {
         final TestWindowContainerBuilder builder = new TestWindowContainerBuilder(mWm);
         final TestWindowContainer root = builder.setLayer(0).build();
@@ -437,11 +415,11 @@ public class WindowContainerTests extends WindowTestsBase {
 
         assertFalse(root.isAnimating());
         assertFalse(child1.isAnimating());
-        assertFalse(child1.isAnimating(PARENTS));
+        assertFalse(child1.isAnimating(PARENTS, ANIMATION_TYPE_ALL));
         assertTrue(child2.isAnimating());
-        assertTrue(child2.isAnimating(PARENTS));
+        assertTrue(child2.isAnimating(PARENTS, ANIMATION_TYPE_ALL));
         assertFalse(child21.isAnimating());
-        assertTrue(child21.isAnimating(PARENTS));
+        assertTrue(child21.isAnimating(PARENTS, ANIMATION_TYPE_ALL));
     }
 
     @Test
@@ -453,39 +431,13 @@ public class WindowContainerTests extends WindowTestsBase {
         final TestWindowContainer child11 = child1.addChildWindow(builder.setIsAnimating(true));
 
         assertFalse(root.isAnimating());
-        assertTrue(root.isAnimating(CHILDREN));
+        assertTrue(root.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
         assertFalse(child1.isAnimating());
-        assertTrue(child1.isAnimating(CHILDREN));
+        assertTrue(child1.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
         assertTrue(child2.isAnimating());
-        assertTrue(child2.isAnimating(CHILDREN));
+        assertTrue(child2.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
         assertTrue(child11.isAnimating());
-        assertTrue(child11.isAnimating(CHILDREN));
-    }
-
-    @Test
-    public void testIsAnimating_combineFlags() {
-        final TestWindowContainerBuilder builder = new TestWindowContainerBuilder(mWm);
-        final TestWindowContainer root = builder.setLayer(0).build();
-
-        final TestWindowContainer child1 = root.addChildWindow(builder.setIsAnimating(true));
-        final TestWindowContainer child2 = root.addChildWindow();
-        final TestWindowContainer child11 = child1.addChildWindow();
-        final TestWindowContainer child12 = child1.addChildWindow(builder.setIsAnimating(true));
-        final TestWindowContainer child21 = child2.addChildWindow();
-
-        assertFalse(root.isAnimating(TRANSITION | PARENTS));
-        assertTrue(child1.isAnimating(TRANSITION | PARENTS));
-        assertTrue(child11.isAnimating(TRANSITION | PARENTS));
-        assertTrue(child12.isAnimating(TRANSITION | PARENTS));
-        assertFalse(child2.isAnimating(TRANSITION | PARENTS));
-        assertFalse(child21.isAnimating(TRANSITION | PARENTS));
-
-        assertTrue(root.isAnimating(TRANSITION | CHILDREN));
-        assertTrue(child1.isAnimating(TRANSITION | CHILDREN));
-        assertFalse(child11.isAnimating(TRANSITION | CHILDREN));
-        assertTrue(child12.isAnimating(TRANSITION | CHILDREN));
-        assertFalse(child2.isAnimating(TRANSITION | CHILDREN));
-        assertFalse(child21.isAnimating(TRANSITION | CHILDREN));
+        assertTrue(child11.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
     }
 
     @Test
@@ -500,21 +452,21 @@ public class WindowContainerTests extends WindowTestsBase {
 
         final TestWindowContainer child = window.addChildWindow();
         assertFalse(child.isAnimating());
-        assertTrue(child.isAnimating(PARENTS));
+        assertTrue(child.isAnimating(PARENTS, ANIMATION_TYPE_ALL));
         assertTrue(child.isAnimating(PARENTS, ANIMATION_TYPE_APP_TRANSITION));
         assertFalse(child.isAnimating(PARENTS, ANIMATION_TYPE_SCREEN_ROTATION));
 
-        final WindowState windowState = createWindow(null /* parent */, TYPE_BASE_APPLICATION,
-                mDisplayContent, "TestWindowState");
+        final WindowState windowState = newWindowBuilder("TestWindowState",
+                TYPE_BASE_APPLICATION).setDisplay(mDisplayContent).build();
         WindowContainer parent = windowState.getParent();
         spyOn(windowState.mSurfaceAnimator);
         doReturn(true).when(windowState.mSurfaceAnimator).isAnimating();
         doReturn(ANIMATION_TYPE_APP_TRANSITION).when(
                 windowState.mSurfaceAnimator).getAnimationType();
-        assertTrue(parent.isAnimating(CHILDREN));
+        assertTrue(parent.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
 
         windowState.setControllableInsetProvider(mock(InsetsSourceProvider.class));
-        assertFalse(parent.isAnimating(CHILDREN));
+        assertFalse(parent.isAnimating(CHILDREN, ANIMATION_TYPE_ALL));
     }
 
     @Test
@@ -977,7 +929,8 @@ public class WindowContainerTests extends WindowTestsBase {
         final InsetsFrameProvider provider =
                 new InsetsFrameProvider(owner, 1, captionBar())
                         .setArbitraryRectangle(insetsRect)
-                        .setFlags(flags);
+                        .setFlags(flags)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         task.addLocalInsetsFrameProvider(provider, owner);
 
         final int sourceFlags = task.mLocalInsetsSources.get(provider.getId()).getFlags();
@@ -989,7 +942,8 @@ public class WindowContainerTests extends WindowTestsBase {
         Rect genericOverlayInsetsRect1 = new Rect(0, 200, 1080, 700);
         final InsetsFrameProvider provider1 =
                 new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(genericOverlayInsetsRect1);
+                        .setArbitraryRectangle(genericOverlayInsetsRect1)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         wc.addLocalInsetsFrameProvider(provider1, owner);
     }
 
@@ -1014,30 +968,6 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
-    public void testOnDisplayChanged_cleanupChanging() {
-        final Task task = createTask(mDisplayContent);
-        addLocalInsets(task);
-        spyOn(task.mSurfaceFreezer);
-        mDisplayContent.mChangingContainers.add(task);
-
-        // Don't remove the changing transition of this window when it is still the old display.
-        // This happens on display info changed.
-        task.onDisplayChanged(mDisplayContent);
-
-        assertTrue(task.mLocalInsetsSources.size() == 1);
-        assertTrue(mDisplayContent.mChangingContainers.contains(task));
-        verify(task.mSurfaceFreezer, never()).unfreeze(any());
-
-        // Remove the changing transition of this window when it is moved or reparented from the old
-        // display.
-        final DisplayContent newDc = createNewDisplay();
-        task.onDisplayChanged(newDc);
-
-        assertFalse(mDisplayContent.mChangingContainers.contains(task));
-        verify(task.mSurfaceFreezer).unfreeze(any());
-    }
-
-    @Test
     public void testHandleCompleteDeferredRemoval() {
         final DisplayContent displayContent = createNewDisplay();
         // Do not reparent activity to default display when removing the display.
@@ -1045,8 +975,8 @@ public class WindowContainerTests extends WindowTestsBase {
 
         // An animating window with mRemoveOnExit can be removed by handleCompleteDeferredRemoval
         // once it no longer animates.
-        final WindowState exitingWindow = createWindow(null, TYPE_APPLICATION_OVERLAY,
-                displayContent, "exiting window");
+        final WindowState exitingWindow = newWindowBuilder("exiting window",
+                TYPE_APPLICATION_OVERLAY).setDisplay(displayContent).build();
         exitingWindow.startAnimation(exitingWindow.getPendingTransaction(),
                 mock(AnimationAdapter.class), false /* hidden */,
                 SurfaceAnimator.ANIMATION_TYPE_WINDOW_ANIMATION);
@@ -1063,7 +993,7 @@ public class WindowContainerTests extends WindowTestsBase {
         final ActivityRecord r = new TaskBuilder(mSupervisor).setCreateActivity(true)
                 .setDisplay(displayContent).build().getTopMostActivity();
         // Add a window and make the activity animating so the removal of activity is deferred.
-        createWindow(null, TYPE_BASE_APPLICATION, r, "win");
+        newWindowBuilder("win", TYPE_BASE_APPLICATION).setWindowToken(r).build();
         doReturn(true).when(r).isAnimating(anyInt(), anyInt());
 
         displayContent.remove();
@@ -1078,25 +1008,6 @@ public class WindowContainerTests extends WindowTestsBase {
         assertFalse(displayContent.handleCompleteDeferredRemoval());
         assertFalse(displayContent.hasChild());
         assertFalse(r.hasChild());
-    }
-
-    @Test
-    public void testTaskCanApplyAnimation() {
-        final Task rootTask = createTask(mDisplayContent);
-        final Task task = createTaskInRootTask(rootTask, 0 /* userId */);
-        final ActivityRecord activity2 = createActivityRecord(mDisplayContent, task);
-        final ActivityRecord activity1 = createActivityRecord(mDisplayContent, task);
-        verifyWindowContainerApplyAnimation(task, activity1, activity2);
-    }
-
-    @Test
-    public void testRootTaskCanApplyAnimation() {
-        final Task rootTask = createTask(mDisplayContent);
-        final ActivityRecord activity2 = createActivityRecord(mDisplayContent,
-                createTaskInRootTask(rootTask, 0 /* userId */));
-        final ActivityRecord activity1 = createActivityRecord(mDisplayContent,
-                createTaskInRootTask(rootTask, 0 /* userId */));
-        verifyWindowContainerApplyAnimation(rootTask, activity1, activity2);
     }
 
     @Test
@@ -1115,8 +1026,9 @@ public class WindowContainerTests extends WindowTestsBase {
         assertNull(task.getDisplayArea());
 
         // TaskDisplayArea > Task > WindowContainer
-        final TaskDisplayArea taskDisplayArea = new TaskDisplayArea(
-                mDisplayContent, mWm, "TaskDisplayArea", FEATURE_DEFAULT_TASK_CONTAINER);
+        final TaskDisplayArea taskDisplayArea = new TaskDisplayArea(mWm, "TaskDisplayArea",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
         taskDisplayArea.addChild(task, 0);
 
         assertEquals(taskDisplayArea, windowContainer.getDisplayArea());
@@ -1127,59 +1039,6 @@ public class WindowContainerTests extends WindowTestsBase {
         final DisplayArea displayArea = new DisplayArea(mWm, ANY, "DisplayArea");
 
         assertEquals(displayArea, displayArea.getDisplayArea());
-    }
-
-    private void verifyWindowContainerApplyAnimation(WindowContainer wc, ActivityRecord act,
-            ActivityRecord act2) {
-        // Initial remote animation for app transition.
-        final RemoteAnimationAdapter adapter = new RemoteAnimationAdapter(
-                new IRemoteAnimationRunner.Stub() {
-                    @Override
-                    public void onAnimationStart(@WindowManager.TransitionOldType int transit,
-                            RemoteAnimationTarget[] apps,
-                            RemoteAnimationTarget[] wallpapers,
-                            RemoteAnimationTarget[] nonApps,
-                            IRemoteAnimationFinishedCallback finishedCallback) {
-                        try {
-                            finishedCallback.onAnimationFinished();
-                        } catch (RemoteException e) {
-                            e.printStackTrace();
-                        }
-                    }
-
-                    @Override
-                    public void onAnimationCancelled() {
-                    }
-                }, 0, 0, false);
-        adapter.setCallingPidUid(123, 456);
-        wc.getDisplayContent().prepareAppTransition(TRANSIT_OPEN);
-        wc.getDisplayContent().mAppTransition.overridePendingAppTransitionRemote(adapter);
-        spyOn(wc);
-        doReturn(true).when(wc).okToAnimate();
-
-        // Make sure animating state is as expected after applied animation.
-
-        // Animation target is promoted from act to wc. act2 is a descendant of wc, but not a source
-        // of the animation.
-        ArrayList<WindowContainer<WindowState>> sources = new ArrayList<>();
-        sources.add(act);
-        assertTrue(wc.applyAnimation(null, TRANSIT_OLD_TASK_OPEN, true, false, sources));
-
-        assertEquals(act, wc.getTopMostActivity());
-        assertTrue(wc.isAnimating());
-        assertTrue(wc.isAnimating(0, ANIMATION_TYPE_APP_TRANSITION));
-        assertTrue(wc.getAnimationSources().contains(act));
-        assertFalse(wc.getAnimationSources().contains(act2));
-        assertTrue(act.isAnimating(PARENTS));
-        assertTrue(act.isAnimating(PARENTS, ANIMATION_TYPE_APP_TRANSITION));
-        assertEquals(wc, act.getAnimatingContainer(PARENTS, ANIMATION_TYPE_APP_TRANSITION));
-
-        // Make sure animation finish callback will be received and reset animating state after
-        // animation finish.
-        wc.getDisplayContent().mAppTransition.goodToGo(TRANSIT_OLD_TASK_OPEN, act);
-        verify(wc).onAnimationFinished(eq(ANIMATION_TYPE_APP_TRANSITION), any());
-        assertFalse(wc.isAnimating());
-        assertFalse(act.isAnimating(PARENTS));
     }
 
     @Test
@@ -1216,7 +1075,8 @@ public class WindowContainerTests extends WindowTestsBase {
     public void testFreezeInsets() {
         final Task task = createTask(mDisplayContent);
         final ActivityRecord activity = createActivityRecord(mDisplayContent, task);
-        final WindowState win = createWindow(null, TYPE_BASE_APPLICATION, activity, "win");
+        final WindowState win = newWindowBuilder("win", TYPE_BASE_APPLICATION).setWindowToken(
+                activity).build();
 
         // Set visibility to false, verify the main window of the task will be set the frozen
         // insets state immediately.
@@ -1233,8 +1093,8 @@ public class WindowContainerTests extends WindowTestsBase {
         final Task rootTask = createTask(mDisplayContent);
         final Task task = createTaskInRootTask(rootTask, 0 /* userId */);
         final ActivityRecord activity = createActivityRecord(mDisplayContent, task);
-        final WindowState win = createWindow(null, TYPE_BASE_APPLICATION, activity, "win");
-        task.getDisplayContent().prepareAppTransition(TRANSIT_CLOSE);
+        final WindowState win = newWindowBuilder("win", TYPE_BASE_APPLICATION).setWindowToken(
+                activity).build();
         spyOn(win);
         doReturn(true).when(task).okToAnimate();
         ArrayList<WindowContainer> sources = new ArrayList<>();
@@ -1243,8 +1103,6 @@ public class WindowContainerTests extends WindowTestsBase {
         // Simulate the task applying the exit transition, verify the main window of the task
         // will be set the frozen insets state before the animation starts
         activity.setVisibility(false);
-        task.applyAnimation(null, TRANSIT_OLD_TASK_CLOSE, false /* enter */,
-                false /* isVoiceInteraction */, sources);
         verify(win).freezeInsetsState();
 
         // Simulate the task transition finished.
@@ -1259,27 +1117,73 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
+    public void testAssignLayer() {
+        final WindowContainer container = new WindowContainer(mWm);
+        container.mSurfaceControl = mock(SurfaceControl.class);
+
+        // Trigger layer call with a pending transaction, verify layer set
+        container.assignLayer(mTransaction, 1 /* layer */);
+        verify(mTransaction).setLayer(container.mSurfaceControl, 1 /* layer */);
+
+        // Trigger layer call with a pending transaction, verify layer not set
+        clearInvocations(mTransaction);
+        container.assignLayer(mTransaction, 1 /* layer */);
+        verify(mTransaction, never()).setLayer(container.mSurfaceControl, 1 /* layer */);
+
+        // Trigger layer call while building a (non-finish) transition transaction, verify layer
+        // not set
+        container.mTransitionController.mBuildingTransitionLayers = true;
+        clearInvocations(mTransaction);
+        container.assignLayer(mTransaction, 1 /* layer */);
+        verify(mTransaction, never()).setLayer(container.mSurfaceControl, 1 /* layer */);
+        container.mTransitionController.mBuildingTransitionLayers = false;
+
+        // Trigger layer call while building a finish transition transaction, verify layer set
+        container.mTransitionController.mBuildingTransitionLayers = true;
+        container.mTransitionController.mBuildingFinishLayers = true;
+        clearInvocations(mTransaction);
+        container.assignLayer(mTransaction, 1 /* layer */);
+        verify(mTransaction).setLayer(container.mSurfaceControl, 1 /* layer */);
+        // The layer of ImeContainer can only be updated from explicit IME state changes.
+        mDisplayContent.assignChildLayers(mTransaction);
+        final SurfaceControl imeContainerSc = mDisplayContent.getImeContainer().mSurfaceControl;
+        verify(mTransaction, never()).setLayer(eq(imeContainerSc), anyInt());
+        verify(mTransaction, never()).setRelativeLayer(eq(imeContainerSc), any(), anyInt());
+        container.mTransitionController.mBuildingTransitionLayers = false;
+        container.mTransitionController.mBuildingFinishLayers = false;
+
+        // Trigger another layer call while building a finish transition transaction, verify layer
+        // set
+        container.mTransitionController.mBuildingTransitionLayers = true;
+        container.mTransitionController.mBuildingFinishLayers = true;
+        clearInvocations(mTransaction);
+        container.assignLayer(mTransaction, 1 /* layer */);
+        verify(mTransaction).setLayer(container.mSurfaceControl, 1 /* layer */);
+        container.mTransitionController.mBuildingTransitionLayers = false;
+        container.mTransitionController.mBuildingFinishLayers = false;
+    }
+
+    @Test
     public void testAssignRelativeLayer() {
         final WindowContainer container = new WindowContainer(mWm);
         container.mSurfaceControl = mock(SurfaceControl.class);
+        spyOn(container);
+        doReturn(mTransaction).when(container).getPendingTransaction();
+        doReturn(mTransaction).when(container).getSyncTransaction();
         final SurfaceAnimator surfaceAnimator = container.mSurfaceAnimator;
         final SurfaceControl relativeParent = mock(SurfaceControl.class);
-        final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
-        spyOn(container);
+        final SurfaceControl.Transaction otherTx = mock(SurfaceControl.Transaction.class);
         spyOn(surfaceAnimator);
 
         // Trigger for first relative layer call.
-        container.assignRelativeLayer(t, relativeParent, 1 /* layer */);
-        verify(surfaceAnimator).setRelativeLayer(t, relativeParent, 1 /* layer */);
+        container.assignRelativeLayer(mTransaction, relativeParent, 1 /* layer */);
+        verify(surfaceAnimator).setRelativeLayer(mTransaction, relativeParent, 1 /* layer */);
 
         // Not trigger for the same relative layer call.
         clearInvocations(surfaceAnimator);
-        container.assignRelativeLayer(t, relativeParent, 1 /* layer */);
-        verify(surfaceAnimator, never()).setRelativeLayer(t, relativeParent, 1 /* layer */);
-
-        // Trigger for the same relative layer call if forceUpdate=true
-        container.assignRelativeLayer(t, relativeParent, 1 /* layer */, true /* forceUpdate */);
-        verify(surfaceAnimator).setRelativeLayer(t, relativeParent, 1 /* layer */);
+        container.assignRelativeLayer(mTransaction, relativeParent, 1 /* layer */);
+        verify(surfaceAnimator, never()).setRelativeLayer(mTransaction, relativeParent,
+                1 /* layer */);
     }
 
     @Test
@@ -1287,156 +1191,17 @@ public class WindowContainerTests extends WindowTestsBase {
         final WindowContainer container = new WindowContainer(mWm);
         container.mSurfaceControl = mock(SurfaceControl.class);
         final SurfaceAnimator surfaceAnimator = container.mSurfaceAnimator;
-        final SurfaceFreezer surfaceFreezer = container.mSurfaceFreezer;
         final SurfaceControl relativeParent = mock(SurfaceControl.class);
         final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
         spyOn(container);
         spyOn(surfaceAnimator);
-        spyOn(surfaceFreezer);
+        doReturn(t).when(container).getSyncTransaction();
 
         container.setLayer(t, 1);
         container.setRelativeLayer(t, relativeParent, 2);
 
-        // Set through surfaceAnimator if surfaceFreezer doesn't have leash.
         verify(surfaceAnimator).setLayer(t, 1);
         verify(surfaceAnimator).setRelativeLayer(t, relativeParent, 2);
-        verify(surfaceFreezer, never()).setLayer(any(), anyInt());
-        verify(surfaceFreezer, never()).setRelativeLayer(any(), any(), anyInt());
-
-        clearInvocations(surfaceAnimator);
-        clearInvocations(surfaceFreezer);
-        doReturn(true).when(surfaceFreezer).hasLeash();
-
-        container.setLayer(t, 1);
-        container.setRelativeLayer(t, relativeParent, 2);
-
-        // Set through surfaceFreezer if surfaceFreezer has leash.
-        verify(surfaceFreezer).setLayer(t, 1);
-        verify(surfaceFreezer).setRelativeLayer(t, relativeParent, 2);
-        verify(surfaceAnimator, never()).setLayer(any(), anyInt());
-        verify(surfaceAnimator, never()).setRelativeLayer(any(), any(), anyInt());
-    }
-
-    @Test
-    public void testStartChangeTransitionWhenPreviousIsNotFinished() {
-        final WindowContainer container = createTaskFragmentWithActivity(
-                createTask(mDisplayContent));
-        container.mSurfaceControl = mock(SurfaceControl.class);
-        final SurfaceAnimator surfaceAnimator = container.mSurfaceAnimator;
-        final SurfaceFreezer surfaceFreezer = container.mSurfaceFreezer;
-        final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
-        spyOn(container);
-        spyOn(surfaceAnimator);
-        mockSurfaceFreezerSnapshot(surfaceFreezer);
-        doReturn(t).when(container).getPendingTransaction();
-        doReturn(t).when(container).getSyncTransaction();
-
-        // Leash and snapshot created for change transition.
-        container.initializeChangeTransition(new Rect(0, 0, 1000, 2000));
-
-        assertNotNull(surfaceFreezer.mLeash);
-        assertNotNull(surfaceFreezer.mSnapshot);
-        assertEquals(surfaceFreezer.mLeash, container.getAnimationLeash());
-
-        // Start animation: surfaceAnimator take over the leash and snapshot from surfaceFreezer.
-        container.applyAnimationUnchecked(null /* lp */, true /* enter */,
-                TRANSIT_OLD_TASK_FRAGMENT_CHANGE, false /* isVoiceInteraction */,
-                null /* sources */);
-
-        assertNull(surfaceFreezer.mLeash);
-        assertNull(surfaceFreezer.mSnapshot);
-        assertNotNull(surfaceAnimator.mLeash);
-        assertNotNull(surfaceAnimator.mSnapshot);
-        final SurfaceControl prevLeash = surfaceAnimator.mLeash;
-        final SurfaceFreezer.Snapshot prevSnapshot = surfaceAnimator.mSnapshot;
-
-        // Prepare another change transition.
-        container.initializeChangeTransition(new Rect(0, 0, 1000, 2000));
-
-        assertNotNull(surfaceFreezer.mLeash);
-        assertNotNull(surfaceFreezer.mSnapshot);
-        assertEquals(surfaceFreezer.mLeash, container.getAnimationLeash());
-        assertNotEquals(prevLeash, container.getAnimationLeash());
-
-        // Start another animation before the previous one is finished, it should reset the previous
-        // one, but not change the current one.
-        container.applyAnimationUnchecked(null /* lp */, true /* enter */,
-                TRANSIT_OLD_TASK_FRAGMENT_CHANGE, false /* isVoiceInteraction */,
-                null /* sources */);
-
-        verify(container, never()).onAnimationLeashLost(any());
-        verify(surfaceFreezer, never()).unfreeze(any());
-        assertNotNull(surfaceAnimator.mLeash);
-        assertNotNull(surfaceAnimator.mSnapshot);
-        assertEquals(surfaceAnimator.mLeash, container.getAnimationLeash());
-        assertNotEquals(prevLeash, surfaceAnimator.mLeash);
-        assertNotEquals(prevSnapshot, surfaceAnimator.mSnapshot);
-
-        // Clean up after animation finished.
-        surfaceAnimator.mInnerAnimationFinishedCallback.onAnimationFinished(
-                ANIMATION_TYPE_APP_TRANSITION, surfaceAnimator.getAnimation());
-
-        verify(container).onAnimationLeashLost(any());
-        assertNull(surfaceAnimator.mLeash);
-        assertNull(surfaceAnimator.mSnapshot);
-    }
-
-    @Test
-    public void testUnfreezeWindow_removeWindowFromChanging() {
-        final WindowContainer container = createTaskFragmentWithActivity(
-                createTask(mDisplayContent));
-        mockSurfaceFreezerSnapshot(container.mSurfaceFreezer);
-        final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
-
-        container.initializeChangeTransition(new Rect(0, 0, 1000, 2000));
-
-        assertTrue(mDisplayContent.mChangingContainers.contains(container));
-
-        container.mSurfaceFreezer.unfreeze(t);
-
-        assertFalse(mDisplayContent.mChangingContainers.contains(container));
-    }
-
-    @Test
-    public void testFailToTaskSnapshot_unfreezeWindow() {
-        final WindowContainer container = createTaskFragmentWithActivity(
-                createTask(mDisplayContent));
-        final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
-        spyOn(container.mSurfaceFreezer);
-
-        container.initializeChangeTransition(new Rect(0, 0, 1000, 2000));
-
-        verify(container.mSurfaceFreezer).freeze(any(), any(), any(), any());
-        verify(container.mSurfaceFreezer).unfreeze(any());
-        assertTrue(mDisplayContent.mChangingContainers.isEmpty());
-    }
-
-    @Test
-    public void testRemoveUnstartedFreezeSurfaceWhenFreezeAgain() {
-        final WindowContainer container = createTaskFragmentWithActivity(
-                createTask(mDisplayContent));
-        container.mSurfaceControl = mock(SurfaceControl.class);
-        final SurfaceFreezer surfaceFreezer = container.mSurfaceFreezer;
-        mockSurfaceFreezerSnapshot(surfaceFreezer);
-        final SurfaceControl.Transaction t = mock(SurfaceControl.Transaction.class);
-        spyOn(container);
-        doReturn(t).when(container).getPendingTransaction();
-        doReturn(t).when(container).getSyncTransaction();
-
-        // Leash and snapshot created for change transition.
-        container.initializeChangeTransition(new Rect(0, 0, 1000, 2000));
-
-        assertNotNull(surfaceFreezer.mLeash);
-        assertNotNull(surfaceFreezer.mSnapshot);
-
-        final SurfaceControl prevLeash = surfaceFreezer.mLeash;
-        final SurfaceFreezer.Snapshot prevSnapshot = surfaceFreezer.mSnapshot;
-        spyOn(prevSnapshot);
-
-        container.initializeChangeTransition(new Rect(0, 0, 1500, 2500));
-
-        verify(t).remove(prevLeash);
-        verify(prevSnapshot).destroy(t);
     }
 
     @Test
@@ -1476,10 +1241,12 @@ public class WindowContainerTests extends WindowTestsBase {
         Rect genericOverlayInsetsRect2 = new Rect(0, 0, 1080, 200);
         final InsetsFrameProvider provider1 =
                 new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(genericOverlayInsetsRect1);
+                        .setArbitraryRectangle(genericOverlayInsetsRect1)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final InsetsFrameProvider provider2 =
                 new InsetsFrameProvider(owner, 2, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(genericOverlayInsetsRect2);
+                        .setArbitraryRectangle(genericOverlayInsetsRect2)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final int sourceId1 = provider1.getId();
         final int sourceId2 = provider2.getId();
 
@@ -1516,6 +1283,84 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
+    public void testAddLocalInsetsFrameProvider_relativeInsets() {
+         /*
+                ___ rootTask _______________________________________________
+               |        |                |                                  |
+          activity0    container     navigationBarInsetsProvider1    navigationBarInsetsProvider2
+                       /       \
+               activity1    activity2
+         */
+        final Task rootTask = createTask(mDisplayContent);
+
+        final ActivityRecord activity0 = createActivityRecord(mDisplayContent,
+                createTaskInRootTask(rootTask, 0 /* userId */));
+        final WindowManager.LayoutParams attrs = new WindowManager.LayoutParams(
+                TYPE_BASE_APPLICATION);
+        attrs.setTitle("AppWindow0");
+        activity0.addWindow(createWindowState(attrs, activity0));
+
+        final Task container = createTaskInRootTask(rootTask, 0);
+        final ActivityRecord activity1 = createActivityRecord(mDisplayContent,
+                createTaskInRootTask(container, 0 /* userId */));
+        final WindowManager.LayoutParams attrs1 = new WindowManager.LayoutParams(
+                TYPE_BASE_APPLICATION);
+        attrs1.setTitle("AppWindow1");
+        activity1.addWindow(createWindowState(attrs1, activity1));
+
+        final ActivityRecord activity2 = createActivityRecord(mDisplayContent,
+                createTaskInRootTask(container, 0 /* userId */));
+        final WindowManager.LayoutParams attrs2 = new WindowManager.LayoutParams(
+                TYPE_BASE_APPLICATION);
+        attrs2.setTitle("AppWindow2");
+        activity2.addWindow(createWindowState(attrs2, activity2));
+        final Binder owner = new Binder();
+        Insets genericOverlayInsetsSize1 = Insets.of(0, 200, 0, 0);
+        Insets genericOverlayInsetsSize2 = Insets.of(0, 0, 0, 200);
+        final InsetsFrameProvider provider1 =
+                new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
+                        .setInsetsSize(genericOverlayInsetsSize1)
+                        .setSource(InsetsFrameProvider.SOURCE_ATTACHED_CONTAINER_BOUNDS);
+        final InsetsFrameProvider provider2 =
+                new InsetsFrameProvider(owner, 2, WindowInsets.Type.systemOverlays())
+                        .setInsetsSize(genericOverlayInsetsSize2)
+                        .setSource(InsetsFrameProvider.SOURCE_ATTACHED_CONTAINER_BOUNDS);
+        final int sourceId1 = provider1.getId();
+        final int sourceId2 = provider2.getId();
+
+        rootTask.addLocalInsetsFrameProvider(provider1, owner);
+        container.addLocalInsetsFrameProvider(provider2, owner);
+
+        InsetsSource genericOverlayInsetsProvider1Source = new InsetsSource(
+                sourceId1, systemOverlays());
+        genericOverlayInsetsProvider1Source.setAttachedInsets(genericOverlayInsetsSize1);
+        genericOverlayInsetsProvider1Source.setVisible(true);
+        InsetsSource genericOverlayInsetsProvider2Source = new InsetsSource(
+                sourceId2, systemOverlays());
+        genericOverlayInsetsProvider2Source.setAttachedInsets(genericOverlayInsetsSize2);
+        genericOverlayInsetsProvider2Source.setVisible(true);
+
+        activity0.forAllWindows(window -> {
+            assertEquals(genericOverlayInsetsSize1,
+                    window.getInsetsState().peekSource(sourceId1).getAttachedInsets());
+            assertEquals(null,
+                    window.getInsetsState().peekSource(sourceId2));
+        }, true);
+        activity1.forAllWindows(window -> {
+            assertEquals(genericOverlayInsetsSize1,
+                    window.getInsetsState().peekSource(sourceId1).getAttachedInsets());
+            assertEquals(genericOverlayInsetsSize2,
+                    window.getInsetsState().peekSource(sourceId2).getAttachedInsets());
+        }, true);
+        activity2.forAllWindows(window -> {
+            assertEquals(genericOverlayInsetsSize1,
+                    window.getInsetsState().peekSource(sourceId1).getAttachedInsets());
+            assertEquals(genericOverlayInsetsSize2,
+                    window.getInsetsState().peekSource(sourceId2).getAttachedInsets());
+        }, true);
+    }
+
+    @Test
     public void testAddLocalInsetsFrameProvider_sameType_replacesInsets() {
          /*
                 ___ rootTask ________________________________________
@@ -1536,10 +1381,12 @@ public class WindowContainerTests extends WindowTestsBase {
         final Rect genericOverlayInsetsRect2 = new Rect(0, 0, 1080, 200);
         final InsetsFrameProvider provider1 =
                 new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(genericOverlayInsetsRect1);
+                        .setArbitraryRectangle(genericOverlayInsetsRect1)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final InsetsFrameProvider provider2 =
                 new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(genericOverlayInsetsRect2);
+                        .setArbitraryRectangle(genericOverlayInsetsRect2)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final int sourceId1 = provider1.getId();
         final int sourceId2 = provider2.getId();
 
@@ -1597,10 +1444,12 @@ public class WindowContainerTests extends WindowTestsBase {
         final Rect navigationBarInsetsRect2 = new Rect(0, 0, 1080, 200);
         final InsetsFrameProvider provider1 =
                 new InsetsFrameProvider(owner, 1, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(navigationBarInsetsRect1);
+                        .setArbitraryRectangle(navigationBarInsetsRect1)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final InsetsFrameProvider provider2 =
                 new InsetsFrameProvider(owner, 2, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(navigationBarInsetsRect2);
+                        .setArbitraryRectangle(navigationBarInsetsRect2)
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         final int sourceId1 = provider1.getId();
         final int sourceId2 = provider2.getId();
 
@@ -1638,7 +1487,8 @@ public class WindowContainerTests extends WindowTestsBase {
         final TestBinder owner = new TestBinder();
         final InsetsFrameProvider provider =
                 new InsetsFrameProvider(owner, 0, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(new Rect());
+                        .setArbitraryRectangle(new Rect())
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         task.addLocalInsetsFrameProvider(provider, owner);
 
         assertTrue("The death recipient must exist.", owner.hasDeathRecipient());
@@ -1661,7 +1511,8 @@ public class WindowContainerTests extends WindowTestsBase {
 
         final InsetsFrameProvider provider =
                 new InsetsFrameProvider(owner, 0, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(new Rect());
+                        .setArbitraryRectangle(new Rect())
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         task.addLocalInsetsFrameProvider(provider, owner);
 
         assertFalse("The death recipient must not exist.", owner.hasDeathRecipient());
@@ -1674,7 +1525,8 @@ public class WindowContainerTests extends WindowTestsBase {
         final TestBinder owner = new TestBinder();
         final InsetsFrameProvider provider =
                 new InsetsFrameProvider(owner, 0, WindowInsets.Type.systemOverlays())
-                        .setArbitraryRectangle(new Rect());
+                        .setArbitraryRectangle(new Rect())
+                        .setSource(InsetsFrameProvider.SOURCE_ARBITRARY_RECTANGLE);
         task.addLocalInsetsFrameProvider(provider, owner);
 
         assertTrue("The death recipient must exist.", owner.hasDeathRecipient());
@@ -1684,6 +1536,93 @@ public class WindowContainerTests extends WindowTestsBase {
 
         assertFalse("The death recipient must be removed.", owner.hasDeathRecipient());
         assertFalse("The source must be removed.", hasLocalSource(task, provider.getId()));
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SAFE_REGION_LETTERBOXING_V1)
+    public void testSetSafeRegionBounds_appliedOnNodeAndChildren() {
+        final TestWindowContainerBuilder builder = new TestWindowContainerBuilder(mWm);
+        final TestWindowContainer root = builder.setLayer(0).build();
+
+        final TestWindowContainer child1 = root.addChildWindow();
+        final TestWindowContainer child2 = root.addChildWindow();
+        final TestWindowContainer child11 = child1.addChildWindow();
+        final TestWindowContainer child12 = child1.addChildWindow();
+        final TestWindowContainer child21 = child2.addChildWindow();
+
+        assertNull(root.getSafeRegionBounds());
+        assertNull(child1.getSafeRegionBounds());
+        assertNull(child11.getSafeRegionBounds());
+        assertNull(child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
+
+        final Rect tempSafeRegionBounds1 = new Rect(50, 50, 200, 300);
+        child1.setSafeRegionBounds(tempSafeRegionBounds1);
+
+        assertNull(root.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child1.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child11.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
+
+        // Set different safe region bounds on child11
+        final Rect tempSafeRegionBounds2 = new Rect(30, 30, 200, 200);
+        child11.setSafeRegionBounds(tempSafeRegionBounds2);
+
+        assertNull(root.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child1.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds2, child11.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SAFE_REGION_LETTERBOXING_V1)
+    public void testSetSafeRegionBounds_resetSafeRegionBounds() {
+        final TestWindowContainerBuilder builder = new TestWindowContainerBuilder(mWm);
+        final TestWindowContainer root = builder.setLayer(0).build();
+
+        final TestWindowContainer child1 = root.addChildWindow();
+        final TestWindowContainer child2 = root.addChildWindow();
+        final TestWindowContainer child11 = child1.addChildWindow();
+        final TestWindowContainer child12 = child1.addChildWindow();
+        final TestWindowContainer child21 = child2.addChildWindow();
+
+        assertNull(root.getSafeRegionBounds());
+        assertNull(child1.getSafeRegionBounds());
+        assertNull(child11.getSafeRegionBounds());
+        assertNull(child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
+
+        final Rect tempSafeRegionBounds1 = new Rect(50, 50, 200, 300);
+        child1.setSafeRegionBounds(tempSafeRegionBounds1);
+
+        assertNull(root.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child1.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child11.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
+
+        // Set different safe region bounds on child11
+        final Rect tempSafeRegionBounds2 = new Rect(30, 30, 200, 200);
+        child11.setSafeRegionBounds(tempSafeRegionBounds2);
+
+        assertEquals(tempSafeRegionBounds2, child11.getSafeRegionBounds());
+
+        // Reset safe region bounds on child11. Now child11 will use child1 safe region bounds.
+        child11.setSafeRegionBounds(/* safeRegionBounds */null);
+
+        assertNull(root.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child1.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child11.getSafeRegionBounds());
+        assertEquals(tempSafeRegionBounds1, child12.getSafeRegionBounds());
+        assertNull(child2.getSafeRegionBounds());
+        assertNull(child21.getSafeRegionBounds());
     }
 
     @Test
@@ -1771,7 +1710,6 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
-    @RequiresFlagsEnabled(android.view.inputmethod.Flags.FLAG_REFACTOR_INSETS_CONTROLLER)
     public void testSetExcludeInsetsTypes_appliedAfterReparenting() {
         final SurfaceControl mockSurfaceControl = mock(SurfaceControl.class);
         final DisplayContent mockDisplayContent = mock(DisplayContent.class);
@@ -1807,7 +1745,6 @@ public class WindowContainerTests extends WindowTestsBase {
     }
 
     @Test
-    @RequiresFlagsEnabled(android.view.inputmethod.Flags.FLAG_REFACTOR_INSETS_CONTROLLER)
     public void testSetExcludeInsetsTypes_notifyInsetsAfterChange() {
         final var mockDisplayContent = mock(DisplayContent.class);
         final var mockInsetsStateController = mock(InsetsStateController.class);
@@ -1895,7 +1832,7 @@ public class WindowContainerTests extends WindowTestsBase {
         };
 
         TestWindowContainer(WindowManagerService wm, int layer, boolean isAnimating,
-                boolean isVisible, boolean waitTransitStart, Integer orientation, WindowState ws) {
+                boolean isVisible, Integer orientation, WindowState ws) {
             super(wm);
 
             mLayer = layer;
@@ -1903,7 +1840,6 @@ public class WindowContainerTests extends WindowTestsBase {
             mIsVisible = isVisible;
             mFillsParent = true;
             mOrientation = orientation;
-            mWaitForTransitStart = waitTransitStart;
             mWindowState = ws;
             spyOn(mSurfaceAnimator);
             doReturn(mIsAnimating).when(mSurfaceAnimator).isAnimating();
@@ -1969,11 +1905,6 @@ public class WindowContainerTests extends WindowTestsBase {
         }
 
         @Override
-        boolean isWaitingForTransitionStart() {
-            return mWaitForTransitStart;
-        }
-
-        @Override
         WindowState asWindowState() {
             return mWindowState;
         }
@@ -1984,7 +1915,6 @@ public class WindowContainerTests extends WindowTestsBase {
         private int mLayer;
         private boolean mIsAnimating;
         private boolean mIsVisible;
-        private boolean mIsWaitTransitStart;
         private Integer mOrientation;
         private WindowState mWindowState;
 
@@ -2022,14 +1952,9 @@ public class WindowContainerTests extends WindowTestsBase {
             return this;
         }
 
-        TestWindowContainerBuilder setWaitForTransitionStart(boolean waitTransitStart) {
-            mIsWaitTransitStart = waitTransitStart;
-            return this;
-        }
-
         TestWindowContainer build() {
             return new TestWindowContainer(mWm, mLayer, mIsAnimating, mIsVisible,
-                    mIsWaitTransitStart, mOrientation, mWindowState);
+                    mOrientation, mWindowState);
         }
     }
 

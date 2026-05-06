@@ -16,9 +16,9 @@
 
 package android.hardware;
 
-import static android.companion.virtual.VirtualDeviceManager.ACTION_VIRTUAL_DEVICE_REMOVED;
-import static android.companion.virtual.VirtualDeviceManager.EXTRA_VIRTUAL_DEVICE_ID;
+import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_CUSTOM;
 import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_DEFAULT;
+import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_INVALID;
 import static android.companion.virtual.VirtualDeviceParams.POLICY_TYPE_SENSORS;
 import static android.content.Context.DEVICE_ID_DEFAULT;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
@@ -145,7 +145,7 @@ public class SystemSensorManager extends SensorManager {
 
     private Optional<Boolean> mHasHighSamplingRateSensorsPermission = Optional.empty();
 
-    /** {@hide} */
+    /** @hide */
     public SystemSensorManager(Context context, Looper mainLooper) {
         synchronized (sLock) {
             if (!sNativeClassInited) {
@@ -162,15 +162,15 @@ public class SystemSensorManager extends SensorManager {
         mIsPackageDebuggable = (0 != (appInfo.flags & ApplicationInfo.FLAG_DEBUGGABLE));
 
         // initialize the sensor list
-        for (int index = 0;; ++index) {
-            Sensor sensor = new Sensor();
-            if (android.companion.virtual.flags.Flags.enableNativeVdm()) {
+        if (getSensorPolicy(mContext.getDeviceId()) == DEVICE_POLICY_CUSTOM) {
+            createRuntimeSensorListLocked(mContext.getDeviceId());
+        } else {
+            for (int index = 0; ; ++index) {
+                Sensor sensor = new Sensor();
                 if (!nativeGetDefaultDeviceSensorAtIndex(mNativeInstance, sensor, index)) break;
-            } else {
-                if (!nativeGetSensorAtIndex(mNativeInstance, sensor, index)) break;
+                mFullSensorsList.add(sensor);
+                mHandleToSensor.put(sensor.getHandle(), sensor);
             }
-            mFullSensorsList.add(sensor);
-            mHandleToSensor.put(sensor.getHandle(), sensor);
         }
     }
 
@@ -178,7 +178,11 @@ public class SystemSensorManager extends SensorManager {
     @Override
     public List<Sensor> getSensorList(int type) {
         final int deviceId = mContext.getDeviceId();
-        if (isDeviceSensorPolicyDefault(deviceId)) {
+        final int sensorPolicy = getSensorPolicy(deviceId);
+        if (sensorPolicy == DEVICE_POLICY_INVALID) {
+            return Collections.emptyList();
+        }
+        if (sensorPolicy == DEVICE_POLICY_DEFAULT) {
             return super.getSensorList(type);
         }
 
@@ -214,7 +218,11 @@ public class SystemSensorManager extends SensorManager {
     @Override
     protected List<Sensor> getFullSensorList() {
         final int deviceId = mContext.getDeviceId();
-        if (isDeviceSensorPolicyDefault(deviceId)) {
+        final int sensorPolicy = getSensorPolicy(deviceId);
+        if (sensorPolicy == DEVICE_POLICY_INVALID) {
+            return List.of();
+        }
+        if (sensorPolicy == DEVICE_POLICY_DEFAULT) {
             return mFullSensorsList;
         }
 
@@ -262,9 +270,25 @@ public class SystemSensorManager extends SensorManager {
             return false;
         }
         if (mSensorListeners.size() >= MAX_LISTENER_COUNT) {
-            throw new IllegalStateException("register failed, "
-                + "the sensor listeners size has exceeded the maximum limit "
-                + MAX_LISTENER_COUNT);
+            Log.e(TAG, "Too many sensor listeners! Dump:");
+            Map<String, Integer> listenerCounts = new HashMap<>();
+            synchronized (mSensorListeners) {
+                int i = 0;
+                for (SensorEventListener debugListener : mSensorListeners.keySet()) {
+                    String listenerName = debugListener.toString();
+                    Log.e(TAG, "  " + ++i + ": " + listenerName);
+                    int index = listenerName.indexOf('@');
+                    listenerName = index < 0 ? listenerName
+                            : listenerName.substring(0, index);
+                    listenerCounts.put(
+                            listenerName, listenerCounts.getOrDefault(listenerName, 0) + 1);
+                }
+            }
+            Map.Entry<String, Integer> maxEntry = listenerCounts.entrySet().stream()
+                    .max(Map.Entry.comparingByValue()).get();
+            throw new IllegalStateException("Too many sensor listeners (" + MAX_LISTENER_COUNT
+                    + "). Most common: " + maxEntry.getKey() + " (" + maxEntry.getValue()
+                    + ")");
         }
 
         // Invariants to preserve:
@@ -555,11 +579,7 @@ public class SystemSensorManager extends SensorManager {
     }
 
     private List<Sensor> createRuntimeSensorListLocked(int deviceId) {
-        if (android.companion.virtual.flags.Flags.vdmPublicApis()) {
-            setupVirtualDeviceListener();
-        } else {
-            setupRuntimeSensorBroadcastReceiver();
-        }
+        setupVirtualDeviceListener();
         List<Sensor> list = new ArrayList<>();
         nativeGetRuntimeSensors(mNativeInstance, deviceId, list);
         mFullRuntimeSensorListByDevice.put(deviceId, list);
@@ -568,35 +588,6 @@ public class SystemSensorManager extends SensorManager {
             mHandleToSensor.put(s.getHandle(), s);
         }
         return list;
-    }
-
-    private void setupRuntimeSensorBroadcastReceiver() {
-        if (mRuntimeSensorBroadcastReceiver == null) {
-            mRuntimeSensorBroadcastReceiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    if (intent.getAction().equals(ACTION_VIRTUAL_DEVICE_REMOVED)) {
-                        synchronized (mFullRuntimeSensorListByDevice) {
-                            final int deviceId = intent.getIntExtra(
-                                    EXTRA_VIRTUAL_DEVICE_ID, DEVICE_ID_DEFAULT);
-                            List<Sensor> removedSensors =
-                                    mFullRuntimeSensorListByDevice.removeReturnOld(deviceId);
-                            if (removedSensors != null) {
-                                for (Sensor s : removedSensors) {
-                                    cleanupSensorConnection(s);
-                                }
-                            }
-                            mRuntimeSensorListByDeviceByType.remove(deviceId);
-                        }
-                    }
-                }
-            };
-
-            IntentFilter filter = new IntentFilter("virtual_device_removed");
-            filter.addAction(ACTION_VIRTUAL_DEVICE_REMOVED);
-            mContext.registerReceiver(mRuntimeSensorBroadcastReceiver, filter,
-                    Context.RECEIVER_NOT_EXPORTED);
-        }
     }
 
     private void setupVirtualDeviceListener() {
@@ -770,7 +761,11 @@ public class SystemSensorManager extends SensorManager {
     protected SensorDirectChannel createDirectChannelImpl(
             MemoryFile memoryFile, HardwareBuffer hardwareBuffer) {
         int deviceId = mContext.getDeviceId();
-        if (isDeviceSensorPolicyDefault(deviceId)) {
+        final int sensorPolicy = getSensorPolicy(deviceId);
+        if (sensorPolicy == DEVICE_POLICY_INVALID) {
+            throw new IllegalArgumentException("Invalid device id in context");
+        }
+        if (sensorPolicy == DEVICE_POLICY_DEFAULT) {
             deviceId = DEVICE_ID_DEFAULT;
         }
         int id;
@@ -799,6 +794,10 @@ public class SystemSensorManager extends SensorManager {
             }
             type = SensorDirectChannel.TYPE_MEMORY_FILE;
         } else if (hardwareBuffer != null) {
+            if (deviceId != DEVICE_ID_DEFAULT) {
+                throw new UnsupportedOperationException(
+                        "HardwareBuffer direct channel is only supported for default device");
+            }
             if (hardwareBuffer.getFormat() != HardwareBuffer.BLOB) {
                 throw new IllegalArgumentException("Format of HardwareBuffer must be BLOB");
             }
@@ -1221,15 +1220,17 @@ public class SystemSensorManager extends SensorManager {
                 parameter.type, parameter.floatValues, parameter.intValues) == 0;
     }
 
-    private boolean isDeviceSensorPolicyDefault(int deviceId) {
+    private int getSensorPolicy(int deviceId) {
         if (deviceId == DEVICE_ID_DEFAULT) {
-            return true;
+            return DEVICE_ID_DEFAULT;
         }
         if (mVdm == null) {
             mVdm = mContext.getSystemService(VirtualDeviceManager.class);
         }
-        return mVdm == null
-                || mVdm.getDevicePolicy(deviceId, POLICY_TYPE_SENSORS) == DEVICE_POLICY_DEFAULT;
+        if (mVdm == null) {
+            return DEVICE_POLICY_INVALID;
+        }
+        return mVdm.getDevicePolicy(deviceId, POLICY_TYPE_SENSORS);
     }
 
     /**

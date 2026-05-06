@@ -41,10 +41,7 @@ the file, one after the other without separators:
 }
 ```
 
-Many examples of command files can be found [in the CTS tests][cts-example-jsons].
-
 [lenient mode]: https://developer.android.com/reference/android/util/JsonReader#setLenient(boolean)
-[cts-example-jsons]: https://cs.android.com/android/platform/superproject/main/+/main:cts/tests/tests/hardware/res/raw/
 
 ### Command reference
 
@@ -59,7 +56,7 @@ Register a new uinput device
 | `name`           | string         | Device name                |
 | `vid`            | 16-bit integer | Vendor ID                  |
 | `pid`            | 16-bit integer | Product ID                 |
-| `bus`            | string         | Bus that device should use |
+| `bus`            | string         | The bus to report          |
 | `port`           | string         | `phys` value to report     |
 | `configuration`  | object array   | uinput device configuration|
 | `ff_effects_max` | integer        | `ff_effects_max` value     |
@@ -68,8 +65,11 @@ Register a new uinput device
 `id` is used for matching the subsequent commands to a specific device to avoid ambiguity when
 multiple devices are registered.
 
-`bus` is used to determine how the uinput device is connected to the host. The options are `"usb"`
-and `"bluetooth"`.
+`bus` specifies the bus that the kernel should report the device as being connected to. The most
+common values are `"usb"` and `"bluetooth"`, but any bus with a `BUS_…` constant in the [Linux
+kernel's input.h][input.h] can be specified using the part of its identifier after `BUS_`. For
+example, to specify the SPI bus type (`BUS_SPI` in the kernel header), use `"spi"` (or `"SPI"`,
+since it's case-insensitive).
 
 Device configuration is used to configure the uinput device. The `type` field provides a `UI_SET_*`
 control code as an integer value or a string label (e.g. `"UI_SET_EVBIT"`), and data is a vector of
@@ -120,7 +120,7 @@ Example:
   "pid": 0x2c42,
   "bus": "usb",
   "configuration":[
-        {"type":"UI_SET_EVBIT", "data":["EV_KEY", "EV_FF"]},
+        {"type":"UI_SET_EVBIT", "data":["EV_KEY", "EV_ABS", "EV_FF"]},
         {"type":"UI_SET_KEYBIT", "data":["KEY_0", "KEY_1", "KEY_2", "KEY_3"]},
         {"type":"UI_SET_ABSBIT", "data":["ABS_Y", "ABS_WHEEL"]},
         {"type":"UI_SET_FFBIT", "data":["FF_RUMBLE"]}
@@ -137,6 +137,7 @@ Example:
 }
 ```
 
+[input.h]: https://source.chromium.org/chromiumos/chromiumos/codesearch/+/main:src/third_party/kernel/upstream/include/uapi/linux/input.h?q=BUS_
 [struct input_absinfo]: https://cs.android.com/android/platform/superproject/main/+/main:bionic/libc/kernel/uapi/linux/input.h?q=%22struct%20input_absinfo%22
 
 ##### Waiting for registration

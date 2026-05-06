@@ -17,7 +17,6 @@
 package android.app;
 
 import static android.app.PropertyInvalidatedCache.MODULE_SYSTEM;
-import static android.app.PropertyInvalidatedCache.createSystemCacheKey;
 import static android.app.admin.DevicePolicyResources.Drawables.Style.SOLID_COLORED;
 import static android.app.admin.DevicePolicyResources.Drawables.Style.SOLID_NOT_COLORED;
 import static android.app.admin.DevicePolicyResources.Drawables.WORK_PROFILE_ICON;
@@ -79,6 +78,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.SharedLibraryInfo;
 import android.content.pm.SuspendDialogInfo;
+import android.content.pm.SystemFeaturesCache;
 import android.content.pm.VerifierDeviceIdentity;
 import android.content.pm.VersionedPackage;
 import android.content.pm.dex.ArtManager;
@@ -128,6 +128,7 @@ import android.util.LauncherIcons;
 import android.util.Log;
 import android.util.Slog;
 import android.util.Xml;
+import android.window.DesktopExperienceFlags;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -199,6 +200,8 @@ public class ApplicationPackageManager extends PackageManager {
     @NonNull
     @GuardedBy("mPackageMonitorCallbacks")
     private final ArraySet<IRemoteCallback> mPackageMonitorCallbacks = new ArraySet<>();
+
+    private final boolean mUseSystemFeaturesCache;
 
     UserManager getUserManager() {
         if (mUserManager == null) {
@@ -300,13 +303,23 @@ public class ApplicationPackageManager extends PackageManager {
 
     @Override
     public Intent getLaunchIntentForPackage(String packageName) {
+        return getLaunchIntentForPackage(packageName, false);
+    }
+
+    @Override
+    @Nullable
+    public Intent getLaunchIntentForPackage(@NonNull String packageName,
+            boolean includeDirectBootUnaware) {
+        ResolveInfoFlags queryFlags = ResolveInfoFlags.of(
+                includeDirectBootUnaware ? MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE : 0);
+
         // First see if the package has an INFO activity; the existence of
         // such an activity is implied to be the desired front-door for the
         // overall package (such as if it has multiple launcher entries).
         Intent intentToResolve = new Intent(Intent.ACTION_MAIN);
         intentToResolve.addCategory(Intent.CATEGORY_INFO);
         intentToResolve.setPackage(packageName);
-        List<ResolveInfo> ris = queryIntentActivities(intentToResolve, 0);
+        List<ResolveInfo> ris = queryIntentActivities(intentToResolve, queryFlags);
 
         // Otherwise, try to find a main launcher activity.
         if (ris == null || ris.size() <= 0) {
@@ -314,7 +327,7 @@ public class ApplicationPackageManager extends PackageManager {
             intentToResolve.removeCategory(Intent.CATEGORY_INFO);
             intentToResolve.addCategory(Intent.CATEGORY_LAUNCHER);
             intentToResolve.setPackage(packageName);
-            ris = queryIntentActivities(intentToResolve, 0);
+            ris = queryIntentActivities(intentToResolve, queryFlags);
         }
         if (ris == null || ris.size() <= 0) {
             return null;
@@ -804,16 +817,6 @@ public class ApplicationPackageManager extends PackageManager {
                 @Override
                 public Boolean recompute(HasSystemFeatureQuery query) {
                     try {
-                        // As an optimization, check first to see if the feature was defined at
-                        // compile-time as either available or unavailable.
-                        // TODO(b/203143243): Consider hoisting this optimization out of the cache
-                        // after the trunk stable (build) flag has soaked and more features are
-                        // defined at compile-time.
-                        Boolean maybeHasSystemFeature =
-                                RoSystemFeatures.maybeHasFeature(query.name, query.version);
-                        if (maybeHasSystemFeature != null) {
-                            return maybeHasSystemFeature.booleanValue();
-                        }
                         return ActivityThread.currentActivityThread().getPackageManager().
                             hasSystemFeature(query.name, query.version);
                     } catch (RemoteException e) {
@@ -824,12 +827,24 @@ public class ApplicationPackageManager extends PackageManager {
 
     @Override
     public boolean hasSystemFeature(String name, int version) {
+        // We check for system features in the following order:
+        //    * Build time-defined system features (constant, very efficient)
+        //    * SDK-defined system features (cached at process start, very efficient)
+        //    * IPC-retrieved system features (lazily cached, requires per-feature IPC)
+        // TODO(b/375000483): Refactor all of this logic, including flag queries, into
+        // the SystemFeaturesCache class after initial rollout and validation.
+        Boolean maybeHasSystemFeature = RoSystemFeatures.maybeHasFeature(name, version);
+        if (maybeHasSystemFeature != null) {
+            return maybeHasSystemFeature;
+        }
+        if (mUseSystemFeaturesCache) {
+            maybeHasSystemFeature =
+                    SystemFeaturesCache.getInstance().maybeHasFeature(name, version);
+            if (maybeHasSystemFeature != null) {
+                return maybeHasSystemFeature;
+            }
+        }
         return mHasSystemFeatureCache.query(new HasSystemFeatureQuery(name, version));
-    }
-
-    /** @hide */
-    public void disableHasSystemFeatureCache() {
-        mHasSystemFeatureCache.disableLocal();
     }
 
     /** @hide */
@@ -1146,12 +1161,16 @@ public class ApplicationPackageManager extends PackageManager {
         }
     }
 
-    private static final String CACHE_KEY_PACKAGES_FOR_UID_PROPERTY =
-            createSystemCacheKey("get_packages_for_uid");
-    private static final PropertyInvalidatedCache<Integer, GetPackagesForUidResult>
-            mGetPackagesForUidCache =
-            new PropertyInvalidatedCache<Integer, GetPackagesForUidResult>(
-                1024, CACHE_KEY_PACKAGES_FOR_UID_PROPERTY) {
+    private static final String CACHE_KEY_PACKAGES_FOR_UID_API = "get_packages_for_uid";
+
+    /** @hide */
+    @VisibleForTesting
+    public static final PropertyInvalidatedCache<Integer, GetPackagesForUidResult>
+            sGetPackagesForUidCache = new PropertyInvalidatedCache<>(
+                new PropertyInvalidatedCache.Args(MODULE_SYSTEM)
+                .maxEntries(1024).api(CACHE_KEY_PACKAGES_FOR_UID_API).cacheNulls(true),
+                CACHE_KEY_PACKAGES_FOR_UID_API, null) {
+
                 @Override
                 public GetPackagesForUidResult recompute(Integer uid) {
                     try {
@@ -1170,17 +1189,17 @@ public class ApplicationPackageManager extends PackageManager {
 
     @Override
     public String[] getPackagesForUid(int uid) {
-        return mGetPackagesForUidCache.query(uid).value();
+        return sGetPackagesForUidCache.query(uid).value();
     }
 
     /** @hide */
     public static void disableGetPackagesForUidCache() {
-        mGetPackagesForUidCache.disableLocal();
+        sGetPackagesForUidCache.disableLocal();
     }
 
     /** @hide */
     public static void invalidateGetPackagesForUidCache() {
-        PropertyInvalidatedCache.invalidateCache(CACHE_KEY_PACKAGES_FOR_UID_PROPERTY);
+        sGetPackagesForUidCache.invalidateCache();
     }
 
     @Override
@@ -1478,22 +1497,36 @@ public class ApplicationPackageManager extends PackageManager {
 
     @Override
     public ResolveInfo resolveActivity(Intent intent, ResolveInfoFlags flags) {
-        return resolveActivityAsUser(intent, flags, getUserId());
+        return resolveActivityAsUser(intent, /* resolvedType= */ null, flags, getUserId());
     }
 
     @Override
     public ResolveInfo resolveActivityAsUser(Intent intent, int flags, int userId) {
-        return resolveActivityAsUser(intent, ResolveInfoFlags.of(flags), userId);
+        return resolveActivityAsUser(intent, /* resolvedType= */ null, ResolveInfoFlags.of(flags),
+                userId);
     }
 
     @Override
     public ResolveInfo resolveActivityAsUser(Intent intent, ResolveInfoFlags flags, int userId) {
+        return resolveActivityAsUser(intent, /* resolvedType= */ null, flags, userId);
+    }
+
+    @Override
+    public ResolveInfo resolveActivityAsUser(Intent intent, String resolvedType,
+            int flags, int userId) {
+        return resolveActivityAsUser(intent, resolvedType,
+                ResolveInfoFlags.of(flags), userId);
+    }
+
+    @Override
+    public ResolveInfo resolveActivityAsUser(Intent intent, String resolvedType,
+            ResolveInfoFlags flags, int userId) {
         try {
-            return mPM.resolveIntent(
-                intent,
-                intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                updateFlagsForComponent(flags.getValue(), userId, intent),
-                userId);
+            return mPM.resolveIntent(intent,
+                    resolvedType == null
+                        ? intent.resolveTypeIfNeeded(mContext.getContentResolver())
+                        : resolvedType,
+                    updateFlagsForComponent(flags.getValue(), userId, intent), userId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1520,18 +1553,29 @@ public class ApplicationPackageManager extends PackageManager {
     @SuppressWarnings("unchecked")
     public List<ResolveInfo> queryIntentActivitiesAsUser(Intent intent, ResolveInfoFlags flags,
             int userId) {
-        try {
-            ParceledListSlice<ResolveInfo> parceledList = mPM.queryIntentActivities(
-                    intent,
-                    intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    updateFlagsForComponent(flags.getValue(), userId, intent),
-                    userId);
-            if (parceledList == null) {
+        if (android.content.pm.Flags.cacheQueryIntentActivitiesInClientSide()) {
+            List<ResolveInfo> resolveInfos = sQueryIntentActivitiesCache.query(
+                    new IntentActivitiesQuery(intent,
+                            intent.resolveTypeIfNeeded(mContext.getContentResolver()),
+                            updateFlagsForComponent(flags.getValue(), userId, intent), userId));
+            if (resolveInfos == null) {
                 return Collections.emptyList();
             }
-            return parceledList.getList();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            return resolveInfos;
+        } else {
+            try {
+                ParceledListSlice<ResolveInfo> parceledList = mPM.queryIntentActivities(
+                        intent,
+                        intent.resolveTypeIfNeeded(mContext.getContentResolver()),
+                        updateFlagsForComponent(flags.getValue(), userId, intent),
+                        userId);
+                if (parceledList == null) {
+                    return Collections.emptyList();
+                }
+                return parceledList.getList();
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
         }
     }
 
@@ -1746,6 +1790,19 @@ public class ApplicationPackageManager extends PackageManager {
         try {
             return mPM.resolveContentProvider(name,
                     updateFlagsForComponent(flags.getValue(), userId, null), userId);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @hide **/
+    @Override
+    public ProviderInfo resolveContentProviderForUid(@NonNull String authority,
+            ComponentInfoFlags flags, int callingUid) {
+        try {
+            return mPM.resolveContentProviderForUid(authority,
+                updateFlagsForComponent(flags.getValue(), getUserId(), null), getUserId(),
+                callingUid);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -2106,7 +2163,15 @@ public class ApplicationPackageManager extends PackageManager {
     @Override
     public Resources getResourcesForApplication(@NonNull ApplicationInfo app)
             throws NameNotFoundException {
-        return getResourcesForApplication(app, null);
+        if (DesktopExperienceFlags.USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS.isTrue()) {
+            // To support multiple displays, we need to use the Configuration of the Resources
+            // associated with the Display of the current Context.
+            // Otherwise, we will be using wrong resource qualifiers due to different display
+            // configurations.
+            return getResourcesForApplication(app, mContext.getResources().getConfiguration());
+        } else {
+            return getResourcesForApplication(app, null);
+        }
     }
 
     @Override
@@ -2126,6 +2191,11 @@ public class ApplicationPackageManager extends PackageManager {
                 app.resourceDirs, app.overlayPaths, app.sharedLibraryFiles,
                 mContext.mPackageInfo, configuration);
         if (r != null) {
+            if (android.content.res.Flags.defaultLocale()
+                    && r.getConfiguration().getLocales().size() > 1) {
+                LocaleConfig lc = new LocaleConfig(app, r);
+                r.setLocaleConfig(lc);
+            }
             return r;
         }
         throw new NameNotFoundException("Unable to open " + app.publicSourceDir);
@@ -2201,6 +2271,19 @@ public class ApplicationPackageManager extends PackageManager {
     protected ApplicationPackageManager(ContextImpl context, IPackageManager pm) {
         mContext = context;
         mPM = pm;
+        mUseSystemFeaturesCache = isSystemFeaturesCacheAvailable();
+    }
+
+    private static boolean isSystemFeaturesCacheAvailable() {
+        if (ActivityThread.isSystem() && !SystemFeaturesCache.hasInstance()) {
+            // There are a handful of utility "system" processes that are neither system_server nor
+            // bound as applications. For these processes, we don't have access to application
+            // shared memory or the dependent system features cache.
+            // TODO(b/400713460): Revisit this exception after deprecating these command-like
+            // system processes.
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -3538,7 +3621,7 @@ public class ApplicationPackageManager extends PackageManager {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     private static class MoveCallbackDelegate extends IPackageMoveObserver.Stub implements
             Handler.Callback {
         private static final int MSG_CREATED = 1;
@@ -4191,5 +4274,102 @@ public class ApplicationPackageManager extends PackageManager {
             Log.e(TAG, "Error parsing: " + info.packageName, e);
             return null;
         }
+    }
+
+    private static final class IntentActivitiesQuery {
+        final Intent mIntent;
+        final String mResolvedType;
+        final long mFlags;
+        final int mUserId;
+
+        IntentActivitiesQuery(Intent intent, String resolvedType, long flags, int userId) {
+            this.mIntent = intent;
+            this.mResolvedType = resolvedType;
+            this.mFlags = flags;
+            this.mUserId = userId;
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = mIntent.filterHashCode();
+            hash = hash * 13 + Objects.hashCode(mResolvedType);
+            hash = hash * 13 + Long.hashCode(mFlags);
+            hash = hash * 13 + mUserId;
+            return hash;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object obj) {
+            if (obj == null) {
+                return false;
+            }
+            ApplicationPackageManager.IntentActivitiesQuery other;
+            try {
+                other = (ApplicationPackageManager.IntentActivitiesQuery) obj;
+            } catch (ClassCastException ex) {
+                return false;
+            }
+            return mIntent.filterEquals(other.mIntent)
+                    && Objects.equals(mResolvedType, other.mResolvedType)
+                    && mFlags == other.mFlags
+                    && mUserId == other.mUserId;
+        }
+    }
+
+    private static final String CACHE_KEY_QUERY_INTENT_ACTIVITIES_API = "query_intent_activities";
+
+    /** @hide */
+    @VisibleForTesting
+    public static final PropertyInvalidatedCache<IntentActivitiesQuery, List<ResolveInfo>>
+            sQueryIntentActivitiesCache = new PropertyInvalidatedCache<>(
+                    new PropertyInvalidatedCache.Args(MODULE_SYSTEM).maxEntries(1024).api(
+                            CACHE_KEY_QUERY_INTENT_ACTIVITIES_API).cacheNulls(true),
+                    CACHE_KEY_QUERY_INTENT_ACTIVITIES_API, null) {
+                @Override
+                public List<ResolveInfo> recompute(IntentActivitiesQuery query) {
+                    try {
+                        ParceledListSlice<ResolveInfo> parceledList =
+                                ActivityThread.currentActivityThread().getPackageManager()
+                                        .queryIntentActivities(
+                                        query.mIntent,
+                                        query.mResolvedType,
+                                        query.mFlags,
+                                        query.mUserId);
+                        if (parceledList == null) {
+                            return Collections.emptyList();
+                        }
+                        return parceledList.getList();
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                }
+
+                @Override
+                public String queryToString(IntentActivitiesQuery query) {
+                    StringBuilder b = new StringBuilder(128);
+                    b.append("Query { ");
+                    b.append("intent=").append(query.mIntent.toString());
+                    b.append(", resolvedType=").append(query.mResolvedType);
+                    b.append(", flags=").append(Long.toHexString(query.mFlags));
+                    b.append(", userId=").append(query.mUserId);
+                    b.append(" }");
+                    return b.toString();
+                }
+            };
+
+    /** @hide */
+    public static void disableQueryIntentActivitiesCacheForCurrentProcess() {
+        if (!android.content.pm.Flags.cacheQueryIntentActivitiesInClientSide()) {
+            return;
+        }
+        sQueryIntentActivitiesCache.disableForCurrentProcess();
+    }
+
+    /** @hide */
+    public static void invalidateQueryIntentActivitiesCache() {
+        if (!android.content.pm.Flags.cacheQueryIntentActivitiesInClientSide()) {
+            return;
+        }
+        sQueryIntentActivitiesCache.invalidateCache();
     }
 }

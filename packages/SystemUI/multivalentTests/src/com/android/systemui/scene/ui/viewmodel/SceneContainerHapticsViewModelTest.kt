@@ -29,6 +29,7 @@ import com.android.compose.animation.scene.OverlayKey
 import com.android.compose.animation.scene.SceneKey
 import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.haptics.msdl.fakeMSDLPlayer
 import com.android.systemui.kosmos.testScope
@@ -37,6 +38,9 @@ import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.scene.sceneContainerHapticsViewModelFactory
 import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.shade.domain.interactor.disableDualShade
+import com.android.systemui.shade.domain.interactor.enableDualShade
+import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.testKosmos
 import com.google.android.msdl.data.model.MSDLToken
 import com.google.common.truth.Truth.assertThat
@@ -57,7 +61,7 @@ import org.mockito.kotlin.verifyNoMoreInteractions
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @EnableSceneContainer
-class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
+class SceneContainerHapticsViewModelTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
@@ -74,10 +78,10 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
     }
 
     @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
-    @DisableFlags(Flags.FLAG_DUAL_SHADE)
     @Test
     fun onValidSceneTransition_withMSDL_playsMSDLShadePullHaptics() =
         testScope.runTest {
+            kosmos.disableDualShade()
             // GIVEN a valid scene transition to play haptics
             val validTransition = createTransitionState(from = Scenes.Gone, to = Scenes.Shade)
 
@@ -91,10 +95,10 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
         }
 
     @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
-    @DisableFlags(Flags.FLAG_DUAL_SHADE)
     @Test
     fun onInValidSceneTransition_withMSDL_doesNotPlayMSDLShadePullHaptics() =
         testScope.runTest {
+            kosmos.disableDualShade()
             // GIVEN an invalid scene transition to play haptics
             val invalidTransition = createTransitionState(from = Scenes.Shade, to = Scenes.Gone)
 
@@ -107,10 +111,11 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             assertThat(msdlPlayer.latestPropertiesPlayed).isNull()
         }
 
-    @DisableFlags(Flags.FLAG_DUAL_SHADE, Flags.FLAG_MSDL_FEEDBACK)
+    @DisableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onValidSceneTransition_withoutMSDL_playsHapticConstantForShadePullHaptics() =
         testScope.runTest {
+            kosmos.disableDualShade()
             // GIVEN a valid scene transition to play haptics
             val validTransition = createTransitionState(from = Scenes.Gone, to = Scenes.Shade)
 
@@ -122,10 +127,11 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             verify(view).performHapticFeedback(eq(HapticFeedbackConstants.GESTURE_START))
         }
 
-    @DisableFlags(Flags.FLAG_DUAL_SHADE, Flags.FLAG_MSDL_FEEDBACK)
+    @DisableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onInValidSceneTransition_withoutMSDL_doesNotPlayHapticConstantForShadePullHaptics() =
         testScope.runTest {
+            kosmos.disableDualShade()
             // GIVEN an invalid scene transition to play haptics
             val invalidTransition = createTransitionState(from = Scenes.Shade, to = Scenes.Gone)
 
@@ -137,10 +143,11 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             verifyNoMoreInteractions(view)
         }
 
-    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK, Flags.FLAG_DUAL_SHADE)
+    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onValidOverlayTransition_withMSDL_playsMSDLShadePullHaptics() =
         testScope.runTest {
+            kosmos.enableDualShade()
             // GIVEN a valid scene transition to play haptics
             val validTransition =
                 createTransitionState(from = Scenes.Gone, to = Overlays.NotificationsShade)
@@ -154,13 +161,14 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             assertThat(msdlPlayer.latestPropertiesPlayed).isNull()
         }
 
-    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK, Flags.FLAG_DUAL_SHADE)
+    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onInValidOverlayTransition_withMSDL_doesNotPlayMSDLShadePullHaptics() =
         testScope.runTest {
+            kosmos.enableDualShade()
             // GIVEN an invalid scene transition to play haptics
             val invalidTransition =
-                createTransitionState(from = Scenes.Bouncer, to = Overlays.NotificationsShade)
+                createTransitionState(from = Scenes.QuickSettings, to = Scenes.Gone)
 
             // WHEN the transition occurs
             sceneInteractor.setTransitionState(MutableStateFlow(invalidTransition))
@@ -171,11 +179,11 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             assertThat(msdlPlayer.latestPropertiesPlayed).isNull()
         }
 
-    @EnableFlags(Flags.FLAG_DUAL_SHADE)
     @DisableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onValidOverlayTransition_withoutMSDL_playsHapticConstantForShadePullHaptics() =
         testScope.runTest {
+            kosmos.enableDualShade()
             // GIVEN a valid scene transition to play haptics
             val validTransition =
                 createTransitionState(from = Scenes.Gone, to = Overlays.NotificationsShade)
@@ -188,14 +196,14 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             verify(view).performHapticFeedback(eq(HapticFeedbackConstants.GESTURE_START))
         }
 
-    @EnableFlags(Flags.FLAG_DUAL_SHADE)
     @DisableFlags(Flags.FLAG_MSDL_FEEDBACK)
     @Test
     fun onInValidOverlayTransition_withoutMSDL_doesNotPlayHapticConstantForShadePullHaptics() =
         testScope.runTest {
+            kosmos.enableDualShade()
             // GIVEN an invalid scene transition to play haptics
             val invalidTransition =
-                createTransitionState(from = Scenes.Bouncer, to = Overlays.NotificationsShade)
+                createTransitionState(from = Scenes.QuickSettings, to = Scenes.Gone)
 
             // WHEN the transition occurs
             sceneInteractor.setTransitionState(MutableStateFlow(invalidTransition))
@@ -205,7 +213,55 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
             verifyNoMoreInteractions(view)
         }
 
-    private fun createTransitionState(from: SceneKey, to: ContentKey) =
+    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
+    @Test
+    fun onRemoteUserInteraction_withValidSceneTransition_playsMSDLShadePullHaptics() =
+        testScope.runTest {
+            kosmos.disableDualShade()
+            val isUserInteracting by collectLastValue(kosmos.shadeInteractor.isUserInteracting)
+
+            // GIVEN a valid scene transition to play haptics that initiated remotely
+            val validTransition =
+                createTransitionState(from = Scenes.Gone, to = Scenes.Shade, byUser = false)
+            sceneInteractor.onRemoteUserInputStarted("remote input")
+
+            // WHEN the transition occurs
+            sceneInteractor.setTransitionState(MutableStateFlow(validTransition))
+            runCurrent()
+            assertThat(isUserInteracting).isTrue()
+
+            // THEN the expected token plays without interaction properties
+            assertThat(msdlPlayer.latestTokenPlayed).isEqualTo(MSDLToken.SWIPE_THRESHOLD_INDICATOR)
+            assertThat(msdlPlayer.latestPropertiesPlayed).isNull()
+        }
+
+    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
+    @Test
+    fun onRemoteUserInteraction_withValidOverlayTransition_playsMSDLShadePullHaptics() =
+        testScope.runTest {
+            kosmos.enableDualShade()
+            val isUserInteracting by collectLastValue(kosmos.shadeInteractor.isUserInteracting)
+
+            // GIVEN a valid scene transition to play haptics that initiated remotely
+            val validTransition =
+                createTransitionState(
+                    from = Scenes.Gone,
+                    to = Overlays.NotificationsShade,
+                    byUser = false,
+                )
+            sceneInteractor.onRemoteUserInputStarted("remote input")
+
+            // WHEN the transition occurs
+            sceneInteractor.setTransitionState(MutableStateFlow(validTransition))
+            runCurrent()
+            assertThat(isUserInteracting).isTrue()
+
+            // THEN the expected token plays without interaction properties
+            assertThat(msdlPlayer.latestTokenPlayed).isEqualTo(MSDLToken.SWIPE_THRESHOLD_INDICATOR)
+            assertThat(msdlPlayer.latestPropertiesPlayed).isNull()
+        }
+
+    private fun createTransitionState(from: SceneKey, to: ContentKey, byUser: Boolean = true) =
         when (to) {
             is SceneKey ->
                 ObservableTransitionState.Transition(
@@ -213,7 +269,7 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
                     toScene = to,
                     currentScene = flowOf(from),
                     progress = MutableStateFlow(0.2f),
-                    isInitiatedByUserInput = true,
+                    isInitiatedByUserInput = byUser,
                     isUserInputOngoing = flowOf(true),
                 )
             is OverlayKey ->
@@ -224,7 +280,7 @@ class SceneContainerHapticsViewModelTest() : SysuiTestCase() {
                     currentScene = from,
                     currentOverlays = sceneInteractor.currentOverlays,
                     progress = MutableStateFlow(0.2f),
-                    isInitiatedByUserInput = true,
+                    isInitiatedByUserInput = byUser,
                     isUserInputOngoing = flowOf(true),
                     previewProgress = flowOf(0f),
                     isInPreviewStage = flowOf(false),

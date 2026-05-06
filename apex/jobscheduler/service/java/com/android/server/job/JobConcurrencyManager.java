@@ -1521,8 +1521,7 @@ class JobConcurrencyManager {
         final int numControllers = controllers.size();
         final PowerManager.WakeLock wl = mPowerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK, jobStatus.getWakelockTag());
-        wl.setWorkSource(mService.deriveWorkSource(
-                jobStatus.getSourceUid(), jobStatus.getSourcePackageName()));
+        wl.setWorkSource(mService.deriveWorkSource(jobStatus.getSourceUid()));
         wl.setReferenceCounted(false);
         // Since the quota controller will start counting from the time prepareForExecutionLocked()
         // is called, hold a wakelock to make sure the CPU doesn't suspend between that call and
@@ -1652,7 +1651,7 @@ class JobConcurrencyManager {
                     continue;
                 }
 
-                if (Flags.countQuotaFix() && !nextPending.isReady()) {
+                if (!nextPending.isReady()) {
                     // This could happen when the constraints for the job have been marked
                     // as unsatisfiled but hasn't been removed from the pending queue yet.
                     if (DEBUG) {
@@ -1749,7 +1748,7 @@ class JobConcurrencyManager {
                     continue;
                 }
 
-                if (Flags.countQuotaFix() && !nextPending.isReady()) {
+                if (!nextPending.isReady()) {
                     // This could happen when the constraints for the job have been marked
                     // as unsatisfiled but hasn't been removed from the pending queue yet.
                     if (DEBUG) {
@@ -2039,8 +2038,8 @@ class JobConcurrencyManager {
         DeviceConfig.Properties properties =
                 DeviceConfig.getProperties(DeviceConfig.NAMESPACE_JOB_SCHEDULER);
 
-        // Concurrency limit should be in the range [8, MAX_CONCURRENCY_LIMIT].
-        mSteadyStateConcurrencyLimit = Math.max(8, Math.min(MAX_CONCURRENCY_LIMIT,
+        // Concurrency limit should be in the range [1, MAX_CONCURRENCY_LIMIT].
+        mSteadyStateConcurrencyLimit = Math.max(1, Math.min(MAX_CONCURRENCY_LIMIT,
                 properties.getInt(KEY_CONCURRENCY_LIMIT, DEFAULT_CONCURRENCY_LIMIT)));
 
         mScreenOffAdjustmentDelayMs = properties.getLong(

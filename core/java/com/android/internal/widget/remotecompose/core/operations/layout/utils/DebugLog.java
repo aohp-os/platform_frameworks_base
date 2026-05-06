@@ -25,6 +25,8 @@ public class DebugLog {
 
     public static final boolean DEBUG_LAYOUT_ON = false;
 
+    private DebugLog() {}
+
     public static class Node {
         @Nullable public Node parent;
         @NonNull public String name;
@@ -40,6 +42,11 @@ public class DebugLog {
             }
         }
 
+        /**
+         * Add a node to the current node
+         *
+         * @param node
+         */
         public void add(@NonNull Node node) {
             list.add(node);
         }
@@ -54,23 +61,35 @@ public class DebugLog {
     @NonNull public static Node node = new Node(null, "Root");
     @NonNull public static Node currentNode = node;
 
+    /** clear the current logging */
     public static void clear() {
         node = new Node(null, "Root");
         currentNode = node;
     }
 
+    /**
+     * start a node
+     *
+     * @param valueSupplier
+     */
     public static void s(@NonNull StringValueSupplier valueSupplier) {
         if (DEBUG_LAYOUT_ON) {
             currentNode = new Node(currentNode, valueSupplier.getString());
         }
     }
 
+    /**
+     * arbitrary log statement
+     *
+     * @param valueSupplier
+     */
     public static void log(@NonNull StringValueSupplier valueSupplier) {
         if (DEBUG_LAYOUT_ON) {
             new LogNode(currentNode, valueSupplier.getString());
         }
     }
 
+    /** end a node */
     public static void e() {
         if (DEBUG_LAYOUT_ON) {
             if (currentNode.parent != null) {
@@ -81,6 +100,11 @@ public class DebugLog {
         }
     }
 
+    /**
+     * end a node
+     *
+     * @param valueSupplier
+     */
     public static void e(@NonNull StringValueSupplier valueSupplier) {
         if (DEBUG_LAYOUT_ON) {
             currentNode.endString = valueSupplier.getString();
@@ -92,6 +116,13 @@ public class DebugLog {
         }
     }
 
+    /**
+     * print a given node
+     *
+     * @param indent
+     * @param node
+     * @param builder
+     */
     public static void printNode(int indent, @NonNull Node node, @NonNull StringBuilder builder) {
         if (DEBUG_LAYOUT_ON) {
             StringBuilder indentationBuilder = new StringBuilder();
@@ -121,6 +152,7 @@ public class DebugLog {
         }
     }
 
+    /** Output the captured log to System.out */
     public static void display() {
         if (DEBUG_LAYOUT_ON) {
             StringBuilder builder = new StringBuilder();

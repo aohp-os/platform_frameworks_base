@@ -36,7 +36,6 @@ import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.mock
 import junit.framework.Assert.assertEquals
 import junit.framework.Assert.assertFalse
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -47,7 +46,6 @@ import org.junit.runner.RunWith
 import org.mockito.MockitoAnnotations
 
 @SmallTest
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class LightRevealScrimRepositoryTest : SysuiTestCase() {
     private val kosmos = testKosmos()
@@ -66,7 +64,9 @@ class LightRevealScrimRepositoryTest : SysuiTestCase() {
                 kosmos.fakeKeyguardRepository,
                 context,
                 powerRepository,
-                mock()
+                mock(),
+                mock(),
+                kosmos.testScope.backgroundScope,
             )
     }
 
@@ -91,41 +91,35 @@ class LightRevealScrimRepositoryTest : SysuiTestCase() {
         // default reveal despite a biometric unlock.
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
 
         runCurrent()
-        values.assertEffectsMatchPredicates(
-            { it == DEFAULT_REVEAL_EFFECT },
-        )
+        values.assertEffectsMatchPredicates({ it == DEFAULT_REVEAL_EFFECT })
 
         // We got a source but still have no sensor locations, so should be sticking with
         // the default effect.
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
 
         runCurrent()
-        values.assertEffectsMatchPredicates(
-            { it == DEFAULT_REVEAL_EFFECT },
-        )
+        values.assertEffectsMatchPredicates({ it == DEFAULT_REVEAL_EFFECT })
 
         // We got a location for the face sensor, but we unlocked with fingerprint.
         val faceLocation = Point(250, 0)
         fakeKeyguardRepository.setFaceSensorLocation(faceLocation)
 
         runCurrent()
-        values.assertEffectsMatchPredicates(
-            { it == DEFAULT_REVEAL_EFFECT },
-        )
+        values.assertEffectsMatchPredicates({ it == DEFAULT_REVEAL_EFFECT })
 
         // Now we have fingerprint sensor locations, and wake and unlock via fingerprint.
         val fingerprintLocation = Point(500, 500)
         fakeKeyguardRepository.setFingerprintSensorLocation(fingerprintLocation)
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK_PULSING,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
 
         // We should now have switched to the circle reveal, at the fingerprint location.
@@ -143,18 +137,18 @@ class LightRevealScrimRepositoryTest : SysuiTestCase() {
         val valuesPrevSize = values.size
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK_PULSING,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK_FROM_DREAM,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
         assertEquals(valuesPrevSize, values.size)
 
         // Non-biometric unlock, we should return to the default reveal.
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.NONE,
-            BiometricUnlockSource.FINGERPRINT_SENSOR
+            BiometricUnlockSource.FINGERPRINT_SENSOR,
         )
 
         runCurrent()
@@ -172,7 +166,7 @@ class LightRevealScrimRepositoryTest : SysuiTestCase() {
         // CircleReveal.
         fakeKeyguardRepository.setBiometricUnlockState(
             BiometricUnlockMode.WAKE_AND_UNLOCK,
-            BiometricUnlockSource.FACE_SENSOR
+            BiometricUnlockSource.FACE_SENSOR,
         )
         runCurrent()
 

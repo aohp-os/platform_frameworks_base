@@ -76,7 +76,7 @@ public class DisplayPolicyLayoutTests extends DisplayPolicyTestsBase {
 
     @Before
     public void setUp() throws Exception {
-        mWindow = spy(createWindow(null, TYPE_APPLICATION, "window"));
+        mWindow = spy(newWindowBuilder("window", TYPE_APPLICATION).build());
 
         spyOn(mStatusBarWindow);
         spyOn(mNavBarWindow);
@@ -147,7 +147,7 @@ public class DisplayPolicyLayoutTests extends DisplayPolicyTestsBase {
     public void addingWindow_withInsetsTypes() {
         mDisplayPolicy.removeWindowLw(mStatusBarWindow);  // Removes the existing one.
 
-        final WindowState win = createWindow(null, TYPE_STATUS_BAR_SUB_PANEL, "statusBar");
+        final WindowState win = newWindowBuilder("statusBar", TYPE_STATUS_BAR_SUB_PANEL).build();
         final Binder owner = new Binder();
         win.mAttrs.providedInsets = new InsetsFrameProvider[] {
                 new InsetsFrameProvider(owner, 0, WindowInsets.Type.statusBars()),
@@ -157,6 +157,9 @@ public class DisplayPolicyLayoutTests extends DisplayPolicyTestsBase {
         win.getFrame().set(0, 0, 500, 100);
         makeWindowVisible(win);
         win.updateSourceFrame(win.getFrame());
+        if (android.view.inputmethod.Flags.setServerVisibilityOnprelayout()) {
+            mDisplayContent.getInsetsStateController().onPreLayout();
+        }
         mDisplayContent.getInsetsStateController().onPostLayout();
 
         assertTrue(win.hasInsetsSourceProvider());

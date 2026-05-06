@@ -20,18 +20,15 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.data.repository.BiometricSettingsRepository
 import com.android.systemui.keyguard.shared.model.AuthenticationFlags
 import javax.inject.Inject
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 
 /** Encapsulates business logic for device entry biometric settings. */
-@ExperimentalCoroutinesApi
 @SysUISingleton
 class DeviceEntryBiometricSettingsInteractor
 @Inject
-constructor(
-    repository: BiometricSettingsRepository,
-) {
+constructor(repository: BiometricSettingsRepository) {
 
     /**
      * Flags that control the device entry authentication behavior.
@@ -44,7 +41,7 @@ constructor(
     val isFingerprintAuthEnrolledAndEnabled: Flow<Boolean> =
         repository.isFingerprintEnrolledAndEnabled
 
-    val fingerprintAuthCurrentlyAllowed: Flow<Boolean> =
+    val fingerprintAuthCurrentlyAllowed: StateFlow<Boolean> =
         repository.isFingerprintAuthCurrentlyAllowed
     /** Whether the current user has enrolled and enabled face auth. */
     val isFaceAuthEnrolledAndEnabled: Flow<Boolean> = repository.isFaceAuthEnrolledAndEnabled

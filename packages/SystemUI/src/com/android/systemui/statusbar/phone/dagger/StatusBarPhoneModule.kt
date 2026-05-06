@@ -16,24 +16,30 @@
 package com.android.systemui.statusbar.phone.dagger
 
 import android.view.Display
+import com.android.app.displaylib.DefaultDisplayOnlyInstanceRepositoryImpl
+import com.android.app.displaylib.PerDisplayInstanceRepositoryImpl
+import com.android.app.displaylib.PerDisplayRepository
 import com.android.systemui.CoreStartable
 import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Default
+import com.android.systemui.display.dagger.ReferenceSysUIDisplaySubcomponent
 import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.core.CommandQueueInitializer
 import com.android.systemui.statusbar.core.MultiDisplayStatusBarInitializerStore
+import com.android.systemui.statusbar.core.MultiDisplayStatusBarOrchestratorStore
 import com.android.systemui.statusbar.core.MultiDisplayStatusBarStarter
 import com.android.systemui.statusbar.core.SingleDisplayStatusBarInitializerStore
 import com.android.systemui.statusbar.core.StatusBarConnectedDisplays
 import com.android.systemui.statusbar.core.StatusBarInitializer
 import com.android.systemui.statusbar.core.StatusBarInitializerImpl
 import com.android.systemui.statusbar.core.StatusBarInitializerStore
-import com.android.systemui.statusbar.core.StatusBarOrchestrator
 import com.android.systemui.statusbar.core.StatusBarRootModernization
 import com.android.systemui.statusbar.data.repository.PrivacyDotViewControllerStoreModule
 import com.android.systemui.statusbar.data.repository.PrivacyDotWindowControllerStoreModule
+import com.android.systemui.statusbar.data.repository.StatusBarConfigurationControllerStore
 import com.android.systemui.statusbar.data.repository.StatusBarModeRepositoryStore
+import com.android.systemui.statusbar.domain.interactor.StatusBarIconRefreshInteractor
+import com.android.systemui.statusbar.domain.interactor.StatusBarIconRefreshPerDisplayInstanceProvider
 import com.android.systemui.statusbar.events.PrivacyDotViewControllerModule
 import com.android.systemui.statusbar.phone.AutoHideControllerStore
 import com.android.systemui.statusbar.phone.CentralSurfacesCommandQueueCallbacks
@@ -48,7 +54,6 @@ import dagger.Module
 import dagger.Provides
 import dagger.multibindings.ClassKey
 import dagger.multibindings.IntoMap
-import kotlinx.coroutines.CoroutineScope
 
 /** Similar in purpose to [StatusBarModule], but scoped only to phones */
 @Module(
@@ -107,33 +112,17 @@ interface StatusBarPhoneModule {
             implFactory: StatusBarInitializerImpl.Factory,
             statusBarWindowControllerStore: StatusBarWindowControllerStore,
             statusBarModeRepositoryStore: StatusBarModeRepositoryStore,
+            statusBarConfigurationControllerStore: StatusBarConfigurationControllerStore,
+            displayComponentRepo: PerDisplayRepository<ReferenceSysUIDisplaySubcomponent>,
         ): StatusBarInitializerImpl {
+            val systemUIDisplaySubcomponent = displayComponentRepo[Display.DEFAULT_DISPLAY]!!
             return implFactory.create(
                 statusBarWindowControllerStore.defaultDisplay,
                 statusBarModeRepositoryStore.defaultDisplay,
-            )
-        }
-
-        @Provides
-        @SysUISingleton
-        @Default // Dagger does not support providing @AssistedInject types without a qualifier
-        fun orchestrator(
-            @Background backgroundApplicationScope: CoroutineScope,
-            statusBarWindowStateRepositoryStore: StatusBarWindowStateRepositoryStore,
-            statusBarModeRepositoryStore: StatusBarModeRepositoryStore,
-            initializerStore: StatusBarInitializerStore,
-            statusBarWindowControllerStore: StatusBarWindowControllerStore,
-            autoHideControllerStore: AutoHideControllerStore,
-            statusBarOrchestratorFactory: StatusBarOrchestrator.Factory,
-        ): StatusBarOrchestrator {
-            return statusBarOrchestratorFactory.create(
-                Display.DEFAULT_DISPLAY,
-                backgroundApplicationScope,
-                statusBarWindowStateRepositoryStore.defaultDisplay,
-                statusBarModeRepositoryStore.defaultDisplay,
-                initializerStore.defaultDisplay,
-                statusBarWindowControllerStore.defaultDisplay,
-                autoHideControllerStore.defaultDisplay,
+                statusBarConfigurationControllerStore.defaultDisplay,
+                systemUIDisplaySubcomponent.statusBarFragmentProvider,
+                systemUIDisplaySubcomponent.statusBarRootFactory,
+                systemUIDisplaySubcomponent.homeStatusBarComponentFactory,
             )
         }
 
@@ -211,6 +200,45 @@ interface StatusBarPhoneModule {
         @ClassKey(AutoHideControllerStore::class)
         fun storeAsCoreStartable(
             multiDisplayLazy: Lazy<MultiDisplayAutoHideControllerStore>
+        ): CoreStartable {
+            return if (StatusBarConnectedDisplays.isEnabled) {
+                multiDisplayLazy.get()
+            } else {
+                CoreStartable.NOP
+            }
+        }
+
+        /**
+         * This is added for compat with SysUISingleton scoped objects.
+         * StatusBarIconRefreshInteractor is provided as @PerDisplaysingleton, and should be used as
+         * such from per-display classes.
+         */
+        @SysUISingleton
+        @Provides
+        fun provideStatusBarIconRefreshPerDisplayProvider(
+            repositoryFactory:
+                PerDisplayInstanceRepositoryImpl.Factory<StatusBarIconRefreshInteractor>,
+            instanceProvider: StatusBarIconRefreshPerDisplayInstanceProvider,
+        ): PerDisplayRepository<StatusBarIconRefreshInteractor> {
+            return if (StatusBarConnectedDisplays.isEnabled) {
+                repositoryFactory.create(
+                    debugName = "StatusBarIconRefreshInteractor",
+                    instanceProvider,
+                )
+            } else {
+                DefaultDisplayOnlyInstanceRepositoryImpl(
+                    "StatusBarIconRefreshInteractor",
+                    instanceProvider,
+                )
+            }
+        }
+
+        @Provides
+        @SysUISingleton
+        @IntoMap
+        @ClassKey(MultiDisplayStatusBarOrchestratorStore::class)
+        fun orchestratorStoreAsCoreStartable(
+            multiDisplayLazy: Lazy<MultiDisplayStatusBarOrchestratorStore>
         ): CoreStartable {
             return if (StatusBarConnectedDisplays.isEnabled) {
                 multiDisplayLazy.get()

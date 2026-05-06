@@ -32,13 +32,13 @@ import com.android.systemui.kosmos.testScope
 import com.android.systemui.testKosmos
 import com.android.systemui.volume.data.repository.TestAudioDevicesFactory
 import com.android.systemui.volume.data.repository.audioRepository
+import com.android.systemui.volume.data.repository.audioSharingRepository
 import com.android.systemui.volume.domain.model.AudioOutputDevice
 import com.android.systemui.volume.localMediaController
 import com.android.systemui.volume.localMediaRepository
 import com.android.systemui.volume.mediaControllerRepository
 import com.android.systemui.volume.panel.component.mediaoutput.domain.interactor.TestMediaDevicesFactory
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -51,7 +51,6 @@ import org.mockito.kotlin.whenever
 
 private const val builtInDeviceName = "This phone"
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 @SmallTest
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
@@ -71,6 +70,7 @@ class AudioOutputInteractorTest : SysuiTestCase() {
                 addOverride(R.drawable.ic_smartphone, testIcon)
                 addOverride(R.drawable.ic_media_speaker_device, testIcon)
                 addOverride(R.drawable.ic_media_tablet, testIcon)
+                addOverride(com.android.internal.R.drawable.ic_settings_bluetooth, testIcon)
 
                 addOverride(com.android.internal.R.drawable.ic_bt_hearing_aid, testIcon)
 
@@ -136,7 +136,7 @@ class AudioOutputInteractorTest : SysuiTestCase() {
                 val cachedBluetoothDevice: CachedBluetoothDevice = mock {
                     on { address }.thenReturn(btDevice.address)
                     on { name }.thenReturn(btDevice.productName.toString())
-                    on { isHearingAidDevice }.thenReturn(true)
+                    on { isHearingDevice }.thenReturn(true)
                 }
                 whenever(bluetoothAdapter.getRemoteDevice(eq(btDevice.address)))
                     .thenReturn(bluetoothDevice)
@@ -213,6 +213,29 @@ class AudioOutputInteractorTest : SysuiTestCase() {
                 assertThat(device).isInstanceOf(AudioOutputDevice.Bluetooth::class.java)
                 assertThat(device!!.icon).isEqualTo(testIcon)
                 assertThat(device!!.name).isEqualTo("bt_media")
+            }
+        }
+    }
+
+    @Test
+    fun inAudioSharing_returnsPrimaryDevice() {
+        with(kosmos) {
+            testScope.runTest {
+                val cachedBluetoothDevice: CachedBluetoothDevice = mock {
+                    on { name }.thenReturn("audio_sharing_device_name")
+                }
+                with(audioSharingRepository) {
+                    setInAudioSharing(true)
+                    setPrimaryDevice(cachedBluetoothDevice)
+                }
+
+                val device by collectLastValue(underTest.currentAudioDevice)
+
+                runCurrent()
+
+                assertThat(device).isInstanceOf(AudioOutputDevice.Bluetooth::class.java)
+                assertThat(device!!.icon).isEqualTo(testIcon)
+                assertThat(device!!.name).isEqualTo("audio_sharing_device_name")
             }
         }
     }

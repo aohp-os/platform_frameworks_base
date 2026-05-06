@@ -16,6 +16,8 @@
 
 package android.view;
 
+import static android.app.Flags.notificationsRedesignTemplates;
+
 import android.annotation.Nullable;
 import android.content.Context;
 import android.content.res.Resources;
@@ -112,7 +114,9 @@ public class NotificationTopLineView extends ViewGroup {
         final int givenHeight = MeasureSpec.getSize(heightMeasureSpec);
         final boolean wrapHeight = MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.AT_MOST;
         int wrapContentWidthSpec = MeasureSpec.makeMeasureSpec(givenWidth, MeasureSpec.AT_MOST);
-        int heightSpec = MeasureSpec.makeMeasureSpec(givenHeight, MeasureSpec.AT_MOST);
+        int heightSpec = notificationsRedesignTemplates()
+                ? MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+                : MeasureSpec.makeMeasureSpec(givenHeight, MeasureSpec.AT_MOST);
         int totalWidth = getPaddingStart();
         int maxChildHeight = -1;
         mMaxAscent = -1;
@@ -179,11 +183,13 @@ public class NotificationTopLineView extends ViewGroup {
         // Only used when mGravityY is CENTER_VERTICAL
         int baselineY = mPaddingTop + ((childSpace - (mMaxAscent + mMaxDescent)) / 2) + mMaxAscent;
 
+        boolean isFirstVisibleChild = true;
         for (int i = 0; i < childCount; i++) {
             View child = getChildAt(i);
             if (child.getVisibility() == GONE) {
                 continue;
             }
+
             int childHeight = child.getMeasuredHeight();
             MarginLayoutParams params = (MarginLayoutParams) child.getLayoutParams();
 
@@ -224,13 +230,19 @@ public class NotificationTopLineView extends ViewGroup {
             if (mViewsToDisappear.contains(child)) {
                 child.layout(start, childTop, start, childTop + childHeight);
             } else {
-                start += params.getMarginStart();
+                // If this is the first child, don't include the start margin. The children will
+                // generally have a 2dp start margin by default to space them out, but if the child
+                // is first we don't need that.
+                if (!android.app.Flags.notificationTopLineMarginFix() || !isFirstVisibleChild) {
+                    start += params.getMarginStart();
+                }
                 int end = start + child.getMeasuredWidth();
                 int layoutLeft = isRtl ? width - end : start;
                 int layoutRight = isRtl ? width - start : end;
                 start = end + params.getMarginEnd();
                 child.layout(layoutLeft, childTop, layoutRight, childTop + childHeight);
             }
+            isFirstVisibleChild = false;
         }
         updateTouchListener();
     }
@@ -378,6 +390,13 @@ public class NotificationTopLineView extends ViewGroup {
     @Override
     public boolean hasOverlappingRendering() {
         return false;
+    }
+
+    /**
+     * Returns whether the title is present.
+     */
+    public boolean isTitlePresent() {
+        return mTitle != null;
     }
 
     /**

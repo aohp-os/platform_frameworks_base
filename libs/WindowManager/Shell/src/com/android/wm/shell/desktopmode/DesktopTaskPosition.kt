@@ -22,6 +22,7 @@ import android.graphics.Point
 import android.graphics.Rect
 import android.view.Gravity
 import com.android.internal.annotations.VisibleForTesting
+import com.android.internal.policy.DesktopModeCompatUtils.applyLayoutGravity
 import com.android.wm.shell.R
 import com.android.wm.shell.desktopmode.DesktopTaskPosition.BottomLeft
 import com.android.wm.shell.desktopmode.DesktopTaskPosition.BottomRight
@@ -41,49 +42,35 @@ sealed class DesktopTaskPosition {
             return Point(x, y.toInt())
         }
 
-        override fun next(): DesktopTaskPosition {
-            return BottomRight
-        }
+        override fun next(): DesktopTaskPosition = BottomRight
     }
 
     data object BottomRight : DesktopTaskPosition() {
-        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point {
-            return Point(frame.right - window.width(), frame.bottom - window.height())
-        }
+        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point =
+            Point(frame.right - window.width(), frame.bottom - window.height())
 
-        override fun next(): DesktopTaskPosition {
-            return TopLeft
-        }
+        override fun next(): DesktopTaskPosition = TopLeft
     }
 
     data object TopLeft : DesktopTaskPosition() {
-        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point {
-            return Point(frame.left, frame.top)
-        }
+        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point =
+            Point(frame.left, frame.top)
 
-        override fun next(): DesktopTaskPosition {
-            return BottomLeft
-        }
+        override fun next(): DesktopTaskPosition = BottomLeft
     }
 
     data object BottomLeft : DesktopTaskPosition() {
-        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point {
-            return Point(frame.left, frame.bottom - window.height())
-        }
+        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point =
+            Point(frame.left, frame.bottom - window.height())
 
-        override fun next(): DesktopTaskPosition {
-            return TopRight
-        }
+        override fun next(): DesktopTaskPosition = TopRight
     }
 
     data object TopRight : DesktopTaskPosition() {
-        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point {
-            return Point(frame.right - window.width(), frame.top)
-        }
+        override fun getTopLeftCoordinates(frame: Rect, window: Rect): Point =
+            Point(frame.right - window.width(), frame.top)
 
-        override fun next(): DesktopTaskPosition {
-            return Center
-        }
+        override fun next(): DesktopTaskPosition = Center
     }
 
     /**
@@ -95,17 +82,18 @@ sealed class DesktopTaskPosition {
     abstract fun next(): DesktopTaskPosition
 }
 
-/**
- * If the app has specified horizontal or vertical gravity layout, don't change the task position
- * for cascading effect.
- */
-fun canChangeTaskPosition(taskInfo: TaskInfo): Boolean {
+fun applyLayoutGravityIfNeeded(taskInfo: TaskInfo, bounds: Rect, stableBounds: Rect): Boolean {
+    var horizontalGravity = 0
+    var verticalGravity = 0
     taskInfo.topActivityInfo?.windowLayout?.let {
-        val horizontalGravityApplied = it.gravity.and(Gravity.HORIZONTAL_GRAVITY_MASK)
-        val verticalGravityApplied = it.gravity.and(Gravity.VERTICAL_GRAVITY_MASK)
-        return horizontalGravityApplied == 0 && verticalGravityApplied == 0
+        horizontalGravity = it.gravity.and(Gravity.HORIZONTAL_GRAVITY_MASK)
+        verticalGravity = it.gravity.and(Gravity.VERTICAL_GRAVITY_MASK)
     }
-    return true
+    if (verticalGravity > 0 || horizontalGravity > 0) {
+        applyLayoutGravity(verticalGravity, horizontalGravity, bounds, stableBounds)
+        return true
+    }
+    return false
 }
 
 /** Returns the current DesktopTaskPosition for a given window in the frame. */

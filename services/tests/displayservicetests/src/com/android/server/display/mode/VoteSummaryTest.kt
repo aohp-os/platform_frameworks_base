@@ -186,11 +186,49 @@ class VoteSummaryTest {
 
         assertThat(result).hasSize(1)
     }
+
+    enum class RejectedModesTestCase(
+            internal val summaryRejectedModes: Set<Int>?,
+            val modesToFilter: Array<Display.Mode>,
+            val expectedModeIds: Set<Int>
+    ) {
+        HAS_NO_MATCHING_VOTE(
+                setOf(4, 5),
+                arrayOf(createMode(1, 90f, 90f),
+                        createMode(2, 90f, 60f),
+                        createMode(3, 60f, 90f)),
+                setOf(1, 2, 3)
+        ),
+        HAS_SINGLE_MATCHING_VOTE(
+                setOf(1),
+                arrayOf(createMode(1, 90f, 90f),
+                        createMode(2, 90f, 60f),
+                        createMode(3, 60f, 90f)),
+                setOf(2, 3)
+        ),
+        HAS_MULTIPLE_MATCHING_VOTES(
+                setOf(1, 2),
+                arrayOf(createMode(1, 90f, 90f),
+                        createMode(2, 90f, 60f),
+                        createMode(3, 60f, 90f)),
+                setOf(3)
+        ),
+    }
+
+    @Test
+    fun testFilterModes_rejectedModes(@TestParameter testCase: RejectedModesTestCase) {
+        val summary = createSummary()
+        summary.rejectedModeIds = testCase.summaryRejectedModes
+
+        val result = summary.filterModes(testCase.modesToFilter)
+
+        assertThat(result.map {it.modeId}).containsExactlyElementsIn(testCase.expectedModeIds)
+    }
 }
 
 
 private fun createMode(modeId: Int, refreshRate: Float, vsyncRate: Float): Display.Mode {
-    return Display.Mode(modeId, 600, 800, refreshRate, vsyncRate, false,
+    return Display.Mode(modeId, -1, 0, 600, 800, refreshRate, vsyncRate,
             FloatArray(0), IntArray(0))
 }
 

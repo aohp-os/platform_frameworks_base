@@ -19,12 +19,11 @@ package com.android.systemui.statusbar.policy
 import android.app.admin.DeviceAdminInfo
 import android.content.ComponentName
 import android.graphics.drawable.Drawable
+import com.android.systemui.supervision.data.model.SupervisionModel
 import java.io.PrintWriter
 
 /** A fake [SecurityController] to be used in tests. */
-class FakeSecurityController(
-    private val fakeState: FakeState = FakeState(),
-) : SecurityController {
+class FakeSecurityController(private val fakeState: FakeState = FakeState()) : SecurityController {
     private val callbacks = LinkedHashSet<SecurityController.SecurityControllerCallback>()
 
     override fun addCallback(callback: SecurityController.SecurityControllerCallback) {
@@ -65,8 +64,6 @@ class FakeSecurityController(
     override fun getDeviceOwnerComponentOnAnyUser(): ComponentName? =
         fakeState.deviceOwnerComponentOnAnyUser
 
-    override fun getDeviceOwnerType(admin: ComponentName?): Int = 0
-
     override fun isFinancedDevice(): Boolean = false
 
     override fun isNetworkLoggingEnabled(): Boolean = fakeState.isNetworkLoggingEnabled
@@ -91,11 +88,21 @@ class FakeSecurityController(
 
     override fun isParentalControlsEnabled(): Boolean = fakeState.isParentalControlsEnabled
 
-    override fun getDeviceAdminInfo(): DeviceAdminInfo? = fakeState.deviceAdminInfo
+    override fun getDeviceAdminInfo(): DeviceAdminInfo? = null
 
     override fun getIcon(info: DeviceAdminInfo?): Drawable? = null
 
+    override fun getIcon(): Drawable? = null
+
     override fun getLabel(info: DeviceAdminInfo?): CharSequence? = null
+
+    override fun getLabel(): CharSequence? = null
+
+    override fun getSupervisionModel(): SupervisionModel? = fakeState.supervisionModel
+
+    override fun setSupervisionModel(supervisionModel: SupervisionModel?) {
+        fakeState.supervisionModel = supervisionModel
+    }
 
     class FakeState(
         var isDeviceManaged: Boolean = false,
@@ -118,6 +125,6 @@ class FakeSecurityController(
         var hasCACertInCurrentUser: Boolean = false,
         var hasCACertInWorkProfile: Boolean = false,
         var isParentalControlsEnabled: Boolean = false,
-        var deviceAdminInfo: DeviceAdminInfo? = null,
+        var supervisionModel: SupervisionModel? = null,
     )
 }

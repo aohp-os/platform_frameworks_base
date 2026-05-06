@@ -21,6 +21,11 @@
     <!-- The dark background color behind the shade -->
     <color name="shade_scrim_background_dark">@androidprv:color/system_under_surface_dark</color>
 
+    <!-- The main FG tint for shade header items -->
+    <!-- Only applicable when com.android.systemui.shade_header_blur_font_color is enabled -->
+    <color name="shade_header_text_color" android:featureFlag="com.android.systemui.shade_header_blur_font_color">#FFFFFFFF</color>
+    <color name="shade_header_text_color_bg" android:featureFlag="com.android.systemui.shade_header_blur_font_color">#FF000000</color>
+
     <!-- The color of the legacy notifications with customs backgrounds (gingerbread and lollipop.)
     It's fine to override this color since at that point the shade was dark. -->
     <color name="notification_legacy_background_color">@color/GM2_grey_900</color>
@@ -62,6 +67,9 @@
     <!-- The color of the text in the Global Actions menu -->
     <color name="global_actions_alert_text">@color/GM2_red_300</color>
 
+    <color name="global_actions_lite_emergency_background_new_color">#F55E57</color>
+    <color name="global_actions_lite_emergency_icon_new_color">#3A0907</color>
+
     <!-- Floating overlay actions -->
     <color name="overlay_background_protection_start">#80000000</color> <!-- 50% black -->
 
@@ -76,6 +84,16 @@
     <color name="media_dialog_seekbar_progress">@color/material_dynamic_secondary40</color>
     <color name="media_dialog_button_background">@color/material_dynamic_primary70</color>
     <color name="media_dialog_solid_button_text">@color/material_dynamic_secondary20</color>
+    <color name="media_dialog_primary">@android:color/system_primary_dark</color>
+    <color name="media_dialog_on_primary">@android:color/system_on_primary_dark</color>
+    <color name="media_dialog_secondary">@android:color/system_secondary_dark</color>
+    <color name="media_dialog_secondary_container">@android:color/system_secondary_container_dark</color>
+    <color name="media_dialog_surface_container">@android:color/system_surface_container_dark</color>
+    <color name="media_dialog_surface_container_high">@android:color/system_surface_container_high_dark</color>
+    <color name="media_dialog_on_surface">@android:color/system_on_surface_dark</color>
+    <color name="media_dialog_on_surface_variant">@android:color/system_on_surface_variant_dark</color>
+    <color name="media_dialog_outline">@android:color/system_outline_dark</color>
+    <color name="media_dialog_outline_variant">@android:color/system_outline_variant_dark</color>
 
     <!-- Biometric dialog colors -->
     <color name="biometric_dialog_gray">#ffcccccc</color>
@@ -100,6 +118,10 @@
     <color name="qs_user_switcher_avatar_background">#3C4043</color>
     <!-- Color of border for keyguard password input when focused -->
     <color name="bouncer_password_focus_color">@*android:color/system_secondary_dark</color>
+    <!-- BG color for confirm and backspace button in non-auto confirm PIN bouncer.   -->
+    <color name="pin_bouncer_action_button_bg">@androidprv:color/surface_effect_3</color>
+    <!-- Bouncer background when blur is not enabled.   -->
+    <color name="bouncer_fallback_bg">@android:color/system_accent1_800</color>
 
     <!-- Accessibility floating menu -->
     <color name="accessibility_floating_menu_background">#B3000000</color> <!-- 70% -->
@@ -107,6 +129,14 @@
     <color name="accessibility_floating_menu_message_text">@*android:color/primary_text_default_material_dark</color>
 
     <color name="people_tile_background">@color/material_dynamic_secondary20</color>
+
+    <!-- Dark theme base colors for notification shade/scrim, the alpha component is adjusted
+     programmatically to match the spec -->
+    <color name="notification_scrim_base">@android:color/system_accent1_800</color>
+
+    <!-- Dark theme fallback colors for notification shade/scrim -->
+    <color name="shade_panel_fallback">@android:color/system_accent2_800</color>
+    <color name="notification_scrim_fallback">@android:color/system_surface_dim_dark</color>
 
     <!-- Keyboard shortcut helper dialog -->
     <color name="ksh_key_item_color">@*android:color/system_on_surface_variant_dark</color>

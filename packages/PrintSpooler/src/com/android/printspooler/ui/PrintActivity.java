@@ -89,6 +89,7 @@ import android.window.OnBackInvokedDispatcher;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.printspooler.R;
+import com.android.printspooler.flags.Flags;
 import com.android.printspooler.model.MutexFileProvider;
 import com.android.printspooler.model.PrintSpoolerProvider;
 import com.android.printspooler.model.PrintSpoolerService;
@@ -96,6 +97,7 @@ import com.android.printspooler.model.RemotePrintDocument;
 import com.android.printspooler.model.RemotePrintDocument.RemotePrintDocumentInfo;
 import com.android.printspooler.renderer.IPdfEditor;
 import com.android.printspooler.renderer.PdfManipulationService;
+import com.android.printspooler.stats.StatsAsyncLogger;
 import com.android.printspooler.util.ApprovedPrintServices;
 import com.android.printspooler.util.MediaSizeUtils;
 import com.android.printspooler.util.MediaSizeUtils.MediaSizeComparator;
@@ -118,8 +120,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class PrintActivity extends Activity implements RemotePrintDocument.UpdateResultCallbacks,
@@ -167,6 +171,7 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     private static final int STATE_PRINTER_UNAVAILABLE = 6;
     private static final int STATE_UPDATE_SLOW = 7;
     private static final int STATE_PRINT_COMPLETED = 8;
+    private static final int STATE_FILE_INVALID = 9;
 
     private static final int UI_STATE_PREVIEW = 0;
     private static final int UI_STATE_ERROR = 1;
@@ -404,6 +409,11 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     public void onPause() {
         PrintSpoolerService spooler = mSpoolerProvider.getSpooler();
 
+        if (isInvalid()) {
+            super.onPause();
+            return;
+        }
+
         if (mState == STATE_INITIALIZING) {
             if (isFinishing()) {
                 if (spooler != null) {
@@ -478,7 +488,8 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
         }
 
         if (mState == STATE_PRINT_CANCELED || mState == STATE_PRINT_CONFIRMED
-                || mState == STATE_PRINT_COMPLETED) {
+                || mState == STATE_PRINT_COMPLETED
+                || mState == STATE_FILE_INVALID) {
             return true;
         }
 
@@ -509,23 +520,32 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     @Override
     public void onMalformedPdfFile() {
         onPrintDocumentError("Cannot print a malformed PDF file");
+        mPrintedDocument.invalid();
+        setState(STATE_FILE_INVALID);
     }
 
     @Override
     public void onSecurePdfFile() {
         onPrintDocumentError("Cannot print a password protected PDF file");
+        mPrintedDocument.invalid();
+        setState(STATE_FILE_INVALID);
     }
 
     private void onPrintDocumentError(String message) {
         setState(mProgressMessageController.cancel());
-        ensureErrorUiShown(null, PrintErrorFragment.ACTION_RETRY);
+        ensureErrorUiShown(
+                getString(R.string.print_cannot_load_page), PrintErrorFragment.ACTION_NONE);
 
         setState(STATE_UPDATE_FAILED);
         if (DEBUG) {
             Log.i(LOG_TAG, "PrintJob state[" +  PrintJobInfo.STATE_FAILED + "] reason: " + message);
         }
         PrintSpoolerService spooler = mSpoolerProvider.getSpooler();
-        spooler.setPrintJobState(mPrintJob.getId(), PrintJobInfo.STATE_FAILED, message);
+        // Use a cancel state for the spooler.  This will prevent the notification from getting
+        // displayed and will remove the job.  The notification (which displays the cancel and
+        // restart options) doesn't make sense for an invalid document since it will just fail
+        // again.
+        spooler.setPrintJobState(mPrintJob.getId(), PrintJobInfo.STATE_CANCELED, message);
         mPrintedDocument.finish();
     }
 
@@ -829,6 +849,16 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
             return;
         }
 
+        if (Flags.printingTelemetry()) {
+            final String serviceName = printer.getId().getServiceName().getPackageName();
+            try {
+                final int serviceUId = getPackageManager().getApplicationInfo(serviceName, 0).uid;
+                StatsAsyncLogger.INSTANCE.AdvancedOptionsUiLaunched(serviceUId);
+            } catch (NameNotFoundException e) {
+                Log.e(LOG_TAG, "Failed to get uid for service");
+            }
+        }
+
         // The activity is a component name, therefore it is one or none.
         if (resolvedActivities.get(0).activityInfo.exported) {
             PrintJobInfo.Builder printJobBuilder = new PrintJobInfo.Builder(mPrintJob);
@@ -995,6 +1025,9 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     }
 
     private void setState(int state) {
+        if (isInvalid()) {
+            return;
+        }
         if (isFinalState(mState)) {
             if (isFinalState(state)) {
                 if (DEBUG) {
@@ -1015,7 +1048,12 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     private static boolean isFinalState(int state) {
         return state == STATE_PRINT_CANCELED
                 || state == STATE_PRINT_COMPLETED
-                || state == STATE_CREATE_FILE_FAILED;
+                || state == STATE_CREATE_FILE_FAILED
+                || state == STATE_FILE_INVALID;
+    }
+
+    private boolean isInvalid() {
+        return mState == STATE_FILE_INVALID;
     }
 
     private void updateSelectedPagesFromPreview() {
@@ -1100,7 +1138,7 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     }
 
     private void ensurePreviewUiShown() {
-        if (isFinishing() || isDestroyed()) {
+        if (isFinishing() || isDestroyed() || isInvalid()) {
             return;
         }
         if (mUiState != UI_STATE_PREVIEW) {
@@ -1257,6 +1295,9 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     }
 
     private boolean updateDocument(boolean clearLastError) {
+        if (isInvalid()) {
+            return false;
+        }
         if (!clearLastError && mPrintedDocument.hasUpdateError()) {
             return false;
         }
@@ -1676,7 +1717,8 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
                 || mState == STATE_UPDATE_FAILED
                 || mState == STATE_CREATE_FILE_FAILED
                 || mState == STATE_PRINTER_UNAVAILABLE
-                || mState == STATE_UPDATE_SLOW) {
+                || mState == STATE_UPDATE_SLOW
+                || mState == STATE_FILE_INVALID) {
             disableOptionsUi(isFinalState(mState));
             return;
         }
@@ -2100,6 +2142,9 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
     }
 
     private boolean canUpdateDocument() {
+        if (isInvalid()) {
+            return false;
+        }
         if (mPrintedDocument.isDestroyed()) {
             return false;
         }
@@ -2160,6 +2205,32 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
         if (mPrintedDocument != null && mPrintedDocument.isUpdating()) {
             // The printedDocument will call doFinish() when the current command finishes
             return;
+        }
+
+        if (Flags.printingTelemetry()) {
+            // If this runs any earlier we double log when a printjob
+            // is completed. If it gets called any later than it does
+            // not get called when a user launches the printing UI
+            // without printing anything or opening "All printers".
+
+            // We record the MainPrintUilaunched event and recorded
+            // printers/services at the end of the activity lifecycle
+            // so there has been time for printers to be discovered.
+            final List<PrinterInfo> printers = (mPrinterRegistry == null)
+                    ? new ArrayList<>() :
+                      mPrinterRegistry.getPrinters();
+            final Set<Integer> printServiceUIds = new HashSet<>();
+            for (final PrinterInfo printer : printers) {
+                final String serviceName = printer.getId().getServiceName().getPackageName();
+                try {
+                    final int serviceUId =
+                            getPackageManager().getApplicationInfo(serviceName, 0).uid;
+                    printServiceUIds.add(serviceUId);
+                } catch (NameNotFoundException e) {
+                    Log.e(LOG_TAG, "Failed to get uid for service");
+                }
+            }
+            StatsAsyncLogger.INSTANCE.MainPrintUiLaunched(printServiceUIds, printers.size());
         }
 
         if (mIsFinishing) {
@@ -2592,6 +2663,31 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
                 }
             }
 
+            if (Flags.printingTelemetry()) {
+                for (final PrinterInfo printer : newPrintersMap.values()) {
+                    final PrinterCapabilitiesInfo caps = printer.getCapabilities();
+                    int colorModesMask = 0;
+                    int duplexModesMask = 0;
+                    Set<MediaSize> mediaSizes = new HashSet<>();
+                    if (caps != null) {
+                        colorModesMask = caps.getColorModes();
+                        duplexModesMask = caps.getDuplexModes();
+                        mediaSizes = new HashSet<>(caps.getMediaSizes());
+                    }
+                    final String serviceName = printer.getId().getServiceName().getPackageName();
+                    try {
+                        final int serviceUId =
+                                getPackageManager().getApplicationInfo(serviceName, 0).uid;
+                        StatsAsyncLogger.INSTANCE
+                                .PrinterDiscovery(serviceUId,
+                                                  colorModesMask,
+                                                  duplexModesMask,
+                                                  mediaSizes);
+                    } catch (NameNotFoundException e) {
+                        Log.e(LOG_TAG, "Failed to get uid for service");
+                    }
+                }
+            }
             // Add the rest of the new printers, i.e. what is left.
             addPrinters(newPrinterHolders, newPrintersMap.values());
 
@@ -3186,8 +3282,20 @@ public class PrintActivity extends Activity implements RemotePrintDocument.Updat
 
                     @Override
                     protected void onPostExecute(String error) {
-                        mContext.unbindService(DocumentTransformer.this);
-                        mCallback.accept(error);
+                        try {
+                            mContext.unbindService(DocumentTransformer.this);
+                            mCallback.accept(error);
+                        } catch (IllegalArgumentException e) {
+                            // Unbinding can fail if the PrintActivity has already been torn down
+                            // before the document transform completes.  Since this is about to
+                            // exit, there's no need to attempt additional error recovery.
+                            Log.w(
+                                    LOG_TAG,
+                                    "Unable to unbind PdfManipulationService: "
+                                            + e
+                                            + ". Original error: "
+                                            + error);
+                        }
                     }
                 }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 

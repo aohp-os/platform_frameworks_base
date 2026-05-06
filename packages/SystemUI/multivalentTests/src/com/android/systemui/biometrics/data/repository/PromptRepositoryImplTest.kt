@@ -16,11 +16,13 @@
 
 package com.android.systemui.biometrics.data.repository
 
+import android.hardware.biometrics.BiometricPrompt
 import android.hardware.biometrics.PromptInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.biometrics.AuthController
+import com.android.systemui.biometrics.shared.model.BiometricModalities
 import com.android.systemui.biometrics.shared.model.PromptKind
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.util.concurrency.FakeExecutor
@@ -28,7 +30,6 @@ import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.mockito.withArgCaptor
 import com.android.systemui.util.time.FakeSystemClock
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -49,7 +50,6 @@ private const val WRONG_REQUEST_ID = 10L
 private const val CHALLENGE = 90L
 private const val OP_PACKAGE_NAME = "biometric.testapp"
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class PromptRepositoryImplTest : SysuiTestCase() {
@@ -83,11 +83,11 @@ class PromptRepositoryImplTest : SysuiTestCase() {
             withArgCaptor<AuthController.Callback> {
                 verify(authController).addCallback(capture())
 
-                value.onBiometricPromptShown()
+                value.onBiometricPromptShown(PromptInfo())
                 runCurrent()
                 assertThat(values).containsExactly(true, true)
 
-                value.onBiometricPromptDismissed()
+                value.onBiometricPromptDismissed(BiometricPrompt.DISMISSED_REASON_USER_CANCEL)
                 runCurrent()
                 assertThat(values).containsExactly(true, true, false).inOrder()
 
@@ -107,10 +107,11 @@ class PromptRepositoryImplTest : SysuiTestCase() {
                 repository.setPrompt(
                     PromptInfo().apply { isConfirmationRequested = case },
                     USER_ID,
+                    BiometricModalities(),
                     REQUEST_ID,
                     CHALLENGE,
                     PromptKind.Biometric(),
-                    OP_PACKAGE_NAME
+                    OP_PACKAGE_NAME,
                 )
 
                 assertThat(isConfirmationRequired).isEqualTo(case)
@@ -127,10 +128,11 @@ class PromptRepositoryImplTest : SysuiTestCase() {
                 repository.setPrompt(
                     PromptInfo().apply { isConfirmationRequested = case },
                     USER_ID,
+                    BiometricModalities(),
                     REQUEST_ID,
                     CHALLENGE,
                     PromptKind.Biometric(),
-                    OP_PACKAGE_NAME
+                    OP_PACKAGE_NAME,
                 )
 
                 assertThat(isConfirmationRequired).isTrue()
@@ -143,7 +145,15 @@ class PromptRepositoryImplTest : SysuiTestCase() {
             val kind = PromptKind.Pin
             val promptInfo = PromptInfo()
 
-            repository.setPrompt(promptInfo, USER_ID, REQUEST_ID, CHALLENGE, kind, OP_PACKAGE_NAME)
+            repository.setPrompt(
+                promptInfo,
+                USER_ID,
+                BiometricModalities(),
+                REQUEST_ID,
+                CHALLENGE,
+                kind,
+                OP_PACKAGE_NAME,
+            )
 
             assertThat(repository.promptKind.value).isEqualTo(kind)
             assertThat(repository.userId.value).isEqualTo(USER_ID)
@@ -165,7 +175,15 @@ class PromptRepositoryImplTest : SysuiTestCase() {
             val kind = PromptKind.Pin
             val promptInfo = PromptInfo()
 
-            repository.setPrompt(promptInfo, USER_ID, REQUEST_ID, CHALLENGE, kind, OP_PACKAGE_NAME)
+            repository.setPrompt(
+                promptInfo,
+                USER_ID,
+                BiometricModalities(),
+                REQUEST_ID,
+                CHALLENGE,
+                kind,
+                OP_PACKAGE_NAME,
+            )
 
             assertThat(repository.promptKind.value).isEqualTo(kind)
             assertThat(repository.userId.value).isEqualTo(USER_ID)

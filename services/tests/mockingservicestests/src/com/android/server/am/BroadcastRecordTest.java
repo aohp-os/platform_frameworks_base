@@ -17,6 +17,8 @@
 package com.android.server.am;
 
 import static android.app.ActivityManager.PROCESS_STATE_UNKNOWN;
+import static android.app.AppProtoEnums.BROADCAST_TYPE_BACKGROUND;
+import static android.app.AppProtoEnums.BROADCAST_TYPE_DEFERRABLE_UNTIL_ACTIVE;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.server.am.BroadcastRecord.DELIVERY_DEFERRED;
@@ -30,14 +32,20 @@ import static com.android.server.am.BroadcastRecord.calculateDeferUntilActive;
 import static com.android.server.am.BroadcastRecord.calculateUrgent;
 import static com.android.server.am.BroadcastRecord.isReceiverEquals;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import android.app.BackgroundStartPrivileges;
 import android.app.BroadcastOptions;
@@ -66,6 +74,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnitRunner;
 
@@ -92,6 +101,9 @@ public class BroadcastRecordTest {
     private static final String PACKAGE1 = "pkg1";
     private static final String PACKAGE2 = "pkg2";
     private static final String PACKAGE3 = "pkg3";
+
+    private static final String PROCESS1 = "process1";
+    private static final String PROCESS2 = "process2";
 
     private static final int SYSTEM_UID = android.os.Process.SYSTEM_UID;
     private static final int APP_UID = android.os.Process.FIRST_APPLICATION_UID;
@@ -159,33 +171,6 @@ public class BroadcastRecordTest {
                         createResolveInfo(PACKAGE3, getAppId(3), 10)), false, mPlatformCompat));
     }
 
-    @DisableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
-    @Test
-    public void testIsPrioritized_Yes() {
-        assertTrue(isPrioritized(List.of(
-                createResolveInfo(PACKAGE1, getAppId(1), 10),
-                createResolveInfo(PACKAGE2, getAppId(2), 0),
-                createResolveInfo(PACKAGE3, getAppId(3), -10))));
-        assertTrue(isPrioritized(List.of(
-                createResolveInfo(PACKAGE1, getAppId(1), 10),
-                createResolveInfo(PACKAGE2, getAppId(2), 0),
-                createResolveInfo(PACKAGE3, getAppId(3), 0))));
-
-        assertArrayEquals(new int[] {0, 1, 2},
-                calculateBlockedUntilBeyondCount(List.of(
-                        createResolveInfo(PACKAGE1, getAppId(1), 10),
-                        createResolveInfo(PACKAGE2, getAppId(2), 0),
-                        createResolveInfo(PACKAGE3, getAppId(3), -10)), false, mPlatformCompat));
-        assertArrayEquals(new int[] {0, 0, 2, 3, 3},
-                calculateBlockedUntilBeyondCount(List.of(
-                        createResolveInfo(PACKAGE1, getAppId(1), 20),
-                        createResolveInfo(PACKAGE2, getAppId(2), 20),
-                        createResolveInfo(PACKAGE3, getAppId(3), 10),
-                        createResolveInfo(PACKAGE3, getAppId(3), 0),
-                        createResolveInfo(PACKAGE3, getAppId(3), 0)), false, mPlatformCompat));
-    }
-
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testIsPrioritized_withDifferentPriorities() {
         assertFalse(isPrioritized(List.of(
@@ -221,7 +206,6 @@ public class BroadcastRecordTest {
                         createResolveInfo(PACKAGE3, getAppId(3), 0)), false, mPlatformCompat));
     }
 
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testIsPrioritized_withDifferentPriorities_withFirstUidChangeIdDisabled() {
         doReturn(false).when(mPlatformCompat).isChangeEnabledInternalNoLogging(
@@ -255,7 +239,6 @@ public class BroadcastRecordTest {
                         createResolveInfo(PACKAGE3, getAppId(3), 0)), false, mPlatformCompat));
     }
 
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testIsPrioritized_withDifferentPriorities_withLastUidChangeIdDisabled() {
         doReturn(false).when(mPlatformCompat).isChangeEnabledInternalNoLogging(
@@ -293,7 +276,6 @@ public class BroadcastRecordTest {
                         createResolveInfo(PACKAGE3, getAppId(3), 0)), false, mPlatformCompat));
     }
 
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testIsPrioritized_withDifferentPriorities_withUidChangeIdDisabled() {
         doReturn(false).when(mPlatformCompat).isChangeEnabledInternalNoLogging(
@@ -327,7 +309,6 @@ public class BroadcastRecordTest {
                         createResolveInfo(PACKAGE3, getAppId(4), 0)), false, mPlatformCompat));
     }
 
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testIsPrioritized_withDifferentPriorities_withMultipleUidChangeIdDisabled() {
         doReturn(false).when(mPlatformCompat).isChangeEnabledInternalNoLogging(
@@ -451,77 +432,6 @@ public class BroadcastRecordTest {
         assertTerminalDeferredBeyond(r, 3, 0, 3);
     }
 
-    @DisableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
-    @Test
-    public void testSetDeliveryState_DeferUntilActive_flagDisabled() {
-        final BroadcastRecord r = createBroadcastRecord(
-                new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED), List.of(
-                        createResolveInfoWithPriority(10),
-                        createResolveInfoWithPriority(10),
-                        createResolveInfoWithPriority(10),
-                        createResolveInfoWithPriority(0),
-                        createResolveInfoWithPriority(0),
-                        createResolveInfoWithPriority(0),
-                        createResolveInfoWithPriority(-10),
-                        createResolveInfoWithPriority(-10),
-                        createResolveInfoWithPriority(-10)));
-        assertBlocked(r, false, false, false, true, true, true, true, true, true);
-        assertTerminalDeferredBeyond(r, 0, 0, 0);
-
-        r.setDeliveryState(0, DELIVERY_PENDING, TAG);
-        r.setDeliveryState(1, DELIVERY_DEFERRED, TAG);
-        r.setDeliveryState(2, DELIVERY_PENDING, TAG);
-        r.setDeliveryState(3, DELIVERY_DEFERRED, TAG);
-        r.setDeliveryState(4, DELIVERY_DEFERRED, TAG);
-        r.setDeliveryState(5, DELIVERY_DEFERRED, TAG);
-        r.setDeliveryState(6, DELIVERY_DEFERRED, TAG);
-        r.setDeliveryState(7, DELIVERY_PENDING, TAG);
-        r.setDeliveryState(8, DELIVERY_DEFERRED, TAG);
-
-        // Verify deferred counts ratchet up, but we're not "beyond" the first
-        // still-pending receiver
-        assertBlocked(r, false, false, false, true, true, true, true, true, true);
-        assertTerminalDeferredBeyond(r, 0, 6, 0);
-
-        // We're still not "beyond" the first still-pending receiver, even when
-        // we finish a receiver later in the first tranche
-        r.setDeliveryState(2, DELIVERY_DELIVERED, TAG);
-        assertBlocked(r, false, false, false, true, true, true, true, true, true);
-        assertTerminalDeferredBeyond(r, 1, 6, 0);
-
-        // Completing that last item in first tranche means we now unblock the
-        // second tranche, and since it's entirely deferred, the third traunche
-        // is unblocked too
-        r.setDeliveryState(0, DELIVERY_DELIVERED, TAG);
-        assertBlocked(r, false, false, false, false, false, false, false, false, false);
-        assertTerminalDeferredBeyond(r, 2, 6, 7);
-
-        // Moving a deferred item in an earlier tranche back to being pending
-        // doesn't change the fact that we've already moved beyond it
-        r.setDeliveryState(1, DELIVERY_PENDING, TAG);
-        assertBlocked(r, false, false, false, false, false, false, false, false, false);
-        assertTerminalDeferredBeyond(r, 2, 5, 7);
-        r.setDeliveryState(1, DELIVERY_DELIVERED, TAG);
-        assertBlocked(r, false, false, false, false, false, false, false, false, false);
-        assertTerminalDeferredBeyond(r, 3, 5, 7);
-
-        // Completing middle pending item is enough to fast-forward to end
-        r.setDeliveryState(7, DELIVERY_DELIVERED, TAG);
-        assertBlocked(r, false, false, false, false, false, false, false, false, false);
-        assertTerminalDeferredBeyond(r, 4, 5, 9);
-
-        // Moving everyone else directly into a finished state updates all the
-        // terminal counters
-        r.setDeliveryState(3, DELIVERY_SKIPPED, TAG);
-        r.setDeliveryState(4, DELIVERY_SKIPPED, TAG);
-        r.setDeliveryState(5, DELIVERY_SKIPPED, TAG);
-        r.setDeliveryState(6, DELIVERY_SKIPPED, TAG);
-        r.setDeliveryState(8, DELIVERY_SKIPPED, TAG);
-        assertBlocked(r, false, false, false, false, false, false, false, false, false);
-        assertTerminalDeferredBeyond(r, 9, 0, 9);
-    }
-
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testSetDeliveryState_DeferUntilActive() {
         final BroadcastRecord r = createBroadcastRecord(
@@ -591,7 +501,6 @@ public class BroadcastRecordTest {
         assertTerminalDeferredBeyond(r, 9, 0, 9);
     }
 
-    @EnableFlags(Flags.FLAG_LIMIT_PRIORITY_SCOPE)
     @Test
     public void testSetDeliveryState_DeferUntilActive_changeIdDisabled() {
         doReturn(false).when(mPlatformCompat).isChangeEnabledInternalNoLogging(
@@ -752,8 +661,6 @@ public class BroadcastRecordTest {
 
     @Test
     public void testCalculateDeferUntilActive_System() {
-        BroadcastRecord.CORE_DEFER_UNTIL_ACTIVE = true;
-
         // Verify non-urgent behavior
         assertTrue(calculateDeferUntilActive(SYSTEM_UID, null, null, false, false));
         assertTrue(calculateDeferUntilActive(SYSTEM_UID, OPT_DEFAULT, null, false, false));
@@ -1005,6 +912,146 @@ public class BroadcastRecordTest {
                                 createResolveInfo(PACKAGE3, getAppId(3)))));
     }
 
+
+    @Test
+    @DisableFlags(Flags.FLAG_LOG_BROADCAST_PROCESSED_EVENT)
+    public void testUpdateBroadcastProcessedEventRecord_flagDisabled() {
+        final ResolveInfo receiver = createResolveInfo(PACKAGE1, getAppId(1));
+        final BroadcastRecord record = createBroadcastRecord(
+                new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED),
+                List.of(receiver));
+
+        record.updateBroadcastProcessedEventRecord(receiver, 10);
+
+        assertThat(record.getBroadcastProcessedRecordsForTest()).isEmpty();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_LOG_BROADCAST_PROCESSED_EVENT)
+    public void testUpdateBroadcastProcessedEventRecord_withNewReceiver_newBroadcastProcessedEventRecordCreated() {
+        final ResolveInfo receiver =
+                createResolveInfoWithProcessName(PACKAGE1, getAppId(1), PROCESS1);
+        final BroadcastRecord record = createBroadcastRecord(
+                new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED),
+                List.of(receiver));
+
+        record.updateBroadcastProcessedEventRecord(receiver, 10);
+
+        assertThat(record.getBroadcastProcessedRecordsForTest()).isNotEmpty();
+        final BroadcastProcessedEventRecord broadcastProcessedEventRecord =
+                record.getBroadcastProcessedRecordsForTest().get(
+                        BroadcastRecord.getReceiverProcessName(receiver));
+        final int[] expectedBroadcastTypes =
+                new int[]{BROADCAST_TYPE_BACKGROUND, BROADCAST_TYPE_DEFERRABLE_UNTIL_ACTIVE};
+
+        assertBroadcastProcessedEvent(
+                broadcastProcessedEventRecord,
+                /* receiverUid = */ 10001,
+                PROCESS1,
+                /* numberOfReceivers = */ 1,
+                expectedBroadcastTypes,
+                /* totalBroadcastFinishTimeMillis = */ 10,
+                /* maxReceiverFinishTimeMillis = */ 10);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_LOG_BROADCAST_PROCESSED_EVENT)
+    public void testUpdateBroadcastProcessedEventRecord_withNewAndExistingReceiver_multipleBroadcastProcessedEventRecordCreated() {
+        final ResolveInfo receiver1 =
+                createResolveInfoWithProcessName(PACKAGE1, getAppId(1), PROCESS1);
+
+        final ResolveInfo receiver2 =
+                createResolveInfoWithProcessName(PACKAGE2, getAppId(2), PROCESS2);
+
+        final BroadcastRecord record = createBroadcastRecord(
+                new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED),
+                List.of(receiver1, receiver2));
+
+        record.updateBroadcastProcessedEventRecord(receiver1, 11);
+        record.updateBroadcastProcessedEventRecord(receiver2, 11);
+        record.updateBroadcastProcessedEventRecord(receiver1, 20);
+
+        assertThat(record.getBroadcastProcessedRecordsForTest().size()).isEqualTo(2);
+        final BroadcastProcessedEventRecord broadcastProcessedEventRecord1 =
+                record.getBroadcastProcessedRecordsForTest().get(
+                        BroadcastRecord.getReceiverProcessName(receiver1));
+        final BroadcastProcessedEventRecord broadcastProcessedEventRecord2 =
+                record.getBroadcastProcessedRecordsForTest().get(
+                        BroadcastRecord.getReceiverProcessName(receiver2));
+        final int[] expectedBroadcastTypes =
+                new int[]{BROADCAST_TYPE_BACKGROUND, BROADCAST_TYPE_DEFERRABLE_UNTIL_ACTIVE};
+
+        assertBroadcastProcessedEvent(
+                broadcastProcessedEventRecord1,
+                /* receiverUid = */ 10001,
+                PROCESS1,
+                /* numberOfReceivers = */ 2,
+                expectedBroadcastTypes,
+                /* totalBroadcastFinishTimeMillis = */ 31,
+                /* maxReceiverFinishTimeMillis = */ 20);
+        assertBroadcastProcessedEvent(
+                broadcastProcessedEventRecord2,
+                /* receiverUid = */ 10002,
+                PROCESS2,
+                /* numberOfReceivers = */ 1,
+                expectedBroadcastTypes,
+                /* totalBroadcastFinishTimeMillis = */ 11,
+                /* maxReceiverFinishTimeMillis = */ 11);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_LOG_BROADCAST_PROCESSED_EVENT)
+    public void testLogBroadcastProcessedEventRecord_flagDisabled() {
+        testLogBroadcastProcessedEventRecord(0);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_LOG_BROADCAST_PROCESSED_EVENT)
+    public void testLogBroadcastProcessedEventRecord_flagEnabled_allBroadcastProcessedEventLogged() {
+        testLogBroadcastProcessedEventRecord(1);
+    }
+
+    private void testLogBroadcastProcessedEventRecord(int times) {
+        final ResolveInfo receiver = createResolveInfo(PACKAGE1, getAppId(1));
+        final BroadcastRecord record = createBroadcastRecord(
+                new Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED),
+                List.of(receiver));
+
+        final BroadcastProcessedEventRecord broadcastProcessedEventRecord = Mockito.mock(
+                BroadcastProcessedEventRecord.class);
+        record.getBroadcastProcessedRecordsForTest()
+                .put("process", broadcastProcessedEventRecord);
+        record.logBroadcastProcessedEventRecord();
+        doNothing().when(broadcastProcessedEventRecord).logToStatsD();
+
+        verify(broadcastProcessedEventRecord, times(times)).logToStatsD();
+    }
+
+    private void assertBroadcastProcessedEvent(
+            BroadcastProcessedEventRecord broadcastProcessedEventRecord,
+            int receiverUid,
+            String processName,
+            int numberOfReceivers,
+            int[] broadcastTypes,
+            long totalBroadcastFinishTimeMillis,
+            long maxReceiverFinishTimeMillis) {
+        assertNotNull(broadcastProcessedEventRecord);
+        assertThat(broadcastProcessedEventRecord.getReceiverUidForTest()).isEqualTo(receiverUid);
+        assertThat(broadcastProcessedEventRecord.getSenderUidForTest()).isEqualTo(0);
+        assertThat(broadcastProcessedEventRecord.getIntentActionForTest())
+                .isEqualTo(Intent.ACTION_AIRPLANE_MODE_CHANGED);
+        assertThat(broadcastProcessedEventRecord.getReceiverProcessNameForTest())
+                .isEqualTo(processName);
+        assertThat(broadcastProcessedEventRecord.getBroadcastTypesForTest())
+                .isEqualTo(broadcastTypes);
+        assertThat(broadcastProcessedEventRecord.getNumberOfReceiversForTest())
+                .isEqualTo(numberOfReceivers);
+        assertThat(broadcastProcessedEventRecord.getTotalBroadcastFinishTimeMillisForTest())
+                .isEqualTo(totalBroadcastFinishTimeMillis);
+        assertThat(broadcastProcessedEventRecord.getMaxReceiverFinishTimeMillisForTest())
+                .isEqualTo(maxReceiverFinishTimeMillis);
+    }
+
     private boolean[] calculateChangeState(List<Object> receivers) {
         return BroadcastRecord.calculateChangeStateForReceivers(receivers,
                 LIMIT_PRIORITY_SCOPE, mPlatformCompat);
@@ -1047,6 +1094,16 @@ public class BroadcastRecordTest {
 
     private static ResolveInfo createResolveInfoWithPriority(int priority) {
         return createResolveInfo(PACKAGE1, getAppId(1), priority);
+    }
+
+    private static ResolveInfo createResolveInfoWithProcessName(
+            String packageName,
+            int uid,
+            String processName) {
+        final ResolveInfo resolveInfo = createResolveInfo(packageName, uid);
+        resolveInfo.activityInfo.processName = processName;
+
+        return resolveInfo;
     }
 
     private static ResolveInfo createResolveInfo(String packageName, int uid) {

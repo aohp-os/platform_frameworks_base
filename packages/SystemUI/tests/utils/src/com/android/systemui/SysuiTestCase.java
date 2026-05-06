@@ -15,61 +15,54 @@
  */
 package com.android.systemui;
 
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import android.app.Instrumentation;
-import android.content.Context;
-import android.content.res.Resources;
 import android.os.Handler;
-import android.os.HandlerExecutor;
 import android.os.Looper;
 import android.os.MessageQueue;
 import android.os.ParcelFileDescriptor;
-import android.platform.test.annotations.DisabledOnRavenwood;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.platform.test.flag.junit.SetFlagsRule;
-import android.platform.test.ravenwood.RavenwoodClassRule;
 import android.platform.test.ravenwood.RavenwoodRule;
-import android.test.mock.MockContext;
 import android.testing.DexmakerShareClassLoaderRule;
 import android.testing.LeakCheck;
 import android.testing.TestWithLooperRule;
 import android.testing.TestableLooper;
 import android.util.Log;
-import android.util.Singleton;
 
 import androidx.annotation.NonNull;
 import androidx.core.animation.AndroidXAnimatorIsolationRule;
-import androidx.test.InstrumentationRegistry;
+import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.UiDevice;
 
 import com.android.internal.protolog.ProtoLog;
 import com.android.systemui.broadcast.FakeBroadcastDispatcher;
 import com.android.systemui.flags.SceneContainerRule;
+import com.android.systemui.log.LogWtfHandlerRule;
 
 import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.mockito.Mockito;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 
 /**
  * Base class that does System UI specific setup.
  */
-// NOTE: This @DisabledOnRavenwood annotation is inherited to all subclasses (unless overridden
-// via a more-specific @EnabledOnRavenwood annotation); this means that by default all
-// subclasses will be "ignored" when executed on the Ravenwood testing environment; more
-// background on Ravenwood is available at go/ravenwood-docs
-@DisabledOnRavenwood
 public abstract class SysuiTestCase {
     /**
      * Especially when self-testing test utilities, we may have classes that look like test
@@ -92,22 +85,8 @@ public abstract class SysuiTestCase {
     public AndroidXAnimatorIsolationRule mAndroidXAnimatorIsolationRule =
             new AndroidXAnimatorIsolationRule();
 
-    /**
-     * Rule that respects class-level annotations such as {@code @DisabledOnRavenwood} when tests
-     * are running on Ravenwood; on all other test environments this rule is a no-op passthrough.
-     */
-    @ClassRule(order = Integer.MIN_VALUE + 1)
-    public static final RavenwoodClassRule sRavenwood = new RavenwoodClassRule();
-
-    /**
-     * Rule that defines and prepares the Ravenwood environment when tests are running on
-     * Ravenwood; on all other test environments this rule is a no-op passthrough.
-     */
-    @Rule(order = Integer.MIN_VALUE + 1)
-    public final RavenwoodRule mRavenwood = new RavenwoodRule.Builder()
-            .setProcessApp()
-            .setProvideMainThread(true)
-            .build();
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
     @ClassRule
     public static final SetFlagsRule.ClassRule mSetFlagsClassRule =
@@ -117,15 +96,19 @@ public abstract class SysuiTestCase {
                     android.multiuser.Flags.class,
                     android.net.platform.flags.Flags.class,
                     android.os.Flags.class,
+                    android.security.Flags.class,
                     android.service.controls.flags.Flags.class,
                     android.service.quickaccesswallet.Flags.class,
                     com.android.internal.telephony.flags.Flags.class,
                     com.android.server.notification.Flags.class,
-                    com.android.systemui.Flags.class);
+                    com.android.systemui.Flags.class,
+                    com.android.window.flags.Flags.class);
 
     // TODO(b/339471826): Fix Robolectric to execute the @ClassRule correctly
     @Rule public final SetFlagsRule mSetFlagsRule =
             isRobolectricTest() ? new SetFlagsRule() : mSetFlagsClassRule.createSetFlagsRule();
+
+    @Rule public final LogWtfHandlerRule mLogWtfRule = new LogWtfHandlerRule();
 
     @Rule(order = 10)
     public final SceneContainerRule mSceneContainerRule = new SceneContainerRule();
@@ -136,49 +119,12 @@ public abstract class SysuiTestCase {
     @NonNull
     private SysuiTestableContext createTestableContext() {
         SysuiTestableContext context = new SysuiTestableContext(
-                getTestableContextBase(), getLeakCheck());
+                InstrumentationRegistry.getInstrumentation().getContext(), getLeakCheck());
         if (isRobolectricTest()) {
             // Manually associate a Display to context for Robolectric test. Similar to b/214297409
             return context.createDefaultDisplayContext();
         } else {
             return context;
-        }
-    }
-
-    @NonNull
-    private Context getTestableContextBase() {
-        if (isRavenwoodTest()) {
-            // TODO(b/292141694): build out Ravenwood support for Context
-            // Ravenwood doesn't yet provide a Context, but many SysUI tests assume one exists;
-            // so here we construct just enough of a Context to be useful; this will be replaced
-            // as more of the Ravenwood environment is built out
-            return new MockContext() {
-                @Override
-                public void setTheme(int resid) {
-                    // TODO(b/318393625): build out Ravenwood support for Resources
-                    // until then, ignored as no-op
-                }
-
-                @Override
-                public Resources getResources() {
-                    // TODO(b/318393625): build out Ravenwood support for Resources
-                    return Mockito.mock(Resources.class);
-                }
-
-                private Singleton<Executor> mMainExecutor = new Singleton<>() {
-                    @Override
-                    protected Executor create() {
-                        return new HandlerExecutor(new Handler(Looper.getMainLooper()));
-                    }
-                };
-
-                @Override
-                public Executor getMainExecutor() {
-                    return mMainExecutor.get();
-                }
-            };
-        } else {
-            return InstrumentationRegistry.getContext();
         }
     }
 
@@ -203,15 +149,16 @@ public abstract class SysuiTestCase {
     private Instrumentation mRealInstrumentation;
     private SysuiTestDependency mSysuiDependency;
 
+    static {
+        waitUntilMockitoCanBeInitialized();
+    }
+
     @Before
     public void SysuiSetup() throws Exception {
         ProtoLog.REQUIRE_PROTOLOGTOOL = false;
         mSysuiDependency = new SysuiTestDependency(mContext, shouldFailOnLeakedReceiver());
         mDependency = mSysuiDependency.install();
-        // TODO(b/292141694): build out Ravenwood support for Instrumentation
-        // Ravenwood doesn't yet provide Instrumentation, so we sidestep this global configuration
-        // step; any tests that rely on it are already being excluded on Ravenwood
-        if (!isRavenwoodTest() && !isScreenshotTest()) {
+        if (!isScreenshotTest()) {
             mRealInstrumentation = InstrumentationRegistry.getInstrumentation();
             Instrumentation inst = spy(mRealInstrumentation);
             when(inst.getContext()).thenAnswer(invocation -> {
@@ -224,6 +171,56 @@ public abstract class SysuiTestCase {
             });
             InstrumentationRegistry.registerInstance(inst, InstrumentationRegistry.getArguments());
         }
+    }
+
+    /**
+     * Due to b/404544974, it is possible for a test process to start without access to its
+     * temp folder, and then gain access later.  Mockito cannot initialize (b/391948934) if the
+     * temp folder is not writeable, so calling this method allows a test not to proceed until
+     * mockito will be workable.
+     */
+    public static void waitUntilMockitoCanBeInitialized() {
+        assertTempFilesAreCreatable();
+    }
+
+    private static Boolean sCanCreateTempFiles = null;
+    private static void assertTempFilesAreCreatable() throws RuntimeException {
+        // TODO(b/391948934): hopefully remove this hack
+        if (sCanCreateTempFiles == null) {
+            attemptToCreateTempFile();
+        }
+        if (!sCanCreateTempFiles) {
+            Assert.fail(
+                    "Cannot create temp files, so mockito will probably fail (b/391948934).  Temp"
+                            + " folder should be: "
+                            + System.getProperty("java.io.tmpdir"));
+        }
+    }
+
+    private static void attemptToCreateTempFile() throws RuntimeException {
+        // If I understand https://buganizer.corp.google.com/issues/123230176#comment11 correctly,
+        // we may have to wait for the temp folder to become available.
+        int retriesRemaining = 40;
+        IOException latestFailure = null;
+        while (sCanCreateTempFiles == null && retriesRemaining > 0) {
+            retriesRemaining--;
+            try {
+                File tempFile = File.createTempFile("confirm_temp_file_createable", "txt");
+                sCanCreateTempFiles = true;
+                assertTrue(tempFile.delete());
+                return;
+            } catch (IOException e) {
+                latestFailure = e;
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ie) {
+                    // just keep waiting
+                }
+            }
+        }
+
+        sCanCreateTempFiles = false;
+        throw new RuntimeException(latestFailure);
     }
 
     protected boolean shouldFailOnLeakedReceiver() {
@@ -272,6 +269,9 @@ public abstract class SysuiTestCase {
     }
 
     public FakeBroadcastDispatcher getFakeBroadcastDispatcher() {
+        if (mSysuiDependency == null) {
+            return null;
+        }
         return mSysuiDependency.getFakeBroadcastDispatcher();
     }
 
@@ -342,7 +342,7 @@ public abstract class SysuiTestCase {
     }
 
     /** Delegates to {@link android.testing.TestableResources#addOverride(int, Object)}. */
-    protected void overrideResource(int resourceId, Object value) {
+    public void overrideResource(int resourceId, Object value) {
         mContext.getOrCreateTestableResources().addOverride(resourceId, value);
     }
 

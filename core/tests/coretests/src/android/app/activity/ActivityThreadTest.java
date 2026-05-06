@@ -39,17 +39,20 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.app.ActivityThread;
 import android.app.ActivityThread.ActivityClientRecord;
+import android.app.ActivityThread.ReceiverData;
 import android.app.Application;
 import android.app.IApplicationThread;
 import android.app.PictureInPictureParams;
 import android.app.PictureInPictureUiState;
 import android.app.ResourcesManager;
-import android.app.WindowConfiguration;
 import android.app.servertransaction.ActivityConfigurationChangeItem;
 import android.app.servertransaction.ActivityRelaunchItem;
 import android.app.servertransaction.ClientTransaction;
@@ -62,6 +65,7 @@ import android.app.servertransaction.StopActivityItem;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.res.CameraCompatibilityInfo;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -71,6 +75,7 @@ import android.hardware.display.VirtualDisplay;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.RemoteCallback;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
@@ -82,6 +87,10 @@ import android.util.MergedConfiguration;
 import android.view.Display;
 import android.view.Surface;
 import android.view.View;
+import android.view.autofill.AutofillId;
+import android.view.autofill.AutofillManager;
+import android.view.autofill.AutofillValue;
+import android.widget.EditText;
 import android.window.ActivityWindowInfo;
 import android.window.WindowContextInfo;
 import android.window.WindowTokenClientController;
@@ -158,10 +167,7 @@ public class ActivityThreadTest {
 
     @After
     public void tearDown() {
-        if (mCreatedVirtualDisplays != null) {
-            mCreatedVirtualDisplays.forEach(VirtualDisplay::release);
-            mCreatedVirtualDisplays = null;
-        }
+        tearDownVirtualDisplays();
         WindowTokenClientController.overrideForTesting(mOriginalWindowTokenClientController);
         ClientTransactionListenerController.getInstance()
                 .unregisterActivityWindowInfoChangedListener(mActivityWindowInfoListener);
@@ -182,6 +188,34 @@ public class ActivityThreadTest {
         appThread.scheduleTransaction(newRelaunchResumeTransaction(activity));
         appThread.scheduleTransaction(newRelaunchResumeTransaction(activity));
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
+    @Test
+    public void testPerformDirectAction_remoteAutofill() throws Exception {
+        final TestActivity activity = mActivityTestRule.launchActivity(new Intent());
+        final IApplicationThread appThread = activity.getActivityThread().getApplicationThread();
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        EditText editText = activity.mEditText;
+        AutofillId autofillId = editText.getAutofillId();
+        AutofillValue autofillValue = AutofillValue.forText("test");
+
+        Bundle bundle = new Bundle();
+        bundle.putParcelable(AutofillManager.EXTRA_REMOTE_AUTOFILL_ID, autofillId);
+        bundle.putParcelable(AutofillManager.EXTRA_REMOTE_AUTOFILL_VALUE, autofillValue);
+        final RemoteCallback remoteCallback = new RemoteCallback((unused) -> {});
+        appThread.performDirectAction(
+                activity.getActivityToken(),
+                AutofillManager.DIRECT_ACTION_ID_REMOTE_AUTOFILL,
+                bundle,
+                null,
+                remoteCallback);
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        assertEquals("test", editText.getText().toString());
+        assertTrue("edit text should be focused", editText.isFocused());
     }
 
     @Test
@@ -283,7 +317,8 @@ public class ActivityThreadTest {
             newConfig.smallestScreenWidthDp++;
             transaction = newTransaction(activityThread);
             transaction.addTransactionItem(new ActivityConfigurationChangeItem(
-                    activity.getActivityToken(), newConfig, new ActivityWindowInfo()));
+                    activity.getActivityToken(), newConfig, new ActivityWindowInfo(),
+                    DEFAULT_DISPLAY));
             appThread.scheduleTransaction(transaction);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
@@ -318,8 +353,9 @@ public class ActivityThreadTest {
         final Configuration newConfig = new Configuration(originalAppConfig);
         newConfig.seq = BASE_SEQ + 1;
 
-        int sandboxedDisplayRotation = (originalDisplayRotation + 1) % 4;
-        CompatibilityInfo.setOverrideDisplayRotation(sandboxedDisplayRotation);
+        CameraCompatibilityInfo cameraCompatInfo = new CameraCompatibilityInfo.Builder()
+                .setDisplayRotationSandbox((originalDisplayRotation + 1) % 4).build();
+        CompatibilityInfo.setCameraCompatibilityInfo(cameraCompatInfo);
         try {
             // Send process level config change.
             ClientTransaction transaction = newTransaction(activityThread);
@@ -328,19 +364,24 @@ public class ActivityThreadTest {
             appThread.scheduleTransaction(transaction);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
-            assertDisplayRotation(sandboxedDisplayRotation, app);
+            assertDisplayRotation(cameraCompatInfo.getDisplayRotationSandbox(), app);
 
-            sandboxedDisplayRotation = (sandboxedDisplayRotation + 1) % 4;
-            CompatibilityInfo.setOverrideDisplayRotation(sandboxedDisplayRotation);
+            final CameraCompatibilityInfo newCameraCompatInfo = new CameraCompatibilityInfo
+                    .Builder()
+                    .setDisplayRotationSandbox(
+                            (cameraCompatInfo.getDisplayRotationSandbox() + 1) % 4)
+                    .build();
+            CompatibilityInfo.setCameraCompatibilityInfo(newCameraCompatInfo);
             // Send activity level config change.
             newConfig.seq++;
             transaction = newTransaction(activityThread);
             transaction.addTransactionItem(new ActivityConfigurationChangeItem(
-                    activity.getActivityToken(), newConfig, new ActivityWindowInfo()));
+                    activity.getActivityToken(), newConfig, new ActivityWindowInfo(),
+                    DEFAULT_DISPLAY));
             appThread.scheduleTransaction(transaction);
             InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
-            assertDisplayRotation(sandboxedDisplayRotation, activity);
+            assertDisplayRotation(newCameraCompatInfo.getDisplayRotationSandbox(), activity);
 
             // Execute a local relaunch item with current scaled config (e.g. simulate recreate),
             // the config should not change again.
@@ -348,9 +389,9 @@ public class ActivityThreadTest {
                     () -> activityThread.executeTransaction(
                             newRelaunchResumeTransaction(activity)));
 
-            assertDisplayRotation(sandboxedDisplayRotation, activity);
+            assertDisplayRotation(newCameraCompatInfo.getDisplayRotationSandbox(), activity);
         } finally {
-            CompatibilityInfo.setOverrideDisplayRotation(WindowConfiguration.ROTATION_UNDEFINED);
+            CompatibilityInfo.resetCameraCompatibilityInfo();
             InstrumentationRegistry.getInstrumentation().runOnMainSync(
                     () -> restoreConfig(activityThread, originalAppConfig));
         }
@@ -550,11 +591,13 @@ public class ActivityThreadTest {
 
         transaction = newTransaction(activityThread);
         transaction.addTransactionItem(new ActivityConfigurationChangeItem(
-                activity.getActivityToken(), activityConfigLandscape, new ActivityWindowInfo()));
-        transaction.addTransactionItem(
-                new ConfigurationChangeItem(processConfigPortrait, DEVICE_ID_INVALID));
+                activity.getActivityToken(), activityConfigLandscape, new ActivityWindowInfo(),
+                DEFAULT_DISPLAY));
+        transaction.addTransactionItem(new ConfigurationChangeItem(
+                processConfigPortrait, DEVICE_ID_INVALID));
         transaction.addTransactionItem(new ActivityConfigurationChangeItem(
-                activity.getActivityToken(), activityConfigPortrait, new ActivityWindowInfo()));
+                activity.getActivityToken(), activityConfigPortrait, new ActivityWindowInfo(),
+                DEFAULT_DISPLAY));
         appThread.scheduleTransaction(transaction);
 
         activity.mTestLatch.await(TIMEOUT_SEC, TimeUnit.SECONDS);
@@ -920,7 +963,7 @@ public class ActivityThreadTest {
             final ActivityRelaunchItem relaunchItem = new ActivityRelaunchItem(
                     activity.getActivityToken(), null, null, 0,
                     new MergedConfiguration(currentConfig, currentConfig),
-                    false /* preserveWindow */, newInfo);
+                    false /* preserveWindow */, newInfo, DEFAULT_DISPLAY);
             final ClientTransaction transaction = newTransaction(activity);
             transaction.addTransactionItem(relaunchItem);
 
@@ -951,8 +994,8 @@ public class ActivityThreadTest {
             final ActivityWindowInfo activityWindowInfo = new ActivityWindowInfo();
             activityWindowInfo.set(true /* isEmbedded */, taskBounds, taskFragmentBounds);
             final ActivityConfigurationChangeItem activityConfigurationChangeItem =
-                    new ActivityConfigurationChangeItem(
-                            activity.getActivityToken(), config, activityWindowInfo);
+                    new ActivityConfigurationChangeItem(activity.getActivityToken(), config,
+                            activityWindowInfo, DEFAULT_DISPLAY);
             final ClientTransaction transaction = newTransaction(activity);
             transaction.addTransactionItem(activityConfigurationChangeItem);
 
@@ -968,8 +1011,8 @@ public class ActivityThreadTest {
                     new ActivityWindowInfo(activityWindowInfo);
             config.seq++;
             final ActivityConfigurationChangeItem activityConfigurationChangeItem2 =
-                    new ActivityConfigurationChangeItem(
-                            activity.getActivityToken(), config, activityWindowInfo2);
+                    new ActivityConfigurationChangeItem(activity.getActivityToken(), config,
+                            activityWindowInfo2, DEFAULT_DISPLAY);
             final ClientTransaction transaction2 = newTransaction(activity);
             transaction2.addTransactionItem(activityConfigurationChangeItem2);
 
@@ -1005,6 +1048,88 @@ public class ActivityThreadTest {
         systemThread.handleApplicationInfoChanged(newAppInfo);
         assertWithMessage("Application info was updated successfully")
                 .that(systemContext.getApplicationInfo()).isSameInstanceAs(newAppInfo);
+    }
+
+    @Test
+    public void tesScheduleReceiver_withLaunchDisplayId_receivesDisplayContext() {
+        final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        final Display virtualDisplay = createVirtualDisplay(context, 100 /* w */, 100 /* h */);
+        final int virtualDisplayId = virtualDisplay.getDisplayId();
+        final ActivityOptions activityOptions =
+                ActivityOptions.makeBasic().setLaunchDisplayId(virtualDisplayId);
+        final ActivityThread activityThread = ActivityThread.currentActivityThread();
+
+        final ReceiverData data = createReceiverData(activityOptions.toBundle());
+        final Context resultContext =
+                activityThread.createDisplayContextIfNeeded(context, data);
+
+        final Display resultDisplay = resultContext.getDisplayNoVerify();
+        assertThat(resultDisplay).isNotNull();
+        assertThat(resultDisplay.getDisplayId()).isEqualTo(virtualDisplayId);
+        assertThat(resultContext.getAssociatedDisplayId()).isEqualTo(virtualDisplayId);
+    }
+
+    @Test
+    public void tesScheduleReceiver_withNotExistDisplayId_receivesNoneUiContext() {
+        final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        final Display virtualDisplay = createVirtualDisplay(context, 100 /* w */, 100 /* h */);
+        final int virtualDisplayId = virtualDisplay.getDisplayId();
+        final ActivityOptions activityOptions =
+                ActivityOptions.makeBasic().setLaunchDisplayId(virtualDisplayId);
+        final ActivityThread activityThread = ActivityThread.currentActivityThread();
+        tearDownVirtualDisplays();
+
+        final ReceiverData data = createReceiverData(activityOptions.toBundle());
+        final Context resultContext = activityThread.createDisplayContextIfNeeded(context, data);
+
+        assertThat(resultContext).isEqualTo(context);
+    }
+
+    @Test
+    public void tesScheduleReceiver_withInvalidDisplay_receivesNoneUiContext() {
+        final Context context = mock(Context.class);
+        final ActivityOptions activityOptions =
+                ActivityOptions.makeBasic().setLaunchDisplayId(INVALID_DISPLAY);
+        final ActivityThread activityThread = ActivityThread.currentActivityThread();
+
+        final ReceiverData data = createReceiverData(activityOptions.toBundle());
+        final Context resultContext = activityThread.createDisplayContextIfNeeded(context, data);
+
+        verify(context, never()).createDisplayContext(any());
+        assertThat(resultContext).isEqualTo(context);
+    }
+
+    @Test
+    public void tesScheduleReceiver_withoutDisplayManagerService_receivesNoneUiContext() {
+        final Context context = mock(Context.class);
+        when(context.getSystemService(DisplayManager.class)).thenReturn(null);
+        final ActivityThread activityThread = ActivityThread.currentActivityThread();
+
+        final ReceiverData data = createReceiverData(null /* resultExtras */);
+        final Context resultContext = activityThread.createDisplayContextIfNeeded(context, data);
+
+        verify(context, never()).createDisplayContext(any());
+        assertThat(resultContext).isEqualTo(context);
+    }
+
+    @Test
+    public void tesScheduleReceiver_withoutActivityOptions_receivesNoneUiContext() {
+        final Context context = mock(Context.class);
+        final ActivityThread activityThread = ActivityThread.currentActivityThread();
+
+        final ReceiverData data = createReceiverData(null /* resultExtras */);
+        final Context resultContext = activityThread.createDisplayContextIfNeeded(context, data);
+
+        verify(context, never()).createDisplayContext(any());
+        assertThat(resultContext).isEqualTo(context);
+    }
+
+    @NonNull
+    private ReceiverData createReceiverData(@Nullable Bundle resultExtras) {
+        return new ReceiverData(new Intent("test.action.WIDGET_ITEM_CLICK"),
+                0 /* resultCode */, null /* resultData */, resultExtras, false /* ordered */,
+                false /* sticky */, false /* assumeDelivered */, null /* token */,
+                0 /* sendingUser */, -1 /* sendingUid */, null /* sendingPackage */);
     }
 
     /**
@@ -1056,6 +1181,13 @@ public class ActivityThreadTest {
         return virtualDisplay.getDisplay();
     }
 
+    private void tearDownVirtualDisplays() {
+        if (mCreatedVirtualDisplays != null) {
+            mCreatedVirtualDisplays.forEach(VirtualDisplay::release);
+            mCreatedVirtualDisplays = null;
+        }
+    }
+
     private static ActivityClientRecord getActivityClientRecord(Activity activity) {
         final ActivityThread thread = activity.getActivityThread();
         final IBinder token = activity.getActivityToken();
@@ -1077,7 +1209,7 @@ public class ActivityThreadTest {
         final ClientTransactionItem callbackItem = new ActivityRelaunchItem(
                 activity.getActivityToken(), null, null, 0,
                 new MergedConfiguration(currentConfig, currentConfig),
-                false /* preserveWindow */, activityWindowInfo);
+                false /* preserveWindow */, activityWindowInfo, DEFAULT_DISPLAY);
         final ResumeActivityItem resumeStateRequest =
                 new ResumeActivityItem(activity.getActivityToken(), true /* isForward */,
                         false /* shouldSendCompatFakeFocus*/);
@@ -1115,7 +1247,7 @@ public class ActivityThreadTest {
     private static ClientTransaction newActivityConfigTransaction(@NonNull Activity activity,
             @NonNull Configuration config) {
         final ActivityConfigurationChangeItem item = new ActivityConfigurationChangeItem(
-                activity.getActivityToken(), config, new ActivityWindowInfo());
+                activity.getActivityToken(), config, new ActivityWindowInfo(), DEFAULT_DISPLAY);
 
         final ClientTransaction transaction = newTransaction(activity);
         transaction.addTransactionItem(item);
@@ -1173,12 +1305,16 @@ public class ActivityThreadTest {
          */
         volatile CountDownLatch mPipUiStateLatch;
 
+        private EditText mEditText;
+
         @Override
         protected void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
             getWindow().getDecorView().setKeepScreenOn(true);
             setShowWhenLocked(true);
             setTurnScreenOn(true);
+            mEditText = new EditText(this);
+            setContentView(mEditText);
         }
 
         @Override

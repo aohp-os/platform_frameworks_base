@@ -24,13 +24,13 @@ import com.android.compose.animation.scene.TestScenes.SceneB
 import com.android.compose.animation.scene.TestScenes.SceneC
 import com.android.compose.animation.scene.content.state.TransitionState
 import com.android.compose.animation.scene.subjects.assertThat
-import com.android.compose.test.runMonotonicClockTest
 import com.android.compose.test.transition
 import com.google.common.truth.Correspondence
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import platform.test.motion.compose.runMonotonicClockTest
 
 @RunWith(AndroidJUnit4::class)
 class InterruptionHandlerTest {
@@ -39,7 +39,7 @@ class InterruptionHandlerTest {
     @Test
     fun default() = runMonotonicClockTest {
         val state =
-            MutableSceneTransitionLayoutState(
+            MutableSceneTransitionLayoutStateForTests(
                 SceneA,
                 transitions { /* default interruption handler */ },
             )
@@ -62,7 +62,7 @@ class InterruptionHandlerTest {
     @Test
     fun chainingDisabled() = runMonotonicClockTest {
         val state =
-            MutableSceneTransitionLayoutState(
+            MutableSceneTransitionLayoutStateForTests(
                 SceneA,
                 transitions {
                     // Handler that animates from currentScene (default) but disables chaining.
@@ -97,7 +97,7 @@ class InterruptionHandlerTest {
     fun animateFromOtherScene() = runMonotonicClockTest {
         val duration = 500
         val state =
-            MutableSceneTransitionLayoutState(
+            MutableSceneTransitionLayoutStateForTests(
                 SceneA,
                 transitions {
                     // Handler that animates from the scene that is not currentScene.
@@ -146,7 +146,7 @@ class InterruptionHandlerTest {
 
     @Test
     fun animateToFromScene() = runMonotonicClockTest {
-        val state = MutableSceneTransitionLayoutStateImpl(SceneA, transitions {})
+        val state = MutableSceneTransitionLayoutStateForTests(SceneA, transitions {})
 
         // Fake a transition from A to B that has a non 0 velocity.
         val progressVelocity = 1f
@@ -182,7 +182,7 @@ class InterruptionHandlerTest {
 
     @Test
     fun animateToToScene() = runMonotonicClockTest {
-        val state = MutableSceneTransitionLayoutStateImpl(SceneA, transitions {})
+        val state = MutableSceneTransitionLayoutStateForTests(SceneA, transitions {})
 
         // Fake a transition from A to B with current scene = A that has a non 0 velocity.
         val progressVelocity = -1f

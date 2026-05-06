@@ -15,6 +15,8 @@
  */
 package com.android.wm.shell.bubbles.bar;
 
+import static com.android.wm.shell.bubbles.bar.BubbleBarCaptionView.CAPTION_ELEVATION;
+
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
@@ -22,17 +24,15 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.content.res.Resources;
-import android.content.res.TypedArray;
-import android.graphics.Color;
-import android.graphics.drawable.Icon;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
 import com.android.app.animation.Interpolators;
-import com.android.wm.shell.Flags;
+import com.android.launcher3.icons.BitmapInfo;
 import com.android.wm.shell.R;
 import com.android.wm.shell.bubbles.Bubble;
+import com.android.wm.shell.shared.bubbles.BubbleAnythingFlagHelper;
 
 import java.util.ArrayList;
 
@@ -88,12 +88,10 @@ class BubbleBarMenuViewController {
         runOnMenuIsMeasured(() -> {
             mMenuView.setVisibility(View.VISIBLE);
             mScrimView.setVisibility(View.VISIBLE);
-            Runnable endActions = () -> {
-                mMenuView.getChildAt(0).requestAccessibilityFocus();
-                if (mListener != null) {
-                    mListener.onMenuVisibilityChanged(true /* isShown */);
-                }
-            };
+            if (mListener != null) {
+                mListener.onMenuVisibilityChanged(true /* isShown */);
+            }
+            Runnable endActions = () -> mMenuView.getChildAt(0).requestAccessibilityFocus();
             if (animated) {
                 animateTransition(true /* show */, endActions);
             } else {
@@ -169,12 +167,7 @@ class BubbleBarMenuViewController {
         int handleHeight = mHandleView.getHandleHeight();
         float targetWidth = mHandleView.getHandleWidth() + widthDiff * WIDTH_SWAP_FRACTION;
         float targetHeight = targetWidth * mMenuView.getTitleItemHeight() / mMenuView.getWidth();
-        int menuColor;
-        try (TypedArray ta = mContext.obtainStyledAttributes(new int[]{
-                com.android.internal.R.attr.materialColorSurfaceBright,
-        })) {
-            menuColor = ta.getColor(0, Color.WHITE);
-        }
+        int menuColor = mContext.getColor(com.android.internal.R.color.materialColorSurfaceBright);
         // Calculating deltas
         float swapScale = targetWidth / mMenuView.getWidth();
         float handleWidthDelta = targetWidth - mHandleView.getHandleWidth();
@@ -207,6 +200,8 @@ class BubbleBarMenuViewController {
         mMenuView = (BubbleBarMenuView) LayoutInflater.from(mContext).inflate(
                 R.layout.bubble_bar_menu_view, mRootView, false);
         mMenuView.setOnCloseListener(() -> hideMenu(true  /* animated */));
+        // Set the elevation to draw on top of the caption view.
+        mMenuView.setElevation(CAPTION_ELEVATION + 1);
         if (mBubble != null) {
             mMenuView.updateInfo(mBubble);
             mMenuView.updateActions(createMenuActions(mBubble));
@@ -227,15 +222,12 @@ class BubbleBarMenuViewController {
     private ArrayList<BubbleBarMenuView.MenuAction> createMenuActions(Bubble bubble) {
         ArrayList<BubbleBarMenuView.MenuAction> menuActions = new ArrayList<>();
         Resources resources = mContext.getResources();
-        int tintColor;
-        try (TypedArray ta = mContext.obtainStyledAttributes(new int[]{
-                com.android.internal.R.attr.materialColorOnSurface})) {
-            tintColor = ta.getColor(0, Color.TRANSPARENT);
-        }
-        if (bubble.isConversation()) {
+        int tintColor = mContext.getColor(com.android.internal.R.color.materialColorOnSurface);
+
+        if (bubble.isChat()) {
             // Don't bubble conversation action
             menuActions.add(new BubbleBarMenuView.MenuAction(
-                    Icon.createWithResource(mContext, R.drawable.bubble_ic_stop_bubble),
+                    DrawableProvider.forResource(R.drawable.bubble_ic_stop_bubble),
                     resources.getString(R.string.bubbles_dont_bubble_conversation),
                     tintColor,
                     view -> {
@@ -246,8 +238,9 @@ class BubbleBarMenuViewController {
                     }
             ));
             // Open settings action
-            Icon appIcon = bubble.getRawAppBadge() != null ? Icon.createWithBitmap(
-                    bubble.getRawAppBadge()) : null;
+            BitmapInfo rawAppBadge = bubble.getRawAppBadge();
+            DrawableProvider appIcon = rawAppBadge != null
+                    ? DrawableProvider.forInfo(rawAppBadge) : null;
             menuActions.add(new BubbleBarMenuView.MenuAction(
                     appIcon,
                     resources.getString(R.string.bubbles_app_settings, bubble.getAppName()),
@@ -262,7 +255,7 @@ class BubbleBarMenuViewController {
 
         // Dismiss bubble action
         menuActions.add(new BubbleBarMenuView.MenuAction(
-                Icon.createWithResource(resources, R.drawable.ic_remove_no_shadow),
+                DrawableProvider.forResource(R.drawable.ic_remove_no_shadow),
                 resources.getString(R.string.bubble_dismiss_text),
                 tintColor,
                 view -> {
@@ -273,10 +266,9 @@ class BubbleBarMenuViewController {
                 }
         ));
 
-        if (Flags.enableBubbleAnything() || Flags.enableBubbleToFullscreen()) {
+        if (BubbleAnythingFlagHelper.enableBubbleToFullscreen()) {
             menuActions.add(new BubbleBarMenuView.MenuAction(
-                    Icon.createWithResource(resources,
-                            R.drawable.desktop_mode_ic_handle_menu_fullscreen),
+                    DrawableProvider.forResource(R.drawable.desktop_mode_ic_handle_menu_fullscreen),
                     resources.getString(R.string.bubble_fullscreen_text),
                     tintColor,
                     view -> {

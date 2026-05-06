@@ -16,6 +16,8 @@
 
 package com.android.wm.shell.common.split;
 
+import static android.view.Display.DEFAULT_DISPLAY;
+
 import static com.android.wm.shell.shared.split.SplitScreenConstants.CONTROLLED_ACTIVITY_TYPES;
 import static com.android.wm.shell.shared.split.SplitScreenConstants.CONTROLLED_WINDOWING_MODES;
 import static com.android.wm.shell.shared.split.SplitScreenConstants.SNAP_TO_2_10_90;
@@ -26,19 +28,22 @@ import static com.android.wm.shell.shared.split.SplitScreenConstants.SPLIT_POSIT
 import static com.android.wm.shell.shared.split.SplitScreenConstants.SPLIT_POSITION_TOP_OR_LEFT;
 import static com.android.wm.shell.shared.split.SplitScreenConstants.SPLIT_POSITION_UNDEFINED;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.ActivityManager;
-import android.app.PendingIntent;
-import android.content.Intent;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Rect;
-
-import androidx.annotation.Nullable;
+import android.window.DesktopExperienceFlags;
+import android.window.DisplayAreaInfo;
+import android.window.WindowContainerToken;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.wm.shell.Flags;
+import com.android.wm.shell.RootTaskDisplayAreaOrganizer;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.shared.split.SplitScreenConstants;
+import com.android.wm.shell.splitscreen.StageTaskListener;
 
 /** Helper utility class for split screen components to use. */
 public class SplitScreenUtils {
@@ -65,31 +70,6 @@ public class SplitScreenUtils {
                 && ArrayUtils.contains(CONTROLLED_WINDOWING_MODES, taskInfo.getWindowingMode());
     }
 
-    /** Retrieve package name from an intent */
-    @Nullable
-    public static String getPackageName(Intent intent) {
-        if (intent == null || intent.getComponent() == null) {
-            return null;
-        }
-        return intent.getComponent().getPackageName();
-    }
-
-    /** Retrieve package name from a PendingIntent */
-    @Nullable
-    public static String getPackageName(PendingIntent pendingIntent) {
-        if (pendingIntent == null || pendingIntent.getIntent() == null) {
-            return null;
-        }
-        return getPackageName(pendingIntent.getIntent());
-    }
-
-    /** Retrieve package name from a taskId */
-    @Nullable
-    public static String getPackageName(int taskId, ShellTaskOrganizer taskOrganizer) {
-        final ActivityManager.RunningTaskInfo taskInfo = taskOrganizer.getRunningTaskInfo(taskId);
-        return taskInfo != null ? getPackageName(taskInfo.baseIntent) : null;
-    }
-
     /** Retrieve user id from a taskId */
     public static int getUserId(int taskId, ShellTaskOrganizer taskOrganizer) {
         final ActivityManager.RunningTaskInfo taskInfo = taskOrganizer.getRunningTaskInfo(taskId);
@@ -105,20 +85,20 @@ public class SplitScreenUtils {
      * Returns whether left/right split is allowed in portrait.
      */
     public static boolean allowLeftRightSplitInPortrait(Resources res) {
-        return Flags.enableLeftRightSplitInPortrait() && res.getBoolean(
-                com.android.internal.R.bool.config_leftRightSplitInPortrait);
+        return res.getBoolean(com.android.internal.R.bool.config_leftRightSplitInPortrait);
     }
 
     /**
      * Returns whether left/right split is supported in the given configuration.
      */
     public static boolean isLeftRightSplit(boolean allowLeftRightSplitInPortrait,
-            Configuration config) {
+            Configuration config, int displayId) {
         // Compare the max bounds sizes as on near-square devices, the insets may result in a
         // configuration in the other orientation
         final Rect maxBounds = config.windowConfiguration.getMaxBounds();
         final boolean isLandscape = maxBounds.width() >= maxBounds.height();
-        return isLeftRightSplit(allowLeftRightSplitInPortrait, isLargeScreen(config), isLandscape);
+        return isLeftRightSplit(allowLeftRightSplitInPortrait, isLargeScreen(config), isLandscape,
+                displayId);
     }
 
     /**
@@ -126,9 +106,16 @@ public class SplitScreenUtils {
      * is useful for cases where we need to calculate this given last saved state.
      */
     public static boolean isLeftRightSplit(boolean allowLeftRightSplitInPortrait,
-            boolean isLargeScreen, boolean isLandscape) {
+            boolean isLargeScreen, boolean isLandscape, int displayId) {
         if (allowLeftRightSplitInPortrait && isLargeScreen) {
-            return !isLandscape;
+            if (displayId == DEFAULT_DISPLAY
+                    || !DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT.isTrue()) {
+                return !isLandscape;
+            } else {
+                // If split is started in external display and the non_default_display_split_bugfix
+                // is enabled, set isLeftRightSplit to true in landscape mode.
+                return isLandscape;
+            }
         } else {
             return isLandscape;
         }
@@ -180,6 +167,60 @@ public class SplitScreenUtils {
                 return stageIndex == 2;
             default:
                 return false;
+        }
+    }
+
+    /**
+     * Retrieves the new parent WindowContainerToken for tasks in the main or stage display area
+     * after the split pair is dismissed. This token will be used for reparenting tasks. The
+     * specific stage (main or side) from which the display ID is obtained does not alter the
+     * resulting parent token, as it's based on the display area of the display itself.
+     *
+     * @param stage The StageTaskListener representing the current stage.
+     * @param rootTDAOrganizer The RootTaskDisplayAreaOrganizer to query for DisplayAreaInfo.
+     * @return The WindowContainerToken of the parent display area if
+     *         DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT is true and a valid
+     *         DisplayAreaInfo is found for the main stage's display; otherwise, returns null.
+     */
+    @Nullable
+    public static WindowContainerToken getNewParentTokenForStage(
+            @Nullable StageTaskListener stage,
+            @NonNull RootTaskDisplayAreaOrganizer rootTDAOrganizer) {
+        if (!DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT.isTrue()
+                || stage == null || stage.getRunningTaskInfo() == null) {
+            return null;
+        }
+
+        final int displayId = stage.getRunningTaskInfo().displayId;
+        final DisplayAreaInfo displayAreaInfo = rootTDAOrganizer.getDisplayAreaInfo(displayId);
+        return displayAreaInfo != null ? displayAreaInfo.token : null;
+    }
+
+    /**
+     * Retrieves DisplayAreaInfo for a given task and updates the SplitLayout's configuration.
+     *
+     * @param rootTDAOrganizer The RootTaskDisplayAreaOrganizer instance.
+     * @param displayId The RunningTaskInfo displayId for which to get display information.
+     * @param splitLayout The SplitLayout to update. Can be null.
+     */
+    public static void updateSplitLayoutConfig(
+            @NonNull RootTaskDisplayAreaOrganizer rootTDAOrganizer,
+            int displayId,
+            @Nullable SplitLayout splitLayout) {
+        if (!DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT.isTrue()) {
+            return;
+        }
+
+        DisplayAreaInfo displayAreaInfo = rootTDAOrganizer.getDisplayAreaInfo(displayId);
+        if (displayAreaInfo == null) {
+            return;
+        }
+
+        Configuration displayConfiguration = displayAreaInfo.configuration;
+        if (splitLayout != null) {
+            if (splitLayout.updateConfiguration(displayConfiguration, displayId)) {
+                splitLayout.update(null /* t */, false /* resetImePosition */);
+            }
         }
     }
 }

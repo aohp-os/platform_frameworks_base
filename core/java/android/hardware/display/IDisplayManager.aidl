@@ -56,15 +56,18 @@ interface IDisplayManager {
     void stopWifiDisplayScan();
 
     // Requires CONFIGURE_WIFI_DISPLAY permission.
+    @EnforcePermission("CONFIGURE_WIFI_DISPLAY")
     void connectWifiDisplay(String address);
 
     // No permissions required.
     void disconnectWifiDisplay();
 
     // Requires CONFIGURE_WIFI_DISPLAY permission.
+    @EnforcePermission("CONFIGURE_WIFI_DISPLAY")
     void renameWifiDisplay(String address, String alias);
 
     // Requires CONFIGURE_WIFI_DISPLAY permission.
+    @EnforcePermission("CONFIGURE_WIFI_DISPLAY")
     void forgetWifiDisplay(String address);
 
     // Requires CONFIGURE_WIFI_DISPLAY permission.
@@ -168,8 +171,16 @@ interface IDisplayManager {
     @EnforcePermission("CONTROL_DISPLAY_BRIGHTNESS")
     void setBrightness(int displayId, float brightness);
 
+    // Set the display brightness. Accepts different brightness units.
+    @EnforcePermission("WRITE_SETTINGS")
+    void setBrightnessByUnit(int displayId, float value, int unit);
+
     // Retrieves the display brightness.
+    @EnforcePermission("CONTROL_DISPLAY_BRIGHTNESS")
     float getBrightness(int displayId);
+
+    // Retrieves the display brightness in the specified brightness unit.
+    float getBrightnessByUnit(int displayId, int unit);
 
     // Temporarily sets the auto brightness adjustment factor.
     @EnforcePermission("CONTROL_DISPLAY_BRIGHTNESS")
@@ -190,14 +201,15 @@ interface IDisplayManager {
     // Sets the user preferred display mode.
     // Requires MODIFY_USER_PREFERRED_DISPLAY_MODE permission.
     @EnforcePermission("MODIFY_USER_PREFERRED_DISPLAY_MODE")
-    void setUserPreferredDisplayMode(int displayId, in Mode mode);
+    void setUserPreferredDisplayMode(int displayId, in Mode mode, boolean storeMode);
+    @EnforcePermission("MODIFY_USER_PREFERRED_DISPLAY_MODE")
+    void resetUserPreferredDisplayMode(int displayId);
     Mode getUserPreferredDisplayMode(int displayId);
     Mode getSystemPreferredDisplayMode(int displayId);
 
     // Sets the HDR conversion mode for a device.
     // Requires MODIFY_HDR_CONVERSION_MODE permission.
-    @JavaPassthrough(annotation = "@android.annotation.RequiresPermission(android.Manifest"
-                + ".permission.MODIFY_HDR_CONVERSION_MODE)")
+    @EnforcePermission("MODIFY_HDR_CONVERSION_MODE")
     void setHdrConversionMode(in HdrConversionMode hdrConversionMode);
     HdrConversionMode getHdrConversionModeSetting();
     HdrConversionMode getHdrConversionMode();
@@ -241,6 +253,13 @@ interface IDisplayManager {
     @EnforcePermission("MANAGE_DISPLAYS")
     boolean requestDisplayPower(int displayId, int state);
 
+    // Sets the connection preference for external display.
+    @EnforcePermission("MANAGE_DISPLAYS")
+    void setConnectionPreference(String uniqueId, int preference);
+
+    // Returns the saved connection preference for external display.
+    int getConnectionPreference(String uniqueId);
+
     // Restricts display modes to specified modeIds.
     @EnforcePermission("RESTRICT_DISPLAY_MODES")
     void requestDisplayModes(in IBinder token, int displayId, in @nullable int[] modeIds);
@@ -257,7 +276,6 @@ interface IDisplayManager {
     float getDefaultDozeBrightness(int displayId);
 
     // Get the display topology
-    @EnforcePermission("MANAGE_DISPLAYS")
     @nullable
     DisplayTopology getDisplayTopology();
 

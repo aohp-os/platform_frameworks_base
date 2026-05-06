@@ -27,20 +27,17 @@ import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Handler
 import android.provider.Settings
-import com.android.settingslib.flags.Flags
 import com.android.settingslib.notification.modes.ZenMode
 import com.android.settingslib.notification.modes.ZenModesBackend
 import java.time.Duration
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -57,7 +54,7 @@ interface ZenModeRepository {
     val globalZenMode: StateFlow<Int?>
 
     /** A list of all existing priority modes. */
-    val modes: Flow<List<ZenMode>>
+    val modes: StateFlow<List<ZenMode>>
 
     fun getModes(): List<ZenMode>
 
@@ -72,7 +69,7 @@ class ZenModeRepositoryImpl(
     private val notificationManager: NotificationManager,
     private val backend: ZenModesBackend,
     private val contentResolver: ContentResolver,
-    val scope: CoroutineScope,
+    val applicationScope: CoroutineScope,
     val backgroundCoroutineContext: CoroutineContext,
     // This is nullable just to simplify testing, since SettingsLib doesn't have a good way
     // to create a fake handler.
@@ -93,10 +90,9 @@ class ZenModeRepositoryImpl(
                     IntentFilter().apply {
                         addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
                         addAction(NotificationManager.ACTION_NOTIFICATION_POLICY_CHANGED)
-                        if (android.app.Flags.modesApi())
-                            addAction(
-                                NotificationManager.ACTION_CONSOLIDATED_NOTIFICATION_POLICY_CHANGED
-                            )
+                        addAction(
+                            NotificationManager.ACTION_CONSOLIDATED_NOTIFICATION_POLICY_CHANGED
+                        )
                     },
                     /* broadcastPermission = */ null,
                     /* scheduler = */ backgroundHandler,
@@ -105,20 +101,17 @@ class ZenModeRepositoryImpl(
                 awaitClose { context.unregisterReceiver(receiver) }
             }
             .flowOn(backgroundCoroutineContext)
-            .shareIn(started = SharingStarted.WhileSubscribed(), scope = scope)
+            .shareIn(started = SharingStarted.WhileSubscribed(), scope = applicationScope)
     }
 
     override val consolidatedNotificationPolicy: StateFlow<NotificationManager.Policy?> by lazy {
-        if (android.app.Flags.modesApi())
-            flowFromBroadcast(NotificationManager.ACTION_CONSOLIDATED_NOTIFICATION_POLICY_CHANGED) {
-                // If available, get the value from extras to avoid a potential binder call.
-                it?.extras?.getParcelable(EXTRA_NOTIFICATION_POLICY)
-                    ?: notificationManager.consolidatedNotificationPolicy
-            }
-        else
-            flowFromBroadcast(NotificationManager.ACTION_NOTIFICATION_POLICY_CHANGED) {
-                notificationManager.consolidatedNotificationPolicy
-            }
+        flowFromBroadcast(NotificationManager.ACTION_CONSOLIDATED_NOTIFICATION_POLICY_CHANGED) {
+            // If available, get the value from extras to avoid a potential binder call.
+            it?.extras?.getParcelable(
+                EXTRA_NOTIFICATION_POLICY,
+                NotificationManager.Policy::class.java
+            ) ?: notificationManager.consolidatedNotificationPolicy
+        }
     }
 
     override val globalZenMode: StateFlow<Int?> by lazy {
@@ -133,50 +126,43 @@ class ZenModeRepositoryImpl(
             .map { mapper(it) }
             .onStart { emit(mapper(null)) }
             .flowOn(backgroundCoroutineContext)
-            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+            .stateIn(applicationScope, SharingStarted.WhileSubscribed(), null)
 
     private val zenConfigChanged by lazy {
-        if (android.app.Flags.modesUi()) {
-            callbackFlow {
-                    // emit an initial value
-                    trySend(Unit)
-
-                    val observer =
-                        object : ContentObserver(backgroundHandler) {
-                            override fun onChange(selfChange: Boolean) {
-                                trySend(Unit)
-                            }
+        callbackFlow {
+                val observer =
+                    object : ContentObserver(backgroundHandler) {
+                        override fun onChange(selfChange: Boolean) {
+                            trySend(Unit)
                         }
+                    }
 
-                    contentResolver.registerContentObserver(
-                        Settings.Global.getUriFor(Settings.Global.ZEN_MODE),
-                        /* notifyForDescendants= */ false,
-                        observer,
-                    )
-                    contentResolver.registerContentObserver(
-                        Settings.Global.getUriFor(Settings.Global.ZEN_MODE_CONFIG_ETAG),
-                        /* notifyForDescendants= */ false,
-                        observer,
-                    )
+                contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(Settings.Global.ZEN_MODE),
+                    /* notifyForDescendants= */ false,
+                    observer,
+                )
+                contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(Settings.Global.ZEN_MODE_CONFIG_ETAG),
+                    /* notifyForDescendants= */ false,
+                    observer,
+                )
 
-                    awaitClose { contentResolver.unregisterContentObserver(observer) }
-                }
-                .flowOn(backgroundCoroutineContext)
-        } else {
-            flowOf(Unit)
-        }
+                awaitClose { contentResolver.unregisterContentObserver(observer) }
+            }
+            .flowOn(backgroundCoroutineContext)
     }
 
-    override val modes: Flow<List<ZenMode>> by lazy {
-        if (android.app.Flags.modesUi()) {
-            zenConfigChanged
-                .map { backend.modes }
-                .distinctUntilChanged()
-                .flowOn(backgroundCoroutineContext)
-        } else {
-            flowOf(emptyList())
-        }
-    }
+    override val modes: StateFlow<List<ZenMode>> =
+        zenConfigChanged
+            .map { backend.modes }
+            .distinctUntilChanged()
+            .flowOn(backgroundCoroutineContext)
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.Eagerly,
+                initialValue = backend.modes,
+            )
 
     /**
      * Gets the current list of [ZenMode] instances according to the backend.

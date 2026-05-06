@@ -25,11 +25,13 @@ import com.android.internal.widget.remotecompose.core.PaintOperation;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.List;
 
 /** Base class for commands that take 3 float */
-public abstract class DrawBase2 extends PaintOperation implements VariableSupport {
+public abstract class DrawBase2 extends PaintOperation implements VariableSupport, Serializable {
     @NonNull protected String mName = "DrawRectBase";
     float mV1;
     float mV2;
@@ -76,8 +78,15 @@ public abstract class DrawBase2 extends PaintOperation implements VariableSuppor
         return mName + " " + floatToString(mV1) + " " + floatToString(mV2);
     }
 
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations to add to
+     * @param maker the maker of the operation
+     */
     public static void read(
-            @NonNull Maker maker, @NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
+            @NonNull WireBuffer buffer, @NonNull List<Operation> operations, @NonNull Maker maker) {
         float v1 = buffer.readFloat();
         float v2 = buffer.readFloat();
 
@@ -109,5 +118,10 @@ public abstract class DrawBase2 extends PaintOperation implements VariableSuppor
         buffer.start(opCode);
         buffer.writeFloat(x1);
         buffer.writeFloat(y1);
+    }
+
+    protected @NonNull MapSerializer serialize(
+            @NonNull MapSerializer serializer, @NonNull String v1Name, @NonNull String v2Name) {
+        return serializer.add(v1Name, mValue1, mV1).add(v2Name, mValue2, mV2);
     }
 }

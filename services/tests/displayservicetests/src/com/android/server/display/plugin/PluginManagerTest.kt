@@ -20,15 +20,12 @@ import android.content.Context
 import androidx.test.filters.SmallTest
 import com.android.server.display.feature.DisplayManagerFlags
 import com.android.server.display.plugin.PluginManager.PluginChangeListener
-
 import org.junit.Test
-
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
-import org.mockito.kotlin.whenever
 
 private val TEST_PLUGIN_TYPE = PluginType(Int::class.java, "test_type")
+private val DISPLAY_ID = "display_id"
 
 @SmallTest
 class PluginManagerTest {
@@ -49,35 +46,24 @@ class PluginManagerTest {
     }
 
     @Test
-    fun testBootCompleted_disabledPluginManager() {
-        val pluginManager = createPluginManager(false)
-
-        pluginManager.onBootCompleted()
-
-        verify(testInjector.mockPlugin1, never()).onBootCompleted()
-        verify(testInjector.mockPlugin2, never()).onBootCompleted()
-    }
-
-    @Test
     fun testSubscribe() {
         val pluginManager = createPluginManager()
 
-        pluginManager.subscribe(TEST_PLUGIN_TYPE, mockListener)
+        pluginManager.subscribe(TEST_PLUGIN_TYPE, DISPLAY_ID, mockListener)
 
-        verify(testInjector.mockStorage).addListener(TEST_PLUGIN_TYPE, mockListener)
+        verify(testInjector.mockStorage).addListener(TEST_PLUGIN_TYPE, DISPLAY_ID, mockListener)
     }
 
     @Test
     fun testUnsubscribe() {
         val pluginManager = createPluginManager()
 
-        pluginManager.unsubscribe(TEST_PLUGIN_TYPE, mockListener)
+        pluginManager.unsubscribe(TEST_PLUGIN_TYPE, DISPLAY_ID, mockListener)
 
-        verify(testInjector.mockStorage).removeListener(TEST_PLUGIN_TYPE, mockListener)
+        verify(testInjector.mockStorage).removeListener(TEST_PLUGIN_TYPE, DISPLAY_ID, mockListener)
     }
 
-    private fun createPluginManager(enabled: Boolean = true): PluginManager {
-        whenever(mockFlags.isPluginManagerEnabled).thenReturn(enabled)
+    private fun createPluginManager(): PluginManager {
         return PluginManager(mockContext, mockFlags, testInjector)
     }
 
@@ -86,11 +72,15 @@ class PluginManagerTest {
         val mockPlugin1 = mock<Plugin>()
         val mockPlugin2 = mock<Plugin>()
 
-        override fun getPluginStorage(): PluginStorage {
+        override fun getPluginStorage(enabledTypes: Set<PluginType<*>>): PluginStorage {
             return mockStorage
         }
 
-        override fun loadPlugins(context: Context?, storage: PluginStorage?): List<Plugin> {
+        override fun loadPlugins(
+            context: Context?,
+            storage: PluginStorage?,
+            enabledTypes: Set<PluginType<*>>
+        ): List<Plugin> {
             return listOf(mockPlugin1, mockPlugin2)
         }
     }

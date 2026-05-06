@@ -55,7 +55,7 @@
   </string-array>
   <string-array name="hdcp_checking_summaries">
     <item msgid="4045840870658484038">"Nunca utilizar a verificação HDCP"</item>
-    <item msgid="8254225038262324761">"Usar a verificação HDCP para conteúdo DRM apenas"</item>
+    <item msgid="8254225038262324761">"Usa a verificação HDCP para conteúdo DRM apenas"</item>
     <item msgid="6421717003037072581">"Usar sempre a verificação HDCP"</item>
   </string-array>
   <string-array name="bt_hci_snoop_log_entries">
@@ -287,5 +287,23 @@
     <item msgid="2646486108212979598">"1"</item>
     <item msgid="3753634915787796632">"2"</item>
     <item msgid="4779928470672877922">"3"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_entries">
+    <item msgid="816770658383209617">"Apenas no ecrã do dispositivo (predefinição)"</item>
+    <item msgid="9161645858025071955">"Ecrã externo"</item>
+    <item msgid="23651860565814477">"Toque mais recente na barra de estado"</item>
+    <item msgid="7521112827893653392">"Com base no foco"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_summaries">
+    <item msgid="2964753205732912921">"Mostrar a sombra apenas no ecrã do dispositivo"</item>
+    <item msgid="1955398604822147783">"Mostrar a sombra num único ecrã externo"</item>
+    <item msgid="391477482416751568">"Mostrar a sombra no ecrã em que ocorreu a última interação com a barra de estado"</item>
+    <item msgid="1746820128097981528">"Mostrar a sombra no último ecrã focado"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_values">
+    <item msgid="3055776101992426514">"default_display"</item>
+    <item msgid="774789415968826925">"any_external_display"</item>
+    <item msgid="7880769915418638436">"status_bar_latest_touch"</item>
+    <item msgid="4313165186636015195">"focused_display"</item>
   </string-array>
 </resources>

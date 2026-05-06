@@ -20,6 +20,8 @@ import static android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT;
 import static android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY;
 import static android.window.OnBackInvokedDispatcher.PRIORITY_SYSTEM_NAVIGATION_OBSERVER;
 
+import static com.android.window.flags.Flags.FLAG_MULTIPLE_SYSTEM_NAVIGATION_OBSERVER_CALLBACKS;
+import static com.android.window.flags.Flags.FLAG_PREDICTIVE_BACK_CALLBACK_CANCELLATION_FIX;
 import static com.android.window.flags.Flags.FLAG_PREDICTIVE_BACK_PRIORITY_SYSTEM_NAVIGATION_OBSERVER;
 import static com.android.window.flags.Flags.FLAG_PREDICTIVE_BACK_TIMESTAMP_API;
 
@@ -101,9 +103,9 @@ public class WindowOnBackInvokedDispatcherTest {
     @Mock
     private OnBackAnimationCallback mCallback2;
     @Mock
-    private ImeOnBackInvokedDispatcher.ImeOnBackInvokedCallback mImeCallback;
+    private ImeBackCallbackProxy.ImeOnBackInvokedCallback mImeCallback;
     @Mock
-    private ImeOnBackInvokedDispatcher.DefaultImeOnBackAnimationCallback mDefaultImeCallback;
+    private ImeBackCallbackProxy.DefaultImeOnBackAnimationCallback mDefaultImeCallback;
     @Mock
     private ImeBackAnimationController mImeBackAnimationController;
     @Mock
@@ -167,7 +169,8 @@ public class WindowOnBackInvokedDispatcherTest {
         int actualSizeOverlay = callbacksOverlay != null ? callbacksOverlay.size() : 0;
         assertEquals("mOnBackInvokedCallbacks OVERLAY size", expectedOverlay, actualSizeOverlay);
 
-        int actualSizeObserver = mDispatcher.mSystemNavigationObserverCallback == null ? 0 : 1;
+        int actualSizeObserver = mDispatcher.mSystemNavigationObserverCallback == null
+                ? mDispatcher.mSystemNavigationObserverCallbacks.size() : 1;
         assertEquals("mOnBackInvokedCallbacks SYSTEM_NAVIGATION_OBSERVER size", expectedObserver,
                 actualSizeObserver);
     }
@@ -441,6 +444,64 @@ public class WindowOnBackInvokedDispatcherTest {
     }
 
     @Test
+    @RequiresFlagsEnabled(FLAG_PREDICTIVE_BACK_CALLBACK_CANCELLATION_FIX)
+    public void onDetachFromWindow_cancelsInProgressNonTopCallback() throws RemoteException {
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback1);
+
+        OnBackInvokedCallbackInfo callbackInfo = assertSetCallbackInfo();
+
+        callbackInfo.getCallback().onBackStarted(mBackEvent);
+
+        waitForIdle();
+        verify(mCallback1).onBackStarted(any(BackEvent.class));
+
+        // Register another callback. Back event dispatching continues to be routed to mCallback1
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback2);
+
+        // This should trigger mCallback1.onBackCancelled()
+        mDispatcher.detachFromWindow();
+        // This should be ignored by mCallback1
+        callbackInfo.getCallback().onBackInvoked();
+
+        waitForIdle();
+        verify(mCallback1).onBackCancelled();
+        verify(mCallback1, never()).onBackInvoked();
+        verify(mCallback2, never()).onBackStarted(any());
+        verify(mCallback2, never()).onBackCancelled();
+        verify(mCallback2, never()).onBackInvoked();
+    }
+
+    @Test
+    @RequiresFlagsEnabled(FLAG_PREDICTIVE_BACK_CALLBACK_CANCELLATION_FIX)
+    public void callbackEvents_continueAfterNewRegistration_andUnregistration()
+            throws RemoteException {
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback1);
+
+        OnBackInvokedCallbackInfo callbackInfo = assertSetCallbackInfo();
+
+        callbackInfo.getCallback().onBackStarted(mBackEvent);
+
+        waitForIdle();
+        verify(mCallback1).onBackStarted(any(BackEvent.class));
+
+        // Register another callback. Back event dispatching continues to be routed to mCallback1
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback2);
+        waitForIdle();
+
+        // Unregister the second callback again
+        mDispatcher.unregisterOnBackInvokedCallback(mCallback2);
+
+        callbackInfo.getCallback().onBackInvoked();
+
+        waitForIdle();
+        verify(mCallback1).onBackInvoked();
+        verify(mCallback1, never()).onBackCancelled();
+        verify(mCallback2, never()).onBackStarted(any());
+        verify(mCallback2, never()).onBackCancelled();
+        verify(mCallback2, never()).onBackInvoked();
+    }
+
+    @Test
     public void updatesDispatchingState() throws RemoteException {
         mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback1);
         OnBackInvokedCallbackInfo callbackInfo = assertSetCallbackInfo();
@@ -541,24 +602,30 @@ public class WindowOnBackInvokedDispatcherTest {
             throws RemoteException, InterruptedException {
         // Setup a callback that unregisters itself after the gesture is finished but before the
         // progress is animated back to 0f
-        final AtomicBoolean unregisterOnProgressUpdate = new AtomicBoolean(false);
+        final AtomicBoolean unregisterOnNextCallbackInvocation = new AtomicBoolean(false);
         final AtomicInteger onBackInvokedCalled = new AtomicInteger(0);
         final CountDownLatch onBackCancelledCalled = new CountDownLatch(1);
         OnBackAnimationCallback onBackAnimationCallback = new OnBackAnimationCallback() {
             @Override
             public void onBackProgressed(@NonNull BackEvent backEvent) {
-                if (unregisterOnProgressUpdate.get()) {
+                if (unregisterOnNextCallbackInvocation.getAndSet(false)) {
                     mDispatcher.unregisterOnBackInvokedCallback(this);
                 }
             }
 
             @Override
             public void onBackInvoked() {
+                if (unregisterOnNextCallbackInvocation.getAndSet(false)) {
+                    mDispatcher.unregisterOnBackInvokedCallback(this);
+                }
                 onBackInvokedCalled.getAndIncrement();
             }
 
             @Override
             public void onBackCancelled() {
+                if (unregisterOnNextCallbackInvocation.getAndSet(false)) {
+                    mDispatcher.unregisterOnBackInvokedCallback(this);
+                }
                 onBackCancelledCalled.countDown();
             }
         };
@@ -572,7 +639,7 @@ public class WindowOnBackInvokedDispatcherTest {
 
         // simulate back gesture finished and onBackCancelled() called, which starts the progress
         // animation back to 0f. On the first progress emission, the callback will unregister itself
-        unregisterOnProgressUpdate.set(true);
+        unregisterOnNextCallbackInvocation.set(true);
         callbackInfo.getCallback().onBackCancelled();
         waitForIdle();
         onBackCancelledCalled.await(1000, TimeUnit.MILLISECONDS);
@@ -660,6 +727,7 @@ public class WindowOnBackInvokedDispatcherTest {
 
     @Test
     @RequiresFlagsEnabled(FLAG_PREDICTIVE_BACK_PRIORITY_SYSTEM_NAVIGATION_OBSERVER)
+    @RequiresFlagsDisabled(FLAG_MULTIPLE_SYSTEM_NAVIGATION_OBSERVER_CALLBACKS)
     public void testObserverCallback_reregistrations() {
         mDispatcher.registerOnBackInvokedCallback(PRIORITY_SYSTEM_NAVIGATION_OBSERVER, mCallback1);
         assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 1);
@@ -682,6 +750,39 @@ public class WindowOnBackInvokedDispatcherTest {
         assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 0);
     }
 
+    @Test
+    @RequiresFlagsEnabled({FLAG_PREDICTIVE_BACK_PRIORITY_SYSTEM_NAVIGATION_OBSERVER,
+            FLAG_MULTIPLE_SYSTEM_NAVIGATION_OBSERVER_CALLBACKS})
+    public void testObserverCallback_multiple_registrations() {
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_SYSTEM_NAVIGATION_OBSERVER, mCallback1);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 1);
+        assertTrue(mDispatcher.mSystemNavigationObserverCallbacks.contains(mCallback1));
+
+        // test registration of another observer-callback
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_SYSTEM_NAVIGATION_OBSERVER, mCallback2);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 2);
+        assertTrue(mDispatcher.mSystemNavigationObserverCallbacks.contains(mCallback1));
+        assertTrue(mDispatcher.mSystemNavigationObserverCallbacks.contains(mCallback2));
+
+        // test reregistration of first observer-callback
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_SYSTEM_NAVIGATION_OBSERVER, mCallback1);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 2);
+
+        // test reregistration of observer-callback with default priority
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_DEFAULT, mCallback1);
+        assertCallbacksSize(/* default */ 1, /* overlay */ 0, /* observer */ 1);
+
+        // test reregistration of regular callback as observer-callback
+        mDispatcher.registerOnBackInvokedCallback(PRIORITY_SYSTEM_NAVIGATION_OBSERVER, mCallback1);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 2);
+
+        mDispatcher.unregisterOnBackInvokedCallback(mCallback2);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 1);
+
+        mDispatcher.unregisterOnBackInvokedCallback(mCallback1);
+        assertCallbacksSize(/* default */ 0, /* overlay */ 0, /* observer */ 0);
+    }
+
     private BackMotionEvent backMotionEventFrom(float progress) {
         return new BackMotionEvent(
                 /* touchX = */ 0,
@@ -689,8 +790,7 @@ public class WindowOnBackInvokedDispatcherTest {
                 /* frameTimeMillis = */ 0,
                 /* progress = */ progress,
                 /* triggerBack = */ false,
-                /* swipeEdge = */ BackEvent.EDGE_LEFT,
-                /* departingAnimationTarget = */ null);
+                /* swipeEdge = */ BackEvent.EDGE_LEFT);
     }
 
     private void verifyImeCallackRegistrations() throws RemoteException {

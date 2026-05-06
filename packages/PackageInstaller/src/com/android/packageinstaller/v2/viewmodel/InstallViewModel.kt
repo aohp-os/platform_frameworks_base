@@ -49,25 +49,29 @@ class InstallViewModel(application: Application, val repository: InstallReposito
                 _currentInstallStage.value = installStage
             }
         }
+
+        // Since staging is an async operation, we will get the staging result later in time.
+        // Result of the file staging will be set in InstallRepository#mStagingResult.
+        // As such, mCurrentInstallStage will need to add another MutableLiveData
+        // as a data source
+        _currentInstallStage.addSource(
+            repository.stagingResult.distinctUntilChanged()
+        ) { installStage: InstallStage ->
+            when (installStage.stageCode) {
+                InstallStage.STAGE_READY -> checkIfAllowedAndInitiateInstall()
+                InstallStage.STAGE_VERIFICATION_CONFIRMATION_REQUIRED -> requestVerification()
+                else -> _currentInstallStage.value = installStage
+            }
+        }
     }
 
     fun preprocessIntent(intent: Intent, callerInfo: InstallRepository.CallerInfo) {
         val stage = repository.performPreInstallChecks(intent, callerInfo)
-        if (stage.stageCode == InstallStage.STAGE_ABORTED) {
+        if (stage.stageCode == InstallStage.STAGE_ABORTED
+            || stage.stageCode == InstallStage.STAGE_VERIFICATION_FAILURE) {
             _currentInstallStage.value = stage
         } else {
-            // Since staging is an async operation, we will get the staging result later in time.
-            // Result of the file staging will be set in InstallRepository#mStagingResult.
-            // As such, mCurrentInstallStage will need to add another MutableLiveData
-            // as a data source
             repository.stageForInstall()
-            _currentInstallStage.addSource(repository.stagingResult) { installStage: InstallStage ->
-                if (installStage.stageCode != InstallStage.STAGE_READY) {
-                    _currentInstallStage.value = installStage
-                } else {
-                    checkIfAllowedAndInitiateInstall()
-                }
-            }
         }
     }
 
@@ -81,8 +85,30 @@ class InstallViewModel(application: Application, val repository: InstallReposito
         }
     }
 
+    private fun requestVerification() {
+        val stage = repository.requestVerificationConfirmation()
+        _currentInstallStage.value = stage
+    }
+
+    fun onNegativeVerificationUserResponse() {
+        val stage = repository.setNegativeVerificationUserResponse()
+        _currentInstallStage.value = stage
+    }
+
+    fun onPositiveVerificationUserResponse() {
+        val stage =
+            repository.setPositiveVerificationUserResponse()
+        _currentInstallStage.value = stage
+    }
+
+    fun onRetryVerificationUserResponse() {
+        val stage =
+            repository.setRetryVerificationUserResponse()
+        _currentInstallStage.value = stage
+    }
+
     fun forcedSkipSourceCheck() {
-        val stage = repository.forcedSkipSourceCheck()
+        val stage = repository.requestUserConfirmation(/* forceSourceCheck= */ false)
         if (stage != null) {
             _currentInstallStage.value = stage
         }
@@ -99,6 +125,10 @@ class InstallViewModel(application: Application, val repository: InstallReposito
 
     fun initiateInstall() {
         repository.initiateInstall()
+    }
+
+    fun abortStaging() {
+        repository.abortStaging()
     }
 
     val stagedSessionId: Int

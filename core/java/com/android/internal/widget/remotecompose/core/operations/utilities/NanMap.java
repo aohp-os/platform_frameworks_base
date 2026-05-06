@@ -15,6 +15,8 @@
  */
 package com.android.internal.widget.remotecompose.core.operations.utilities;
 
+import static com.android.internal.widget.remotecompose.core.operations.utilities.AnimatedFloatExpression.VAR1;
+
 import com.android.internal.widget.remotecompose.core.operations.Utils;
 
 /**
@@ -26,6 +28,7 @@ import com.android.internal.widget.remotecompose.core.operations.Utils;
  * PathData 0x1100-0x1200 are used for math operations in Animated float 0x
  */
 public class NanMap {
+
     public static final int MOVE = 0x300_000;
     public static final int LINE = 0x300_001;
     public static final int QUADRATIC = 0x300_002;
@@ -41,18 +44,54 @@ public class NanMap {
     public static final float CLOSE_NAN = Utils.asNan(CLOSE);
     public static final float DONE_NAN = Utils.asNan(DONE);
 
+    private NanMap() {}
+
+    /**
+     * Returns true if the float id is a system variable
+     *
+     * @param value the id encoded as float NaN
+     * @return
+     */
     public static boolean isSystemVariable(float value) {
         return (fromNaN(value) >> 20) == 0;
     }
 
+    /**
+     * Returns true if the float id is a normal variable
+     *
+     * @param value the id encoded as float NaN
+     * @return
+     */
     public static boolean isNormalVariable(float value) {
         return (fromNaN(value) >> 20) == 1;
     }
 
+    /**
+     * Returns true if the float id is a data variable
+     *
+     * @param value the id encoded as float NaN
+     * @return
+     */
     public static boolean isDataVariable(float value) {
         return (fromNaN(value) >> 20) == 2;
     }
 
+    /**
+     * Returns true if the float id is a var1
+     *
+     * @param value the id encoded as float NaN
+     * @return true if the float id is a var1
+     */
+    public static boolean isVar1(float value) {
+        return Float.floatToRawIntBits(value) == Float.floatToRawIntBits(VAR1);
+    }
+
+    /**
+     * Returns true if the float id is an operation variable
+     *
+     * @param value the id encoded as float NaN
+     * @return
+     */
     public static boolean isOperationVariable(float value) {
         return (fromNaN(value) >> 20) == 3;
     }

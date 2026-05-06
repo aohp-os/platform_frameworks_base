@@ -33,14 +33,16 @@ import static com.android.server.om.OverlayManagerService.TAG;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.content.om.CriticalOverlayInfo;
+import android.content.om.OverlayConstraint;
 import android.content.om.OverlayIdentifier;
 import android.content.om.OverlayInfo;
 import android.content.pm.UserPackage;
 import android.content.pm.overlay.OverlayPaths;
 import android.content.pm.parsing.FrameworkParsingPackageUtils;
+import android.content.res.Flags;
 import android.os.FabricatedOverlayInfo;
 import android.os.FabricatedOverlayInternal;
+import android.os.IdmapParams;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -179,6 +181,8 @@ final class OverlayManagerServiceImpl {
             }
         }
 
+        List<AndroidPackage> pkgs = new ArrayList<>();
+
         // Update the state of all installed packages containing overlays, and initialize new
         // overlays that are not currently in the settings.
         for (int i = 0, n = userPackages.size(); i < n; i++) {
@@ -188,19 +192,34 @@ final class OverlayManagerServiceImpl {
                 continue;
             }
 
+            // When a new user is switched to for the first time, package manager must be
+            // informed of the overlay paths for all overlaid packages installed in the user.
             var packageName = packageState.getPackageName();
+            if (overlaidByOthers.contains(packageName)) {
+                updatedTargets.add(UserPackage.of(newUserId, packageName));
+            }
+
+            // If this flag is enabled, we'll collect the set of non-null packages and carry out
+            // idmap verification and creation in one batched binder call.
+            if (Flags.mergeIdmapBinderTransactions()) {
+                pkgs.add(pkg);
+            } else {
+                try {
+                    CollectionUtils.addAll(updatedTargets,
+                            updatePackageOverlays(pkg, newUserId, 0 /* flags */));
+                } catch (OperationFailedException e) {
+                    Slog.e(TAG, "failed to initialize overlays of '" + packageName
+                            + "' for user " + newUserId + "", e);
+                }
+            }
+        }
+
+        if (Flags.mergeIdmapBinderTransactions()) {
             try {
                 CollectionUtils.addAll(updatedTargets,
-                        updatePackageOverlays(pkg, newUserId, 0 /* flags */));
-
-                // When a new user is switched to for the first time, package manager must be
-                // informed of the overlay paths for all overlaid packages installed in the user.
-                if (overlaidByOthers.contains(packageName)) {
-                    updatedTargets.add(UserPackage.of(newUserId, packageName));
-                }
+                        updateAllPackageOverlays(pkgs, newUserId, 0));
             } catch (OperationFailedException e) {
-                Slog.e(TAG, "failed to initialize overlays of '" + packageName
-                        + "' for user " + newUserId + "", e);
+                Slog.e(TAG, "failed to initialize overlays for user " + newUserId);
             }
         }
 
@@ -246,7 +265,7 @@ final class OverlayManagerServiceImpl {
                             + oi.targetPackageName + "' in category '" + oi.category + "' for user "
                             + newUserId);
                     mSettings.setEnabled(overlay, newUserId, true);
-                    if (updateState(oi, newUserId, 0)) {
+                    if (updateState(oi, newUserId, 0, oi.constraints)) {
                         CollectionUtils.add(updatedTargets,
                                 UserPackage.of(oi.userId, oi.targetPackageName));
                     }
@@ -306,7 +325,9 @@ final class OverlayManagerServiceImpl {
             Slog.d(TAG, "onPackageRemoved pkgName=" + pkgName + " userId=" + userId);
         }
         // Update the state of all overlays that target this package.
-        final Set<UserPackage> targets = updateOverlaysForTarget(pkgName, userId, 0 /* flags */);
+        Set<UserPackage> targets = Collections.emptySet();
+        targets = CollectionUtils.addAll(targets,
+                updateOverlaysForTarget(pkgName, userId, 0 /* flags */));
 
         // Remove all the overlays this package declares.
         return CollectionUtils.addAll(targets,
@@ -338,7 +359,7 @@ final class OverlayManagerServiceImpl {
         for (int i = 0, n = overlays.size(); i < n; i++) {
             final OverlayInfo oi = overlays.get(i);
             try {
-                modified |= updateState(oi, userId, flags);
+                modified |= updateState(oi, userId, flags, oi.constraints);
             } catch (OverlayManagerSettings.BadKeyException e) {
                 Slog.e(TAG, "failed to update settings", e);
                 modified |= mSettings.remove(oi.getOverlayIdentifier(), userId);
@@ -350,6 +371,31 @@ final class OverlayManagerServiceImpl {
         return Set.of(UserPackage.of(userId, targetPackage));
     }
 
+    private OverlayInfo initOverlayForPackage(@NonNull AndroidPackage pkg, final int userId,
+            Set<UserPackage> updatedTargets)
+            throws OverlayManagerSettings.BadKeyException {
+        final OverlayIdentifier overlay = new OverlayIdentifier(pkg.getPackageName());
+        final int priority = getPackageConfiguredPriority(pkg);
+        OverlayInfo currentInfo = mSettings.getNullableOverlayInfo(overlay, userId);
+        if (mustReinitializeOverlay(pkg, currentInfo)) {
+            if (currentInfo != null) {
+                // If the targetPackageName has changed, the package that *used* to be the target
+                // must also update its assets.
+                updatedTargets.add(UserPackage.of(userId, currentInfo.targetPackageName));
+            }
+            currentInfo = mSettings.init(overlay, userId, pkg.getOverlayTarget(),
+                    pkg.getOverlayTargetOverlayableName(), pkg.getSplits().get(0).getPath(),
+                    isPackageConfiguredMutable(pkg), isPackageConfiguredEnabled(pkg),
+                    getPackageConfiguredPriority(pkg), pkg.getOverlayCategory(), false);
+        } else if (priority != currentInfo.priority) {
+            // Changing the priority of an overlay does not cause its settings to be reinitialized.
+            // Reorder the overlay and update its target package.
+            mSettings.setPriority(overlay, userId, priority);
+            updatedTargets.add(UserPackage.of(userId, currentInfo.targetPackageName));
+        }
+        return currentInfo;
+    }
+
     @NonNull
     private Set<UserPackage> updatePackageOverlays(@NonNull AndroidPackage pkg,
             final int userId, final int flags) throws OperationFailedException {
@@ -358,38 +404,44 @@ final class OverlayManagerServiceImpl {
             return Collections.emptySet();
         }
 
-        Set<UserPackage> updatedTargets = Collections.emptySet();
-        final OverlayIdentifier overlay = new OverlayIdentifier(pkg.getPackageName());
-        final int priority = getPackageConfiguredPriority(pkg);
+        // We initialize an ArraySet instead of using Collections.emptySet() so that we can add
+        // elements in initOverlayForPackage() without using CollectionUtils.add(), which requires a
+        // re-assignment of updatedTargets to work.
+        Set<UserPackage> updatedTargets = new ArraySet<>();
         try {
-            OverlayInfo currentInfo = mSettings.getNullableOverlayInfo(overlay, userId);
-            if (mustReinitializeOverlay(pkg, currentInfo)) {
-                if (currentInfo != null) {
-                    // If the targetPackageName has changed, the package that *used* to
-                    // be the target must also update its assets.
-                    updatedTargets = CollectionUtils.add(updatedTargets,
-                            UserPackage.of(userId, currentInfo.targetPackageName));
-                }
-
-                currentInfo = mSettings.init(overlay, userId, pkg.getOverlayTarget(),
-                        pkg.getOverlayTargetOverlayableName(), pkg.getSplits().get(0).getPath(),
-                        isPackageConfiguredMutable(pkg),
-                        isPackageConfiguredEnabled(pkg),
-                        getPackageConfiguredPriority(pkg), pkg.getOverlayCategory(),
-                        false);
-            } else if (priority != currentInfo.priority) {
-                // Changing the priority of an overlay does not cause its settings to be
-                // reinitialized. Reorder the overlay and update its target package.
-                mSettings.setPriority(overlay, userId, priority);
-                updatedTargets = CollectionUtils.add(updatedTargets,
-                        UserPackage.of(userId, currentInfo.targetPackageName));
-            }
+            OverlayInfo currentInfo = initOverlayForPackage(pkg, userId, updatedTargets);
 
             // Update the enabled state of the overlay.
-            if (updateState(currentInfo, userId, flags)) {
+            if (updateState(currentInfo, userId, flags, currentInfo.constraints)) {
                 updatedTargets = CollectionUtils.add(updatedTargets,
                         UserPackage.of(userId, currentInfo.targetPackageName));
             }
+        } catch (OverlayManagerSettings.BadKeyException e) {
+            throw new OperationFailedException("failed to update settings", e);
+        }
+        return updatedTargets;
+    }
+
+    // This does the same work as updatePackageOverlays() above, but for multiple AndroidPackages.
+    @NonNull
+    private Set<UserPackage> updateAllPackageOverlays(List<AndroidPackage> pkgs,
+            final int userId, final int flags) throws OperationFailedException {
+        Set<UserPackage> updatedTargets = new ArraySet<>();
+        List<OverlayInfo> currentInfos = new ArrayList<>();
+        try {
+            for (int i = 0; i < pkgs.size(); i++) {
+                final AndroidPackage pkg = pkgs.get(i);
+
+                // We later iterate through currentInfos in updateAllStates() with the same index as
+                // pkgs, so we need to insert something even if there is no overlay target.
+                if (pkg.getOverlayTarget() == null) {
+                    currentInfos.add(null);
+                } else {
+                    currentInfos.add(initOverlayForPackage(pkg, userId, updatedTargets));
+                }
+            }
+            updatedTargets = CollectionUtils.addAll(updatedTargets,
+                    updateAllStates(pkgs, currentInfos, userId, flags));
         } catch (OverlayManagerSettings.BadKeyException e) {
             throw new OperationFailedException("failed to update settings", e);
         }
@@ -440,10 +492,22 @@ final class OverlayManagerServiceImpl {
 
     @NonNull
     Set<UserPackage> setEnabled(@NonNull final OverlayIdentifier overlay,
-            final boolean enable, final int userId) throws OperationFailedException {
+            final boolean enable, final int userId,
+            @NonNull final List<OverlayConstraint> constraints)
+            throws OperationFailedException {
         if (DEBUG) {
-            Slog.d(TAG, String.format("setEnabled overlay=%s enable=%s userId=%d",
-                    overlay, enable, userId));
+            Slog.d(TAG, TextUtils.formatSimple(
+                    "setEnabled overlay=%s enable=%s userId=%d constraints=%s",
+                    overlay, enable, userId, OverlayConstraint.constraintsToString(constraints)));
+        }
+
+        boolean hasConstraints = constraints != null && !constraints.isEmpty();
+        if (!Flags.rroConstraints() && hasConstraints) {
+            throw new OperationFailedException("RRO constraints are not supported");
+        }
+        if (!enable && hasConstraints) {
+            throw new OperationFailedException(
+                    "Constraints can only be set when enabling an overlay");
         }
 
         try {
@@ -455,7 +519,7 @@ final class OverlayManagerServiceImpl {
             }
 
             boolean modified = mSettings.setEnabled(overlay, userId, enable);
-            modified |= updateState(oi, userId, 0);
+            modified |= updateState(oi, userId, 0, constraints);
 
             if (modified) {
                 return Set.of(UserPackage.of(userId, oi.targetPackageName));
@@ -469,7 +533,7 @@ final class OverlayManagerServiceImpl {
     Optional<UserPackage> setEnabledExclusive(@NonNull final OverlayIdentifier overlay,
             boolean withinCategory, final int userId) throws OperationFailedException {
         if (DEBUG) {
-            Slog.d(TAG, String.format("setEnabledExclusive overlay=%s"
+            Slog.d(TAG, TextUtils.formatSimple("setEnabledExclusive overlay=%s"
                     + " withinCategory=%s userId=%d", overlay, withinCategory, userId));
         }
 
@@ -501,12 +565,16 @@ final class OverlayManagerServiceImpl {
 
                 // Disable the overlay.
                 modified |= mSettings.setEnabled(disabledOverlay, userId, false);
-                modified |= updateState(disabledInfo, userId, 0);
+                modified |= updateState(disabledInfo, userId, 0 /* flags */,
+                        Collections.emptyList() /* constraints */);
             }
 
             // Enable the selected overlay.
             modified |= mSettings.setEnabled(overlay, userId, true);
-            modified |= updateState(enabledInfo, userId, 0);
+            // No constraints should be applied when exclusively enabling an overlay within
+            // a category.
+            modified |= updateState(enabledInfo, userId, 0 /* flags */,
+                    Collections.emptyList() /* constraints */);
 
             if (modified) {
                 return Optional.of(UserPackage.of(userId, enabledInfo.targetPackageName));
@@ -555,7 +623,9 @@ final class OverlayManagerServiceImpl {
             }
         }
         try {
-            if (mustReinitializeOverlay(info, oi)) {
+            final boolean mustReinitializeOverlay = mustReinitializeOverlay(info, oi);
+            boolean updated = false;
+            if (mustReinitializeOverlay) {
                 if (oi != null) {
                     // If the fabricated overlay changes its target package, update the previous
                     // target package so it no longer is overlaid.
@@ -567,9 +637,17 @@ final class OverlayManagerServiceImpl {
             } else {
                 // The only non-critical part of the info that will change is path to the fabricated
                 // overlay.
-                mSettings.setBaseCodePath(overlayIdentifier, userId, info.path);
+                updated |= mSettings.setBaseCodePath(overlayIdentifier, userId, info.path);
             }
-            if (updateState(oi, userId, 0)) {
+            // No constraints should be applied when registering a fabricated overlay.
+            updated |= updateState(oi, userId, 0 /* flags */,
+                    Collections.emptyList() /* constraints */);
+            if (DEBUG) {
+                Slog.d(TAG, "In registerFabricatedOverlay, OverlayInfo=" + oi
+                        + " mustReinitializeOverlay=" + mustReinitializeOverlay
+                        + " updated=" + updated);
+            }
+            if (updated) {
                 updatedTargets.add(UserPackage.of(userId, oi.targetPackageName));
             }
         } catch (OverlayManagerSettings.BadKeyException e) {
@@ -670,7 +748,7 @@ final class OverlayManagerServiceImpl {
 
     Set<UserPackage> setHighestPriority(@NonNull final OverlayIdentifier overlay,
             final int userId) throws OperationFailedException {
-        try{
+        try {
             if (DEBUG) {
                 Slog.d(TAG, "setHighestPriority overlay=" + overlay + " userId=" + userId);
             }
@@ -693,7 +771,7 @@ final class OverlayManagerServiceImpl {
 
     Optional<UserPackage> setLowestPriority(@NonNull final OverlayIdentifier overlay,
             final int userId) throws OperationFailedException {
-        try{
+        try {
             if (DEBUG) {
                 Slog.d(TAG, "setLowestPriority packageName=" + overlay + " userId=" + userId);
             }
@@ -715,20 +793,11 @@ final class OverlayManagerServiceImpl {
     }
 
     void dump(@NonNull final PrintWriter pw, @NonNull DumpState dumpState) {
-        Pair<OverlayIdentifier, String> overlayIdmap = null;
-        if (dumpState.getPackageName() != null) {
-            OverlayIdentifier id = new OverlayIdentifier(dumpState.getPackageName(),
-                    dumpState.getOverlayName());
-            OverlayInfo oi = mSettings.getNullableOverlayInfo(id, USER_SYSTEM);
-            if (oi != null) {
-                overlayIdmap = new Pair<>(id, oi.baseCodePath);
-            }
-        }
-
         // settings
         mSettings.dump(pw, dumpState);
 
         // idmap data
+        final var overlayIdmap = mSettings.getIdentifierAndBaseCodePath(dumpState);
         if (dumpState.getField() == null) {
             Set<Pair<OverlayIdentifier, String>> allIdmaps = (overlayIdmap != null)
                     ? Set.of(overlayIdmap) : mSettings.getAllIdentifiersAndBaseCodePaths();
@@ -792,8 +861,9 @@ final class OverlayManagerServiceImpl {
     /**
      * Returns true if the settings/state was modified, false otherwise.
      */
-    private boolean updateState(@NonNull final CriticalOverlayInfo info,
-            final int userId, final int flags) throws OverlayManagerSettings.BadKeyException {
+    private boolean updateState(@NonNull final OverlayInfo info, final int userId, final int flags,
+            @NonNull final List<OverlayConstraint> constraints)
+            throws OverlayManagerSettings.BadKeyException {
         final OverlayIdentifier overlay = info.getOverlayIdentifier();
         var targetPackageState =
                 mPackageManager.getPackageStateForUser(info.getTargetPackageName(), userId);
@@ -805,37 +875,156 @@ final class OverlayManagerServiceImpl {
         var overlayPackage =
                 overlayPackageState == null ? null : overlayPackageState.getAndroidPackage();
 
-        boolean modified = false;
         if (overlayPackage == null) {
             removeIdmapIfPossible(mSettings.getOverlayInfo(overlay, userId));
             return mSettings.remove(overlay, userId);
         }
 
-        modified |= mSettings.setCategory(overlay, userId, overlayPackage.getOverlayCategory());
-        if (!info.isFabricated()) {
-            modified |= mSettings.setBaseCodePath(overlay, userId,
-                    overlayPackage.getSplits().get(0).getPath());
-        }
+        boolean modified = updateOverlaySettings(
+                overlay, overlayPackage, info, constraints, userId);
 
         final OverlayInfo updatedOverlayInfo = mSettings.getOverlayInfo(overlay, userId);
         @IdmapManager.IdmapStatus int idmapStatus = IDMAP_NOT_EXIST;
 
-        // Idmaps for immutable RROs targeting "android", i.e. framework-res.apk, are created at
-        // boot time in OverlayConfig.createImmutableFrameworkIdmapsInZygote().
-        if (targetPackage != null && !("android".equals(info.getTargetPackageName())
-                && !isPackageConfiguredMutable(overlayPackage))) {
+        if (shouldCreateIdmap(targetPackage, overlayPackage, info)) {
             idmapStatus = mIdmapManager.createIdmap(targetPackage, overlayPackageState,
                     overlayPackage, updatedOverlayInfo.baseCodePath, overlay.getOverlayName(),
-                    userId);
+                    userId, updatedOverlayInfo.constraints);
             modified |= (idmapStatus & IDMAP_IS_MODIFIED) != 0;
         }
 
+        modified |= calculateStateDiffs(overlay, updatedOverlayInfo, targetPackage, userId, flags,
+                idmapStatus);
+        return modified;
+    }
+
+    // This does the same work as updateState() above, but for multiple packages.
+    private Set<UserPackage> updateAllStates(List<AndroidPackage> pkgs, List<OverlayInfo> infos,
+            final int userId, final int flags) throws OverlayManagerSettings.BadKeyException {
+        // Set of packages that have been modified when updating overlay settings.
+        ArraySet<AndroidPackage> modifiedPkgs = new ArraySet<>();
+
+        // Set of packages that idmaps are needed for, and the parameters needed to create them.
+        ArraySet<AndroidPackage> idmapPkgs = new ArraySet<>();
+        List<IdmapParams> idmapParams = new ArrayList<>();
+
+        // Start by updating overlay settings if necessary and determining which packages have
+        // idmaps that need verifying/creating.
+        for (int i = 0; i < pkgs.size(); i++) {
+            final AndroidPackage pkg = pkgs.get(i);
+            final OverlayInfo info = infos.get(i);
+            if (info == null) {
+                continue;
+            }
+
+            final OverlayIdentifier overlay = info.getOverlayIdentifier();
+            var targetPackageState =
+                    mPackageManager.getPackageStateForUser(info.getTargetPackageName(), userId);
+            var targetPackage =
+                    targetPackageState == null ? null : targetPackageState.getAndroidPackage();
+            var overlayPackageState =
+                    mPackageManager.getPackageStateForUser(info.getPackageName(), userId);
+            var overlayPackage =
+                    overlayPackageState == null ? null : overlayPackageState.getAndroidPackage();
+
+            if (overlayPackage == null) {
+                removeIdmapIfPossible(mSettings.getOverlayInfo(overlay, userId));
+                if (mSettings.remove(overlay, userId)) {
+                    modifiedPkgs.add(pkg);
+                }
+            } else {
+                // We save whether overlay settings have been updated because we'll need this when
+                // accumulating updated targets at the end.
+                if (updateOverlaySettings(
+                        overlay, overlayPackage, info, info.constraints, userId)) {
+                    modifiedPkgs.add(pkg);
+                }
+
+                final OverlayInfo updatedOverlayInfo = mSettings.getOverlayInfo(overlay, userId);
+                if (shouldCreateIdmap(targetPackage, overlayPackage, info)) {
+                    IdmapParams params = new IdmapParams();
+                    params.targetPath = targetPackage.getSplits().get(0).getPath();
+                    params.overlayPath = updatedOverlayInfo.baseCodePath;
+                    params.overlayName = TextUtils.emptyIfNull(overlay.getOverlayName());
+                    params.fulfilledPolicies = mIdmapManager.calculateFulfilledPolicies(
+                            targetPackage, overlayPackageState, overlayPackage, userId);
+                    params.enforceOverlayable = mIdmapManager.enforceOverlayable(
+                            overlayPackageState, overlayPackage);
+                    params.userId = userId;
+                    params.constraints = IdmapManager.toIdmapConstraints(
+                            updatedOverlayInfo.constraints);
+
+                    // We maintain a list of packages with idmaps so we can iterate through them in
+                    // order later.
+                    idmapPkgs.add(pkg);
+                    idmapParams.add(params);
+                }
+            }
+        }
+
+        // Create idmaps, then determine whether something has been updated.
+        int[] idmapStatuses = mIdmapManager.createIdmaps(idmapParams);
+        int statusIndex = 0;
+
+        Set<UserPackage> updatedTargets = Collections.emptySet();
+        for (int i = 0; i < pkgs.size(); i++) {
+            final AndroidPackage pkg = pkgs.get(i);
+            final OverlayInfo info = infos.get(i);
+            if (info == null) {
+                continue;
+            }
+
+            int idmapStatus = IDMAP_NOT_EXIST;
+            if (idmapPkgs.contains(pkg)) {
+                idmapStatus = idmapStatuses[statusIndex++];
+            }
+
+            boolean modified = modifiedPkgs.contains(pkg);
+            modified |= (idmapStatus & IDMAP_IS_MODIFIED) != 0;
+
+            var targetPackageState =
+                    mPackageManager.getPackageStateForUser(info.getTargetPackageName(), userId);
+            var targetPackage =
+                    targetPackageState == null ? null : targetPackageState.getAndroidPackage();
+
+            final OverlayIdentifier overlay = info.getOverlayIdentifier();
+            final OverlayInfo updatedOverlayInfo = mSettings.getOverlayInfo(overlay, userId);
+            modified |= calculateStateDiffs(overlay, updatedOverlayInfo, targetPackage, userId,
+                    flags, idmapStatus);
+
+            if (modified) {
+                updatedTargets = CollectionUtils.add(updatedTargets,
+                        UserPackage.of(userId, infos.get(i).targetPackageName));
+            }
+        }
+
+        return updatedTargets;
+    }
+
+    private boolean updateOverlaySettings(OverlayIdentifier overlay, AndroidPackage overlayPackage,
+            OverlayInfo info, final List<OverlayConstraint> constraints, final int userId)
+            throws OverlayManagerSettings.BadKeyException {
+        boolean modified = false;
+        modified |= mSettings.setCategory(overlay, userId, overlayPackage.getOverlayCategory());
+        modified |= mSettings.setConstraints(overlay, userId, constraints);
+        if (!info.isFabricated()) {
+            modified |= mSettings.setBaseCodePath(overlay, userId,
+                    overlayPackage.getSplits().get(0).getPath());
+        }
+        return modified;
+    }
+
+    private boolean calculateStateDiffs(OverlayIdentifier overlay, OverlayInfo updatedOverlayInfo,
+            AndroidPackage targetPackage, int userId, int flags, int idmapStatus)
+            throws OverlayManagerSettings.BadKeyException {
         final @OverlayInfo.State int currentState = mSettings.getState(overlay, userId);
         final @OverlayInfo.State int newState = calculateNewState(updatedOverlayInfo, targetPackage,
                 userId, flags, idmapStatus);
+
+        boolean modified = false;
         if (currentState != newState) {
             if (DEBUG) {
-                Slog.d(TAG, String.format("%s:%d: %s -> %s",
+                Slog.d(TAG, TextUtils.formatSimple("%s:%d: %s -> %s",
                         overlay, userId,
                         OverlayInfo.stateToString(currentState),
                         OverlayInfo.stateToString(newState)));
@@ -844,6 +1033,14 @@ final class OverlayManagerServiceImpl {
         }
 
         return modified;
+    }
+
+    private boolean shouldCreateIdmap(AndroidPackage targetPackage, AndroidPackage overlayPackage,
+            OverlayInfo info) {
+        // Idmaps for immutable RROs targeting "android", i.e. framework-res.apk, are created at
+        // boot time in OverlayConfig.createImmutableFrameworkIdmapsInZygote().
+        return targetPackage != null && !("android".equals(info.getTargetPackageName())
+                && !isPackageConfiguredMutable(overlayPackage));
     }
 
     private @OverlayInfo.State int calculateNewState(@NonNull final OverlayInfo info,

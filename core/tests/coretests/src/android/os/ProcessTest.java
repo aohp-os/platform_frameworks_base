@@ -18,15 +18,19 @@
 package android.os;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
-import android.platform.test.annotations.IgnoreUnderRavenwood;
+import android.platform.test.annotations.DisabledOnRavenwood;
 import android.platform.test.ravenwood.RavenwoodRule;
 
 import org.junit.Rule;
 import org.junit.Test;
 
-@IgnoreUnderRavenwood(blockedBy = Process.class)
+import java.util.Arrays;
+
+@DisabledOnRavenwood(blockedBy = Process.class)
 public class ProcessTest {
     @Rule
     public final RavenwoodRule mRavenwood = new RavenwoodRule();
@@ -91,5 +95,74 @@ public class ProcessTest {
     public void testGetAdvertisedMem() {
         assertTrue(Process.getAdvertisedMem() > 0);
         assertTrue(Process.getTotalMemory() <= Process.getAdvertisedMem());
+    }
+
+    @Test
+    public void testGetSchedAffinity() {
+        long[] tidMasks = Process.getSchedAffinity(Process.myTid());
+        long[] pidMasks = Process.getSchedAffinity(Process.myPid());
+        checkAffinityMasks(tidMasks);
+        checkAffinityMasks(pidMasks);
+    }
+
+    @Test
+    public void testThreadPriority() {
+        int tid = Process.myTid();
+        Thread thr = Thread.currentThread();
+        int origJavaPriority = thr.getPriority();
+        thr.setPriority(Thread.NORM_PRIORITY);
+        int origPriority = Process.getThreadPriority(tid);
+
+        Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+        assertTrue(Process.getThreadPriority(tid) == Process.THREAD_PRIORITY_DEFAULT);
+        assertTrue(thr.getPriority() == Thread.NORM_PRIORITY);
+
+        Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND);
+        assertTrue(Process.getThreadPriority(tid) == Process.THREAD_PRIORITY_BACKGROUND);
+        // Change does not affect cached priority
+        assertTrue(thr.getPriority() == Thread.NORM_PRIORITY);
+
+        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+        thr.setPriority(Thread.NORM_PRIORITY);
+        // Should reset the Process Linux priority, eventhough the Java priority is
+        // unchanged.
+        assertTrue(Process.getThreadPriority(tid) == Process.THREAD_PRIORITY_DEFAULT);
+        assertTrue(thr.getPriority() == Thread.NORM_PRIORITY);
+
+        Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND);
+        Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+        assertTrue(Process.getThreadPriority(tid) == Process.THREAD_PRIORITY_DEFAULT);
+        assertTrue(thr.getPriority() == Thread.NORM_PRIORITY);
+
+        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+        // We only documented this recently, but this should affect neither the Thread cached
+        // priority, nor the priority inherited by a Java child. This choice reflects historical
+        // behavior, and thus, at least in the case of inheritance by a child, client
+        // expectations.
+        assertTrue(thr.getPriority() == Thread.NORM_PRIORITY);
+        Thread t = new Thread(() -> {
+            Thread me = Thread.currentThread();
+            int myTid = Process.myTid();
+            assertTrue(Process.getThreadPriority(myTid) == Process.THREAD_PRIORITY_DEFAULT);
+            assertTrue(Process.getThreadPriority(tid) == Process.THREAD_PRIORITY_BACKGROUND);
+            assertTrue(me.getPriority() == Thread.NORM_PRIORITY);
+        });
+        t.start();
+        try {
+            t.join();
+        } catch (InterruptedException e) {
+            fail("Unexpected exception: " + e);
+        }
+
+        Process.setThreadPriority(origPriority);
+        assertTrue(Process.getThreadPriority(tid) == origPriority);
+        thr.setPriority(origJavaPriority);
+    }
+
+    static void checkAffinityMasks(long[] masks) {
+        assertNotNull(masks);
+        assertTrue(masks.length > 0);
+        assertTrue("At least one of the affinity mask should be non-zero but got "
+                + Arrays.toString(masks), Arrays.stream(masks).anyMatch(value -> value > 0));
     }
 }

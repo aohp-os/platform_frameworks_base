@@ -28,13 +28,12 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.android.settingslib.spa.framework.theme.SettingsDimension
 import com.android.settingslib.spa.framework.theme.SettingsOpacity.alphaForEnabled
+import com.android.settingslib.spa.framework.theme.SettingsSpace
 import com.android.settingslib.spa.framework.theme.divider
 import com.android.settingslib.spa.framework.theme.isSpaExpressiveEnabled
 import com.android.settingslib.spa.framework.util.wrapOnClickWithLog
@@ -42,7 +41,7 @@ import com.android.settingslib.spa.framework.util.wrapOnClickWithLog
 @Composable
 internal fun TwoTargetPreference(
     title: String,
-    summary: () -> String,
+    summary: () -> CharSequence,
     primaryEnabled: () -> Boolean = { true },
     primaryOnClick: (() -> Unit)?,
     icon: @Composable (() -> Unit)? = null,
@@ -104,8 +103,17 @@ internal fun TwoTargetPreference(
 @Composable
 private fun PreferenceDivider() {
     Box(
-        Modifier.padding(horizontal = SettingsDimension.itemPaddingEnd)
-            .size(width = 1.dp, height = SettingsDimension.itemDividerHeight)
-            .background(color = MaterialTheme.colorScheme.divider)
+        if (isSpaExpressiveEnabled) {
+            Modifier.padding(
+                start = SettingsDimension.paddingSmall,
+                end = SettingsSpace.extraSmall6,
+            )
+                .size(width = 1.dp, height = SettingsDimension.itemDividerHeight)
+                .background(color = MaterialTheme.colorScheme.outline)
+        } else {
+            Modifier.padding(horizontal = SettingsDimension.itemPaddingEnd)
+                .size(width = 1.dp, height = SettingsDimension.itemDividerHeight)
+                .background(color = MaterialTheme.colorScheme.divider)
+        }
     )
 }

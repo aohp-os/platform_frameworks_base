@@ -16,34 +16,69 @@
 
 package android.app;
 
+import static android.content.Intent.ACTION_MAIN;
+import static android.content.Intent.CATEGORY_INFO;
+import static android.content.Intent.CATEGORY_LAUNCHER;
+import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
+import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE;
+import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
 import static android.os.storage.VolumeInfo.STATE_MOUNTED;
 import static android.os.storage.VolumeInfo.STATE_UNMOUNTED;
+
+import static com.android.graphics.flags.Flags.FLAG_USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageItemInfo;
+import android.content.pm.PackageManager.ResolveInfoFlags;
+import android.content.pm.ResolveInfo;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
+import android.hardware.display.DisplayManagerGlobal;
 import android.os.Bundle;
 import android.os.storage.StorageManager;
 import android.os.storage.VolumeInfo;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.flag.junit.SetFlagsRule;
+import android.util.DisplayMetrics;
+import android.view.Display;
+import android.view.DisplayInfo;
 
 import androidx.annotation.NonNull;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.LargeTest;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.android.internal.annotations.VisibleForTesting;
 
 import junit.framework.TestCase;
 
+import org.junit.ClassRule;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.ArgumentMatcher;
 import org.mockito.Mockito;
 import org.xmlpull.v1.XmlPullParser;
 
@@ -54,7 +89,13 @@ import java.util.List;
 
 @Presubmit
 @LargeTest
+@RunWith(AndroidJUnit4.class)
 public class ApplicationPackageManagerTest extends TestCase {
+
+    @ClassRule public static final SetFlagsRule.ClassRule mClassRule = new SetFlagsRule.ClassRule(
+            com.android.graphics.flags.Flags.class);
+    @Rule public final SetFlagsRule mSetFlagsRule = mClassRule.createSetFlagsRule();
+
     private static final String sInternalVolPath = "/data";
     private static final String sAdoptedVolPath = "/mnt/expand/123";
     private static final String sPublicVolPath = "/emulated";
@@ -102,14 +143,14 @@ public class ApplicationPackageManagerTest extends TestCase {
         sVolumes.add(sPrivateUnmountedVol);
     }
 
-    private static final class MockedApplicationPackageManager extends ApplicationPackageManager {
+    public static class MockedApplicationPackageManager extends ApplicationPackageManager {
         private boolean mForceAllowOnExternal = false;
         private boolean mAllow3rdPartyOnInternal = true;
         private HashMap<ApplicationInfo, Resources> mResourcesMap;
 
         public MockedApplicationPackageManager() {
             super(null, null);
-            mResourcesMap = new HashMap<ApplicationInfo, Resources>();
+            mResourcesMap = new HashMap<>();
         }
 
         public void setForceAllowOnExternal(boolean forceAllowOnExternal) {
@@ -153,7 +194,7 @@ public class ApplicationPackageManagerTest extends TestCase {
     }
 
     private StorageManager getMockedStorageManager() {
-        StorageManager storageManager = Mockito.mock(StorageManager.class);
+        StorageManager storageManager = mock(StorageManager.class);
         Mockito.when(storageManager.getVolumes()).thenReturn(sVolumes);
         Mockito.when(storageManager.findVolumeById(VolumeInfo.ID_PRIVATE_INTERNAL))
                 .thenReturn(sInternalVol);
@@ -185,12 +226,13 @@ public class ApplicationPackageManagerTest extends TestCase {
         }
     }
 
+    @Test
     public void testGetCandidateVolumes_systemApp() throws Exception {
         ApplicationInfo sysAppInfo = new ApplicationInfo();
         sysAppInfo.flags = ApplicationInfo.FLAG_SYSTEM;
 
         StorageManager storageManager = getMockedStorageManager();
-        IPackageManager pm = Mockito.mock(IPackageManager.class);
+        IPackageManager pm = mock(IPackageManager.class);
 
         MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
 
@@ -216,11 +258,12 @@ public class ApplicationPackageManagerTest extends TestCase {
         verifyReturnedVolumes(candidates, sInternalVol);
     }
 
+    @Test
     public void testGetCandidateVolumes_3rdParty_internalOnly() throws Exception {
         ApplicationInfo appInfo = new ApplicationInfo();
         StorageManager storageManager = getMockedStorageManager();
 
-        IPackageManager pm = Mockito.mock(IPackageManager.class);
+        IPackageManager pm = mock(IPackageManager.class);
         Mockito.when(pm.isPackageDeviceAdminOnAnyUser(Mockito.anyString())).thenReturn(false);
 
         MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
@@ -245,11 +288,12 @@ public class ApplicationPackageManagerTest extends TestCase {
         }
     }
 
+    @Test
     public void testGetCandidateVolumes_3rdParty_auto() throws Exception {
         ApplicationInfo appInfo = new ApplicationInfo();
         StorageManager storageManager = getMockedStorageManager();
 
-        IPackageManager pm = Mockito.mock(IPackageManager.class);
+        IPackageManager pm = mock(IPackageManager.class);
 
         MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
         appPkgMgr.setForceAllowOnExternal(true);
@@ -283,44 +327,49 @@ public class ApplicationPackageManagerTest extends TestCase {
         }
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_noServiceInfo() {
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
         assertThat(appPkgMgr.extractPackageItemInfoAttributes(null, null, null,
                 new int[]{})).isNull();
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_noMetaData() {
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
-        final PackageItemInfo packageItemInfo = Mockito.mock(PackageItemInfo.class);
+        final PackageItemInfo packageItemInfo = mock(PackageItemInfo.class);
         assertThat(appPkgMgr.extractPackageItemInfoAttributes(packageItemInfo, null, null,
                 new int[]{})).isNull();
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_noParser() {
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
-        final PackageItemInfo packageItemInfo = Mockito.mock(PackageItemInfo.class);
-        final ApplicationInfo applicationInfo = Mockito.mock(ApplicationInfo.class);
+        final PackageItemInfo packageItemInfo = mock(PackageItemInfo.class);
+        final ApplicationInfo applicationInfo = mock(ApplicationInfo.class);
         when(packageItemInfo.getApplicationInfo()).thenReturn(applicationInfo);
         assertThat(appPkgMgr.extractPackageItemInfoAttributes(packageItemInfo, null, null,
                 new int[]{})).isNull();
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_noMetaDataXml() {
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
-        final PackageItemInfo packageItemInfo = Mockito.mock(PackageItemInfo.class);
-        final ApplicationInfo applicationInfo = Mockito.mock(ApplicationInfo.class);
+        final PackageItemInfo packageItemInfo = mock(PackageItemInfo.class);
+        final ApplicationInfo applicationInfo = mock(ApplicationInfo.class);
         when(packageItemInfo.getApplicationInfo()).thenReturn(applicationInfo);
         when(packageItemInfo.loadXmlMetaData(any(), any())).thenReturn(null);
         assertThat(appPkgMgr.extractPackageItemInfoAttributes(packageItemInfo, null, null,
                 new int[]{})).isNull();
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_nonMatchingRootTag() throws Exception {
         final String rootTag = "rootTag";
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
-        final PackageItemInfo packageItemInfo = Mockito.mock(PackageItemInfo.class);
-        final ApplicationInfo applicationInfo = Mockito.mock(ApplicationInfo.class);
-        final XmlResourceParser parser = Mockito.mock(XmlResourceParser.class);
+        final PackageItemInfo packageItemInfo = mock(PackageItemInfo.class);
+        final ApplicationInfo applicationInfo = mock(ApplicationInfo.class);
+        final XmlResourceParser parser = mock(XmlResourceParser.class);
 
         when(packageItemInfo.getApplicationInfo()).thenReturn(applicationInfo);
         packageItemInfo.metaData = new Bundle();
@@ -331,14 +380,15 @@ public class ApplicationPackageManagerTest extends TestCase {
                 new int[]{})).isNull();
     }
 
+    @Test
     public void testExtractPackageItemInfoAttributes_successfulExtraction() throws Exception {
         final String rootTag = "rootTag";
         final MockedApplicationPackageManager appPkgMgr = new MockedApplicationPackageManager();
-        final PackageItemInfo packageItemInfo = Mockito.mock(PackageItemInfo.class);
-        final ApplicationInfo applicationInfo = Mockito.mock(ApplicationInfo.class);
-        final XmlResourceParser parser = Mockito.mock(XmlResourceParser.class);
-        final Resources resources = Mockito.mock(Resources.class);
-        final TypedArray attributes = Mockito.mock(TypedArray.class);
+        final PackageItemInfo packageItemInfo = mock(PackageItemInfo.class);
+        final ApplicationInfo applicationInfo = mock(ApplicationInfo.class);
+        final XmlResourceParser parser = mock(XmlResourceParser.class);
+        final Resources resources = mock(Resources.class);
+        final TypedArray attributes = mock(TypedArray.class);
 
         when(packageItemInfo.getApplicationInfo()).thenReturn(applicationInfo);
         packageItemInfo.metaData = new Bundle();
@@ -350,5 +400,232 @@ public class ApplicationPackageManagerTest extends TestCase {
 
         assertThat(appPkgMgr.extractPackageItemInfoAttributes(packageItemInfo, null, rootTag,
                 new int[]{})).isEqualTo(attributes);
+    }
+
+    @Test
+    public void testGetLaunchIntentForPackage_categoryInfoActivity_returnsIt() throws Exception {
+        String pkg = "com.some.package";
+        int userId = 42;
+        ResolveInfo categoryInfoResolveInfo = new ResolveInfo();
+        categoryInfoResolveInfo.activityInfo = new ActivityInfo();
+        categoryInfoResolveInfo.activityInfo.packageName = pkg;
+        categoryInfoResolveInfo.activityInfo.name = "activity";
+        Intent baseIntent = new Intent(ACTION_MAIN).setPackage(pkg);
+
+        final MockedApplicationPackageManager pm = spy(new MockedApplicationPackageManager());
+        doReturn(userId).when(pm).getUserId();
+        doReturn(List.of(categoryInfoResolveInfo))
+                .when(pm).queryIntentActivitiesAsUser(
+                        eqIntent(new Intent(baseIntent).addCategory(CATEGORY_INFO)),
+                        any(ResolveInfoFlags.class),
+                        anyInt());
+        doReturn(
+                List.of())
+                .when(pm).queryIntentActivitiesAsUser(
+                        eqIntent(new Intent(baseIntent).addCategory(CATEGORY_LAUNCHER)),
+                        any(ResolveInfoFlags.class),
+                        anyInt());
+
+        Intent intent = pm.getLaunchIntentForPackage(pkg, true);
+
+        assertThat(intent).isNotNull();
+        assertThat(intent.getComponent()).isEqualTo(new ComponentName(pkg, "activity"));
+        assertThat(intent.getCategories()).containsExactly(CATEGORY_INFO);
+        assertThat(intent.getFlags()).isEqualTo(FLAG_ACTIVITY_NEW_TASK);
+        verify(pm).queryIntentActivitiesAsUser(
+                eqIntent(new Intent(ACTION_MAIN).addCategory(CATEGORY_INFO).setPackage(pkg)),
+                eqResolveInfoFlags(MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE),
+                eq(userId));
+    }
+
+    @Test
+    public void testGetLaunchIntentForPackage_categoryLauncherActivity_returnsIt() {
+        String pkg = "com.some.package";
+        int userId = 42;
+        ResolveInfo categoryLauncherResolveInfo1 = new ResolveInfo();
+        categoryLauncherResolveInfo1.activityInfo = new ActivityInfo();
+        categoryLauncherResolveInfo1.activityInfo.packageName = pkg;
+        categoryLauncherResolveInfo1.activityInfo.name = "activity1";
+        ResolveInfo categoryLauncherResolveInfo2 = new ResolveInfo();
+        categoryLauncherResolveInfo2.activityInfo = new ActivityInfo();
+        categoryLauncherResolveInfo2.activityInfo.packageName = pkg;
+        categoryLauncherResolveInfo2.activityInfo.name = "activity2";
+        Intent baseIntent = new Intent(ACTION_MAIN).setPackage(pkg);
+
+        final MockedApplicationPackageManager pm = spy(new MockedApplicationPackageManager());
+        doReturn(userId).when(pm).getUserId();
+        doReturn(List.of())
+                .when(pm).queryIntentActivitiesAsUser(
+                        eqIntent(new Intent(baseIntent).addCategory(CATEGORY_INFO)),
+                        any(ResolveInfoFlags.class),
+                        anyInt());
+        doReturn(
+                List.of(categoryLauncherResolveInfo1, categoryLauncherResolveInfo2))
+                .when(pm).queryIntentActivitiesAsUser(
+                        eqIntent(new Intent(baseIntent).addCategory(CATEGORY_LAUNCHER)),
+                        any(ResolveInfoFlags.class),
+                        anyInt());
+
+        Intent intent = pm.getLaunchIntentForPackage(pkg, true);
+
+        assertThat(intent).isNotNull();
+        assertThat(intent.getComponent()).isEqualTo(new ComponentName(pkg, "activity1"));
+        assertThat(intent.getCategories()).containsExactly(CATEGORY_LAUNCHER);
+        assertThat(intent.getFlags()).isEqualTo(FLAG_ACTIVITY_NEW_TASK);
+    }
+
+    @Test
+    public void testGetLaunchIntentForPackage_noSuitableActivity_returnsNull() throws Exception {
+        String pkg = "com.some.package";
+        int userId = 42;
+
+        final MockedApplicationPackageManager pm = spy(new MockedApplicationPackageManager());
+        doReturn(userId).when(pm).getUserId();
+        doReturn(List.of())
+                .when(pm).queryIntentActivitiesAsUser(
+                        any(),
+                        any(ResolveInfoFlags.class),
+                        anyInt());
+
+        Intent intent = pm.getLaunchIntentForPackage(pkg, true);
+
+        assertThat(intent).isNull();
+    }
+
+    @DisableFlags(FLAG_USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS)
+    @Test
+    public void getResourcesForApplication_flagDisabled_nonSystemPackage_returnsDefaultResources()
+            throws Exception {
+        ApplicationInfo appInfo = createApplicationInfoForPackage("com.example");
+        Context defaultDisplayContext = InstrumentationRegistry.getInstrumentation().getContext();
+        int defaultDisplayDensityDpi =
+                defaultDisplayContext.getResources().getConfiguration().densityDpi;
+        Context newDisplayContext =
+                defaultDisplayContext.createDisplayContext(createSecondaryDisplay());
+
+        ApplicationPackageManager packageManager =
+                (ApplicationPackageManager) newDisplayContext.getPackageManager();
+
+        Resources resourcesForApplication = packageManager.getResourcesForApplication(appInfo);
+
+        assertThat(resourcesForApplication.getConfiguration().densityDpi)
+                .isEqualTo(defaultDisplayDensityDpi);
+    }
+
+    @DisableFlags(FLAG_USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS)
+    @Test
+    public void getResourcesForApplication_flagDisabled_systemPackage_returnsDefaultResources()
+            throws Exception {
+        ApplicationInfo appInfo = createApplicationInfoForPackage("system");
+        Context defaultDisplayContext = InstrumentationRegistry.getInstrumentation().getContext();
+        int defaultDisplayDensityDpi =
+                defaultDisplayContext.getResources().getConfiguration().densityDpi;
+        Context newDisplayContext =
+                defaultDisplayContext.createDisplayContext(createSecondaryDisplay());
+
+        ApplicationPackageManager packageManager =
+                (ApplicationPackageManager) newDisplayContext.getPackageManager();
+
+        Resources resourcesForApplication = packageManager.getResourcesForApplication(appInfo);
+
+        assertThat(resourcesForApplication.getConfiguration().densityDpi)
+                .isEqualTo(defaultDisplayDensityDpi);
+    }
+
+    @EnableFlags(FLAG_USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS)
+    @Test
+    public void getResourcesForApplication_flagEnabled_nonSystemPackage_returnsNewDisplayResources()
+            throws Exception {
+        ApplicationInfo appInfo = createApplicationInfoForPackage("com.example");
+        Context defaultDisplayContext = InstrumentationRegistry.getInstrumentation().getContext();
+        Context newDisplayContext =
+                defaultDisplayContext.createDisplayContext(createSecondaryDisplay());
+        int newDisplayDensityDpi = newDisplayContext.getResources().getConfiguration().densityDpi;
+
+        final ApplicationPackageManager pm =
+                (ApplicationPackageManager) newDisplayContext.getPackageManager();
+
+        Resources resourcesForApplication = pm.getResourcesForApplication(appInfo);
+        assertThat(resourcesForApplication.getConfiguration().densityDpi)
+                .isEqualTo(newDisplayDensityDpi);
+    }
+
+    @EnableFlags(FLAG_USE_RESOURCES_FROM_CONTEXT_TO_CREATE_DRAWABLE_ICONS)
+    @Test
+    public void getResourcesForApplication_flagEnabled_systemPackage_returnsNewDisplayResources()
+            throws Exception {
+        ApplicationInfo appInfo = createApplicationInfoForPackage("system");
+        Context defaultDisplayContext = InstrumentationRegistry.getInstrumentation().getContext();
+        Context newDisplayContext =
+                defaultDisplayContext.createDisplayContext(createSecondaryDisplay());
+        int newDisplayDensityDpi = newDisplayContext.getResources().getConfiguration().densityDpi;
+
+        final ApplicationPackageManager pm =
+                (ApplicationPackageManager) newDisplayContext.getPackageManager();
+
+        Resources resourcesForApplication = pm.getResourcesForApplication(appInfo);
+        assertThat(resourcesForApplication.getConfiguration().densityDpi)
+                .isEqualTo(newDisplayDensityDpi);
+    }
+
+    private static ApplicationInfo createApplicationInfoForPackage(String packageName) {
+        final ApplicationInfo appInfo = new ApplicationInfo();
+        appInfo.packageName = packageName;
+        return appInfo;
+    }
+
+    /**
+     * Creates a new {@link Display} object representing a secondary display.
+     *
+     * <p>The returned display has a different density than the default display.
+     */
+    private Display createSecondaryDisplay() {
+        Context context = InstrumentationRegistry.getInstrumentation().getContext();
+        Resources resources = context.getResources();
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        displayMetrics.densityDpi = resources.getConfiguration().densityDpi + 100;
+        Configuration configuration = new Configuration();
+        configuration.densityDpi = displayMetrics.densityDpi;
+        Resources newResources =
+                new Resources(context.getAssets(), displayMetrics, configuration);
+        DisplayInfo displayInfo = new DisplayInfo();
+        displayInfo.displayId = context.getDisplayId() + 1;
+        return new Display(
+                DisplayManagerGlobal.getInstance(),
+                displayInfo.displayId,
+                displayInfo,
+                newResources);
+    }
+
+    /** Equality check for intents -- ignoring extras */
+    private static Intent eqIntent(Intent wanted) {
+        return argThat(
+                new ArgumentMatcher<>() {
+                    @Override
+                    public boolean matches(Intent argument) {
+                        return wanted.filterEquals(argument)
+                                && wanted.getFlags() == argument.getFlags();
+                    }
+
+                    @Override
+                    public String toString() {
+                        return wanted.toString();
+                    }
+                });
+    }
+
+    private static ResolveInfoFlags eqResolveInfoFlags(long flagsWanted) {
+        return argThat(
+                new ArgumentMatcher<>() {
+                    @Override
+                    public boolean matches(ResolveInfoFlags argument) {
+                        return argument.getValue() == flagsWanted;
+                    }
+
+                    @Override
+                    public String toString() {
+                        return String.valueOf(flagsWanted);
+                    }
+                });
     }
 }

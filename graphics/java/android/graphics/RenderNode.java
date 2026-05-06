@@ -192,6 +192,7 @@ import java.lang.ref.WeakReference;
  * top-level content is desired, and finally calling {@link Surface#unlockCanvasAndPost(Canvas)}.
  * </p>
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public final class RenderNode {
 
     // Use a Holder to allow static initialization in the boot image.
@@ -1052,8 +1053,13 @@ public final class RenderNode {
         return nSetHasOverlappingRendering(mNativeRenderNode, hasOverlappingRendering);
     }
 
-    /** @hide */
-    @IntDef({USAGE_BACKGROUND})
+    /**
+     * Note: Constant values should match CanvasTransform.h UsageHint.
+     * @hide
+     */
+    // LINT.IfChange(UsageHint)
+    @IntDef({USAGE_UNKNOWN, USAGE_BACKGROUND, USAGE_NAVIGATION_BAR_BACKGROUND})
+    // LINT.ThenChange(/libs/hwui/CanvasTransform.h:UsageHint)
     @Retention(RetentionPolicy.SOURCE)
     public @interface UsageHint {
     }
@@ -1071,6 +1077,13 @@ public final class RenderNode {
      * @hide
      */
     public static final int USAGE_BACKGROUND = 1;
+
+    /**
+     * Usage is the navigation bar background
+     *
+     * @hide
+     */
+    public static final int USAGE_NAVIGATION_BAR_BACKGROUND = 4;
 
     /**
      * Provides a hint on what this RenderNode's display list content contains. This hint is used

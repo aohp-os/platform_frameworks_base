@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.row;
 
+import static com.android.systemui.Flags.notificationRowTransparency;
 import static com.android.systemui.util.ColorUtilKt.hexColorString;
 
 import android.content.Context;
@@ -23,6 +24,7 @@ import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -35,8 +37,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.android.internal.util.ContrastColorUtil;
-import com.android.settingslib.Utils;
 import com.android.systemui.Dumpable;
+import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.shared.NotificationAddXOnHoverToDismiss;
 import com.android.systemui.util.DrawableDumpKt;
@@ -53,6 +55,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
     private final boolean mDontModifyCorners;
     private Drawable mBackground;
     private int mClipTopAmount;
+    private int mTopOverlap;
+    private int mBottomOverlap;
     private int mClipBottomAmount;
     private int mTintColor;
     @Nullable private Integer mRippleColor;
@@ -69,7 +73,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
     private int mDrawableAlpha = 255;
     private final ColorStateList mLightColoredStatefulColors;
     private final ColorStateList mDarkColoredStatefulColors;
-    private final int mNormalColor;
+    private int mNormalColor;
     private final int convexR = 9;
     private final int concaveR = 22;
 
@@ -83,8 +87,12 @@ public class NotificationBackgroundView extends View implements Dumpable,
                 R.color.notification_state_color_light);
         mDarkColoredStatefulColors = getResources().getColorStateList(
                 R.color.notification_state_color_dark);
-        mNormalColor = Utils.getColorAttrDefaultColor(mContext,
-                com.android.internal.R.attr.materialColorSurfaceContainerHigh);
+        if (notificationRowTransparency()) {
+            mNormalColor = SurfaceEffectColors.surfaceEffect1(getContext());
+        } else  {
+            mNormalColor = mContext.getColor(
+                    com.android.internal.R.color.materialColorSurfaceContainerHigh);
+        }
         mFocusOverlayStroke = getResources().getDimension(R.dimen.notification_focus_stroke_width);
     }
 
@@ -102,11 +110,13 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if (mClipTopAmount + mClipBottomAmount < getActualHeight() || mExpandAnimationRunning) {
+        float clipTop = Math.max(mClipTopAmount, mTopOverlap);
+        int clipBottomAmount = Math.max(mClipBottomAmount, mBottomOverlap);
+        if (clipTop + clipBottomAmount < getActualHeight() || mExpandAnimationRunning) {
             canvas.save();
             if (!mExpandAnimationRunning) {
-                canvas.clipRect(0, mClipTopAmount, getWidth(),
-                        getActualHeight() - mClipBottomAmount);
+                canvas.clipRect(0, clipTop, getWidth(),
+                        getActualHeight() - clipBottomAmount);
             }
 
             if (!NotificationAddXOnHoverToDismiss.isEnabled()) {
@@ -168,14 +178,14 @@ public class NotificationBackgroundView extends View implements Dumpable,
         if (mBottomIsRounded
                 && mBottomAmountClips
                 && !mExpandAnimationRunning) {
-            bottom -= mClipBottomAmount;
+            bottom -= Math.max(mClipBottomAmount, mBottomOverlap);
         }
-        final boolean isRtl = isLayoutRtl();
+        final boolean alignedToRight = isAlignedToRight();
         final int width = getWidth();
         final int actualWidth = getActualWidth();
 
-        int left = isRtl ? width - actualWidth : 0;
-        int right = isRtl ? width : actualWidth;
+        int left = alignedToRight ? width - actualWidth : 0;
+        int right = alignedToRight ? width : actualWidth;
 
         if (mExpandAnimationRunning) {
             // Horizontally center this background view inside of the container
@@ -184,6 +194,15 @@ public class NotificationBackgroundView extends View implements Dumpable,
         }
 
         return new Rect(left, top, right, bottom);
+    }
+
+    /**
+     * @return Whether the background view should be right-aligned. This only matters if the
+     * actualWidth is different than the full (measured) width. In other words, this is used to
+     * define the short-shelf alignment.
+     */
+    protected boolean isAlignedToRight() {
+        return isLayoutRtl();
     }
 
     private void draw(Canvas canvas, Drawable drawable) {
@@ -195,14 +214,15 @@ public class NotificationBackgroundView extends View implements Dumpable,
             if (mBottomIsRounded
                     && mBottomAmountClips
                     && !mExpandAnimationRunning) {
-                bottom -= mClipBottomAmount;
+                bottom -= Math.max(mClipBottomAmount, mBottomOverlap);
             }
-            final boolean isRtl = isLayoutRtl();
+
+            final boolean alignedToRight = isAlignedToRight();
             final int width = getWidth();
             final int actualWidth = getActualWidth();
 
-            int left = isRtl ? width - actualWidth : 0;
-            int right = isRtl ? width : actualWidth;
+            int left = alignedToRight ? width - actualWidth : 0;
+            int right = alignedToRight ? width : actualWidth;
 
             if (mExpandAnimationRunning) {
                 // Horizontally center this background view inside of the container
@@ -271,7 +291,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
         setCustomBackground(d);
     }
 
-    private Drawable getBaseBackgroundLayer() {
+    public Drawable getBaseBackgroundLayer() {
         return ((LayerDrawable) mBackground).getDrawable(0);
     }
 
@@ -281,8 +301,13 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     public void setTint(int tintColor) {
         Drawable baseLayer = getBaseBackgroundLayer();
-        baseLayer.mutate().setTintMode(PorterDuff.Mode.SRC_ATOP);
-        baseLayer.setTint(tintColor);
+        if (notificationRowTransparency()) {
+            ((GradientDrawable) baseLayer.mutate()).setColor(tintColor);
+
+        } else {
+            baseLayer.mutate().setTintMode(PorterDuff.Mode.SRC_ATOP);
+            baseLayer.setTint(tintColor);
+        }
         mTintColor = tintColor;
         setStatefulColors();
         invalidate();
@@ -320,6 +345,28 @@ public class NotificationBackgroundView extends View implements Dumpable,
 
     public void setClipTopAmount(int clipTopAmount) {
         mClipTopAmount = clipTopAmount;
+        invalidate();
+    }
+
+    /**
+     * Sets the overlap on the top of the view with other views. As a result we should clip the
+     * background and content such that no overlap is visible anymore.
+     * This is related to setClipTopAmount, however it is a separate way to clip which is usually
+     * then combined with the clipTopAmount to take the maximum.
+     */
+    public void setTopOverlap(int topOverlap) {
+        mTopOverlap = topOverlap;
+        invalidate();
+    }
+
+    /**
+     * Sets the overlap on the bottom of the view with other views. As a result we should clip the
+     * background and content such that no overlap is visible anymore.
+     * This is related to setClipBottomAmount, however it is a separate way to clip which is usually
+     * then combined with the clipBottomAmount to take the maximum.
+     */
+    public void setBottomOverlap(int bottomOverlap) {
+        mBottomOverlap = bottomOverlap;
         invalidate();
     }
 
@@ -440,6 +487,8 @@ public class NotificationBackgroundView extends View implements Dumpable,
         pw.println("mDontModifyCorners: " + mDontModifyCorners);
         pw.println("mClipTopAmount: " + mClipTopAmount);
         pw.println("mClipBottomAmount: " + mClipBottomAmount);
+        pw.println("mTopOverlap: " + mTopOverlap);
+        pw.println("mBottomOverlap: " + mBottomOverlap);
         pw.println("mCornerRadii: " + Arrays.toString(mCornerRadii));
         pw.println("mBottomIsRounded: " + mBottomIsRounded);
         pw.println("mBottomAmountClips: " + mBottomAmountClips);

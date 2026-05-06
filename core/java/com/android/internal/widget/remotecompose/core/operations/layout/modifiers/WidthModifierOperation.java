@@ -19,11 +19,14 @@ import static com.android.internal.widget.remotecompose.core.documentation.Docum
 import static com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation.INT;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 
 import com.android.internal.widget.remotecompose.core.Operation;
 import com.android.internal.widget.remotecompose.core.Operations;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -31,6 +34,7 @@ import java.util.List;
 public class WidthModifierOperation extends DimensionModifierOperation {
     private static final int OP_CODE = Operations.MODIFIER_WIDTH;
     public static final String CLASS_NAME = "WidthModifierOperation";
+    private @Nullable WidthInModifierOperation mWidthIn = null;
 
     /**
      * The name of the class
@@ -51,6 +55,13 @@ public class WidthModifierOperation extends DimensionModifierOperation {
         return OP_CODE;
     }
 
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     * @param type the type of dimension rule (DimensionModifierOperation.Type)
+     * @param value the value of the dimension
+     */
     public static void apply(@NonNull WireBuffer buffer, int type, float value) {
         buffer.start(OP_CODE);
         buffer.writeInt(type);
@@ -109,5 +120,32 @@ public class WidthModifierOperation extends DimensionModifierOperation {
                 .description("define the animation")
                 .field(INT, "type", "")
                 .field(FLOAT, "value", "");
+    }
+
+    /**
+     * Set width in constraints
+     *
+     * @param widthInConstraints width constraints
+     */
+    public void setWidthIn(@NonNull WidthInModifierOperation widthInConstraints) {
+        mWidthIn = widthInConstraints;
+    }
+
+    /**
+     * Returns width in constraints
+     *
+     * @return width in constraints
+     */
+    public @Nullable WidthInModifierOperation getWidthIn() {
+        return mWidthIn;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("WidthModifierOperation")
+                .add("width", mValue, mOutValue)
+                .add("dimensionModifierType", mType);
     }
 }

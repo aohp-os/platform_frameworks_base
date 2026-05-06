@@ -16,13 +16,12 @@
 
 package com.android.systemui.accessibility.accessibilitymenu.view;
 
+import static android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE;
 import static android.os.UserManager.DISALLOW_ADJUST_VOLUME;
 import static android.os.UserManager.DISALLOW_CONFIG_BRIGHTNESS;
 import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE;
 import static android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
-
-import static com.android.app.viewcapture.ViewCaptureFactory.getViewCaptureAwareWindowManagerInstance;
 
 import static java.lang.Math.max;
 
@@ -55,11 +54,11 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.UiContext;
 
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager;
 import com.android.systemui.accessibility.accessibilitymenu.AccessibilityMenuService;
 import com.android.systemui.accessibility.accessibilitymenu.R;
 import com.android.systemui.accessibility.accessibilitymenu.activity.A11yMenuSettingsActivity.A11yMenuPreferenceFragment;
 import com.android.systemui.accessibility.accessibilitymenu.model.A11yMenuShortcut;
+import com.android.systemui.utils.windowmanager.WindowManagerUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -145,9 +144,8 @@ public class A11yMenuOverlayLayout {
         final Display display = mDisplayManager.getDisplay(DEFAULT_DISPLAY);
         final Context uiContext = mService.createWindowContext(
                 display, TYPE_ACCESSIBILITY_OVERLAY, /* options= */null);
-        final ViewCaptureAwareWindowManager windowManager =
-                getViewCaptureAwareWindowManagerInstance(uiContext,
-                        com.android.systemui.Flags.enableViewCaptureTracing());
+        uiContext.setTheme(R.style.ServiceTheme);
+        final WindowManager windowManager = WindowManagerUtils.getWindowManager(uiContext);
         mLayout = new A11yMenuFrameLayout(uiContext);
         updateLayoutPosition(uiContext);
         inflateLayoutAndSetOnTouchListener(mLayout, uiContext);
@@ -162,8 +160,7 @@ public class A11yMenuOverlayLayout {
 
     public void clearLayout() {
         if (mLayout != null) {
-            ViewCaptureAwareWindowManager windowManager = getViewCaptureAwareWindowManagerInstance(
-                    mLayout.getContext(), com.android.systemui.Flags.enableViewCaptureTracing());
+            WindowManager windowManager = WindowManagerUtils.getWindowManager(mLayout.getContext());
             if (windowManager != null) {
                 windowManager.removeView(mLayout);
             }
@@ -178,7 +175,7 @@ public class A11yMenuOverlayLayout {
             return;
         }
         updateLayoutPosition(mLayout.getContext());
-        WindowManager windowManager = mLayout.getContext().getSystemService(WindowManager.class);
+        WindowManager windowManager = WindowManagerUtils.getWindowManager(mLayout.getContext());
         if (windowManager != null) {
             windowManager.updateViewLayout(mLayout, mLayoutParameter);
         }
@@ -228,9 +225,7 @@ public class A11yMenuOverlayLayout {
         if (shortcutId == A11yMenuShortcut.ShortcutId.ID_BRIGHTNESS_DOWN_VALUE.ordinal()
                 || shortcutId == A11yMenuShortcut.ShortcutId.ID_BRIGHTNESS_UP_VALUE.ordinal()) {
             if (userManager.hasUserRestriction(DISALLOW_CONFIG_BRIGHTNESS)
-                    || (com.android.systemui.Flags.enforceBrightnessBaseUserRestriction()
-                    && userManager.hasBaseUserRestriction(
-                            DISALLOW_CONFIG_BRIGHTNESS, userHandle))) {
+                    || userManager.hasBaseUserRestriction(DISALLOW_CONFIG_BRIGHTNESS, userHandle)) {
                 return true;
             }
         }
@@ -367,6 +362,7 @@ public class A11yMenuOverlayLayout {
                     mLayout, createShortcutList(), getPageIndex());
             updateViewLayout();
 
+            mService.performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE);
             mLayout.setVisibility(View.VISIBLE);
         }
     }

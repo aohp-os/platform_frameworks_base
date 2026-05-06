@@ -17,29 +17,34 @@
 package com.android.systemui.statusbar.window
 
 import android.content.testableContext
+import android.view.fakeWindowManager
 import android.view.windowManagerService
-import com.android.app.viewcapture.realCaptureAwareWindowManager
 import com.android.systemui.concurrency.fakeExecutor
 import com.android.systemui.fragments.fragmentService
 import com.android.systemui.kosmos.Kosmos
-import com.android.systemui.statusbar.phone.statusBarContentInsetsProvider
-import com.android.systemui.statusbar.policy.statusBarConfigurationController
+import com.android.systemui.log.logcatLogBuffer
+import com.android.systemui.statusbar.layout.statusBarContentInsetsProvider
+import com.android.systemui.statusbar.policy.mockStatusBarConfigurationController
 import java.util.Optional
 
 val Kosmos.fakeStatusBarWindowController by Kosmos.Fixture { FakeStatusBarWindowController() }
+
+var Kosmos.statusBarWindowControllerImplDisplayId by Kosmos.Fixture { testableContext.displayId }
 
 val Kosmos.statusBarWindowControllerImpl by
     Kosmos.Fixture {
         StatusBarWindowControllerImpl(
             testableContext,
             statusBarWindowViewInflater,
-            realCaptureAwareWindowManager,
-            statusBarConfigurationController,
+            fakeWindowManager,
+            mockStatusBarConfigurationController,
             windowManagerService,
             statusBarContentInsetsProvider,
             fragmentService,
             Optional.empty(),
             fakeExecutor,
+            logcatLogBuffer(name = "StatusBarWindowControllerImpl"),
+            statusBarWindowControllerImplDisplayId,
         )
     }
 

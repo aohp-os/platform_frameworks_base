@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
+@file:OptIn(ExperimentalKairosApi::class)
+
 package com.android.systemui.statusbar.phone.ui
 
-import android.app.Flags
 import android.graphics.drawable.Icon
 import android.os.UserHandle
-import android.platform.test.annotations.DisableFlags
-import android.platform.test.annotations.EnableFlags
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -28,13 +27,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.statusbar.StatusBarIcon
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.kairos.ExperimentalKairosApi
+import com.android.systemui.kairos.KairosNetwork
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.connectivity.ui.MobileContextProvider
 import com.android.systemui.statusbar.phone.StatusBarLocation
 import com.android.systemui.statusbar.pipeline.mobile.ui.MobileUiAdapter
+import com.android.systemui.statusbar.pipeline.mobile.ui.MobileUiAdapterKairos
 import com.android.systemui.statusbar.pipeline.wifi.ui.WifiUiAdapter
 import com.android.systemui.util.Assert
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CoroutineScope
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -58,12 +61,14 @@ class IconManagerTest : SysuiTestCase() {
                 StatusBarLocation.HOME,
                 mock<WifiUiAdapter>(defaultAnswer = RETURNS_DEEP_STUBS),
                 mock<MobileUiAdapter>(defaultAnswer = RETURNS_DEEP_STUBS),
+                { mock<MobileUiAdapterKairos>(defaultAnswer = RETURNS_DEEP_STUBS) },
                 mock<MobileContextProvider>(defaultAnswer = RETURNS_DEEP_STUBS),
+                mock<KairosNetwork>(defaultAnswer = RETURNS_DEEP_STUBS),
+                mock<CoroutineScope>(defaultAnswer = RETURNS_DEEP_STUBS),
             )
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_MODES_UI, Flags.FLAG_MODES_UI_ICONS)
     fun addIcon_shapeWrapContent_addsIconViewWithVariableWidth() {
         val sbIcon = newStatusBarIcon(StatusBarIcon.Shape.WRAP_CONTENT)
 
@@ -78,7 +83,6 @@ class IconManagerTest : SysuiTestCase() {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_MODES_UI, Flags.FLAG_MODES_UI_ICONS)
     fun addIcon_shapeFixedSpace_addsIconViewWithFixedWidth() {
         val sbIcon = newStatusBarIcon(StatusBarIcon.Shape.FIXED_SPACE)
 
@@ -91,21 +95,6 @@ class IconManagerTest : SysuiTestCase() {
         assertThat(iconView.layoutParams.width).isNotEqualTo(ViewGroup.LayoutParams.WRAP_CONTENT)
         assertThat(iconView.layoutParams.width).isEqualTo(iconView.layoutParams.height)
         assertThat(iconView.scaleType).isEqualTo(ImageView.ScaleType.FIT_CENTER)
-    }
-
-    @Test
-    @DisableFlags(Flags.FLAG_MODES_UI_ICONS)
-    fun addIcon_iconsFlagOff_addsIconViewWithVariableWidth() {
-        val sbIcon = newStatusBarIcon(StatusBarIcon.Shape.FIXED_SPACE)
-
-        underTest.addIcon(0, "slot", false, sbIcon)
-
-        assertThat(viewGroup.childCount).isEqualTo(1)
-        val iconView = viewGroup.getChildAt(0) as StatusBarIconView
-        assertThat(iconView).isNotNull()
-
-        assertThat(iconView.layoutParams.width).isEqualTo(ViewGroup.LayoutParams.WRAP_CONTENT)
-        assertThat(iconView.scaleType).isEqualTo(ImageView.ScaleType.CENTER)
     }
 
     private fun newStatusBarIcon(shape: StatusBarIcon.Shape) =

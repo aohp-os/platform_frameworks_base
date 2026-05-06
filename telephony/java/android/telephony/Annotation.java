@@ -3,7 +3,6 @@ package android.telephony;
 import android.annotation.IntDef;
 import android.net.NetworkAgent;
 import android.net.NetworkCapabilities;
-import android.telecom.Connection;
 import android.telephony.data.ApnSetting;
 import android.telephony.ims.ImsCallProfile;
 
@@ -109,7 +108,6 @@ public class Annotation {
             //TelephonyManager.NETWORK_TYPE_LTE_CA,
 
             TelephonyManager.NETWORK_TYPE_NR,
-            TelephonyManager.NETWORK_TYPE_NB_IOT_NTN,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface NetworkType {
@@ -593,32 +591,6 @@ public class Annotation {
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CarrierPrivilegeStatus {
-    }
-
-    @IntDef({
-            Connection.AUDIO_CODEC_NONE,
-            Connection.AUDIO_CODEC_AMR,
-            Connection.AUDIO_CODEC_AMR_WB,
-            Connection.AUDIO_CODEC_QCELP13K,
-            Connection.AUDIO_CODEC_EVRC,
-            Connection.AUDIO_CODEC_EVRC_B,
-            Connection.AUDIO_CODEC_EVRC_WB,
-            Connection.AUDIO_CODEC_EVRC_NW,
-            Connection.AUDIO_CODEC_GSM_EFR,
-            Connection.AUDIO_CODEC_GSM_FR,
-            Connection.AUDIO_CODEC_G711U,
-            Connection.AUDIO_CODEC_G723,
-            Connection.AUDIO_CODEC_G711A,
-            Connection.AUDIO_CODEC_G722,
-            Connection.AUDIO_CODEC_G711AB,
-            Connection.AUDIO_CODEC_G729,
-            Connection.AUDIO_CODEC_EVS_NB,
-            Connection.AUDIO_CODEC_EVS_WB,
-            Connection.AUDIO_CODEC_EVS_SWB,
-            Connection.AUDIO_CODEC_EVS_FB
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface ImsAudioCodec {
     }
 
     /**

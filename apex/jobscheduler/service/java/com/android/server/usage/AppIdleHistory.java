@@ -38,6 +38,7 @@ import android.app.usage.AppStandbyInfo;
 import android.app.usage.UsageStatsManager;
 import android.os.SystemClock;
 import android.util.ArrayMap;
+import android.util.ArraySet;
 import android.util.AtomicFile;
 import android.util.IndentingPrintWriter;
 import android.util.Slog;
@@ -50,6 +51,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.FastXmlSerializer;
 import com.android.internal.util.FrameworkStatsLog;
+import com.android.internal.util.IntPair;
 import com.android.internal.util.XmlUtils;
 
 import libcore.io.IoUtils;
@@ -82,6 +84,9 @@ public class AppIdleHistory {
     // History for all users and all packages
     private SparseArray<ArrayMap<String,AppUsageHistory>> mIdleHistory = new SparseArray<>();
     private static final long ONE_MINUTE = 60 * 1000;
+
+    // Only keep the persisted restore-to-rare apps list for 2 days.
+    static final long RESTORE_TO_RARE_APPS_LIST_EXPIRY = ONE_MINUTE * 60 * 24 * 2;
 
     static final int STANDBY_BUCKET_UNKNOWN = -1;
 
@@ -275,6 +280,58 @@ public class AppIdleHistory {
         mElapsedDuration += elapsedRealtime - mElapsedSnapshot;
         mElapsedSnapshot = elapsedRealtime;
         writeScreenOnTime();
+    }
+
+    private File getRestoreToRareAppsListFile(int userId) {
+        return new File(getUserDirectory(userId), "restore_to_rare_apps_list");
+    }
+
+    public ArraySet<String> readRestoreToRareAppsList(int userId) {
+        File restoreToRareAppsListFile = getRestoreToRareAppsListFile(userId);
+        if (!restoreToRareAppsListFile.exists()) {
+            return null;
+        }
+
+        try (BufferedReader reader =
+                     new BufferedReader(new FileReader(restoreToRareAppsListFile))) {
+            final ArraySet<String> appsList = new ArraySet<>();
+            final long restoreTime = Long.parseLong(reader.readLine());
+            if (System.currentTimeMillis() - restoreTime > RESTORE_TO_RARE_APPS_LIST_EXPIRY) {
+                // the apps list should only be kept around for 2 days
+                reader.close();
+                restoreToRareAppsListFile.delete();
+                return null;
+            }
+            String pkgName;
+            while ((pkgName = reader.readLine()) != null) {
+                appsList.add(pkgName);
+            }
+            return appsList;
+        } catch (IOException | NumberFormatException e) {
+            return null;
+        }
+    }
+
+    public void writeRestoreToRareAppsList(int userId, ArraySet<String> restoreAppsToRare) {
+        File fileHandle = getRestoreToRareAppsListFile(userId);
+        if (fileHandle.exists()) {
+            // don't update the persisted file - it should only be written once.
+            return;
+        }
+        AtomicFile restoreToRareAppsListFile = new AtomicFile(fileHandle);
+        FileOutputStream fos = null;
+        try {
+            fos = restoreToRareAppsListFile.startWrite();
+            final StringBuilder sb = new StringBuilder();
+            sb.append(System.currentTimeMillis()).append("\n");
+            for (String pkgName : restoreAppsToRare) {
+                sb.append(pkgName).append("\n");
+            }
+            fos.write(sb.toString().getBytes());
+            restoreToRareAppsListFile.finishWrite(fos);
+        } catch (IOException ioe) {
+            restoreToRareAppsListFile.failWrite(fos);
+        }
     }
 
     /**
@@ -562,6 +619,16 @@ public class AppIdleHistory {
         return appUsageHistory == null ? STANDBY_BUCKET_NEVER : appUsageHistory.currentBucket;
     }
 
+    public long getAppStandbyBucketAndReason(String packageName, int userId,
+            long elapsedRealtime) {
+        ArrayMap<String, AppUsageHistory> userHistory = getUserHistory(userId);
+        AppUsageHistory appUsageHistory =
+                getPackageHistory(userHistory, packageName, elapsedRealtime, false);
+        return appUsageHistory == null
+                ? IntPair.of(STANDBY_BUCKET_NEVER, REASON_MAIN_DEFAULT)
+                : IntPair.of(appUsageHistory.currentBucket, appUsageHistory.bucketingReason);
+    }
+
     public ArrayList<AppStandbyInfo> getAppStandbyBuckets(int userId, boolean appIdleEnabled) {
         ArrayMap<String, AppUsageHistory> userHistory = getUserHistory(userId);
         int size = userHistory.size();
@@ -646,8 +713,7 @@ public class AppIdleHistory {
         AppUsageHistory appUsageHistory = getPackageHistory(userHistory, packageName,
                 elapsedRealtime, false);
         // If we don't have any state for the app, assume never used
-        if (appUsageHistory == null || appUsageHistory.lastUsedElapsedTime < 0
-                || (!Flags.screenTimeBypass() && appUsageHistory.lastUsedScreenTime < 0)) {
+        if (appUsageHistory == null || appUsageHistory.lastUsedElapsedTime < 0) {
             return -1;
         }
 
@@ -660,8 +726,7 @@ public class AppIdleHistory {
         if (DEBUG) Slog.d(TAG, packageName + " screenOn=" + screenOnDelta
                 + ", elapsed=" + elapsedDelta);
         for (int i = screenTimeThresholds.length - 1; i >= 0; i--) {
-            if ((Flags.screenTimeBypass() || screenOnDelta >= screenTimeThresholds[i])
-                && elapsedDelta >= elapsedTimeThresholds[i]) {
+            if (elapsedDelta >= elapsedTimeThresholds[i]) {
                 return i;
             }
         }
@@ -694,10 +759,13 @@ public class AppIdleHistory {
         return appUsageHistory.bucketExpiryTimesMs.get(bucket, 0);
     }
 
+    private File getUserDirectory(int userId) {
+        return new File(new File(mStorageDir, "users"), Integer.toString(userId));
+    }
+
     @VisibleForTesting
     File getUserFile(int userId) {
-        return new File(new File(new File(mStorageDir, "users"),
-                Integer.toString(userId)), APP_IDLE_FILENAME);
+        return new File(getUserDirectory(userId), APP_IDLE_FILENAME);
     }
 
     void clearLastUsedTimestamps(String packageName, int userId) {
@@ -789,13 +857,9 @@ public class AppIdleHistory {
                         }
                         appUsageHistory.nextEstimatedLaunchTime = getLongValue(parser,
                                 ATTR_NEXT_ESTIMATED_APP_LAUNCH_TIME, 0);
-                        if (Flags.avoidIdleCheck()) {
-                            // Set lastInformedBucket to the same value with the currentBucket
-                            // it should have already been informed.
-                            appUsageHistory.lastInformedBucket = appUsageHistory.currentBucket;
-                        } else {
-                            appUsageHistory.lastInformedBucket = -1;
-                        }
+                        // Set lastInformedBucket to the same value with the currentBucket
+                        // it should have already been informed.
+                        appUsageHistory.lastInformedBucket = appUsageHistory.currentBucket;
                         userHistory.put(packageName, appUsageHistory);
 
                         if (version >= XML_VERSION_ADD_BUCKET_EXPIRY_TIMES) {

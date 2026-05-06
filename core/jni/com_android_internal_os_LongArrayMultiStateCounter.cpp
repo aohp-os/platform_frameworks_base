@@ -97,7 +97,13 @@ static void native_updateValues(JNIEnv *env, jclass, jlong nativePtr, jlongArray
 static void native_incrementValues(JNIEnv *env, jclass, jlong nativePtr, jlongArray values,
                                    jlong timestamp) {
     auto *counter = reinterpret_cast<LongArrayMultiStateCounter *>(nativePtr);
-    counter->incrementValue(JavaUint64Array(env, values), timestamp);
+    if (values != nullptr) {
+        counter->incrementValue(JavaUint64Array(env, values), timestamp);
+    } else {
+        // Pass an empty Uint64Array, which is equivalent to an array of zeros.
+        // This is done to ensure that the timestamp is still updated in the counter.
+        counter->incrementValue(Uint64Array(), timestamp);
+    }
 }
 
 static void native_addCounts(JNIEnv *env, jclass, jlong nativePtr, jlongArray values) {
@@ -110,17 +116,26 @@ static void native_reset(jlong nativePtr) {
     counter->reset();
 }
 
-static void native_getCounts(JNIEnv *env, jclass, jlong nativePtr, jlongArray values, jint state) {
+static bool native_getCounts(JNIEnv *env, jclass, jlong nativePtr, jlongArray values, jint state) {
     auto *counter = reinterpret_cast<LongArrayMultiStateCounter *>(nativePtr);
-    ScopedLongArrayRW scopedArray(env, values);
     auto *data = counter->getCount(state).data();
-    auto size = env->GetArrayLength(values);
-    auto *outData = scopedArray.get();
     if (data == nullptr) {
-        memset(outData, 0, size * sizeof(uint64_t));
-    } else {
-        memcpy(outData, data, size * sizeof(uint64_t));
+        return false;
     }
+    auto size = env->GetArrayLength(values);
+    bool allZeros = true;
+    for (int i = 0; i < size; i++) {
+        if (data[i]) {
+            allZeros = false;
+            break;
+        }
+    }
+    if (allZeros) {
+        return false;
+    }
+    ScopedLongArrayRW scopedArray(env, values);
+    memcpy(scopedArray.get(), data, size * sizeof(uint64_t));
+    return true;
 }
 
 static jobject native_toString(JNIEnv *env, jclass, jlong nativePtr) {
@@ -188,13 +203,17 @@ static jlong native_initFromParcel(JNIEnv *env, jclass, jobject jParcel) {
     int32_t stateCount;
     THROW_AND_RETURN_ON_READ_ERROR(AParcel_readInt32(parcel.get(), &stateCount));
 
-    if (stateCount < 0 || stateCount > 0xEFFF) {
+    if (stateCount <= 0 || stateCount > 0xEFFF) {
         throwReadException(env, STATUS_INVALID_OPERATION);
         return 0L;
     }
 
     int32_t arrayLength;
     THROW_AND_RETURN_ON_READ_ERROR(AParcel_readInt32(parcel.get(), &arrayLength));
+    if (arrayLength < 0 || arrayLength > 0xFFFFF) {
+        throwReadException(env, STATUS_INVALID_OPERATION);
+        return 0L;
+    }
 
     auto counter =
             std::make_unique<LongArrayMultiStateCounter>(stateCount, Uint64Array(arrayLength));
@@ -249,7 +268,7 @@ static const JNINativeMethod g_LongArrayMultiStateCounter_methods[] = {
         // @CriticalNative
         {"native_reset", "(J)V", (void *)native_reset},
         // @FastNative
-        {"native_getCounts", "(J[JI)V", (void *)native_getCounts},
+        {"native_getCounts", "(J[JI)Z", (void *)native_getCounts},
         // @FastNative
         {"native_toString", "(J)Ljava/lang/String;", (void *)native_toString},
         // @FastNative

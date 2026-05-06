@@ -21,18 +21,24 @@ import android.annotation.Nullable;
 import android.content.ComponentName;
 import android.media.MediaRoute2Info;
 import android.media.MediaRoute2ProviderInfo;
+import android.media.MediaRoute2ProviderService.Reason;
 import android.media.MediaRouter2;
 import android.media.MediaRouter2Utils;
 import android.media.RouteDiscoveryPreference;
 import android.media.RoutingSessionInfo;
 import android.os.Bundle;
 import android.os.UserHandle;
+import android.util.ArrayMap;
+import android.util.ArraySet;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.media.flags.Flags;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -41,9 +47,9 @@ abstract class MediaRoute2Provider {
     final String mUniqueId;
     final Object mLock = new Object();
 
-    Callback mCallback;
     public final boolean mIsSystemRouteProvider;
     private volatile MediaRoute2ProviderInfo mProviderInfo;
+    private Callback mCallback;
 
     @GuardedBy("mLock")
     final List<RoutingSessionInfo> mSessionInfos = new ArrayList<>();
@@ -70,7 +76,8 @@ abstract class MediaRoute2Provider {
     public abstract void releaseSession(long requestId, String sessionId);
 
     public abstract void updateDiscoveryPreference(
-            Set<String> activelyScanningPackages, RouteDiscoveryPreference discoveryPreference);
+            Set<String> activelyScanningPackages, RouteDiscoveryPreference discoveryPreference,
+            Map<String, RouteDiscoveryPreference> perAppPreferences);
 
     public abstract void selectRoute(long requestId, String sessionId, String routeId);
     public abstract void deselectRoute(long requestId, String sessionId, String routeId);
@@ -109,6 +116,17 @@ abstract class MediaRoute2Provider {
     void setProviderState(MediaRoute2ProviderInfo providerInfo) {
         if (providerInfo == null) {
             mProviderInfo = null;
+            return;
+        }
+
+        List<MediaRoute2Info> possiblyUpdatedRoutes = null;
+        if (Flags.enableRouteVisibilityControlCompatFixes()) {
+            possiblyUpdatedRoutes =
+                    getVisibilityUpdatedRoutesIfNeeded(providerInfo.getRoutes(), getSessionInfos());
+        }
+
+        if (possiblyUpdatedRoutes != null) {
+            setProviderStateWithUpdatedRoutes(providerInfo, possiblyUpdatedRoutes);
         } else {
             mProviderInfo = new MediaRoute2ProviderInfo.Builder(providerInfo)
                     .setUniqueId(mComponentName.getPackageName(), mUniqueId)
@@ -117,15 +135,61 @@ abstract class MediaRoute2Provider {
         }
     }
 
-    void notifyProviderState() {
+    private void setProviderStateWithUpdatedRoutes(@NonNull MediaRoute2ProviderInfo providerInfo,
+            @NonNull List<MediaRoute2Info> updatedRoutes) {
+        mProviderInfo = new MediaRoute2ProviderInfo.Builder(providerInfo, new ArrayMap<>())
+                .addRoutes(updatedRoutes)
+                .setUniqueId(mComponentName.getPackageName(), mUniqueId)
+                .setSystemRouteProvider(mIsSystemRouteProvider)
+                .build();
+    }
+
+    protected boolean haveCallback() {
+        return mCallback != null;
+    }
+
+    protected void notifyProviderStateChanged() {
         if (mCallback != null) {
             mCallback.onProviderStateChanged(this);
         }
     }
 
+    protected void notifySessionCreated(long requestId, @Nullable RoutingSessionInfo sessionInfo) {
+        if (mCallback != null) {
+            maybeUpdateProviderStateForRouteVisibility();
+            mCallback.onSessionCreated(this, requestId, sessionInfo);
+        }
+    }
+
+    protected void notifySessionUpdated(
+            @NonNull MediaRoute2Provider provider,
+            @NonNull RoutingSessionInfo sessionInfo,
+            Set<String> packageNamesWithRoutingSessionOverrides,
+            boolean shouldShowVolumeSystemUi) {
+        if (mCallback != null) {
+            maybeUpdateProviderStateForRouteVisibility();
+            mCallback.onSessionUpdated(this, sessionInfo,
+                    packageNamesWithRoutingSessionOverrides, shouldShowVolumeSystemUi);
+        }
+    }
+
+    protected void notifySessionReleased(@NonNull RoutingSessionInfo sessionInfo) {
+        if (mCallback != null) {
+            mCallback.onSessionReleased(this, sessionInfo);
+            maybeUpdateProviderStateForRouteVisibility();
+        }
+    }
+
+    /** Calls {@link Callback#onRequestFailed} with the given id and reason. */
+    protected void notifyRequestFailed(long requestId, @Reason int reason) {
+        if (mCallback != null) {
+            mCallback.onRequestFailed(/* provider= */ this, requestId, reason);
+        }
+    }
+
     void setAndNotifyProviderState(MediaRoute2ProviderInfo providerInfo) {
         setProviderState(providerInfo);
-        notifyProviderState();
+        notifyProviderStateChanged();
     }
 
     public boolean hasComponentName(String packageName, String className) {
@@ -171,11 +235,39 @@ abstract class MediaRoute2Provider {
         void onProviderStateChanged(@Nullable MediaRoute2Provider provider);
         void onSessionCreated(@NonNull MediaRoute2Provider provider,
                 long requestId, @Nullable RoutingSessionInfo sessionInfo);
-        void onSessionUpdated(@NonNull MediaRoute2Provider provider,
-                @NonNull RoutingSessionInfo sessionInfo);
+
+        /**
+         * Called when there's a session info change.
+         *
+         * <p>If the provided {@code sessionInfo} has a null {@link
+         * RoutingSessionInfo#getClientPackageName()}, that means that it's applicable to all
+         * packages. We call this type of routing session "global". This is typically used for
+         * system provided {@link RoutingSessionInfo}. However, some applications may be exempted
+         * from the global routing sessions, because their media is being routed using a session
+         * different from the global routing session.
+         *
+         * @param provider The provider that owns the session that changed.
+         * @param sessionInfo The new {@link RoutingSessionInfo}.
+         * @param packageNamesWithRoutingSessionOverrides The names of packages that are not
+         *     affected by global session changes. This set may only be non-empty when the {@code
+         *     sessionInfo} is for the global session, and therefore has no {@link
+         *     RoutingSessionInfo#getClientPackageName()}.
+         * @param shouldShowVolumeSystemUi Whether a volume UI affordance should be presented as a
+         *     result of this session update. For example, this session update may be the result of
+         *     a volume change in response to a volume hardware key press, in which case a volume
+         *     slider should be presented.
+         */
+        void onSessionUpdated(
+                @NonNull MediaRoute2Provider provider,
+                @NonNull RoutingSessionInfo sessionInfo,
+                Set<String> packageNamesWithRoutingSessionOverrides,
+                boolean shouldShowVolumeSystemUi);
+
         void onSessionReleased(@NonNull MediaRoute2Provider provider,
                 @NonNull RoutingSessionInfo sessionInfo);
-        void onRequestFailed(@NonNull MediaRoute2Provider provider, long requestId, int reason);
+
+        void onRequestFailed(
+                @NonNull MediaRoute2Provider provider, long requestId, @Reason int reason);
     }
 
     /**
@@ -246,5 +338,63 @@ abstract class MediaRoute2Provider {
                     .map(MediaRouter2Utils::getOriginalId)
                     .anyMatch(mTargetOriginalRouteId::equals);
         }
+    }
+
+    private void maybeUpdateProviderStateForRouteVisibility() {
+        if (!Flags.enableRouteVisibilityControlCompatFixes()) {
+            return;
+        }
+        if (mProviderInfo == null) {
+            return;  // no need to update provider state if we don't have any
+        }
+        List<MediaRoute2Info> possiblyUpdatedRoutes =
+                getVisibilityUpdatedRoutesIfNeeded(mProviderInfo.getRoutes(), mSessionInfos);
+        if (possiblyUpdatedRoutes != null) {
+            setProviderStateWithUpdatedRoutes(mProviderInfo, possiblyUpdatedRoutes);
+            notifyProviderStateChanged();
+        }
+    }
+
+    /**
+     * Returns a copy of routes with any missing visibility added, or null if the existing
+     * visibility is sufficient.
+     *
+     * <p>We consider visibility to be missing when a route is not visible to a given app, but a
+     * routing session exists where that app is the {@link #getClientPackageName client} and that
+     * route is selected.
+     *
+     * <p>In summary, this method ensures that all routes which are selected by an app are visible
+     * to that app.
+     */
+    @Nullable
+    private List<MediaRoute2Info> getVisibilityUpdatedRoutesIfNeeded(
+            Collection<MediaRoute2Info> routes, List<RoutingSessionInfo> sessions) {
+        ArrayMap<String, Set<String>> selectedRouteToClient = new ArrayMap<>();
+        for (RoutingSessionInfo session : sessions) {
+            session.getSelectedRoutes().forEach(routeId -> {
+                Set<String> clients =
+                        selectedRouteToClient.computeIfAbsent(routeId, k -> new ArraySet<>());
+                clients.add(session.getClientPackageName());
+            });
+        }
+
+        boolean updatedSomeRoute = false;
+        ArrayList<MediaRoute2Info> updatedRoutes = new ArrayList<>();
+        for (MediaRoute2Info route : routes) {
+            String fullId = MediaRouter2Utils.toUniqueId(mUniqueId, route.getOriginalId());
+            MediaRoute2Info routeToAdd = route;
+            if (!route.isPublic()) {
+                Set<String> clients = selectedRouteToClient.getOrDefault(fullId, Set.of());
+                if (!clients.equals(route.getTemporaryVisibilityPackages())) {
+                    routeToAdd = new MediaRoute2Info.Builder(route)
+                            .setTemporaryAllowedPackages(clients)
+                            .build();
+                    updatedSomeRoute = true;
+                }
+            }
+            updatedRoutes.add(routeToAdd);
+        }
+
+        return updatedSomeRoute ? updatedRoutes : null;
     }
 }

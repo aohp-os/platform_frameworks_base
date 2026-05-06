@@ -61,7 +61,6 @@ import com.android.server.utils.WatchedLongSparseArray;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.List;
-import java.util.Set;
 
 /**
  * A {@link Computer} provides a set of functions that can operate on live data or snapshot
@@ -487,6 +486,20 @@ public interface Computer extends PackageDataSnapshot {
     ProviderInfo resolveContentProvider(@NonNull String name,
             @PackageManager.ResolveInfoFlagsBits long flags, @UserIdInt int userId, int callingUid);
 
+    /**
+     * Resolves a ContentProvider on behalf of a UID
+     * @param name Authority of the content provider
+     * @param flags option flags to modify the data returned.
+     * @param userId Current user ID
+     * @param filterCallingUid UID of the caller who's access to the content provider
+     *        is to be checked
+     * @return
+     */
+    @Nullable
+    ProviderInfo resolveContentProviderForUid(@NonNull String name,
+            @PackageManager.ResolveInfoFlagsBits long flags, @UserIdInt int userId,
+            int filterCallingUid);
+
     @Nullable
     ProviderInfo getGrantImplicitAccessProviderInfo(int recipientUid,
             @NonNull String visibleAuthority);
@@ -505,10 +518,6 @@ public interface Computer extends PackageDataSnapshot {
     @NonNull
     ParceledListSlice<InstrumentationInfo> queryInstrumentationAsUser(
             @NonNull String targetPackage, int flags, int userId);
-
-    @NonNull
-    List<PackageStateInternal> findSharedNonSystemLibraries(
-            @NonNull PackageStateInternal pkgSetting);
 
     boolean getApplicationHiddenSettingAsUser(@NonNull String packageName, @UserIdInt int userId);
 
@@ -622,9 +631,6 @@ public interface Computer extends PackageDataSnapshot {
 
     @NonNull
     String[] getSharedUserPackagesForPackage(@NonNull String packageName, @UserIdInt int userId);
-
-    @NonNull
-    Set<String> getUnusedPackages(long downgradeTimeThresholdMillis);
 
     @Nullable
     CharSequence getHarmfulAppWarning(@NonNull String packageName, @UserIdInt int userId);

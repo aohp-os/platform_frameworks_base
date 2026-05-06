@@ -37,6 +37,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.settingslib.Utils;
 import com.android.settingslib.wifi.WifiUtils;
+import com.android.systemui.qs.flags.QsWifiConfig;
 import com.android.systemui.res.R;
 import com.android.wifi.flags.Flags;
 import com.android.wifitrackerlib.WifiEntry;
@@ -54,21 +55,31 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
 
     private static final String TAG = "InternetAdapter";
 
-    private final InternetDialogController mInternetDialogController;
+    private final InternetDetailsContentController mInternetDetailsContentController;
     private final CoroutineScope mCoroutineScope;
+    private final Boolean mIsInDetailsView;
     @Nullable
     private List<WifiEntry> mWifiEntries;
+    private boolean mShowAllWifi;
     @VisibleForTesting
     protected int mWifiEntriesCount;
     @VisibleForTesting
-    protected int mMaxEntriesCount = InternetDialogController.MAX_WIFI_ENTRY_COUNT;
+    protected int mMaxEntriesCount = InternetDetailsContentController.MAX_WIFI_ENTRY_COUNT;
 
     protected View mHolderView;
     protected Context mContext;
 
-    public InternetAdapter(InternetDialogController controller, CoroutineScope coroutineScope) {
-        mInternetDialogController = controller;
+    public InternetAdapter(InternetDetailsContentController controller,
+            CoroutineScope coroutineScope) {
+        this(controller, coroutineScope,
+                false);
+    }
+
+    public InternetAdapter(InternetDetailsContentController controller,
+            CoroutineScope coroutineScope, boolean isInDetailsView) {
+        mInternetDetailsContentController = controller;
         mCoroutineScope = coroutineScope;
+        mIsInDetailsView = isInDetailsView;
     }
 
     @Override
@@ -77,7 +88,8 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
         mContext = viewGroup.getContext();
         mHolderView = LayoutInflater.from(mContext).inflate(R.layout.internet_list_item,
                 viewGroup, false);
-        return new InternetViewHolder(mHolderView, mInternetDialogController, mCoroutineScope);
+        return new InternetViewHolder(mHolderView, mInternetDetailsContentController,
+                mCoroutineScope, mIsInDetailsView);
     }
 
     @Override
@@ -96,8 +108,12 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
      */
     public void setWifiEntries(@Nullable List<WifiEntry> wifiEntries, int wifiEntriesCount) {
         mWifiEntries = wifiEntries;
-        mWifiEntriesCount =
-                (wifiEntriesCount < mMaxEntriesCount) ? wifiEntriesCount : mMaxEntriesCount;
+        if (mShowAllWifi) {
+            mWifiEntriesCount = wifiEntriesCount;
+        } else {
+            mWifiEntriesCount =
+                    (wifiEntriesCount < mMaxEntriesCount) ? wifiEntriesCount : mMaxEntriesCount;
+        }
     }
 
     /**
@@ -114,6 +130,9 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
      * Sets the maximum number of Wi-Fi networks.
      */
     public void setMaxEntriesCount(int count) {
+        if (mShowAllWifi) {
+            return;
+        }
         if (count < 0 || mMaxEntriesCount == count) {
             return;
         }
@@ -122,6 +141,20 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
             mWifiEntriesCount = count;
             notifyDataSetChanged();
         }
+    }
+
+    /**
+     * Sets to show all available Wi-Fi networks
+     */
+    public void setShowAllWifi() {
+        if (!QsWifiConfig.isEnabled() || mShowAllWifi) {
+            return;
+        }
+        mShowAllWifi = true;
+        if (mWifiEntries != null) {
+            mWifiEntriesCount = mWifiEntries.size();
+        }
+        notifyDataSetChanged();
     }
 
     /**
@@ -137,17 +170,20 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
         final TextView mWifiSummaryText;
         final ImageView mWifiEndIcon;
         final Context mContext;
-        final InternetDialogController mInternetDialogController;
+        final InternetDetailsContentController mInternetDetailsContentController;
         final CoroutineScope mCoroutineScope;
+        final Boolean mIsInDetailsView;
         @Nullable
         private Job mJob;
 
-        InternetViewHolder(View view, InternetDialogController internetDialogController,
-                CoroutineScope coroutineScope) {
+        InternetViewHolder(View view,
+                InternetDetailsContentController internetDetailsContentController,
+                CoroutineScope coroutineScope, Boolean isInDetailsView) {
             super(view);
             mContext = view.getContext();
-            mInternetDialogController = internetDialogController;
+            mInternetDetailsContentController = internetDetailsContentController;
             mCoroutineScope = coroutineScope;
+            mIsInDetailsView = isInDetailsView;
             mContainerLayout = view.requireViewById(R.id.internet_container);
             mWifiListLayout = view.requireViewById(R.id.wifi_list);
             mWifiNetworkLayout = view.requireViewById(R.id.wifi_network_layout);
@@ -167,9 +203,24 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
             updateEndIcon(connectedState, security);
 
             mWifiListLayout.setEnabled(shouldEnabled(wifiEntry));
+
+            // Set the UI styles for details view only.
+            if (mIsInDetailsView) {
+                mWifiTitleText.setTextAppearance(R.style.TextAppearance_TileDetailsEntryTitle);
+                mWifiSummaryText.setTextAppearance(R.style.TextAppearance_TileDetailsEntrySubTitle);
+                if (mWifiIcon.getDrawable() != null) {
+                    mWifiIcon.setColorFilter(
+                            mContext.getColor(com.android.internal.R.color.materialColorOnSurface));
+                }
+                if (mWifiEndIcon.getDrawable() != null) {
+                    mWifiEndIcon.setColorFilter(
+                            mContext.getColor(com.android.internal.R.color.materialColorOnSurface));
+                }
+            }
+
             if (connectedState != WifiEntry.CONNECTED_STATE_DISCONNECTED) {
                 mWifiListLayout.setOnClickListener(
-                        v -> mInternetDialogController.launchWifiDetailsSetting(
+                        v -> mInternetDetailsContentController.launchWifiDetailsSetting(
                                 wifiEntry.getKey(), v));
                 return;
             }
@@ -193,7 +244,8 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
                 if (mJob == null) {
                     mJob = WifiUtils.checkWepAllowed(mContext, mCoroutineScope, wifiEntry.getSsid(),
                             WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG, intent -> {
-                                mInternetDialogController.startActivity(intent, view);
+                                mInternetDetailsContentController
+                                        .startActivityForDialog(intent);
                                 return null;
                             }, () -> {
                                 wifiConnect(wifiEntry, view);
@@ -211,19 +263,20 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
                         true /* connectForCaller */);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                mContext.startActivity(intent);
+                mInternetDetailsContentController.startActivityForDialog(intent);
                 return;
             }
 
             if (wifiEntry.canConnect()) {
-                mInternetDialogController.connect(wifiEntry);
+                mInternetDetailsContentController.connect(wifiEntry);
                 return;
             }
 
             if (wifiEntry.isSaved()) {
                 Log.w(TAG, "The saved Wi-Fi network does not allow to connect. SSID:"
                         + wifiEntry.getSsid());
-                mInternetDialogController.launchWifiDetailsSetting(wifiEntry.getKey(), view);
+                mInternetDetailsContentController.launchWifiDetailsSetting(wifiEntry.getKey(),
+                        view);
             }
         }
 
@@ -239,7 +292,7 @@ public class InternetAdapter extends RecyclerView.Adapter<InternetAdapter.Intern
 
         @Nullable
         Drawable getWifiDrawable(@NonNull WifiEntry wifiEntry) {
-            Drawable drawable = mInternetDialogController.getWifiDrawable(wifiEntry);
+            Drawable drawable = mInternetDetailsContentController.getWifiDrawable(wifiEntry);
             if (drawable == null) {
                 return null;
             }

@@ -69,7 +69,6 @@ import com.android.printspooler.R;
 
 import java.util.ArrayList;
 import java.util.List;
-
 /**
  * This is an activity for selecting a printer.
  */
@@ -133,6 +132,8 @@ public final class SelectPrinterActivity extends Activity implements
 
         mPrinterRegistry = new PrinterRegistry(this, null, LOADER_ID_PRINT_REGISTRY,
                 LOADER_ID_PRINT_REGISTRY_INT);
+
+        findViewById(R.id.select_printer).setFitsSystemWindows(true);
 
         // Hook up the list view.
         mListView = findViewById(android.R.id.list);

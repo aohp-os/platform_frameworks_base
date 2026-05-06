@@ -23,8 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import com.android.compose.animation.scene.SceneScope
-import com.android.systemui.keyguard.ui.composable.LockscreenLongPress
+import com.android.compose.animation.scene.ContentScope
+import com.android.systemui.keyguard.ui.composable.LockscreenTouchHandling
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenContentViewModel
 import dagger.Binds
 import dagger.Module
@@ -37,12 +37,9 @@ class CommunalBlueprint @Inject constructor() : ComposableLockscreenSceneBluepri
     override val id: String = "communal"
 
     @Composable
-    override fun SceneScope.Content(
-        viewModel: LockscreenContentViewModel,
-        modifier: Modifier,
-    ) {
-        LockscreenLongPress(
-            viewModel = viewModel.touchHandling,
+    override fun ContentScope.Content(viewModel: LockscreenContentViewModel, modifier: Modifier) {
+        LockscreenTouchHandling(
+            viewModelFactory = viewModel.touchHandlingFactory,
             modifier = modifier,
         ) { _ ->
             Box(modifier.background(Color.Black)) {

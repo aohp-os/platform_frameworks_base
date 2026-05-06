@@ -16,6 +16,7 @@
 
 package com.android.systemui.screenshot.policy
 
+import android.app.ActivityTaskManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.res.Resources
@@ -80,6 +81,8 @@ class WorkProfilePolicyTest {
         // Set desktop mode supported
         whenever(mContext.resources).thenReturn(mResources)
         whenever(mResources.getBoolean(R.bool.config_isDesktopModeSupported)).thenReturn(true)
+        whenever(mResources.getBoolean(R.bool.config_canInternalDisplayHostDesktops))
+            .thenReturn(true)
 
         policy = WorkProfilePolicy(kosmos.profileTypeRepository, mContext)
     }

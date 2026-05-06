@@ -23,7 +23,11 @@ import static org.junit.Assume.assumeTrue;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.display.DisplayManager;
+import android.platform.test.flag.junit.CheckFlagsRule;
+import android.platform.test.flag.junit.DeviceFlagsValueProvider;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.TestableContext;
+import android.testing.TestableLooper;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 
@@ -31,12 +35,24 @@ import com.android.internal.protolog.ProtoLog;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.ClassRule;
+import org.junit.Rule;
 import org.mockito.MockitoAnnotations;
 
 /**
  * Base class that does shell test case setup.
  */
 public abstract class ShellTestCase {
+
+    @ClassRule
+    public static final SetFlagsRule.ClassRule mClassRule = new SetFlagsRule.ClassRule();
+
+    @Rule
+    public final CheckFlagsRule mCheckFlagsRule =
+            DeviceFlagsValueProvider.createCheckFlagsRule();
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = mClassRule.createSetFlagsRule();
 
     protected TestableContext mContext;
     private PackageManager mPm;
@@ -65,6 +81,16 @@ public abstract class ShellTestCase {
 
     @After
     public void shellTearDown() {
+        // In case someone set up a TestableLooper during the test, get rid of it because
+        // TestableLooper intrinsically leaks all past test method member fields in a
+        // big static list.
+        //
+        // TODO (b/261039202): don't use TestableLooper in WmShell tests at all.
+        if (TestableLooper.get(this) != null) {
+            TestableLooper.get(this).processAllMessages();
+            TestableLooper.remove(this);
+        }
+
         InstrumentationRegistry
                 .getInstrumentation()
                 .getUiAutomation()

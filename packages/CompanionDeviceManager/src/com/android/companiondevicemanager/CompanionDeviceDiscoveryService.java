@@ -76,7 +76,8 @@ public class CompanionDeviceDiscoveryService extends Service {
     private static final String TAG = "CDM_CompanionDeviceDiscoveryService";
 
     private static final String SYS_PROP_DEBUG_TIMEOUT = "debug.cdm.discovery_timeout";
-    private static final long TIMEOUT_DEFAULT = 20_000L; // 20 seconds
+    private static final long TIMEOUT_SOFT = 20_000L; // 20 seconds
+    private static final long TIMEOUT_HARD = 300_000L; // 5 minutes
     private static final long TIMEOUT_MIN = 1_000L; // 1 sec
     private static final long TIMEOUT_MAX = 60_000L; // 1 min
 
@@ -102,7 +103,8 @@ public class CompanionDeviceDiscoveryService extends Service {
 
     private final List<DeviceFilterPair<?>> mDevicesFound = new ArrayList<>();
 
-    private final Runnable mTimeoutRunnable = this::timeout;
+    private final Runnable mSoftTimeoutRunnable = this::softTimeout;
+    private final Runnable mHardTimeoutRunnable = this::stopDiscoveryAndFinish;
 
     private boolean mStopAfterFirstMatch;
 
@@ -116,8 +118,8 @@ public class CompanionDeviceDiscoveryService extends Service {
     enum DiscoveryState {
         NOT_STARTED,
         IN_PROGRESS,
+        IN_PROGRESS_EXTENDED,
         FINISHED_STOPPED,
-        FINISHED_TIMEOUT
     }
 
     static boolean startForRequest(
@@ -134,7 +136,12 @@ public class CompanionDeviceDiscoveryService extends Service {
         intent.setAction(ACTION_START_DISCOVERY);
         intent.putExtra(EXTRA_ASSOCIATION_REQUEST, associationRequest);
 
-        context.startService(intent);
+        try {
+            context.startService(intent);
+        } catch (IllegalStateException e) {
+            Slog.e(TAG, "Failed to start discovery.", e);
+            return false;
+        }
 
         return true;
     }
@@ -142,7 +149,12 @@ public class CompanionDeviceDiscoveryService extends Service {
     static void stop(@NonNull Context context) {
         final Intent intent = new Intent(context, CompanionDeviceDiscoveryService.class);
         intent.setAction(ACTION_STOP_DISCOVERY);
-        context.startService(intent);
+
+        try {
+            context.startService(intent);
+        } catch (IllegalStateException e) {
+            Slog.e(TAG, "Failed to stop discovery.", e);
+        }
     }
 
     static LiveData<List<DeviceFilterPair<?>>> getScanResult() {
@@ -175,7 +187,7 @@ public class CompanionDeviceDiscoveryService extends Service {
                 break;
 
             case ACTION_STOP_DISCOVERY:
-                stopDiscoveryAndFinish(/* timeout */ false);
+                stopDiscoveryAndFinish();
                 break;
         }
         return START_NOT_STICKY;
@@ -223,9 +235,17 @@ public class CompanionDeviceDiscoveryService extends Service {
     }
 
     @MainThread
-    private void stopDiscoveryAndFinish(boolean timeout) {
-        Slog.d(TAG, "stopDiscoveryAndFinish(" + timeout + ")");
+    private void softTimeout() {
+        // If no device is found at this point, display a message and continue discovery
+        if (mDevicesFound.isEmpty()) {
+            sStateLiveData.setValue(DiscoveryState.IN_PROGRESS_EXTENDED);
+        } else {
+            stopDiscoveryAndFinish();
+        }
+    }
 
+    @MainThread
+    private void stopDiscoveryAndFinish() {
         synchronized (LOCK) {
             if (!sDiscoveryStarted) {
                 stopSelf();
@@ -257,16 +277,18 @@ public class CompanionDeviceDiscoveryService extends Service {
 
         // Stop BLE scanning.
         if (mBleScanCallback != null) {
-            mBleScanner.stopScan(mBleScanCallback);
+            try {
+                mBleScanner.stopScan(mBleScanCallback);
+            } catch (IllegalStateException e) {
+                Slog.e(TAG, "Unable to stop BLE scanner. The scanner is already"
+                        + " turned off or Bluetooth is disabled.");
+            }
         }
 
-        Handler.getMain().removeCallbacks(mTimeoutRunnable);
+        Handler.getMain().removeCallbacks(mSoftTimeoutRunnable);
+        Handler.getMain().removeCallbacks(mHardTimeoutRunnable);
 
-        if (timeout) {
-            sStateLiveData.setValue(DiscoveryState.FINISHED_TIMEOUT);
-        } else {
-            sStateLiveData.setValue(DiscoveryState.FINISHED_STOPPED);
-        }
+        sStateLiveData.setValue(DiscoveryState.FINISHED_STOPPED);
 
         synchronized (LOCK) {
             sDiscoveryStarted = false;
@@ -376,10 +398,10 @@ public class CompanionDeviceDiscoveryService extends Service {
             // First: make change.
             mDevicesFound.add(device);
             // Then: notify observers.
-            sScanResultsLiveData.setValue(mDevicesFound);
+            sScanResultsLiveData.setValue(new ArrayList<>(mDevicesFound));
             // Stop discovery when there's one device found for singleDevice.
             if (mStopAfterFirstMatch) {
-                stopDiscoveryAndFinish(/* timeout */ false);
+                stopDiscoveryAndFinish();
             }
         });
     }
@@ -391,25 +413,22 @@ public class CompanionDeviceDiscoveryService extends Service {
             // First: make change.
             mDevicesFound.remove(device);
             // Then: notify observers.
-            sScanResultsLiveData.setValue(mDevicesFound);
+            sScanResultsLiveData.setValue(new ArrayList<>(mDevicesFound));
         });
     }
 
     private void scheduleTimeout() {
-        long timeout = SystemProperties.getLong(SYS_PROP_DEBUG_TIMEOUT, -1);
-        if (timeout <= 0) {
+        long softTimeout = SystemProperties.getLong(SYS_PROP_DEBUG_TIMEOUT, -1);
+        if (softTimeout <= 0) {
             // 0 or negative values indicate that the sysprop was never set or should be ignored.
-            timeout = TIMEOUT_DEFAULT;
+            softTimeout = TIMEOUT_SOFT;
         } else {
-            timeout = min(timeout, TIMEOUT_MAX); // should be <= 1 min (TIMEOUT_MAX)
-            timeout = max(timeout, TIMEOUT_MIN); // should be >= 1 sec (TIMEOUT_MIN)
+            softTimeout = min(softTimeout, TIMEOUT_MAX); // should be <= 1 min (TIMEOUT_MAX)
+            softTimeout = max(softTimeout, TIMEOUT_MIN); // should be >= 1 sec (TIMEOUT_MIN)
         }
 
-        Handler.getMain().postDelayed(mTimeoutRunnable, timeout);
-    }
-
-    private void timeout() {
-        stopDiscoveryAndFinish(/* timeout */ true);
+        Handler.getMain().postDelayed(mSoftTimeoutRunnable, softTimeout);
+        Handler.getMain().postDelayed(mHardTimeoutRunnable, TIMEOUT_HARD);
     }
 
     @Override

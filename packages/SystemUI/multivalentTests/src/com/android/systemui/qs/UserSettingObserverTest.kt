@@ -17,34 +17,30 @@
 package com.android.systemui.qs
 
 import android.os.Handler
-import android.platform.test.flag.junit.FlagsParameterization
 import android.testing.TestableLooper
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.testKosmos
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth.assertThat
 import junit.framework.Assert.fail
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import platform.test.runner.parameterized.ParameterizedAndroidJunit4
-import platform.test.runner.parameterized.Parameters
 
 private typealias Callback = (Int, Boolean) -> Unit
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
-@RunWith(ParameterizedAndroidJunit4::class)
+@RunWith(AndroidJUnit4::class)
 @TestableLooper.RunWithLooper
-class UserSettingObserverTest(flags: FlagsParameterization) : SysuiTestCase() {
+class UserSettingObserverTest : SysuiTestCase() {
 
     companion object {
         private const val TEST_SETTING = "setting"
@@ -52,21 +48,9 @@ class UserSettingObserverTest(flags: FlagsParameterization) : SysuiTestCase() {
         private const val OTHER_USER = 1
         private const val DEFAULT_VALUE = 1
         private val FAIL_CALLBACK: Callback = { _, _ -> fail("Callback should not be called") }
-
-        @JvmStatic
-        @Parameters(name = "{0}")
-        fun getParams(): List<FlagsParameterization> {
-            return FlagsParameterization.allCombinationsOf(
-                Flags.FLAG_QS_REGISTER_SETTING_OBSERVER_ON_BG_THREAD
-            )
-        }
     }
 
-    init {
-        mSetFlagsRule.setFlagsParameterization(flags)
-    }
-
-    private val kosmos = Kosmos()
+    private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
 
     private lateinit var testableLooper: TestableLooper
@@ -87,7 +71,7 @@ class UserSettingObserverTest(flags: FlagsParameterization) : SysuiTestCase() {
                     Handler(testableLooper.looper),
                     TEST_SETTING,
                     USER,
-                    DEFAULT_VALUE
+                    DEFAULT_VALUE,
                 ) {
                 override fun handleValueChanged(value: Int, observedChange: Boolean) {
                     callback(value, observedChange)

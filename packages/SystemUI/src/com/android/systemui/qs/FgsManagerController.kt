@@ -55,7 +55,6 @@ import com.android.internal.config.sysui.SystemUiDeviceConfigFlags.TASK_MANAGER_
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags.TASK_MANAGER_SHOW_USER_VISIBLE_JOBS
 import com.android.internal.jank.InteractionJankMonitor
 import com.android.systemui.Dumpable
-import com.android.systemui.Flags
 import com.android.systemui.animation.DialogCuj
 import com.android.systemui.animation.DialogTransitionAnimator
 import com.android.systemui.animation.Expandable
@@ -67,6 +66,7 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.res.R
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.shade.domain.interactor.ShadeDialogContextInteractor
 import com.android.systemui.shared.system.SysUiStatsLog
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.util.DeviceConfigProxy
@@ -154,6 +154,7 @@ constructor(
     private val broadcastDispatcher: BroadcastDispatcher,
     private val dumpManager: DumpManager,
     private val systemUIDialogFactory: SystemUIDialog.Factory,
+    private val shadeDialogContextRepository: ShadeDialogContextInteractor,
 ) : Dumpable, FgsManagerController {
 
     companion object {
@@ -387,7 +388,7 @@ constructor(
     override fun showDialog(expandable: Expandable?) {
         synchronized(lock) {
             if (dialog == null) {
-                val dialog = systemUIDialogFactory.create()
+                val dialog = systemUIDialogFactory.create(shadeDialogContextRepository.context)
                 dialog.setTitle(R.string.fgs_manager_dialog_title)
                 dialog.setMessage(R.string.fgs_manager_dialog_message)
 
@@ -409,6 +410,10 @@ constructor(
                     newChangesSinceDialogWasDismissed = false
                     synchronized(lock) {
                         this.dialog = null
+                        // Adapters keep references to RV they're added to and
+                        // we need to explicitly clear that reference via setAdapter
+                        // to avoid a leak.
+                        recyclerView.adapter = null
                         updateAppItemsLocked()
                     }
                     onDialogDismissedListeners.forEach {
@@ -751,10 +756,8 @@ constructor(
                 }
             // If the app wants to be a good citizen by being stoppable, even if the category it
             // belongs to is exempted for background restriction, let it be stoppable by user.
-            if (Flags.stoppableFgsSystemApp()) {
-                if (isStoppableApp(packageName)) {
-                    uiControl = UIControl.NORMAL
-                }
+            if (isStoppableApp(packageName)) {
+                uiControl = UIControl.NORMAL
             }
 
             uiControlInitialized = true

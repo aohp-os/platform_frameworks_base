@@ -18,6 +18,7 @@ package com.android.server.timezonedetector;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresPermission;
 import android.annotation.UserIdInt;
 import android.app.time.ITimeZoneDetectorListener;
 import android.app.time.TimeZoneCapabilitiesAndConfig;
@@ -73,6 +74,7 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
         }
 
         @Override
+        @RequiresPermission("android.permission.INTERACT_ACROSS_USERS_FULL")
         public void onStart() {
             // Obtain / create the shared dependencies.
             Context context = getContext();
@@ -81,17 +83,24 @@ public final class TimeZoneDetectorService extends ITimeZoneDetectorService.Stub
             ServiceConfigAccessor serviceConfigAccessor =
                     ServiceConfigAccessorImpl.getInstance(context);
             TimeZoneDetectorStrategy timeZoneDetectorStrategy =
-                    TimeZoneDetectorStrategyImpl.create(handler, serviceConfigAccessor);
+                    TimeZoneDetectorStrategyImpl.create(context, handler, serviceConfigAccessor);
             DeviceActivityMonitor deviceActivityMonitor =
                     DeviceActivityMonitorImpl.create(context, handler);
 
             // Wire up the telephony fallback behavior to activity detection.
-            deviceActivityMonitor.addListener(new DeviceActivityMonitor.Listener() {
-                @Override
-                public void onFlightComplete() {
-                    timeZoneDetectorStrategy.enableTelephonyTimeZoneFallback("onFlightComplete()");
-                }
-            });
+            deviceActivityMonitor.addListener(
+                    new DeviceActivityMonitor.Listener() {
+                        @Override
+                        public void onFlightStart() {
+                            // do nothing
+                        }
+
+                        @Override
+                        public void onFlightComplete() {
+                            timeZoneDetectorStrategy.enableTelephonyTimeZoneFallback(
+                                    "onFlightComplete()");
+                        }
+                    });
 
             // Create and publish the local service for use by internal callers.
             CurrentUserIdentityInjector currentUserIdentityInjector =

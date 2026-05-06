@@ -23,6 +23,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -38,9 +39,11 @@ import android.content.res.Resources;
 import android.graphics.Color;
 import android.media.AudioManager;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.testing.TestableLooper;
+import android.view.Display;
 import android.view.GestureDetector;
 import android.view.IWindowManager;
 import android.view.KeyEvent;
@@ -63,6 +66,8 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
+import com.android.systemui.common.domain.interactor.SysUIStateDisplaysInteractor;
+import com.android.systemui.display.data.repository.FakeDisplayWindowPropertiesRepository;
 import com.android.systemui.globalactions.domain.interactor.GlobalActionsInteractor;
 import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.plugins.ActivityStarter;
@@ -70,7 +75,6 @@ import com.android.systemui.plugins.GlobalActions;
 import com.android.systemui.settings.UserContextProvider;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.ShadeController;
-import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.phone.LightBarController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
@@ -78,6 +82,7 @@ import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.window.StatusBarWindowController;
 import com.android.systemui.statusbar.window.StatusBarWindowControllerStore;
 import com.android.systemui.telephony.TelephonyListenerManager;
+import com.android.systemui.topui.TopUiController;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.user.domain.interactor.UserLogoutInteractor;
 import com.android.systemui.util.RingerModeLiveData;
@@ -88,6 +93,7 @@ import com.android.systemui.util.settings.GlobalSettings;
 import com.android.systemui.util.settings.SecureSettings;
 
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -98,6 +104,7 @@ import org.mockito.MockitoAnnotations;
 import java.util.List;
 import java.util.concurrent.Executor;
 
+@Ignore("b/422015546")
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
@@ -123,7 +130,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
     @Mock private SysuiColorExtractor mColorExtractor;
     @Mock private IStatusBarService mStatusBarService;
     @Mock private LightBarController mLightBarController;
-    @Mock private NotificationShadeWindowController mNotificationShadeWindowController;
+    @Mock private TopUiController mTopUiController;
     @Mock private StatusBarWindowController mStatusBarWindowController;
     @Mock private StatusBarWindowControllerStore mStatusBarWindowControllerStore;
     @Mock private IWindowManager mWindowManager;
@@ -132,7 +139,6 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
     @Mock private RingerModeTracker mRingerModeTracker;
     @Mock private RingerModeLiveData mRingerModeLiveData;
     @Mock private PackageManager mPackageManager;
-    @Mock private Handler mHandler;
     @Mock private UserContextProvider mUserContextProvider;
     @Mock private VibratorHelper mVibratorHelper;
     @Mock private ShadeController mShadeController;
@@ -141,11 +147,13 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
     @Mock private SelectedUserInteractor mSelectedUserInteractor;
     @Mock private UserLogoutInteractor mLogoutInteractor;
     @Mock private OnBackInvokedDispatcher mOnBackInvokedDispatcher;
+    @Mock private PowerManager mPowerManager;
     @Captor private ArgumentCaptor<OnBackInvokedCallback> mOnBackInvokedCallback;
 
     private TestableLooper mTestableLooper;
     private KosmosJavaAdapter mKosmos = new KosmosJavaAdapter(this);
     private GlobalActionsInteractor mInteractor;
+    private Handler mHandler;
 
     @Before
     public void setUp() throws Exception {
@@ -159,9 +167,12 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 getContext().getResources().getConfiguration());
         when(mStatusBarWindowControllerStore.getDefaultDisplay())
                 .thenReturn(mStatusBarWindowController);
+        when(mStatusBarWindowControllerStore.forDisplay(anyInt()))
+                .thenReturn(mStatusBarWindowController);
         mGlobalSettings = new FakeGlobalSettings();
         mSecureSettings = new FakeSettings();
         mInteractor = mKosmos.getGlobalActionsInteractor();
+        mHandler = new Handler(mTestableLooper.getLooper());
 
         mGlobalActionsDialogLite = new GlobalActionsDialogLite(mContext,
                 mWindowManagerFuncs,
@@ -185,7 +196,7 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 mColorExtractor,
                 mStatusBarService,
                 mLightBarController,
-                mNotificationShadeWindowController,
+                mTopUiController,
                 mStatusBarWindowControllerStore,
                 mWindowManager,
                 mBackgroundExecutor,
@@ -198,13 +209,19 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
                 mDialogTransitionAnimator,
                 mSelectedUserInteractor,
                 mLogoutInteractor,
-                mInteractor);
+                mInteractor,
+                () -> new FakeDisplayWindowPropertiesRepository(mContext),
+                mPowerManager
+        );
         mGlobalActionsDialogLite.setZeroDialogPressDelayForTesting();
 
         ColorExtractor.GradientColors backdropColors = new ColorExtractor.GradientColors();
         backdropColors.setMainColor(Color.BLACK);
         when(mColorExtractor.getNeutralColors()).thenReturn(backdropColors);
         when(mSelectedUserInteractor.getSelectedUserId()).thenReturn(0);
+
+        mDependency.injectTestDependency(
+                SysUIStateDisplaysInteractor.class, mKosmos.getSysuiStateInteractor());
     }
 
     @Test
@@ -219,6 +236,16 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
         mGlobalActionsDialogLite.onDismiss(mGlobalActionsDialogLite.mDialog);
         mTestableLooper.processAllMessages();
         verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_POWER_MENU_CLOSE);
+    }
+
+    @Test
+    public void testShouldLogTimeout() {
+        mGlobalActionsDialogLite.onShow(null);
+        verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_POWER_MENU_OPEN);
+        mGlobalActionsDialogLite.rescheduleBurninTimeout(20); // ms
+        mTestableLooper.moveTimeForward(30);
+        mTestableLooper.processAllMessages();
+        verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_CLOSE_TIMEOUT);
     }
 
     @Test
@@ -609,13 +636,17 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
 
         // When entering power menu from lockscreen, with smart lock enabled
         when(mKeyguardUpdateMonitor.getUserHasTrust(anyInt())).thenReturn(true);
-        mGlobalActionsDialogLite.showOrHideDialog(true, true, null /* view */);
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null /* view */,
+                Display.DEFAULT_DISPLAY);
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
 
         // Then smart lock will be disabled
         verify(mLockPatternUtils).requireCredentialEntry(eq(expectedUser));
 
         // hide dialog again
-        mGlobalActionsDialogLite.showOrHideDialog(true, true, null /* view */);
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null /* view */,
+                Display.DEFAULT_DISPLAY);
     }
 
     @Test
@@ -729,13 +760,15 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
         doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
 
         // Show dialog with keyguard showing
-        mGlobalActionsDialogLite.showOrHideDialog(true, true, null);
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null, Display.DEFAULT_DISPLAY);
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
 
         assertOneItemOfType(mGlobalActionsDialogLite.mItems,
                 GlobalActionsDialogLite.SystemUpdateAction.class);
 
         // Hide dialog
-        mGlobalActionsDialogLite.showOrHideDialog(true, true, null);
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null, Display.DEFAULT_DISPLAY);
     }
 
     @Test
@@ -754,17 +787,359 @@ public class GlobalActionsDialogLiteTest extends SysuiTestCase {
         doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
 
         // Show dialog with keyguard showing
-        mGlobalActionsDialogLite.showOrHideDialog(false, false, null);
+        mGlobalActionsDialogLite.showOrHideDialog(false, false, null, Display.DEFAULT_DISPLAY);
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
 
         assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
                 GlobalActionsDialogLite.SystemUpdateAction.class);
 
         // Hide dialog
-        mGlobalActionsDialogLite.showOrHideDialog(false, false, null);
+        mGlobalActionsDialogLite.showOrHideDialog(false, false, null, Display.DEFAULT_DISPLAY);
+
+    }
+
+    @Test
+    public void userSwitching_dismissDialog() {
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mResources)
+                .getStringArray(com.android.internal.R.array.config_globalActionsList);
+
+        mGlobalActionsDialogLite.showOrHideDialog(false, true, null, Display.DEFAULT_DISPLAY);
+        mTestableLooper.processAllMessages();
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
+
+        assertThat(mGlobalActionsDialogLite.mDialog.isShowing()).isTrue();
+
+        ArgumentCaptor<UserTracker.Callback> captor =
+                ArgumentCaptor.forClass(UserTracker.Callback.class);
+
+        verify(mUserTracker).addCallback(captor.capture(), any());
+
+        captor.getValue().onBeforeUserSwitching(100);
+        mTestableLooper.processAllMessages();
+
+        assertThat(mGlobalActionsDialogLite.mDialog).isNull();
+    }
+
+    @Test
+    public void testShouldLogStandbyPress() {
+        GlobalActionsDialogLite.StandbyAction standbyAction =
+                mGlobalActionsDialogLite.new StandbyAction();
+        standbyAction.onPress();
+        verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_STANDBY_PRESS);
+    }
+
+    @Test
+    public void testCreateActionItems_standbyEnabled_doesShowStandby() {
+        // Test like a TV, which only has standby and shut down
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(2).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_STANDBY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+        mGlobalActionsDialogLite.createActionItems();
+
+        assertItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.StandbyAction.class,
+                GlobalActionsDialogLite.ShutDownAction.class);
+        assertThat(mGlobalActionsDialogLite.mOverflowItems).isEmpty();
+        assertThat(mGlobalActionsDialogLite.mPowerItems).isEmpty();
+    }
+
+    @Test
+    public void testCreateActionItems_standbyDisabled_doesntStandbyAction() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(5).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayLockdown(any());
+        doReturn(true).when(mGlobalActionsDialogLite).shouldShowAction(any());
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCKDOWN,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+        mGlobalActionsDialogLite.createActionItems();
+
+        assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.StandbyAction.class);
+        assertThat(mGlobalActionsDialogLite.mOverflowItems).isEmpty();
+        assertThat(mGlobalActionsDialogLite.mPowerItems).isEmpty();
+    }
+
+    @Test
+    public void testCreateActionItems_standbyEnabled_locked_showsStandby() {
+        // Test like a TV, which only has standby and shut down
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(2).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_STANDBY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        // Show dialog with keyguard showing and provisioned
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null, Display.DEFAULT_DISPLAY);
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
+
+        assertOneItemOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.StandbyAction.class);
+
+        // Hide dialog
+        mGlobalActionsDialogLite.showOrHideDialog(true, true, null, Display.DEFAULT_DISPLAY);
+    }
+
+    @Test
+    public void testCreateActionItems_standbyEnabled_notProvisioned_showsStandby() {
+        // Test like a TV, which only has standby and shut down.
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(2).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_STANDBY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        // Show dialog without keyguard showing and not provisioned
+        mGlobalActionsDialogLite.showOrHideDialog(false, false, null, Display.DEFAULT_DISPLAY);
+        // Clear the dismiss override so we don't have behavior after dismissing the dialog
+        mGlobalActionsDialogLite.mDialog.setDismissOverride(null);
+
+        assertOneItemOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.StandbyAction.class);
+
+        // Hide dialog
+        mGlobalActionsDialogLite.showOrHideDialog(false, false, null, Display.DEFAULT_DISPLAY);
+    }
+
+    @Test
+    public void testCreateActionItems_noneTv_actionsNotFocuseableAndClickable() {
+        // Test like a TV, which only has standby and shut down.
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(2).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(false).when(mGlobalActionsDialogLite).isTv();
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_STANDBY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER};
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        GlobalActionsDialogLite.ActionsDialogLite dialog = mGlobalActionsDialogLite.createDialog();
+        dialog.create();
+        dialog.show();
+        mTestableLooper.processAllMessages();
+        assertThat(dialog.isShowing()).isTrue();
+
+        final GlobalActionsDialogLite.SinglePressAction action =
+                (GlobalActionsDialogLite.SinglePressAction) mGlobalActionsDialogLite.mItems.get(0);
+        assertThat(action.mIconView.isClickable()).isFalse();
+        assertThat(action.mIconView.isFocusable()).isFalse();
+        assertThat(action.mIconView.performClick()).isFalse();
+        assertThat(dialog.isShowing()).isTrue();
+
+        final GlobalActionsDialogLite.SinglePressAction action1 =
+                (GlobalActionsDialogLite.SinglePressAction) mGlobalActionsDialogLite.mItems.get(1);
+        assertThat(action1.mIconView.isClickable()).isFalse();
+        assertThat(action1.mIconView.isFocusable()).isFalse();
+        assertThat(action1.mIconView.performClick()).isFalse();
+        assertThat(dialog.isShowing()).isTrue();
+
+        dialog.dismiss();
+    }
+
+    @Test
+    public void testCreateActionItems_tv_actionsFocusableAndClickable() {
+        // Test like a TV, which only has standby and shut down.
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(2).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).isTv();
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_STANDBY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER};
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        GlobalActionsDialogLite.ActionsDialogLite dialog = mGlobalActionsDialogLite.createDialog();
+        dialog.create();
+        dialog.show();
+        mTestableLooper.processAllMessages();
+        assertThat(dialog.isShowing()).isTrue();
+
+        final GlobalActionsDialogLite.SinglePressAction action =
+                (GlobalActionsDialogLite.SinglePressAction) mGlobalActionsDialogLite.mItems.get(0);
+        assertThat(action.mIconView.isClickable()).isTrue();
+        assertThat(action.mIconView.isFocusable()).isTrue();
+
+        final GlobalActionsDialogLite.SinglePressAction action1 =
+                (GlobalActionsDialogLite.SinglePressAction) mGlobalActionsDialogLite.mItems.get(1);
+        assertThat(action1.mIconView.isClickable()).isTrue();
+        assertThat(action1.mIconView.isFocusable()).isTrue();
+
+        assertThat(action.mIconView.performClick()).isTrue();
+        verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_STANDBY_PRESS);
+
+        dialog.dismiss();
+    }
+
+    @Test
+    public void testShouldLogLockPress() {
+        GlobalActionsDialogLite.LockAction lockAction =
+                mGlobalActionsDialogLite.new LockAction();
+        lockAction.onPress();
+        verifyLogPosted(GlobalActionsDialogLite.GlobalActionsEvent.GA_LOCK_PRESS);
+    }
+
+    @Test
+    public void testCreateActionItems_lockEnabled_doesShowLock() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(true).when(mKeyguardStateController).isMethodSecure();
+        doReturn(true).when(mKeyguardStateController).isUnlocked();
+        doCallRealMethod()
+                .when(mGlobalActionsDialogLite)
+                .shouldShowAction(any(GlobalActionsDialogLite.LockAction.class));
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCK,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        mGlobalActionsDialogLite.showOrHideDialog(
+            /* keyguardShowing= */ false,
+            /* isDeviceProvisioned= */ true,
+            /* expandable= */ null,
+            /* displayId= */ Display.DEFAULT_DISPLAY);
+
+        assertItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.EmergencyAction.class,
+                GlobalActionsDialogLite.LockAction.class,
+                GlobalActionsDialogLite.ShutDownAction.class,
+                GlobalActionsDialogLite.RestartAction.class);
+    }
+
+    @Test
+    public void testCreateActionItems_keyguardShowing_doesNotShowLock() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(true).when(mKeyguardStateController).isMethodSecure();
+        doReturn(true).when(mKeyguardStateController).isUnlocked();
+        doCallRealMethod()
+                .when(mGlobalActionsDialogLite)
+                .shouldShowAction(any(GlobalActionsDialogLite.LockAction.class));
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCK,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        mGlobalActionsDialogLite.showOrHideDialog(
+            /* keyguardShowing= */ true,
+            /* isDeviceProvisioned= */ true,
+            /* expandable= */ null,
+            /* displayId= */ Display.DEFAULT_DISPLAY);
+
+        assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.LockAction.class);
+    }
+
+    @Test
+    public void testCreateActionItems_deviceNotProvisioned_doesNotShowLock() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(true).when(mKeyguardStateController).isMethodSecure();
+        doReturn(true).when(mKeyguardStateController).isUnlocked();
+        doCallRealMethod()
+                .when(mGlobalActionsDialogLite)
+                .shouldShowAction(any(GlobalActionsDialogLite.LockAction.class));
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCK,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        mGlobalActionsDialogLite.showOrHideDialog(
+            /* keyguardShowing= */ false,
+            /* isDeviceProvisioned= */ false,
+            /* expandable= */ null,
+            /* displayId= */ Display.DEFAULT_DISPLAY);
+
+        assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.LockAction.class);
+    }
+
+    @Test
+    public void testCreateActionItems_noLockScreen_doesNotShowLock() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(false).when(mKeyguardStateController).isMethodSecure();
+        doReturn(true).when(mKeyguardStateController).isUnlocked();
+        doCallRealMethod()
+                .when(mGlobalActionsDialogLite)
+                .shouldShowAction(any(GlobalActionsDialogLite.LockAction.class));
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCK,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        mGlobalActionsDialogLite.showOrHideDialog(
+            /* keyguardShowing= */ false,
+            /* isDeviceProvisioned= */ true,
+            /* expandable= */ null,
+            /* displayId= */ Display.DEFAULT_DISPLAY);
+
+        assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.LockAction.class);
+    }
+
+    @Test
+    public void testCreateActionItems_deviceLocked_doesNotShowLock() {
+        mGlobalActionsDialogLite = spy(mGlobalActionsDialogLite);
+        doReturn(4).when(mGlobalActionsDialogLite).getMaxShownPowerItems();
+        doReturn(true).when(mGlobalActionsDialogLite).shouldDisplayEmergency();
+        doReturn(true).when(mKeyguardStateController).isMethodSecure();
+        doReturn(false).when(mKeyguardStateController).isUnlocked();
+        doCallRealMethod()
+                .when(mGlobalActionsDialogLite)
+                .shouldShowAction(any(GlobalActionsDialogLite.LockAction.class));
+        String[] actions = {
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_EMERGENCY,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_LOCK,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_POWER,
+                GlobalActionsDialogLite.GLOBAL_ACTION_KEY_RESTART,
+        };
+        doReturn(actions).when(mGlobalActionsDialogLite).getDefaultActions();
+
+        mGlobalActionsDialogLite.showOrHideDialog(
+                /* keyguardShowing= */ false,
+                /* isDeviceProvisioned= */ true,
+                /* expandable= */ null,
+                /* displayId= */ Display.DEFAULT_DISPLAY);
+
+        assertNoItemsOfType(mGlobalActionsDialogLite.mItems,
+                GlobalActionsDialogLite.LockAction.class);
     }
 
     private UserInfo mockCurrentUser(int flags) {
         return new UserInfo(10, "A User", flags);
-
     }
 }

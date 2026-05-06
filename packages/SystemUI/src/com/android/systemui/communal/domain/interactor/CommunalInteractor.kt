@@ -28,19 +28,20 @@ import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.SceneKey
 import com.android.compose.animation.scene.TransitionKey
 import com.android.systemui.Flags.communalResponsiveGrid
+import com.android.systemui.Flags.glanceableHubBlurredBackground
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.communal.data.repository.CommunalMediaRepository
 import com.android.systemui.communal.data.repository.CommunalSmartspaceRepository
 import com.android.systemui.communal.data.repository.CommunalWidgetRepository
 import com.android.systemui.communal.domain.model.CommunalContentModel
 import com.android.systemui.communal.domain.model.CommunalContentModel.WidgetContent
+import com.android.systemui.communal.shared.model.CommunalBackgroundType
 import com.android.systemui.communal.shared.model.CommunalContentSize
 import com.android.systemui.communal.shared.model.CommunalContentSize.FixedSize.FULL
 import com.android.systemui.communal.shared.model.CommunalContentSize.FixedSize.HALF
 import com.android.systemui.communal.shared.model.CommunalContentSize.FixedSize.THIRD
 import com.android.systemui.communal.shared.model.CommunalScenes
 import com.android.systemui.communal.shared.model.CommunalWidgetContentModel
-import com.android.systemui.communal.shared.model.EditModeState
 import com.android.systemui.communal.widgets.EditWidgetsActivityStarter
 import com.android.systemui.communal.widgets.WidgetConfigurator
 import com.android.systemui.dagger.SysUISingleton
@@ -63,13 +64,11 @@ import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.phone.ManagedProfileController
 import com.android.systemui.util.kotlin.BooleanFlowOperators.allOf
-import com.android.systemui.util.kotlin.BooleanFlowOperators.not
 import com.android.systemui.util.kotlin.emitOnStart
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -85,6 +84,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -92,7 +92,6 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 
 /** Encapsulates business-logic related to communal mode. */
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class CommunalInteractor
 @Inject
@@ -150,11 +149,7 @@ constructor(
 
     /** Whether communal features are enabled and available. */
     val isCommunalAvailable: Flow<Boolean> =
-        allOf(
-                communalSettingsInteractor.isCommunalEnabled,
-                not(keyguardInteractor.isEncryptedOrLockdown),
-                keyguardInteractor.isKeyguardShowing,
-            )
+        allOf(communalSettingsInteractor.isCommunalEnabled, keyguardInteractor.isKeyguardShowing)
             .distinctUntilChanged()
             .onEach { available ->
                 logger.i({ "Communal is ${if (bool1) "" else "un"}available" }) {
@@ -163,7 +158,6 @@ constructor(
             }
             .logDiffsForTable(
                 tableLogBuffer = tableLogBuffer,
-                columnPrefix = "",
                 columnName = "isCommunalAvailable",
                 initialValue = false,
             )
@@ -194,9 +188,11 @@ constructor(
             .filter { step -> step.to == KeyguardState.OCCLUDED }
             .combine(isCommunalAvailable, ::Pair)
             .map { (step, available) ->
-                available &&
-                    (step.from == KeyguardState.GLANCEABLE_HUB ||
-                        step.from == KeyguardState.DREAMING)
+                val enteredFromHub = step.from == KeyguardState.GLANCEABLE_HUB
+                val enteredFromDream =
+                    step.from == KeyguardState.DREAMING &&
+                        !communalSettingsInteractor.isV2FlagEnabled()
+                available && (enteredFromHub || enteredFromDream)
             }
             .flowOn(bgDispatcher)
             .stateIn(
@@ -300,7 +296,6 @@ constructor(
             }
             .logDiffsForTable(
                 tableLogBuffer = tableLogBuffer,
-                columnPrefix = "",
                 columnName = "isCommunalShowing",
                 initialValue = false,
             )
@@ -308,6 +303,25 @@ constructor(
                 scope = applicationScope,
                 started = SharingStarted.WhileSubscribed(),
                 replay = 1,
+            )
+
+    /**
+     * Flow that emits {@code true} whenever communal is influencing the shown background on the
+     * screen. This happens when the background for communal is set to blur and communal is visible.
+     * This is used by other components to determine when blur-related emitted values for communal
+     * should be considered.
+     */
+    val isCommunalBlurring: StateFlow<Boolean> =
+        communalSceneInteractor.isCommunalVisible
+            .combine(communalSettingsInteractor.communalBackground) { showing, background ->
+                showing &&
+                    background == CommunalBackgroundType.BLUR &&
+                    glanceableHubBlurredBackground()
+            }
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.Eagerly,
+                initialValue = false,
             )
 
     /**
@@ -354,7 +368,6 @@ constructor(
 
     /** Show the widget editor Activity. */
     fun showWidgetEditor(shouldOpenWidgetPickerOnStart: Boolean = false) {
-        communalSceneInteractor.setEditModeState(EditModeState.STARTING)
         editWidgetsActivityStarter.startActivity(shouldOpenWidgetPickerOnStart)
     }
 
@@ -454,6 +467,7 @@ constructor(
                             size = CommunalContentSize.toSize(widget.spanY),
                         )
                     }
+
                     is CommunalWidgetContentModel.Pending -> {
                         WidgetContent.PendingWidget(
                             appWidgetId = widget.appWidgetId,
@@ -480,6 +494,7 @@ constructor(
                     when (model) {
                         is CommunalWidgetContentModel.Available ->
                             model.providerInfo.profile.identifier
+
                         is CommunalWidgetContentModel.Pending -> model.user.identifier
                     }
                 uid != disallowedByDevicePolicyUser.id
@@ -487,10 +502,16 @@ constructor(
         }
 
     /** CTA tile to be displayed in the glanceable hub (view mode). */
-    val ctaTileContent: Flow<List<CommunalContentModel.CtaTileInViewMode>> =
-        communalPrefsInteractor.isCtaDismissed.map { isDismissed ->
-            if (isDismissed) emptyList() else listOf(CommunalContentModel.CtaTileInViewMode())
+    val ctaTileContent: Flow<List<CommunalContentModel.CtaTileInViewMode>> by lazy {
+        if (communalSettingsInteractor.isV2FlagEnabled()) {
+            flowOf(listOf<CommunalContentModel.CtaTileInViewMode>())
+        } else {
+            communalPrefsInteractor.isCtaDismissed.map { isDismissed ->
+                if (isDismissed) listOf<CommunalContentModel.CtaTileInViewMode>()
+                else listOf(CommunalContentModel.CtaTileInViewMode())
+            }
         }
+    }
 
     /** A list of tutorial content to be displayed in the communal hub in tutorial mode. */
     val tutorialContent: List<CommunalContentModel.Tutorial> =
@@ -525,7 +546,7 @@ constructor(
                 )
 
                 // Add UMO
-                if (isMediaHostVisible && media.hasAnyMediaOrRecommendation) {
+                if (isMediaHostVisible && media.hasAnyMedia) {
                     ongoingContent.add(
                         CommunalContentModel.Umo(
                             createdTimestampMillis = media.createdTimestampMillis
@@ -557,6 +578,7 @@ constructor(
             when (widget) {
                 is CommunalWidgetContentModel.Available ->
                     currentUserIds.contains(widget.providerInfo.profile?.identifier)
+
                 is CommunalWidgetContentModel.Pending -> true
             }
         }
@@ -617,9 +639,20 @@ constructor(
      * memory) so that the next presentation of the grid (either as glanceable hub or edit mode) can
      * restore position.
      */
-    fun setScrollPosition(firstVisibleItemIndex: Int, firstVisibleItemOffset: Int) {
+    fun setScrollPosition(firstVisibleItemIndex: Int, firstVisibleItemOffset: Int, reason: String) {
+        logger.d({ "On persist scroll position ($str1) - index=$int1 offset=$int2" }) {
+            int1 = firstVisibleItemIndex
+            int2 = firstVisibleItemOffset
+            str1 = reason
+        }
         _firstVisibleItemIndex = firstVisibleItemIndex
         _firstVisibleItemOffset = firstVisibleItemOffset
+    }
+
+    fun clearScrollPosition(reason: String) {
+        logger.d({ "On clear scroll position ($str1)" }) { str1 = reason }
+        _firstVisibleItemIndex = 0
+        _firstVisibleItemOffset = 0
     }
 
     val firstVisibleItemIndex: Int

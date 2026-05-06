@@ -33,6 +33,8 @@ import static com.android.server.accessibility.gestures.TouchState.STATE_DRAGGIN
 import static com.android.server.accessibility.gestures.TouchState.STATE_GESTURE_DETECTING;
 import static com.android.server.accessibility.gestures.TouchState.STATE_TOUCH_EXPLORING;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.verify;
@@ -44,7 +46,6 @@ import android.content.Context;
 import android.graphics.PointF;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.DexmakerShareClassLoaderRule;
 import android.view.InputDevice;
@@ -58,7 +59,6 @@ import androidx.test.runner.AndroidJUnit4;
 import com.android.server.accessibility.AccessibilityManagerService;
 import com.android.server.accessibility.AccessibilityTraceManager;
 import com.android.server.accessibility.EventStreamTransformation;
-import com.android.server.accessibility.Flags;
 import com.android.server.accessibility.utils.GestureLogParser;
 import com.android.server.testutils.OffsettableClock;
 
@@ -132,10 +132,12 @@ public class TouchExplorerTest {
      */
     private class EventCaptor implements EventStreamTransformation {
         List<MotionEvent> mEvents = new ArrayList<>();
+        List<MotionEvent> mRawEvents = new ArrayList<>();
 
         @Override
         public void onMotionEvent(MotionEvent event, MotionEvent rawEvent, int policyFlags) {
             mEvents.add(0, event.copy());
+            mRawEvents.add(0, rawEvent.copy());
         }
 
         @Override
@@ -160,43 +162,32 @@ public class TouchExplorerTest {
         mHandler = new TestHandler();
         mTouchExplorer = new TouchExplorer(mContext, mMockAms, null, mHandler);
         mTouchExplorer.setNext(mCaptor);
-        // Start TouchExplorer in the state where it has already reset InputDispatcher so that
-        // all tests do not start with an irrelevant ACTION_CANCEL.
-        mTouchExplorer.setHasResetInputDispatcherState(true);
     }
 
     @Test
     public void testOneFingerMove_shouldInjectHoverEvents() {
-        triggerTouchExplorationWithOneFingerDownMoveUp();
+        goFromStateClearTo(STATE_TOUCH_EXPLORING_1FINGER);
+        // Wait for transiting to touch exploring state.
+        mHandler.fastForward(2 * USER_INTENT_TIMEOUT);
+        moveEachPointers(mLastEvent, p(10, 10));
+        send(mLastEvent);
+        goToStateClearFrom(STATE_TOUCH_EXPLORING_1FINGER);
         assertCapturedEvents(ACTION_HOVER_ENTER, ACTION_HOVER_MOVE, ACTION_HOVER_EXIT);
         assertState(STATE_TOUCH_EXPLORING);
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESET_INPUT_DISPATCHER_BEFORE_FIRST_TOUCH_EXPLORATION)
-    public void testStartTouchExploration_shouldResetInputDispatcherStateWithActionCancel() {
-        // Start TouchExplorer in the state where it has *not yet* reset InputDispatcher.
-        mTouchExplorer.setHasResetInputDispatcherState(false);
-        // Trigger touch exploration twice, with a handler fast-forward in between so TouchExplorer
-        // treats these as two separate interactions.
-        triggerTouchExplorationWithOneFingerDownMoveUp();
+    public void testOneFingerMove_injectedEventsUseVirtualDeviceId() {
+        goFromStateClearTo(STATE_TOUCH_EXPLORING_1FINGER);
+        // Wait for transiting to touch exploring state.
         mHandler.fastForward(2 * USER_INTENT_TIMEOUT);
-        triggerTouchExplorationWithOneFingerDownMoveUp();
+        goToStateClearFrom(STATE_TOUCH_EXPLORING_1FINGER);
 
-        assertCapturedEvents(
-                ACTION_CANCEL, // Only one ACTION_CANCEL before the first touch exploration
-                ACTION_HOVER_ENTER, ACTION_HOVER_MOVE, ACTION_HOVER_EXIT,
-                ACTION_HOVER_ENTER, ACTION_HOVER_MOVE, ACTION_HOVER_EXIT);
-        assertState(STATE_TOUCH_EXPLORING);
-    }
-
-    private void triggerTouchExplorationWithOneFingerDownMoveUp() {
-        send(downEvent());
-        // Fast forward so that TouchExplorer's timeouts transition us to the touch exploring state.
-        mHandler.fastForward(2 * USER_INTENT_TIMEOUT);
-        moveEachPointers(mLastEvent, p(10, 10));
-        send(mLastEvent);
-        send(upEvent());
+        assertThat(getCapturedEvents()).hasSize(2);
+        assertThat(getCapturedEvents().get(0).getDeviceId()).isEqualTo(
+                EventDispatcher.VIRTUAL_TOUCHSCREEN_DEVICE_ID);
+        assertThat(getCapturedEvents().get(1).getDeviceId()).isEqualTo(
+                EventDispatcher.VIRTUAL_TOUCHSCREEN_DEVICE_ID);
     }
 
     /**
@@ -354,6 +345,7 @@ public class TouchExplorerTest {
     public void upEventWhenInTwoFingerMove_clearsState() {
         goFromStateClearTo(STATE_MOVING_2FINGERS);
 
+        send(pointerUpEvent());
         send(upEvent());
         assertState(STATE_CLEAR);
     }
@@ -459,6 +451,58 @@ public class TouchExplorerTest {
         passInGesture(
                 com.android.frameworks.servicestests.R.raw.a11y_three_finger_swipe_down_gesture,
                 AccessibilityService.GESTURE_3_FINGER_SWIPE_DOWN);
+    }
+
+    @Test
+    public void testSendHoverExitIfNeeded_lastSentHoverExit_noActionNeeded() {
+        // Prep TouchState so that the last injected hover event was a HOVER_EXIT
+        mTouchExplorer.getState().onInjectedMotionEvent(hoverExitEvent());
+
+        mTouchExplorer.sendHoverExitAndTouchExplorationGestureEndIfNeeded(/*policyFlags=*/0);
+
+        assertNoCapturedEvents();
+    }
+
+    @Test
+    public void testSendHoverExitIfNeeded_lastSentHoverEnter_sendsHoverExit_withCorrectRawEvent() {
+        final MotionEvent rawEvent = downEvent();
+        final MotionEvent modifiedEvent = hoverEnterEvent();
+        // Use different display IDs just so that we can differentiate between the raw event and
+        // the modified event later during test assertions.
+        final int rawDisplayId = 123;
+        final int modifiedDisplayId = 456;
+        rawEvent.setDisplayId(rawDisplayId);
+        modifiedEvent.setDisplayId(modifiedDisplayId);
+        // Prep TouchState to track the last received modified and raw events
+        mTouchExplorer.getState().onReceivedMotionEvent(modifiedEvent, rawEvent, /*policyFlags=*/0);
+        // Prep TouchState so that the last injected hover event was not a HOVER_EXIT
+        mTouchExplorer.getState().onInjectedMotionEvent(modifiedEvent);
+
+        mTouchExplorer.sendHoverExitAndTouchExplorationGestureEndIfNeeded(/*policyFlags=*/0);
+
+        assertThat(getCapturedEvents().size()).isEqualTo(1);
+        assertThat(getCapturedRawEvents().size()).isEqualTo(1);
+        MotionEvent sentEvent = getCapturedEvents().get(0);
+        MotionEvent sentRawEvent = getCapturedRawEvents().get(0);
+        // TouchExplorer should send ACTION_HOVER_EXIT built from the last injected hover event
+        assertThat(sentEvent.getAction()).isEqualTo(ACTION_HOVER_EXIT);
+        assertThat(sentEvent.getDisplayId()).isEqualTo(modifiedDisplayId);
+        // ... while passing along the original raw (unmodified) event
+        assertThat(sentRawEvent.getDisplayId()).isEqualTo(rawDisplayId);
+    }
+
+    @Test
+    public void handleMotionEventStateTouchExploring_pointerUp_sendsToManager() {
+        mTouchExplorer.getState().setServiceDetectsGestures(true);
+        mTouchExplorer.getState().clear();
+
+        mLastEvent = pointerDownEvent();
+        mTouchExplorer.getState().startTouchExploring();
+        MotionEvent event = fromTouchscreen(pointerUpEvent());
+
+        mTouchExplorer.onMotionEvent(event, event, /*policyFlags=*/0);
+
+        verify(mMockAms).sendMotionEventToListeningServices(event);
     }
 
     /**
@@ -630,6 +674,10 @@ public class TouchExplorerTest {
         return ((EventCaptor) mCaptor).mEvents;
     }
 
+    private List<MotionEvent> getCapturedRawEvents() {
+        return ((EventCaptor) mCaptor).mRawEvents;
+    }
+
     private MotionEvent cancelEvent() {
         mLastDownTime = SystemClock.uptimeMillis();
         return fromTouchscreen(
@@ -686,6 +734,20 @@ public class TouchExplorerTest {
         final MotionEvent event = MotionEvent.obtainNoHistory(mLastEvent);
         event.setAction(action);
         return event;
+    }
+
+    private MotionEvent hoverEnterEvent() {
+        mLastDownTime = SystemClock.uptimeMillis();
+        return fromTouchscreen(
+                MotionEvent.obtain(
+                        mLastDownTime, mLastDownTime, ACTION_HOVER_ENTER, DEFAULT_X, DEFAULT_Y, 0));
+    }
+
+    private MotionEvent hoverExitEvent() {
+        mLastDownTime = SystemClock.uptimeMillis();
+        return fromTouchscreen(
+                MotionEvent.obtain(
+                        mLastDownTime, mLastDownTime, ACTION_HOVER_EXIT, DEFAULT_X, DEFAULT_Y, 0));
     }
 
     private void moveEachPointers(MotionEvent event, PointF... points) {

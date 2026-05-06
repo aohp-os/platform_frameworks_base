@@ -34,13 +34,6 @@ flag {
 }
 
 flag {
-  name: "high_contrast_text_luminance"
-  namespace: "accessibility"
-  description: "Use luminance to determine how to make text more high contrast, instead of RGB heuristic"
-  bug: "186567103"
-}
-
-flag {
   name: "high_contrast_text_small_text_rect"
   namespace: "accessibility"
   description: "Draw a solid rectangle background behind text instead of a stroke outline"
@@ -87,10 +80,19 @@ flag {
 }
 
 flag {
-  name: "animate_hdr_transitions"
+  name: "requested_formats_12_14"
+  is_exported: true
   namespace: "core_graphics"
-  description: "Automatically animate all changes in HDR headroom"
-  bug: "314810174"
+  description: "Add new 12 & 14-bit formats in the SDK"
+  bug: "390471495"
+}
+
+flag {
+  name: "requested_formats_bgra_1010102"
+  is_exported: true
+  namespace: "core_graphics"
+  description: "Enable BGRA_1010102 in the SDK"
+  bug: "414794424"
 }
 
 flag {
@@ -134,13 +136,11 @@ flag {
 }
 
 flag {
-  name: "query_global_priority"
+  name: "shader_color_space"
+  is_exported: true
   namespace: "core_graphics"
-  description: "Attempt to query whether the vulkan driver supports the requested global priority before queue creation."
-  bug: "343986434"
-  metadata {
-    purpose: PURPOSE_BUGFIX
-  }
+  description: "API to set the working colorspace of a Shader or ColorFilter"
+  bug: "299670828"
 }
 
 flag {
@@ -163,6 +163,49 @@ flag {
   namespace: "core_graphics"
   description: "Remove the eager yet thread-violating destroyHardwareResources in VRI#die"
   bug: "377057106"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "early_preinit_buffer_allocator"
+  namespace: "core_graphics"
+  description: "Initialize GraphicBufferAllocater on ViewRootImpl init, to avoid blocking on init during buffer allocation, improving app launch latency."
+  bug: "389908734"
+  is_fixed_read_only: true
+}
+
+flag {
+  name: "bitmap_use_memfd"
+  namespace: "system_performance"
+  description: "Whether to parcel implicit copies of bitmaps to memfd instead of ashmem"
+  bug: "400807118"
+  is_fixed_read_only: true
+}
+
+flag {
+  name: "add_surfacecontrol_constants"
+  namespace: "core_graphics"
+  description: "Add two helper constants to SurfaceControl to improve @IntDef lint"
+  bug: "413710706"
+}
+
+flag {
+  name: "separate_pipeline_cache"
+  namespace: "core_graphics"
+  description: "Store pipeline cache objects in a separate cache independent of ShaderCache"
+  bug: "269117286"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+}
+
+flag {
+  name: "surfaceview_stretch_alignment"
+  namespace: "core_graphics"
+  description: "Fix SurfaceView alignment when overscroll stretch is occurring"
+  bug: "419836766"
   metadata {
     purpose: PURPOSE_BUGFIX
   }

@@ -16,9 +16,13 @@
 package com.android.settingslib.dream;
 
 
+import static android.service.dreams.Flags.FLAG_ALLOW_DREAM_WHEN_POSTURED;
+
 import static com.android.settingslib.dream.DreamBackend.COMPLICATION_TYPE_DATE;
 import static com.android.settingslib.dream.DreamBackend.COMPLICATION_TYPE_HOME_CONTROLS;
 import static com.android.settingslib.dream.DreamBackend.COMPLICATION_TYPE_TIME;
+import static com.android.settingslib.dream.DreamBackend.WHILE_CHARGING;
+import static com.android.settingslib.dream.DreamBackend.WHILE_CHARGING_OR_DOCKED;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -28,6 +32,7 @@ import static org.mockito.Mockito.when;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Resources;
+import android.platform.test.annotations.EnableFlags;
 import android.provider.Settings;
 
 import org.junit.After;
@@ -78,6 +83,13 @@ public final class DreamBackendTest {
         when(res.getStringArray(
                 com.android.internal.R.array.config_loggable_dream_prefixes)).thenReturn(
                 new String[]{});
+        when(res.getBoolean(com.android.internal.R.bool.config_dreamsActivatedOnSleepByDefault
+                )).thenReturn(true);
+        when(res.getBoolean(com.android.internal.R.bool.config_dreamsActivatedOnDockByDefault
+                )).thenReturn(false);
+        when(res.getBoolean(com.android.internal.R.bool.config_dreamsActivatedOnPosturedByDefault
+                )).thenReturn(false);
+
         mBackend = new DreamBackend(mContext);
     }
 
@@ -110,6 +122,25 @@ public final class DreamBackendTest {
         assertThat(mBackend.getEnabledComplications())
                 .containsExactly(COMPLICATION_TYPE_HOME_CONTROLS);
         assertThat(mBackend.getComplicationsEnabled()).isFalse();
+    }
+
+    @Test
+    public void testResolveMissingWhenToStartOption() {
+        mBackend.setWhenToDream(WHILE_CHARGING_OR_DOCKED);
+        mBackend.setEnabled(true);
+        assertThat(mBackend.getDefaultWhenToDreamSetting()).isEqualTo(WHILE_CHARGING);
+        mBackend.resolveMissingWhenToDream(new int[]{WHILE_CHARGING});
+        assertThat(mBackend.getWhenToDreamSetting()).isEqualTo(WHILE_CHARGING);
+        assertThat(mBackend.isEnabled()).isFalse();
+    }
+
+    @Test
+    public void testResolveMissingWhenToStartOptionWhenCompliant() {
+        mBackend.setWhenToDream(WHILE_CHARGING_OR_DOCKED);
+        mBackend.setEnabled(true);
+        mBackend.resolveMissingWhenToDream(new int[]{WHILE_CHARGING, WHILE_CHARGING_OR_DOCKED});
+        assertThat(mBackend.getWhenToDreamSetting()).isEqualTo(WHILE_CHARGING_OR_DOCKED);
+        assertThat(mBackend.isEnabled()).isTrue();
     }
 
     @Test
@@ -171,6 +202,96 @@ public final class DreamBackendTest {
                 );
         assertThat(mBackend.getEnabledComplications())
                 .containsExactlyElementsIn(enabledComplications);
+    }
+
+    @Test
+    @EnableFlags(FLAG_ALLOW_DREAM_WHEN_POSTURED)
+    public void testChargingAndPosturedBothEnabled() {
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_SLEEP,
+                1
+        );
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_POSTURED,
+                1
+        );
+
+        assertThat(mBackend.getWhenToDreamSetting()).isEqualTo(DreamBackend.WHILE_CHARGING);
+    }
+
+    @Test
+    public void testChargingAndDockedBothEnabled() {
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_SLEEP,
+                1
+        );
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_DOCK,
+                1
+        );
+
+        assertThat(mBackend.getWhenToDreamSetting()).isEqualTo(
+                DreamBackend.WHILE_CHARGING_OR_DOCKED);
+    }
+
+    @Test
+    @EnableFlags(FLAG_ALLOW_DREAM_WHEN_POSTURED)
+    public void testPosturedAndDockedBothEnabled() {
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_POSTURED,
+                1
+        );
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_SLEEP,
+                0
+        );
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_ACTIVATE_ON_DOCK,
+                1
+        );
+
+        assertThat(mBackend.getWhenToDreamSetting()).isEqualTo(
+                DreamBackend.WHILE_DOCKED);
+    }
+
+    @Test
+    public void testSetRestrictedToWirelessCharging() {
+        mBackend.setRestrictToWirelessCharging(true);
+        assertThat(mBackend.getRestrictToWirelessCharging()).isTrue();
+    }
+
+    @Test
+    public void testGetRestrictedToWirelessCharging() {
+        Settings.Secure.putInt(
+                mContext.getContentResolver(),
+                Settings.Secure.SCREENSAVER_RESTRICT_TO_WIRELESS_CHARGING,
+                1
+        );
+
+        assertThat(mBackend.getRestrictToWirelessCharging()).isTrue();
+    }
+
+    @Test
+    public void testLowLightDisplayBehavior() {
+        mBackend.setLowLightDisplayBehavior(100);
+        assertThat(mBackend.getLowLightDisplayBehavior()).isEqualTo(100);
+    }
+
+
+    @Test
+    public void testLowLightDisplayBehaviorEnabled() {
+        mBackend.setLowLightDisplayBehaviorEnabled(false);
+        assertThat(mBackend.getLowLightDisplayBehaviorEnabled()).isFalse();
+
+        mBackend.setLowLightDisplayBehaviorEnabled(true);
+        assertThat(mBackend.getLowLightDisplayBehaviorEnabled()).isTrue();
     }
 
     private void setControlsEnabledOnLockscreen(boolean enabled) {

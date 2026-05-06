@@ -20,21 +20,25 @@ import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver.OnGlobalLayoutListener
+import android.widget.LinearLayout
 import androidx.constraintlayout.widget.Barrier
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
-import com.android.systemui.customization.R as customR
+import androidx.constraintlayout.widget.ConstraintSet.GONE
+import androidx.constraintlayout.widget.ConstraintSet.VISIBLE
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController
-import com.android.systemui.keyguard.MigrateClocksToBlueprint
 import com.android.systemui.keyguard.domain.interactor.KeyguardBlueprintInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardSmartspaceInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.binder.KeyguardSmartspaceViewBinder
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
+import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardSmartspaceViewModel
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockViewIds
 import com.android.systemui.res.R as R
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.shared.Flags.clockReactiveSmartspaceLayout
 import com.android.systemui.shared.R as sharedR
 import com.android.systemui.statusbar.lockscreen.LockscreenSmartspaceController
 import dagger.Lazy
@@ -52,10 +56,11 @@ constructor(
     val smartspaceController: LockscreenSmartspaceController,
     val keyguardUnlockAnimationController: KeyguardUnlockAnimationController,
     private val blueprintInteractor: Lazy<KeyguardBlueprintInteractor>,
+    private val keyguardRootViewModel: KeyguardRootViewModel,
 ) : KeyguardSection() {
     private var smartspaceView: View? = null
-    private var weatherView: View? = null
-    private var dateWeatherView: ViewGroup? = null
+    private var dateView: LinearLayout? = null
+    private var dateViewLargeClock: ViewGroup? = null
 
     private var smartspaceVisibilityListener: OnGlobalLayoutListener? = null
     private var pastVisibility: Int = -1
@@ -70,19 +75,32 @@ constructor(
     }
 
     override fun addViews(constraintLayout: ConstraintLayout) {
-        if (!MigrateClocksToBlueprint.isEnabled) return
         if (!keyguardSmartspaceViewModel.isSmartspaceEnabled) return
-        smartspaceView = smartspaceController.buildAndConnectView(constraintLayout)
-        weatherView = smartspaceController.buildAndConnectWeatherView(constraintLayout)
-        dateWeatherView =
-            smartspaceController.buildAndConnectDateView(constraintLayout) as ViewGroup
+        smartspaceView = smartspaceController.buildAndConnectView(context)
+        dateView = smartspaceController.buildAndConnectDateView(context, false) as? LinearLayout
         pastVisibility = smartspaceView?.visibility ?: View.GONE
         constraintLayout.addView(smartspaceView)
+        if (clockReactiveSmartspaceLayout()) {
+            val weatherViewLargeClock =
+                smartspaceController.buildAndConnectWeatherView(context, true)
+            dateViewLargeClock =
+                smartspaceController.buildAndConnectDateView(context, true) as? ViewGroup
+            dateView?.visibility = View.GONE
+            dateViewLargeClock?.visibility = View.GONE
+            constraintLayout.addView(dateViewLargeClock)
+            if (keyguardSmartspaceViewModel.isDateWeatherDecoupled) {
+                // Place weather right after the date, before the extras (alarm and dnd)
+                val index = if (dateViewLargeClock?.childCount == 0) 0 else 1
+                dateViewLargeClock?.addView(weatherViewLargeClock, index)
+            }
+        }
+
         if (keyguardSmartspaceViewModel.isDateWeatherDecoupled) {
-            constraintLayout.addView(dateWeatherView)
+            val weatherView = smartspaceController.buildAndConnectWeatherView(context, false)
+            constraintLayout.addView(dateView)
             // Place weather right after the date, before the extras (alarm and dnd)
-            val index = if (dateWeatherView?.childCount == 0) 0 else 1
-            dateWeatherView?.addView(weatherView, index)
+            val index = if (dateView?.childCount == 0) 0 else 1
+            dateView?.addView(weatherView, index)
         }
         keyguardUnlockAnimationController.lockscreenSmartspace = smartspaceView
         smartspaceVisibilityListener = OnGlobalLayoutListener {
@@ -98,12 +116,12 @@ constructor(
     }
 
     override fun bindData(constraintLayout: ConstraintLayout) {
-        if (!MigrateClocksToBlueprint.isEnabled) return
         if (!keyguardSmartspaceViewModel.isSmartspaceEnabled) return
         disposableHandle?.dispose()
         disposableHandle =
             KeyguardSmartspaceViewBinder.bind(
                 constraintLayout,
+                keyguardRootViewModel,
                 keyguardClockViewModel,
                 keyguardSmartspaceViewModel,
                 blueprintInteractor.get(),
@@ -111,24 +129,37 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        if (!MigrateClocksToBlueprint.isEnabled) return
         if (!keyguardSmartspaceViewModel.isSmartspaceEnabled) return
         val dateWeatherPaddingStart = KeyguardSmartspaceViewModel.getDateWeatherStartMargin(context)
         val smartspaceHorizontalPadding =
             KeyguardSmartspaceViewModel.getSmartspaceHorizontalMargin(context)
+        val dateWeatherBelowSmallClock =
+            keyguardClockViewModel.shouldDateWeatherBeBelowSmallClock.value
+        val dateWeatherBelowLargeClock =
+            keyguardClockViewModel.shouldDateWeatherBeBelowLargeClock.value
+
+        val isLargeClockVisible = keyguardClockViewModel.isLargeClockVisible.value
+
+        if (clockReactiveSmartspaceLayout()) {
+            if (dateWeatherBelowSmallClock) {
+                dateView?.orientation = LinearLayout.HORIZONTAL
+            } else {
+                dateView?.orientation = LinearLayout.VERTICAL
+            }
+        }
         constraintSet.apply {
-            // migrate addDateWeatherView, addWeatherView from KeyguardClockSwitchController
             constrainHeight(sharedR.id.date_smartspace_view, ConstraintSet.WRAP_CONTENT)
             constrainWidth(sharedR.id.date_smartspace_view, ConstraintSet.WRAP_CONTENT)
-            connect(
-                sharedR.id.date_smartspace_view,
-                ConstraintSet.START,
-                ConstraintSet.PARENT_ID,
-                ConstraintSet.START,
-                dateWeatherPaddingStart,
-            )
+            if (dateWeatherBelowSmallClock || !dateWeatherBelowLargeClock) {
+                connect(
+                    sharedR.id.date_smartspace_view,
+                    ConstraintSet.START,
+                    ConstraintSet.PARENT_ID,
+                    ConstraintSet.START,
+                    dateWeatherPaddingStart,
+                )
+            }
 
-            // migrate addSmartspaceView from KeyguardClockSwitchController
             constrainHeight(sharedR.id.bc_smartspace_view, ConstraintSet.WRAP_CONTENT)
             constrainWidth(sharedR.id.bc_smartspace_view, ConstraintSet.MATCH_CONSTRAINT)
             connect(
@@ -141,13 +172,15 @@ constructor(
             connect(
                 sharedR.id.bc_smartspace_view,
                 ConstraintSet.END,
-                if (keyguardSmartspaceViewModel.isShadeLayoutWide.value) R.id.split_shade_guideline
-                else ConstraintSet.PARENT_ID,
+                if (keyguardSmartspaceViewModel.isFullWidthShade.value) {
+                    ConstraintSet.PARENT_ID
+                } else {
+                    R.id.split_shade_guideline
+                },
                 ConstraintSet.END,
                 smartspaceHorizontalPadding,
             )
-
-            if (keyguardClockViewModel.hasCustomWeatherDataDisplay.value) {
+            if (keyguardClockViewModel.hasCustomWeatherDataDisplay.value && isLargeClockVisible) {
                 clear(sharedR.id.date_smartspace_view, ConstraintSet.TOP)
                 connect(
                     sharedR.id.date_smartspace_view,
@@ -157,34 +190,184 @@ constructor(
                 )
             } else {
                 clear(sharedR.id.date_smartspace_view, ConstraintSet.BOTTOM)
-                connect(
-                    sharedR.id.date_smartspace_view,
-                    ConstraintSet.TOP,
-                    customR.id.lockscreen_clock_view,
-                    ConstraintSet.BOTTOM,
-                )
-                connect(
-                    sharedR.id.bc_smartspace_view,
-                    ConstraintSet.TOP,
-                    sharedR.id.date_smartspace_view,
-                    ConstraintSet.BOTTOM,
-                )
+                if (clockReactiveSmartspaceLayout()) {
+                    if (dateWeatherBelowSmallClock || !dateWeatherBelowLargeClock) {
+                        connect(
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.TOP,
+                            ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                            ConstraintSet.BOTTOM,
+                        )
+                        connect(
+                            sharedR.id.bc_smartspace_view,
+                            ConstraintSet.TOP,
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.BOTTOM,
+                        )
+                    } else {
+                        connect(
+                            sharedR.id.bc_smartspace_view,
+                            ConstraintSet.TOP,
+                            ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                            ConstraintSet.BOTTOM,
+                        )
+                    }
+                } else {
+                    connect(
+                        sharedR.id.date_smartspace_view,
+                        ConstraintSet.TOP,
+                        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                        ConstraintSet.BOTTOM,
+                    )
+                    connect(
+                        sharedR.id.bc_smartspace_view,
+                        ConstraintSet.TOP,
+                        sharedR.id.date_smartspace_view,
+                        ConstraintSet.BOTTOM,
+                    )
+                }
             }
 
-            createBarrier(
-                R.id.smart_space_barrier_bottom,
-                Barrier.BOTTOM,
-                0,
-                *intArrayOf(sharedR.id.bc_smartspace_view, sharedR.id.date_smartspace_view),
-            )
+            if (clockReactiveSmartspaceLayout()) {
+                if (
+                    isLargeClockVisible &&
+                        keyguardClockViewModel.shouldDateWeatherBeBelowLargeClock.value
+                ) {
+                    setVisibility(sharedR.id.date_smartspace_view, GONE)
+                    constrainHeight(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.WRAP_CONTENT,
+                    )
+                    constrainWidth(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.WRAP_CONTENT,
+                    )
+                    constrainHeight(
+                        sharedR.id.weather_smartspace_view_large,
+                        ConstraintSet.WRAP_CONTENT,
+                    )
+                    constrainWidth(
+                        sharedR.id.weather_smartspace_view_large,
+                        ConstraintSet.WRAP_CONTENT,
+                    )
+                    connect(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.TOP,
+                        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE,
+                        ConstraintSet.BOTTOM,
+                        context.resources.getDimensionPixelSize(R.dimen.smartspace_padding_vertical),
+                    )
+
+                    connect(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.START,
+                        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE,
+                        ConstraintSet.START,
+                    )
+                    connect(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.END,
+                        ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE,
+                        ConstraintSet.END,
+                    )
+                    setHorizontalChainStyle(
+                        sharedR.id.date_smartspace_view_large,
+                        ConstraintSet.CHAIN_PACKED,
+                    )
+                } else {
+                    if (dateWeatherBelowSmallClock || !dateWeatherBelowLargeClock) {
+                        connect(
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.START,
+                            ConstraintSet.PARENT_ID,
+                            ConstraintSet.START,
+                            dateWeatherPaddingStart,
+                        )
+                    } else {
+                        setVisibility(sharedR.id.date_smartspace_view_large, GONE)
+                        constrainHeight(sharedR.id.date_smartspace_view, ConstraintSet.WRAP_CONTENT)
+                        constrainWidth(sharedR.id.date_smartspace_view, ConstraintSet.WRAP_CONTENT)
+                        connect(
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.START,
+                            ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                            ConstraintSet.END,
+                            context.resources.getDimensionPixelSize(
+                                R.dimen.smartspace_padding_horizontal
+                            ),
+                        )
+                        connect(
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.TOP,
+                            ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                            ConstraintSet.TOP,
+                        )
+                        connect(
+                            sharedR.id.date_smartspace_view,
+                            ConstraintSet.BOTTOM,
+                            ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL,
+                            ConstraintSet.BOTTOM,
+                        )
+                    }
+                }
+            }
+
+            if (clockReactiveSmartspaceLayout()) {
+                if (dateWeatherBelowSmallClock || !dateWeatherBelowLargeClock) {
+                    createBarrier(
+                        R.id.smart_space_barrier_bottom,
+                        Barrier.BOTTOM,
+                        0,
+                        *intArrayOf(sharedR.id.bc_smartspace_view, sharedR.id.date_smartspace_view),
+                    )
+                    createBarrier(
+                        R.id.smart_space_barrier_top,
+                        Barrier.TOP,
+                        0,
+                        *intArrayOf(sharedR.id.bc_smartspace_view, sharedR.id.date_smartspace_view),
+                    )
+                } else {
+                    createBarrier(
+                        R.id.smart_space_barrier_bottom,
+                        Barrier.BOTTOM,
+                        0,
+                        sharedR.id.bc_smartspace_view,
+                    )
+                    createBarrier(
+                        R.id.smart_space_barrier_top,
+                        Barrier.TOP,
+                        0,
+                        sharedR.id.bc_smartspace_view,
+                    )
+                }
+            } else {
+                createBarrier(
+                    R.id.smart_space_barrier_bottom,
+                    Barrier.BOTTOM,
+                    0,
+                    *intArrayOf(sharedR.id.bc_smartspace_view, sharedR.id.date_smartspace_view),
+                )
+                createBarrier(
+                    R.id.smart_space_barrier_top,
+                    Barrier.TOP,
+                    0,
+                    *intArrayOf(sharedR.id.bc_smartspace_view, sharedR.id.date_smartspace_view),
+                )
+            }
         }
-        updateVisibility(constraintSet)
+        updateVisibility(constraintSet, isLargeClockVisible)
     }
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
-        if (!MigrateClocksToBlueprint.isEnabled) return
         if (!keyguardSmartspaceViewModel.isSmartspaceEnabled) return
-        listOf(smartspaceView, dateWeatherView).forEach {
+
+        val list =
+            if (clockReactiveSmartspaceLayout()) {
+                listOf(smartspaceView, dateView, dateViewLargeClock)
+            } else {
+                listOf(smartspaceView, dateView)
+            }
+        list.forEach {
             it?.let {
                 if (it.parent == constraintLayout) {
                     constraintLayout.removeView(it)
@@ -197,29 +380,44 @@ constructor(
         disposableHandle?.dispose()
     }
 
-    private fun updateVisibility(constraintSet: ConstraintSet) {
+    private fun updateVisibility(constraintSet: ConstraintSet, isLargeClockVisible: Boolean) {
+
         // This may update the visibility of the smartspace views
         smartspaceController.requestSmartspaceUpdate()
+        val weatherId: Int
+        val dateId: Int
+        if (
+            clockReactiveSmartspaceLayout() &&
+                isLargeClockVisible &&
+                keyguardClockViewModel.shouldDateWeatherBeBelowLargeClock.value
+        ) {
+            weatherId = sharedR.id.weather_smartspace_view_large
+            dateId = sharedR.id.date_smartspace_view_large
+        } else {
+            weatherId = sharedR.id.weather_smartspace_view
+            dateId = sharedR.id.date_smartspace_view
+        }
 
         constraintSet.apply {
-            val weatherVisibility =
-                when (keyguardSmartspaceViewModel.isWeatherVisible.value) {
-                    true -> ConstraintSet.VISIBLE
-                    false -> ConstraintSet.GONE
+            val showWeather = keyguardSmartspaceViewModel.isWeatherVisible.value
+            setVisibility(weatherId, if (showWeather) VISIBLE else GONE)
+            setAlpha(weatherId, if (showWeather) 1f else 0f)
+
+            val showDateView =
+                !keyguardClockViewModel.hasCustomWeatherDataDisplay.value || !isLargeClockVisible
+            setVisibility(dateId, if (showDateView) VISIBLE else GONE)
+            setAlpha(dateId, if (showDateView) 1f else 0f)
+
+            if (clockReactiveSmartspaceLayout()) {
+                if (
+                    isLargeClockVisible &&
+                        keyguardClockViewModel.shouldDateWeatherBeBelowLargeClock.value
+                ) {
+                    setVisibility(sharedR.id.date_smartspace_view, GONE)
+                } else {
+                    setVisibility(sharedR.id.date_smartspace_view_large, GONE)
                 }
-            setVisibility(sharedR.id.weather_smartspace_view, weatherVisibility)
-            setAlpha(
-                sharedR.id.weather_smartspace_view,
-                if (weatherVisibility == View.VISIBLE) 1f else 0f,
-            )
-            val dateVisibility =
-                if (keyguardClockViewModel.hasCustomWeatherDataDisplay.value) ConstraintSet.GONE
-                else ConstraintSet.VISIBLE
-            setVisibility(sharedR.id.date_smartspace_view, dateVisibility)
-            setAlpha(
-                sharedR.id.date_smartspace_view,
-                if (dateVisibility == ConstraintSet.VISIBLE) 1f else 0f,
-            )
+            }
         }
     }
 }

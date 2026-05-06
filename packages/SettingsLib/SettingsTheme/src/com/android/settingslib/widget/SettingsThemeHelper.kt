@@ -16,45 +16,55 @@
 
 package com.android.settingslib.widget
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
+import androidx.annotation.ChecksSdkIntAtLeast
+import com.android.settingslib.widget.theme.flags.Flags
 
 object SettingsThemeHelper {
     private const val IS_EXPRESSIVE_DESIGN_ENABLED = "is_expressive_design_enabled"
-    private var expressiveThemeState: ExpressiveThemeState = ExpressiveThemeState.UNKNOWN
+    private const val RO_BUILD_CHARACTERISTICS = "ro.build.characteristics"
 
-    enum class ExpressiveThemeState {
-        UNKNOWN,
-        ENABLED,
-        DISABLED,
+    @JvmStatic
+    fun isTablet(context: Context): Boolean {
+        val result = getPropString(context, RO_BUILD_CHARACTERISTICS, "").split(',')
+        return result.contains("tablet")
+    }
+
+    @ChecksSdkIntAtLeast(Build.VERSION_CODES.BAKLAVA)
+    @JvmStatic
+    fun isExpressiveTheme(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) {
+            return false
+        }
+        // Enable if overridden by system property
+        if (getPropBoolean(context, IS_EXPRESSIVE_DESIGN_ENABLED, false)) {
+            return true
+        }
+        // Allow the activity to override.
+        val activity = getActivityFromContext(context)
+        if (activity is ExpressiveDesignEnabledProvider) {
+            return activity.isExpressiveDesignEnabled()
+        }
+        return isExpressiveDesignEnabled()
     }
 
     @JvmStatic
-    fun isExpressiveTheme(context: Context): Boolean {
-        tryInit(context)
-        if (expressiveThemeState == ExpressiveThemeState.UNKNOWN) {
-            throw Exception(
-                "need to call com.android.settingslib.widget.SettingsThemeHelper.init(Context) first."
-            )
-        }
-
-        return expressiveThemeState == ExpressiveThemeState.ENABLED
+    fun isExpressiveDesignEnabled(): Boolean {
+        return Flags.isExpressiveDesignEnabled()
     }
 
-    private fun tryInit(context: Context) {
-        if (expressiveThemeState != ExpressiveThemeState.UNKNOWN) {
-            return
-        }
-
-        expressiveThemeState =
-            if (
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) &&
-                        getPropBoolean(context, IS_EXPRESSIVE_DESIGN_ENABLED, false)
-            ) {
-                ExpressiveThemeState.ENABLED
-            } else {
-                ExpressiveThemeState.DISABLED
+    private fun getActivityFromContext(context: Context): Activity? {
+        var currentContext = context
+        while (true) {
+            when (currentContext) {
+                is Activity -> return currentContext
+                is ContextWrapper -> currentContext = currentContext.baseContext
+                else -> return null
             }
+        }
     }
 
     private fun getPropBoolean(context: Context, property: String, def: Boolean): Boolean {
@@ -67,6 +77,21 @@ object SettingsThemeHelper {
 
             val params = arrayOf<Any>(property, def)
             getBoolean.invoke(systemProperties, *params) as Boolean
+        } catch (iae: IllegalArgumentException) {
+            throw iae
+        } catch (exception: Exception) {
+            def
+        }
+    }
+
+    private fun getPropString(context: Context, property: String, def: String): String {
+        return try {
+            val systemProperties = context.classLoader.loadClass("android.os.SystemProperties")
+
+            val paramTypes =
+                arrayOf<Class<*>?>(String::class.java, String::class.java)
+            val get = systemProperties.getMethod("get", *paramTypes)
+            get.invoke(systemProperties, property, def) as String
         } catch (iae: IllegalArgumentException) {
             throw iae
         } catch (exception: Exception) {

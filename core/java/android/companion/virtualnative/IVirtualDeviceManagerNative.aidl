@@ -38,6 +38,7 @@ interface IVirtualDeviceManagerNative {
     /**
      * Counterpart to VirtualDeviceParams#DevicePolicy.
      */
+    const int DEVICE_POLICY_INVALID = -1;
     const int DEVICE_POLICY_DEFAULT = 0;
     const int DEVICE_POLICY_CUSTOM = 1;
 
@@ -64,4 +65,9 @@ interface IVirtualDeviceManagerNative {
      * Returns the device policy for the given virtual device and policy type.
      */
     int getDevicePolicy(int deviceId, int policyType);
+
+    /**
+     * Returns the ID of the device which owns the display with the given ID.
+     */
+    int getDeviceIdForDisplayId(int displayId);
 }

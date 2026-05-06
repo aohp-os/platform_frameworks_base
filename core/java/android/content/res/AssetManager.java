@@ -17,6 +17,7 @@
 package android.content.res;
 
 import static android.app.ResourcesManager.ApkKey;
+import static android.content.res.Flags.resourcesMinorVersionSupport;
 import static android.content.res.Resources.ID_NULL;
 
 import android.annotation.AnyRes;
@@ -33,6 +34,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration.NativeConfig;
 import android.content.res.loader.ResourcesLoader;
 import android.os.Build;
+import android.os.Build.SdkIntFull;
 import android.os.ParcelFileDescriptor;
 import android.ravenwood.annotation.RavenwoodKeepWholeClass;
 import android.ravenwood.annotation.RavenwoodReplace;
@@ -46,7 +48,7 @@ import android.util.TypedValue;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.om.OverlayConfig;
-import com.android.internal.ravenwood.RavenwoodEnvironment;
+import com.android.internal.ravenwood.RavenwoodHelperBridge;
 
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -62,6 +64,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Provides access to an application's raw asset files; see {@link Resources}
@@ -133,7 +136,7 @@ public final class AssetManager implements AutoCloseable {
 
     // Debug/reference counting implementation.
     @GuardedBy("this") private boolean mOpen = true;
-    @GuardedBy("this") private int mNumRefs = 1;
+    private AtomicInteger mNumRefs = new AtomicInteger(1);
     @GuardedBy("this") private HashMap<Long, RuntimeException> mRefStacks;
 
     private ResourcesLoader[] mLoaders;
@@ -147,8 +150,8 @@ public final class AssetManager implements AutoCloseable {
      * @hide
      */
     public static class Builder {
-        private ArrayList<ApkAssets> mUserApkAssets = new ArrayList<>();
-        private ArrayList<ResourcesLoader> mLoaders = new ArrayList<>();
+        private final ArrayList<ApkAssets> mUserApkAssets = new ArrayList<>();
+        private final ArrayList<ResourcesLoader> mLoaders = new ArrayList<>();
 
         private boolean mNoInit = false;
 
@@ -223,7 +226,7 @@ public final class AssetManager implements AutoCloseable {
     }
 
     private static String getFrameworkApkPath$ravenwood() {
-        return RavenwoodEnvironment.getInstance().getRavenwoodRuntimePath()
+        return RavenwoodHelperBridge.getInstance().getRavenwoodRuntimePath()
                 + FRAMEWORK_APK_PATH_RAVENWOOD;
     }
 
@@ -244,7 +247,7 @@ public final class AssetManager implements AutoCloseable {
 
         mObject = nativeCreate();
         if (DEBUG_REFS) {
-            mNumRefs = 0;
+            mNumRefs.set(0);
             incRefsLocked(hashCode());
         }
 
@@ -260,7 +263,7 @@ public final class AssetManager implements AutoCloseable {
     private AssetManager(boolean sentinel) {
         mObject = nativeCreate();
         if (DEBUG_REFS) {
-            mNumRefs = 0;
+            mNumRefs.set(0);
             incRefsLocked(hashCode());
         }
     }
@@ -283,7 +286,7 @@ public final class AssetManager implements AutoCloseable {
 
             // TODO(Ravenwood): overlay support?
             final String[] systemIdmapPaths =
-                    RavenwoodEnvironment.getInstance().isRunningOnRavenwood() ? new String[0] :
+                    RavenwoodHelperBridge.getInstance().isRunningOnRavenwood() ? new String[0] :
                     OverlayConfig.getZygoteInstance().createImmutableFrameworkIdmapsInZygote();
             for (String idmapPath : systemIdmapPaths) {
                 apkAssets.add(ApkAssets.loadOverlayFromPath(idmapPath, ApkAssets.PROPERTY_SYSTEM));
@@ -324,7 +327,7 @@ public final class AssetManager implements AutoCloseable {
             }
 
             mOpen = false;
-            decRefsLocked(hashCode());
+            decRefs(hashCode());
         }
     }
 
@@ -501,8 +504,8 @@ public final class AssetManager implements AutoCloseable {
     /**
      * @hide
      */
-    public void addPresetApkKeys(@NonNull List<ApkKey> keys) {
-        addAssetPathInternal(keys, true);
+    public void addApkKeys(@NonNull List<ApkKey> keys, boolean presetAssets) {
+        addAssetPathInternal(keys, presetAssets);
     }
 
     private int addAssetPathInternal(List<ApkKey> apkKeys, boolean presetAssets) {
@@ -1189,7 +1192,20 @@ public final class AssetManager implements AutoCloseable {
      */
     public @NonNull XmlResourceParser openXmlResourceParser(int cookie, @NonNull String fileName)
             throws IOException {
-        try (XmlBlock block = openXmlBlockAsset(cookie, fileName)) {
+        return openXmlResourceParser(cookie, fileName, true);
+    }
+
+    /**
+     * Retrieve a parser for a compiled XML file.
+     *
+     * @param cookie Identifier of the package to be opened.
+     * @param fileName The name of the file to retrieve.
+     * @param hasFlags Whether the parser should check for flags on each element
+     * @hide
+     */
+    public @NonNull XmlResourceParser openXmlResourceParser(int cookie, @NonNull String fileName,
+            boolean hasFlags) throws IOException {
+        try (XmlBlock block = openXmlBlockAsset(cookie, fileName, hasFlags)) {
             XmlResourceParser parser = block.newParser(ID_NULL, new Validator());
             // If openXmlBlockAsset doesn't throw, it will always return an XmlBlock object with
             // a valid native pointer, which makes newParser always return non-null. But let's
@@ -1208,7 +1224,7 @@ public final class AssetManager implements AutoCloseable {
      * @hide
      */
     @NonNull XmlBlock openXmlBlockAsset(@NonNull String fileName) throws IOException {
-        return openXmlBlockAsset(0, fileName);
+        return openXmlBlockAsset(0, fileName, true);
     }
 
     /**
@@ -1217,9 +1233,11 @@ public final class AssetManager implements AutoCloseable {
      *
      * @param cookie Identifier of the package to be opened.
      * @param fileName Name of the asset to retrieve.
+     * @param usesFeatureFlags Whether the resources uses feature flags
      * @hide
      */
-    @NonNull XmlBlock openXmlBlockAsset(int cookie, @NonNull String fileName) throws IOException {
+    @NonNull XmlBlock openXmlBlockAsset(int cookie, @NonNull String fileName,
+            boolean usesFeatureFlags) throws IOException {
         Objects.requireNonNull(fileName, "fileName");
         synchronized (this) {
             ensureOpenLocked();
@@ -1228,16 +1246,15 @@ public final class AssetManager implements AutoCloseable {
             if (xmlBlock == 0) {
                 throw new FileNotFoundException("Asset XML file: " + fileName);
             }
-            final XmlBlock block = new XmlBlock(this, xmlBlock);
+
+            final XmlBlock block = new XmlBlock(this, xmlBlock, usesFeatureFlags);
             incRefsLocked(block.hashCode());
             return block;
         }
     }
 
     void xmlBlockGone(int id) {
-        synchronized (this) {
-            decRefsLocked(id);
-        }
+        decRefs(id);
     }
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
@@ -1308,9 +1325,7 @@ public final class AssetManager implements AutoCloseable {
     }
 
     void releaseTheme(long themePtr) {
-        synchronized (this) {
-            decRefsLocked(themePtr);
-        }
+        decRefs(themePtr);
     }
 
     static long getThemeFreeFunction() {
@@ -1332,7 +1347,7 @@ public final class AssetManager implements AutoCloseable {
         if (this != newAssetManager) {
             synchronized (this) {
                 ensureValidLocked();
-                decRefsLocked(themePtr);
+                decRefs(themePtr);
             }
             synchronized (newAssetManager) {
                 newAssetManager.ensureValidLocked();
@@ -1364,8 +1379,8 @@ public final class AssetManager implements AutoCloseable {
 
     @Override
     protected void finalize() throws Throwable {
-        if (DEBUG_REFS && mNumRefs != 0) {
-            Log.w(TAG, "AssetManager " + this + " finalized with non-zero refs: " + mNumRefs);
+        if (DEBUG_REFS && mNumRefs.get() != 0) {
+            Log.w(TAG, "AssetManager " + this + " finalized with non-zero refs: " + mNumRefs.get());
             if (mRefStacks != null) {
                 for (RuntimeException e : mRefStacks.values()) {
                     Log.w(TAG, "Reference from here", e);
@@ -1473,9 +1488,7 @@ public final class AssetManager implements AutoCloseable {
                 nativeAssetDestroy(mAssetNativePtr);
                 mAssetNativePtr = 0;
 
-                synchronized (AssetManager.this) {
-                    decRefsLocked(hashCode());
-                }
+                decRefs(hashCode());
             }
         }
 
@@ -1575,38 +1588,15 @@ public final class AssetManager implements AutoCloseable {
      * @hide
      */
     @UnsupportedAppUsage
-    public void setConfiguration(int mcc, int mnc, @Nullable String locale, int orientation,
-            int touchscreen, int density, int keyboard, int keyboardHidden, int navigation,
-            int screenWidth, int screenHeight, int smallestScreenWidthDp, int screenWidthDp,
-            int screenHeightDp, int screenLayout, int uiMode, int colorMode, int grammaticalGender,
-            int majorVersion) {
-        if (locale != null) {
-            setConfiguration(mcc, mnc, null, new String[]{locale}, orientation, touchscreen,
-                    density, keyboard, keyboardHidden, navigation, screenWidth, screenHeight,
-                    smallestScreenWidthDp, screenWidthDp, screenHeightDp, screenLayout, uiMode,
-                    colorMode, grammaticalGender, majorVersion);
-        } else {
-            setConfiguration(mcc, mnc, null, null, orientation, touchscreen, density,
-                    keyboard, keyboardHidden, navigation, screenWidth, screenHeight,
-                    smallestScreenWidthDp, screenWidthDp, screenHeightDp, screenLayout, uiMode,
-                    colorMode, grammaticalGender, majorVersion);
-        }
-    }
-
-    /**
-     * Change the configuration used when retrieving resources.  Not for use by
-     * applications.
-     * @hide
-     */
     public void setConfiguration(int mcc, int mnc, String defaultLocale, String[] locales,
             int orientation, int touchscreen, int density, int keyboard, int keyboardHidden,
             int navigation, int screenWidth, int screenHeight, int smallestScreenWidthDp,
             int screenWidthDp, int screenHeightDp, int screenLayout, int uiMode, int colorMode,
-            int grammaticalGender, int majorVersion) {
+            int grammaticalGender, @SdkIntFull int sdkVersionFull) {
         setConfigurationInternal(mcc, mnc, defaultLocale, locales, orientation,
                 touchscreen, density, keyboard, keyboardHidden, navigation, screenWidth,
                 screenHeight, smallestScreenWidthDp, screenWidthDp, screenHeightDp,
-                screenLayout, uiMode, colorMode, grammaticalGender, majorVersion, false);
+                screenLayout, uiMode, colorMode, grammaticalGender, sdkVersionFull, false);
     }
 
     /**
@@ -1618,14 +1608,34 @@ public final class AssetManager implements AutoCloseable {
             int orientation, int touchscreen, int density, int keyboard, int keyboardHidden,
             int navigation, int screenWidth, int screenHeight, int smallestScreenWidthDp,
             int screenWidthDp, int screenHeightDp, int screenLayout, int uiMode, int colorMode,
-            int grammaticalGender, int majorVersion, boolean forceRefresh) {
+            int grammaticalGender, @SdkIntFull int sdkVersionFull, boolean forceRefresh) {
         synchronized (this) {
             ensureValidLocked();
+            final int majorVersion = Build.getMajorSdkVersion(sdkVersionFull);
+            final int minorVersion = resourcesMinorVersionSupport()
+                    ? Build.getMinorSdkVersion(sdkVersionFull) : 0;
             nativeSetConfiguration(mObject, mcc, mnc, defaultLocale, locales, orientation,
                     touchscreen, density, keyboard, keyboardHidden, navigation, screenWidth,
                     screenHeight, smallestScreenWidthDp, screenWidthDp, screenHeightDp,
-                    screenLayout, uiMode, colorMode, grammaticalGender, majorVersion,
+                    screenLayout, uiMode, colorMode, grammaticalGender, majorVersion, minorVersion,
                     forceRefresh);
+        }
+    }
+
+    /**
+     * Passes the display id and device id to AssetManager, to filter out overlays based on
+     * any {@link android.content.om.OverlayConstraint}.
+     *
+     * @hide
+     */
+    public void setOverlayConstraints(int displayId, int deviceId) {
+        if (!Flags.rroConstraints()) {
+            return;
+        }
+
+        synchronized (this) {
+            ensureValidLocked();
+            nativeSetOverlayConstraints(mObject, displayId, deviceId);
         }
     }
 
@@ -1680,19 +1690,25 @@ public final class AssetManager implements AutoCloseable {
             RuntimeException ex = new RuntimeException();
             mRefStacks.put(id, ex);
         }
-        mNumRefs++;
+        mNumRefs.incrementAndGet();
     }
 
-    @GuardedBy("this")
-    private void decRefsLocked(long id) {
-        if (DEBUG_REFS && mRefStacks != null) {
-            mRefStacks.remove(id);
+    private void decRefs(long id) {
+        if (DEBUG_REFS) {
+            synchronized (this) {
+                if (mRefStacks != null) {
+                    mRefStacks.remove(id);
+                }
+            }
         }
-        mNumRefs--;
-        if (mNumRefs == 0 && mObject != 0) {
-            nativeDestroy(mObject);
-            mObject = 0;
-            mApkAssets = sEmptyApkAssets;
+        if (mNumRefs.decrementAndGet() == 0) {
+            synchronized (this) {
+                if (mNumRefs.get() == 0 && mObject != 0) {
+                    nativeDestroy(mObject);
+                    mObject = 0;
+                    mApkAssets = sEmptyApkAssets;
+                }
+            }
         }
     }
 
@@ -1715,7 +1731,8 @@ public final class AssetManager implements AutoCloseable {
             int touchscreen, int density, int keyboard, int keyboardHidden, int navigation,
             int screenWidth, int screenHeight, int smallestScreenWidthDp, int screenWidthDp,
             int screenHeightDp, int screenLayout, int uiMode, int colorMode, int grammaticalGender,
-            int majorVersion, boolean forceRefresh);
+            int majorVersion, int minorVersion, boolean forceRefresh);
+    private static native void nativeSetOverlayConstraints(long ptr, int displayId, int deviceId);
     private static native @NonNull SparseArray<String> nativeGetAssignedPackageIdentifiers(
             long ptr, boolean includeOverlays, boolean includeLoaders);
 
@@ -1837,7 +1854,7 @@ public final class AssetManager implements AutoCloseable {
             @Nullable XmlBlock.Parser parser, @NonNull int[] inAttrs, long outValuesAddress,
             long outIndicesAddress) {
         Objects.requireNonNull(inAttrs, "inAttrs");
-        var runtime = RavenwoodEnvironment.getInstance();
+        var runtime = RavenwoodHelperBridge.getInstance();
         final int[] outValues = runtime.fromAddress(outValuesAddress);
         final int[] outIndices = runtime.fromAddress(outIndicesAddress);
         synchronized (this) {

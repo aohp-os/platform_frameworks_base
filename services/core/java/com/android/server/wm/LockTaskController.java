@@ -123,6 +123,12 @@ public class LockTaskController {
         STATUS_BAR_FLAG_MAP_LOCKED.append(DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS,
                 new Pair<>(StatusBarManager.DISABLE_NONE,
                         StatusBarManager.DISABLE2_GLOBAL_ACTIONS));
+
+        if (android.app.supervision.flags.Flags.enableLockTaskFeatureQuickSettings()) {
+            STATUS_BAR_FLAG_MAP_LOCKED.append(DevicePolicyManager.LOCK_TASK_FEATURE_QUICK_SETTINGS,
+                    new Pair<>(StatusBarManager.DISABLE_NONE,
+                            StatusBarManager.DISABLE2_QUICK_SETTINGS));
+        }
     }
 
     /** Tag used for disabling of keyguard */
@@ -263,10 +269,9 @@ public class LockTaskController {
         // should be finish together in the Task.
         if (activity != taskRoot || activity != taskTop) {
             final TaskFragment taskFragment = activity.getTaskFragment();
-            final TaskFragment adjacentTaskFragment = taskFragment.getAdjacentTaskFragment();
             if (taskFragment.asTask() != null
                     || !taskFragment.isDelayLastActivityRemoval()
-                    || adjacentTaskFragment == null) {
+                    || !taskFragment.hasAdjacentTaskFragment()) {
                 // Don't block activity from finishing if the TaskFragment don't have any adjacent
                 // TaskFragment, or it won't finish together with its adjacent TaskFragment.
                 return false;
@@ -281,7 +286,7 @@ public class LockTaskController {
             }
 
             final boolean hasOtherActivityInTask = task.getActivity(a -> !a.finishing
-                    && a != activity && a.getTaskFragment() != adjacentTaskFragment) != null;
+                    && a != activity && !taskFragment.isAdjacentTo(a.getTaskFragment())) != null;
             if (hasOtherActivityInTask) {
                 // Do not block activity from finishing if there are another running activities
                 // after the current and adjacent TaskFragments are removed. Note that we don't
@@ -467,7 +472,9 @@ public class LockTaskController {
         // 3. Telephony then starts the default package for making the call
         final TelecomManager tm = getTelecomManager();
         final String dialerPackage = tm != null ? tm.getSystemDialerPackage() : null;
-        if (dialerPackage != null && dialerPackage.equals(intent.getComponent().getPackageName())) {
+        final String intentPackage =
+                intent.getComponent() == null ? null : intent.getComponent().getPackageName();
+        if (dialerPackage != null && dialerPackage.equals(intentPackage)) {
             return true;
         }
 
@@ -610,7 +617,6 @@ public class LockTaskController {
                     statusBarService.showPinningEnterExitToast(false /* entering */);
                 }
             }
-            mWindowManager.onLockTaskStateChanged(mLockTaskModeState);
         } catch (RemoteException ex) {
             throw new RuntimeException(ex);
         }
@@ -653,6 +659,10 @@ public class LockTaskController {
         if (!isSystemCaller) {
             task.mLockTaskUid = callingUid;
             if (task.mLockTaskAuth == LOCK_TASK_AUTH_PINNABLE) {
+                if (mLockTaskModeTasks.contains(task)) {
+                    ProtoLog.w(WM_DEBUG_LOCKTASK, "Already locked.");
+                    return;
+                }
                 // startLockTask() called by app, but app is not part of lock task allowlist. Show
                 // app pinning request. We will come back here with isSystemCaller true.
                 ProtoLog.w(WM_DEBUG_LOCKTASK, "Mode default, asking user");
@@ -669,8 +679,7 @@ public class LockTaskController {
                 stopLockTaskMode(/* task= */ null, /* stopAppPinning= */ true, callingUid);
             }
         }
-
-        // When a task is locked, dismiss the root pinned task if it exists 
+        // When a task is locked, dismiss the root pinned task if it exists
         mSupervisor.mRootWindowContainer.removeRootTasksInWindowingModes(WINDOWING_MODE_PINNED);
 
         // System can only initiate screen pinning, not full lock task mode
@@ -742,7 +751,6 @@ public class LockTaskController {
                     statusBarService.showPinningEnterExitToast(true /* entering */);
                 }
             }
-            mWindowManager.onLockTaskStateChanged(lockTaskModeState);
             mLockTaskModeState = lockTaskModeState;
             mTaskChangeNotificationController.notifyLockTaskModeChanged(mLockTaskModeState);
             setStatusBarState(lockTaskModeState, userId);
@@ -905,8 +913,8 @@ public class LockTaskController {
         }
 
         try {
-            statusBar.disable(flags1, mToken, mContext.getPackageName());
-            statusBar.disable2(flags2, mToken, mContext.getPackageName());
+            statusBar.disableForUser(flags1, mToken, mContext.getPackageName(), userId);
+            statusBar.disable2ForUser(flags2, mToken, mContext.getPackageName(), userId);
         } catch (RemoteException e) {
             Slog.e(TAG, "Failed to set status bar flags", e);
         }

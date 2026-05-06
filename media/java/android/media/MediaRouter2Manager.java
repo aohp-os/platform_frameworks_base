@@ -18,6 +18,7 @@ package android.media;
 
 import static android.media.MediaRouter2.SCANNING_STATE_NOT_SCANNING;
 import static android.media.MediaRouter2.SCANNING_STATE_WHILE_INTERACTIVE;
+import static android.media.RoutingChangeInfo.ENTRY_POINT_PROXY_ROUTER_UNSPECIFIED;
 
 import static com.android.internal.util.function.pooled.PooledLambda.obtainMessage;
 
@@ -302,12 +303,14 @@ public final class MediaRouter2Manager {
             routes = new ArrayList<>(mRoutes.values());
         }
         // take the negative for descending order
-        routes.sort(Comparator.comparingInt(
-                r -> -packagePriority.getOrDefault(r.getPackageName(), 0)));
+        routes.sort(
+                Comparator.comparingInt(
+                        r -> -packagePriority.getOrDefault(r.getProviderPackageName(), 0)));
         return routes;
     }
 
-    private List<MediaRoute2Info> getFilteredRoutes(@NonNull RoutingSessionInfo sessionInfo,
+    private List<MediaRoute2Info> getFilteredRoutes(
+            @NonNull RoutingSessionInfo sessionInfo,
             boolean includeSelectedRoutes,
             @Nullable Predicate<MediaRoute2Info> additionalFilter) {
         Objects.requireNonNull(sessionInfo, "sessionInfo must not be null");
@@ -336,9 +339,10 @@ public final class MediaRouter2Manager {
                 continue;
             }
             if (!discoveryPreference.getAllowedPackages().isEmpty()
-                    && (route.getPackageName() == null
-                    || !discoveryPreference.getAllowedPackages()
-                    .contains(route.getPackageName()))) {
+                    && (route.getProviderPackageName() == null
+                            || !discoveryPreference
+                                    .getAllowedPackages()
+                                    .contains(route.getProviderPackageName()))) {
                 continue;
             }
             if (additionalFilter != null && !additionalFilter.test(route)) {
@@ -820,8 +824,12 @@ public final class MediaRouter2Manager {
 
         try {
             int requestId = mNextRequestId.getAndIncrement();
+            RoutingChangeInfo routingChangeInfo =
+                    new RoutingChangeInfo(
+                            ENTRY_POINT_PROXY_ROUTER_UNSPECIFIED, /* isSuggested= */ false);
+
             mMediaRouterService.selectRouteWithManager(
-                    mClient, requestId, sessionInfo.getId(), route);
+                    mClient, requestId, sessionInfo.getId(), route, routingChangeInfo);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
@@ -859,8 +867,11 @@ public final class MediaRouter2Manager {
 
         try {
             int requestId = mNextRequestId.getAndIncrement();
+            RoutingChangeInfo routingChangeInfo =
+                    new RoutingChangeInfo(
+                            ENTRY_POINT_PROXY_ROUTER_UNSPECIFIED, /* isSuggested= */ false);
             mMediaRouterService.deselectRouteWithManager(
-                    mClient, requestId, sessionInfo.getId(), route);
+                    mClient, requestId, sessionInfo.getId(), route, routingChangeInfo);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
@@ -900,6 +911,9 @@ public final class MediaRouter2Manager {
             @NonNull String transferInitiatorPackageName) {
         int requestId = createTransferRequest(session, route);
 
+        RoutingChangeInfo routingChangeInfo =
+                new RoutingChangeInfo(
+                        ENTRY_POINT_PROXY_ROUTER_UNSPECIFIED, /* isSuggested= */ false);
         try {
             mMediaRouterService.transferToRouteWithManager(
                     mClient,
@@ -907,7 +921,8 @@ public final class MediaRouter2Manager {
                     session.getId(),
                     route,
                     transferInitiatorUserHandle,
-                    transferInitiatorPackageName);
+                    transferInitiatorPackageName,
+                    routingChangeInfo);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
@@ -922,9 +937,12 @@ public final class MediaRouter2Manager {
 
         int requestId = createTransferRequest(oldSession, route);
 
+        RoutingChangeInfo routingChangeInfo =
+                new RoutingChangeInfo(
+                        ENTRY_POINT_PROXY_ROUTER_UNSPECIFIED, /* isSuggested= */ false);
         try {
             mMediaRouterService.requestCreateSessionWithManager(
-                    mClient, requestId, oldSession, route);
+                    mClient, requestId, oldSession, routingChangeInfo, route);
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
@@ -1098,9 +1116,14 @@ public final class MediaRouter2Manager {
         }
 
         @Override
-        public void notifySessionUpdated(RoutingSessionInfo session) {
-            mHandler.sendMessage(obtainMessage(MediaRouter2Manager::handleSessionsUpdatedOnHandler,
-                    MediaRouter2Manager.this, session));
+        public void notifySessionUpdated(
+                RoutingSessionInfo session, boolean ignoredShouldShowVolumeUi) {
+            // This class doesn't support shouldShowVolumeUi. MediaRouter2 does.
+            mHandler.sendMessage(
+                    obtainMessage(
+                            MediaRouter2Manager::handleSessionsUpdatedOnHandler,
+                            MediaRouter2Manager.this,
+                            session));
         }
 
         @Override
@@ -1135,6 +1158,19 @@ public final class MediaRouter2Manager {
         }
 
         @Override
+        public void notifyDeviceSuggestionsUpdated(
+                String packageName,
+                String suggestingPackageName,
+                @Nullable List<SuggestedDeviceInfo> suggestedDeviceInfo) {
+            // MediaRouter2Manager doesn't support device suggestions
+        }
+
+        @Override
+        public void notifyDeviceSuggestionRequested() {
+            // MediaRouter2Manager doesn't support device suggestions
+        }
+
+        @Override
         public void notifyRoutesUpdated(List<MediaRoute2Info> routes) {
             mHandler.sendMessage(
                     obtainMessage(
@@ -1147,6 +1183,11 @@ public final class MediaRouter2Manager {
         public void invalidateInstance() {
             // Should never happen since MediaRouter2Manager should only be used with
             // MEDIA_CONTENT_CONTROL, which cannot be revoked.
+        }
+
+        @Override
+        public void notifySystemSessionOverridesChanged(List<AppId> apps) {
+            // Not supported by MR2Manager.
         }
     }
 }

@@ -22,21 +22,21 @@ import com.android.systemui.deviceentry.data.repository.deviceEntryRepository
 import com.android.systemui.keyguard.dismissCallbackRegistry
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.applicationCoroutineScope
+import com.android.systemui.log.table.logcatTableLogBuffer
 import com.android.systemui.scene.domain.interactor.sceneBackInteractor
 import com.android.systemui.scene.domain.interactor.sceneInteractor
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
-@ExperimentalCoroutinesApi
 val Kosmos.deviceEntryInteractor by
     Kosmos.Fixture {
         DeviceEntryInteractor(
             applicationScope = applicationCoroutineScope,
-            repository = deviceEntryRepository,
-            authenticationInteractor = authenticationInteractor,
-            sceneInteractor = sceneInteractor,
-            deviceUnlockedInteractor = deviceUnlockedInteractor,
-            alternateBouncerInteractor = alternateBouncerInteractor,
-            dismissCallbackRegistry = dismissCallbackRegistry,
-            sceneBackInteractor = sceneBackInteractor,
+            repository = { deviceEntryRepository },
+            authenticationInteractor = { authenticationInteractor },
+            sceneInteractor = { sceneInteractor },
+            deviceUnlockedInteractor = { deviceUnlockedInteractor },
+            alternateBouncerInteractor = { alternateBouncerInteractor },
+            dismissCallbackRegistry = { dismissCallbackRegistry },
+            sceneBackInteractor = { sceneBackInteractor },
+            tableLogBuffer = { logcatTableLogBuffer(this, "sceneFrameworkTableLogBuffer") },
         )
     }

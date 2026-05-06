@@ -18,7 +18,6 @@ package android.widget;
 
 import static android.Manifest.permission.INTERACT_ACROSS_USERS_FULL;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
-import static android.graphics.Paint.NEW_FONT_VARIATION_MANAGEMENT;
 import static android.view.ContentInfo.FLAG_CONVERT_TO_PLAIN_TEXT;
 import static android.view.ContentInfo.SOURCE_AUTOFILL;
 import static android.view.ContentInfo.SOURCE_CLIPBOARD;
@@ -61,6 +60,7 @@ import android.app.assist.AssistStructure;
 import android.app.compat.CompatChanges;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
+import android.compat.annotation.NoLogging;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ClipData;
 import android.content.ClipDescription;
@@ -538,6 +538,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @hide
      */
     @ChangeId
+    @NoLogging
     @EnabledSince(targetSdkVersion = Build.VERSION_CODES.TIRAMISU)
     public static final long BORINGLAYOUT_FALLBACK_LINESPACING = 210923482L; // buganizer id
 
@@ -546,6 +547,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @hide
      */
     @ChangeId
+    @NoLogging
     @EnabledSince(targetSdkVersion = Build.VERSION_CODES.P)
     public static final long STATICLAYOUT_FALLBACK_LINESPACING = 37756858; // buganizer id
 
@@ -555,6 +557,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      * @hide
      */
     @ChangeId
+    @NoLogging
     @EnabledSince(targetSdkVersion = VERSION_CODES.VANILLA_ICE_CREAM)
     public static final long USE_BOUNDS_FOR_WIDTH = 63938206;  // buganizer id
 
@@ -983,6 +986,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
      */
     @Nullable
     private UserHandle mTextOperationUser;
+
+    /**
+     * @see #setEnforceImePolicyUser(UserHandle)
+     */
+    @Nullable
+    private UserHandle mEnforceImePolicyUser;
 
     private volatile Locale mCurrentSpellCheckerLocaleCache;
 
@@ -5544,13 +5553,32 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             return true;
         }
 
-        final boolean useFontVariationStore = Flags.typefaceRedesignReadonly()
-                && CompatChanges.isChangeEnabled(NEW_FONT_VARIATION_MANAGEMENT);
         boolean effective;
-        if (useFontVariationStore) {
+        if (Flags.typefaceRedesignReadonly()) {
             if (mFontWeightAdjustment != 0
                     && mFontWeightAdjustment != Configuration.FONT_WEIGHT_ADJUSTMENT_UNDEFINED) {
-                mTextPaint.setFontVariationSettings(fontVariationSettings, mFontWeightAdjustment);
+                List<FontVariationAxis> axes = FontVariationAxis.fromFontVariationSettingsForList(
+                        fontVariationSettings);
+                if (axes == null) {
+                    return false;  // invalid format of the font variation settings.
+                }
+                boolean wghtAdjusted = false;
+                for (int i = 0; i < axes.size(); ++i) {
+                    FontVariationAxis axis = axes.get(i);
+                    if (axis.getOpenTypeTagValue() == 0x77676874 /* wght */) {
+                        axes.set(i, new FontVariationAxis("wght",
+                                Math.clamp(axis.getStyleValue() + mFontWeightAdjustment,
+                                        FontStyle.FONT_WEIGHT_MIN, FontStyle.FONT_WEIGHT_MAX)));
+                        wghtAdjusted = true;
+                    }
+                }
+                if (!wghtAdjusted) {
+                    axes.add(new FontVariationAxis("wght",
+                            Math.clamp(400 + mFontWeightAdjustment,
+                                    FontStyle.FONT_WEIGHT_MIN, FontStyle.FONT_WEIGHT_MAX)));
+                }
+                mTextPaint.setFontVariationSettings(
+                        FontVariationAxis.toFontVariationSettings(axes));
             } else {
                 mTextPaint.setFontVariationSettings(fontVariationSettings);
             }
@@ -10105,6 +10133,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             }
             outAttrs.hintText = mHint;
             outAttrs.targetInputMethodUser = mTextOperationUser;
+            outAttrs.targetDevicePolicyUser = mEnforceImePolicyUser;
             if (mText instanceof Editable) {
                 InputConnection ic = new EditableInputConnection(this);
                 outAttrs.initialSelStart = getSelectionStart();
@@ -10913,7 +10942,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     /**
      * The width passed in is now the desired layout width,
      * not the full view width with padding.
-     * {@hide}
+     * @hide
      */
     @VisibleForTesting
     @UnsupportedAppUsage
@@ -11027,6 +11056,11 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                         .setUseBoundsForWidth(mUseBoundsForWidth)
                         .setMinimumFontMetrics(getResolvedMinimumFontMetrics());
 
+                if (com.android.text.flags.Flags.fixShiftDrawingAmount()) {
+                    builder.setShiftDrawingOffsetForStartOverhang(
+                            mShiftDrawingOffsetForStartOverhang);
+                }
+
                 if (shouldEllipsize) {
                     builder.setEllipsize(mEllipsize)
                             .setEllipsizedWidth(ellipsisWidth);
@@ -11092,6 +11126,10 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                     .setEllipsize(getKeyListener() == null ? effectiveEllipsize : null)
                     .setEllipsizedWidth(ellipsisWidth)
                     .setMinimumFontMetrics(getResolvedMinimumFontMetrics());
+            if (com.android.text.flags.Flags.fixShiftDrawingAmount()) {
+                builder.setShiftDrawingOffsetForStartOverhang(
+                        mShiftDrawingOffsetForStartOverhang);
+            }
             result = builder.build();
         } else {
             if (boring == UNKNOWN_BORING) {
@@ -11176,6 +11214,10 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                             mLineBreakStyle, mLineBreakWordStyle))
                     .setUseBoundsForWidth(mUseBoundsForWidth)
                     .setMinimumFontMetrics(getResolvedMinimumFontMetrics());
+
+            if (com.android.text.flags.Flags.fixShiftDrawingAmount()) {
+                builder.setShiftDrawingOffsetForStartOverhang(mShiftDrawingOffsetForStartOverhang);
+            }
             if (shouldEllipsize) {
                 builder.setEllipsize(effectiveEllipsize)
                         .setEllipsizedWidth(ellipsisWidth);
@@ -11209,6 +11251,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     }
 
     private static int desired(Layout layout, boolean useBoundsForWidth) {
+        if (com.android.text.flags.Flags.fixShiftDrawingAmount() && useBoundsForWidth) {
+            return -1;
+        }
         int n = layout.getLineCount();
         CharSequence text = layout.getText();
         float max = 0;
@@ -11226,7 +11271,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             max = Math.max(max, layout.getLineMax(i));
         }
 
-        if (useBoundsForWidth) {
+        if (!com.android.text.flags.Flags.fixShiftDrawingAmount() && useBoundsForWidth) {
             max = Math.max(max, layout.computeDrawingBoundingBox().width());
         }
 
@@ -11561,6 +11606,11 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                         mLineBreakStyle, mLineBreakWordStyle))
                 .setUseBoundsForWidth(mUseBoundsForWidth)
                 .setMinimumFontMetrics(getResolvedMinimumFontMetrics());
+
+        if (com.android.text.flags.Flags.fixShiftDrawingAmount()) {
+            layoutBuilder.setShiftDrawingOffsetForStartOverhang(
+                    mShiftDrawingOffsetForStartOverhang);
+        }
 
         final StaticLayout layout = layoutBuilder.build();
 
@@ -12034,7 +12084,15 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             getInterestingRect(mTempRect, line);
             mTempRect.offset(mScrollX, mScrollY);
 
-            if (requestRectangleOnScreen(mTempRect)) {
+            boolean requestRectangleOnScreenResult;
+            if (android.view.accessibility.Flags.requestRectangleWithSource()) {
+                requestRectangleOnScreenResult = requestRectangleOnScreen(mTempRect, false,
+                        View.RECTANGLE_ON_SCREEN_REQUEST_SOURCE_TEXT_CURSOR);
+            } else {
+                requestRectangleOnScreenResult = requestRectangleOnScreen(mTempRect);
+            }
+
+            if (requestRectangleOnScreenResult) {
                 changed = true;
             }
         }
@@ -13706,11 +13764,31 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             }
         }
         mTextOperationUser = user;
+        mEnforceImePolicyUser = null;
         // Invalidate some resources
         mCurrentSpellCheckerLocaleCache = null;
         if (mEditor != null) {
             mEditor.onTextOperationUserChanged();
         }
+    }
+
+    /**
+     * Enforce {@link UserHandle}'s DevicePolicy for allowlist of IMEs that can interact
+     * with this {@link TextView}.
+     *
+     * <p>Most of applications should not worry about this. Some privileged apps like lockscreen,
+     * settings may need to set this so that the system can limit only allowed IMEs to interact
+     * with {@link TextView}.</p>
+     *
+     * @param user {@link UserHandle} whose DevicePolicy is used for allowlist of IMEs for this
+     *        {@link TextView}. {@code null} to reset {@link #mEnforceImePolicyUser}.
+     * @hide
+     */
+    @RequiresPermission(INTERACT_ACROSS_USERS_FULL)
+    @FlaggedApi(android.view.inputmethod.Flags.FLAG_ENFORCE_DEVICE_POLICY_IME)
+    @TestApi
+    public final void setEnforceImePolicyUser(@Nullable UserHandle user) {
+        mEnforceImePolicyUser = user;
     }
 
     @Override

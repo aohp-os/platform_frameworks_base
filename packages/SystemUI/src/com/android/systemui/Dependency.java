@@ -27,11 +27,13 @@ import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.common.domain.interactor.SysUIStateDisplaysInteractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.fragments.FragmentService;
+import com.android.systemui.media.NotificationMediaManager;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.NavigationModeController;
@@ -39,10 +41,8 @@ import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.PluginManager;
 import com.android.systemui.plugins.VolumeDialogController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
-import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager;
 import com.android.systemui.statusbar.notification.stack.AmbientState;
@@ -129,7 +129,7 @@ public class Dependency {
     @Inject Lazy<MetricsLogger> mMetricsLogger;
     @Inject Lazy<UiOffloadThread> mUiOffloadThread;
     @Inject Lazy<LightBarController> mLightBarController;
-    @Inject Lazy<OverviewProxyService> mOverviewProxyService;
+    @Inject Lazy<LauncherProxyService> mLauncherProxyService;
     @Inject Lazy<NavigationModeController> mNavBarModeController;
     @Inject Lazy<NavigationBarController> mNavigationBarController;
     @Inject Lazy<StatusBarStateController> mStatusBarStateController;
@@ -149,6 +149,7 @@ public class Dependency {
     @Inject Lazy<DialogTransitionAnimator> mDialogTransitionAnimatorLazy;
     @Inject Lazy<UserTracker> mUserTrackerLazy;
     @Inject Lazy<StatusBarWindowControllerStore> mStatusBarWindowControllerStoreLazy;
+    @Inject Lazy<SysUIStateDisplaysInteractor> mSysUIStateDisplaysInteractor;
 
     @Inject
     public Dependency() {
@@ -175,7 +176,7 @@ public class Dependency {
         mProviders.put(MetricsLogger.class, mMetricsLogger::get);
         mProviders.put(UiOffloadThread.class, mUiOffloadThread::get);
         mProviders.put(LightBarController.class, mLightBarController::get);
-        mProviders.put(OverviewProxyService.class, mOverviewProxyService::get);
+        mProviders.put(LauncherProxyService.class, mLauncherProxyService::get);
         mProviders.put(NavigationModeController.class, mNavBarModeController::get);
         mProviders.put(NavigationBarController.class, mNavigationBarController::get);
         mProviders.put(StatusBarStateController.class, mStatusBarStateController::get);
@@ -192,6 +193,7 @@ public class Dependency {
         mProviders.put(SystemUIDialogManager.class, mSystemUIDialogManagerLazy::get);
         mProviders.put(DialogTransitionAnimator.class, mDialogTransitionAnimatorLazy::get);
         mProviders.put(UserTracker.class, mUserTrackerLazy::get);
+        mProviders.put(SysUIStateDisplaysInteractor.class, mSysUIStateDisplaysInteractor::get);
         mProviders.put(
                 StatusBarWindowControllerStore.class, mStatusBarWindowControllerStoreLazy::get);
 

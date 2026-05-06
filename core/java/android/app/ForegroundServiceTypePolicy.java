@@ -49,11 +49,14 @@ import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.app.compat.CompatChanges;
 import android.app.role.RoleManager;
+import android.companion.virtual.VirtualDevice;
+import android.companion.virtual.VirtualDeviceManager;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.Disabled;
 import android.compat.annotation.EnabledAfter;
 import android.compat.annotation.Overridable;
+import android.content.AttributionSource;
 import android.content.Context;
 import android.content.PermissionChecker;
 import android.content.pm.PackageManager;
@@ -67,7 +70,9 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.permission.PermissionCheckerManager;
+import android.permission.PermissionManager;
 import android.provider.DeviceConfig;
+import android.telecom.TelecomManager;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
@@ -346,8 +351,13 @@ public abstract class ForegroundServiceTypePolicy {
                 new RegularPermission(Manifest.permission.FOREGROUND_SERVICE_PHONE_CALL)
             }, true),
             new ForegroundServiceTypePermissions(new ForegroundServiceTypePermission[] {
+                // For VoIP applications using the Telecom APIs.
                 new RegularPermission(Manifest.permission.MANAGE_OWN_CALLS),
-                new RolePermission(RoleManager.ROLE_DIALER)
+                // For the user's chosen dialer app.
+                new RolePermission(RoleManager.ROLE_DIALER),
+                // For the OEM's preloaded Dialer (used for emergency calls even when the user has
+                // chosen a different dialer app as their default).
+                new SystemDialerPermission()
             }, false),
             FGS_TYPE_PERM_ENFORCEMENT_FLAG_PHONE_CALL /* permissionEnforcementFlag */,
             true /* permissionEnforcementFlagDefaultValue */,
@@ -504,13 +514,9 @@ public abstract class ForegroundServiceTypePolicy {
         permissions.add(new RegularPermission(Manifest.permission.ACTIVITY_RECOGNITION));
         permissions.add(new RegularPermission(Manifest.permission.HIGH_SAMPLING_RATE_SENSORS));
 
-        if (android.permission.flags.Flags.replaceBodySensorPermissionEnabled()) {
-            permissions.add(new RegularPermission(HealthPermissions.READ_HEART_RATE));
-            permissions.add(new RegularPermission(HealthPermissions.READ_SKIN_TEMPERATURE));
-            permissions.add(new RegularPermission(HealthPermissions.READ_OXYGEN_SATURATION));
-        } else {
-            permissions.add(new RegularPermission(Manifest.permission.BODY_SENSORS));
-        }
+        permissions.add(new RegularPermission(HealthPermissions.READ_HEART_RATE));
+        permissions.add(new RegularPermission(HealthPermissions.READ_SKIN_TEMPERATURE));
+        permissions.add(new RegularPermission(HealthPermissions.READ_OXYGEN_SATURATION));
 
         return permissions.toArray(new ForegroundServiceTypePermission[permissions.size()]);
     }
@@ -1174,17 +1180,48 @@ public abstract class ForegroundServiceTypePolicy {
         @PackageManager.PermissionResult
         public int checkPermission(@NonNull Context context, int callerUid, int callerPid,
                 String packageName, boolean allowWhileInUse) {
-            return checkPermission(context, mName, callerUid, callerPid, packageName,
-                    allowWhileInUse);
+            int permissionResult = checkPermission(context, mName, callerUid, callerPid,
+                    packageName, allowWhileInUse, Context.DEVICE_ID_DEFAULT);
+
+            if (permissionResult == PERMISSION_GRANTED
+                    || !PermissionManager.DEVICE_AWARE_PERMISSIONS.contains(mName)) {
+                return permissionResult;
+            }
+
+            // For device aware permissions, check if the permission is granted on any other
+            // active virtual device
+            VirtualDeviceManager vdm = context.getSystemService(VirtualDeviceManager.class);
+            if (vdm == null) {
+                return permissionResult;
+            }
+
+            final List<VirtualDevice> virtualDevices = vdm.getVirtualDevices();
+            for (int i = 0, size = virtualDevices.size(); i < size; i++) {
+                final VirtualDevice virtualDevice = virtualDevices.get(i);
+                int resolvedDeviceId = PermissionManager.resolveDeviceIdForPermissionCheck(
+                        context, virtualDevice.getDeviceId(), mName);
+                // we already checked on the default device context
+                if (resolvedDeviceId == Context.DEVICE_ID_DEFAULT) {
+                    continue;
+                }
+                permissionResult = checkPermission(context, mName, callerUid, callerPid,
+                        packageName, allowWhileInUse, resolvedDeviceId);
+                if (permissionResult == PERMISSION_GRANTED) {
+                    break;
+                }
+            }
+
+            return permissionResult;
         }
 
         @SuppressLint("AndroidFrameworkRequiresPermission")
         @PackageManager.PermissionResult
         int checkPermission(@NonNull Context context, @NonNull String name, int callerUid,
-                int callerPid, String packageName, boolean allowWhileInUse) {
+                int callerPid, String packageName, boolean allowWhileInUse, int deviceId) {
+            final AttributionSource attributionSource = new AttributionSource(callerUid,
+                    packageName, null /*attributionTag*/, deviceId);
             @PermissionCheckerManager.PermissionResult final int result =
-                    PermissionChecker.checkPermissionForPreflight(context, name,
-                            callerPid, callerUid, packageName);
+                    PermissionChecker.checkPermissionForPreflight(context, name, attributionSource);
             if (result == PERMISSION_HARD_DENIED) {
                 // If the user didn't grant this permission at all.
                 return PERMISSION_DENIED;
@@ -1196,7 +1233,7 @@ public abstract class ForegroundServiceTypePolicy {
                         ? PERMISSION_GRANTED : PERMISSION_DENIED;
             }
             final AppOpsManager appOpsManager = context.getSystemService(AppOpsManager.class);
-            final int mode = appOpsManager.unsafeCheckOpRawNoThrow(opCode, callerUid, packageName);
+            final int mode = appOpsManager.unsafeCheckOpRawNoThrow(opCode, attributionSource);
             switch (mode) {
                 case MODE_ALLOWED:
                     // The appop is just allowed, plain and simple.
@@ -1265,6 +1302,42 @@ public abstract class ForegroundServiceTypePolicy {
             final List<String> holders = rm.getRoleHoldersAsUser(mRole,
                     UserHandle.getUserHandleForUid(callerUid));
             return holders != null && holders.contains(packageName)
+                    ? PERMISSION_GRANTED : PERMISSION_DENIED;
+        }
+    }
+
+    /**
+     * Represents the pre-loaded system dialer which is preloaded on a device.  Used in the
+     * {@link #FGS_TYPE_POLICY_PHONE_CALL} to also allow the system dialer to be allowed to use a
+     * phone call FGS.
+     * <p>
+     * When the user places an emergency call, Telecom will always bind to the pre-loaded system
+     * dialer instead of the one filling the {@link RoleManager#ROLE_DIALER} role.  If the user has
+     * chosen a different app to fill that role, the system dialer will not be able to start its
+     * phone call FGS.
+     */
+    static class SystemDialerPermission extends ForegroundServiceTypePermission {
+        SystemDialerPermission() {
+            super("System Dialer");
+        }
+
+        @Override
+        @PackageManager.PermissionResult
+        public int checkPermission(@NonNull Context context, int callerUid, int callerPid,
+                @NonNull String packageName, boolean allowWhileInUse) {
+            if (!android.app.Flags.systemDialerPhoneCallFgsGrant()) {
+                return PERMISSION_DENIED;
+            }
+
+            final RoleManager roleManager = context.getSystemService(RoleManager.class);
+            if (!roleManager.isRoleAvailable(RoleManager.ROLE_DIALER)) {
+                // If the Dialer role does not exist on the device, then there will not be a system
+                // dialer which can use the phone call FGS type.
+                return PERMISSION_DENIED;
+            }
+            final TelecomManager tm = context.getSystemService(TelecomManager.class);
+            final String systemDialerPackage = tm.getSystemDialerPackage();
+            return systemDialerPackage != null && systemDialerPackage.equals(packageName)
                     ? PERMISSION_GRANTED : PERMISSION_DENIED;
         }
     }

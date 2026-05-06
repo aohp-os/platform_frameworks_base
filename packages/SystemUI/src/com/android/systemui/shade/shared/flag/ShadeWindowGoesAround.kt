@@ -16,8 +16,8 @@
 
 package com.android.systemui.shade.shared.flag
 
+import android.window.DesktopExperienceFlags
 import com.android.systemui.Flags
-import com.android.systemui.flags.FlagToken
 import com.android.systemui.flags.RefactorFlagUtils
 
 /** Helper for reading or using the shade window goes around flag state. */
@@ -26,14 +26,28 @@ object ShadeWindowGoesAround {
     /** The aconfig flag name */
     const val FLAG_NAME = Flags.FLAG_SHADE_WINDOW_GOES_AROUND
 
-    /** A token used for dependency declaration */
-    val token: FlagToken
-        get() = FlagToken(FLAG_NAME, isEnabled)
+    /**
+     * When true, this is defined as [DesktopExperienceFlags] to make it possible to enable it
+     * together with all the other desktop experience flags from the dev settings.
+     *
+     * Alternatively, using adb:
+     * ```bash
+     * adb shell setprop persist.wm.debug.desktop_experience_devopts 1
+     * ```
+     */
+    private const val ENABLED_BY_DESKTOP_EXPERIENCE_DEV_OPTION = true
+
+    val FLAG =
+        DesktopExperienceFlags.DesktopExperienceFlag(
+            Flags::shadeWindowGoesAround,
+            /* shouldOverrideByDevOption= */ ENABLED_BY_DESKTOP_EXPERIENCE_DEV_OPTION,
+            Flags.FLAG_SHADE_WINDOW_GOES_AROUND,
+        )
 
     /** Is the refactor enabled */
     @JvmStatic
     inline val isEnabled: Boolean
-        get() = Flags.shadeWindowGoesAround()
+        get() = FLAG.isTrue
 
     /**
      * Called to ensure code is only run when the flag is enabled. This protects users from the
@@ -43,14 +57,6 @@ object ShadeWindowGoesAround {
     @JvmStatic
     inline fun isUnexpectedlyInLegacyMode() =
         RefactorFlagUtils.isUnexpectedlyInLegacyMode(isEnabled, FLAG_NAME)
-
-    /**
-     * Called to ensure code is only run when the flag is enabled. This will throw an exception if
-     * the flag is not enabled to ensure that the refactor author catches issues in testing.
-     * Caution!! Using this check incorrectly will cause crashes in nextfood builds!
-     */
-    @JvmStatic
-    inline fun assertInNewMode() = RefactorFlagUtils.assertInNewMode(isEnabled, FLAG_NAME)
 
     /**
      * Called to ensure code is only run when the flag is disabled. This will throw an exception if

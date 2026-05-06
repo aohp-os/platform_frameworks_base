@@ -22,15 +22,17 @@ import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.pm.UserInfo
 import android.os.Bundle
+import android.os.DeadObjectException
 import android.os.UserHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.communal.shared.model.fakeGlanceableHubMultiUserHelper
-import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.coroutines.collectValues
 import com.android.systemui.kosmos.applicationCoroutineScope
-import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.collectValues
+import com.android.systemui.kosmos.runTest
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.testKosmos
 import com.android.systemui.user.data.model.SelectedUserModel
@@ -39,14 +41,9 @@ import com.android.systemui.user.data.repository.fakeUserRepository
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.user.domain.interactor.selectedUserInteractor
 import com.android.systemui.util.mockito.any
-import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.mockito.withArgCaptor
 import com.google.common.truth.Truth.assertThat
 import java.util.Optional
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -56,13 +53,12 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
+import org.mockito.kotlin.whenever
 
 @SmallTest
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class CommunalWidgetHostTest : SysuiTestCase() {
-    private val kosmos = testKosmos()
-    private val testScope = kosmos.testScope
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
 
     @Mock private lateinit var appWidgetManager: AppWidgetManager
     @Mock private lateinit var appWidgetHost: CommunalAppWidgetHost
@@ -103,12 +99,11 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun allocateIdAndBindWidget_withCurrentUser() =
-        testScope.runTest {
+        kosmos.runTest {
             val provider = ComponentName("pkg_name", "cls_name")
             val widgetId = 1
             val userId by collectLastValue(selectedUserInteractor.selectedUser)
             selectUser()
-            runCurrent()
 
             val user = UserHandle(checkNotNull(userId))
             whenever(appWidgetHost.allocateAppWidgetId()).thenReturn(widgetId)
@@ -129,7 +124,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun allocateIdAndBindWidget_onSuccess() =
-        testScope.runTest {
+        kosmos.runTest {
             val provider = ComponentName("pkg_name", "cls_name")
             val widgetId = 1
             val user = UserHandle(0)
@@ -152,7 +147,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun allocateIdAndBindWidget_onFailure() =
-        testScope.runTest {
+        kosmos.runTest {
             val provider = ComponentName("pkg_name", "cls_name")
             val widgetId = 1
             val user = UserHandle(0)
@@ -179,12 +174,11 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun listener_exactlyOneListenerRegisteredForEachWidgetWhenHostStartListening() =
-        testScope.runTest {
+        kosmos.runTest {
             // 3 widgets registered with the host
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2, 3))
 
             underTest.startObservingHost()
-            runCurrent()
 
             // Make sure no listener is set before host starts listening
             verify(appWidgetHost, never()).setListener(any(), any())
@@ -195,7 +189,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
                     verify(appWidgetHost).addObserver(capture())
                 }
             observer.onHostStartListening()
-            runCurrent()
 
             // Verify a listener is set for each widget
             verify(appWidgetHost, times(3)).setListener(any(), any())
@@ -206,12 +199,11 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun listener_listenersRemovedWhenHostStopListening() =
-        testScope.runTest {
+        kosmos.runTest {
             // 3 widgets registered with the host
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2, 3))
 
             underTest.startObservingHost()
-            runCurrent()
 
             // Host starts listening
             val observer =
@@ -219,7 +211,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
                     verify(appWidgetHost).addObserver(capture())
                 }
             observer.onHostStartListening()
-            runCurrent()
 
             // Verify none of the listener is removed before host stop listening
             verify(appWidgetHost, never()).removeListener(any())
@@ -235,7 +226,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun listener_addNewListenerWhenNewIdAllocated() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf())
             val observer = start()
 
@@ -251,7 +242,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun listener_removeListenerWhenWidgetDeleted() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1))
             val observer = start()
 
@@ -267,7 +258,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun providerInfo_populatesWhenStartListening() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
             whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
             whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
@@ -279,7 +270,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             assertThat(providerInfoValues[0]).isEmpty()
 
             start()
-            runCurrent()
 
             // Assert that the provider info map is populated after host started listening, and that
             // all providers are emitted at once
@@ -290,13 +280,12 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun providerInfo_clearsWhenStopListening() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
             whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
             whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
 
             val observer = start()
-            runCurrent()
 
             // Assert that the provider info map is populated
             val providerInfo by collectLastValue(underTest.appWidgetProviders)
@@ -312,7 +301,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun providerInfo_onUpdate() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
             whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
             whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
@@ -320,7 +309,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             val providerInfo by collectLastValue(underTest.appWidgetProviders)
 
             start()
-            runCurrent()
 
             // Assert that the provider info map is populated
             assertThat(providerInfo)
@@ -332,7 +320,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
                     verify(appWidgetHost).setListener(eq(1), capture())
                 }
             listener.onUpdateProviderInfo(providerInfo3)
-            runCurrent()
 
             // Assert that the update is reflected in the flow
             assertThat(providerInfo)
@@ -341,7 +328,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun providerInfo_updateWhenANewWidgetIsBound() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
             whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
             whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
@@ -349,7 +336,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             val providerInfo by collectLastValue(underTest.appWidgetProviders)
 
             start()
-            runCurrent()
 
             // Assert that the provider info map is populated
             assertThat(providerInfo)
@@ -360,7 +346,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             whenever(appWidgetManager.getAppWidgetInfo(3)).thenReturn(providerInfo3)
             val newWidgetComponentName = ComponentName.unflattenFromString("pkg_new/cls_new")!!
             underTest.allocateIdAndBindWidget(newWidgetComponentName)
-            runCurrent()
 
             // Assert that the new provider is reflected in the flow
             assertThat(providerInfo)
@@ -371,7 +356,7 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
     @Test
     fun providerInfo_updateWhenWidgetRemoved() =
-        testScope.runTest {
+        kosmos.runTest {
             whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
             whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
             whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
@@ -379,7 +364,6 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             val providerInfo by collectLastValue(underTest.appWidgetProviders)
 
             val observer = start()
-            runCurrent()
 
             // Assert that the provider info map is populated
             assertThat(providerInfo)
@@ -387,10 +371,37 @@ class CommunalWidgetHostTest : SysuiTestCase() {
 
             // Remove widget 1
             observer.onDeleteAppWidgetId(1)
-            runCurrent()
 
             // Assert that provider info for widget 1 is removed
             assertThat(providerInfo).containsExactlyEntriesIn(mapOf(Pair(2, providerInfo2)))
+        }
+
+    @Test
+    fun refreshProviderInfo_handlesDeadObjectException() =
+        kosmos.runTest {
+            val providerInfoValues by collectLastValue(underTest.appWidgetProviders)
+
+            whenever(appWidgetHost.appWidgetIds).thenReturn(intArrayOf(1, 2))
+            whenever(appWidgetHost.setListener(eq(1), org.mockito.kotlin.any())).thenAnswer {
+                throw DeadObjectException()
+            }
+            whenever(appWidgetManager.getAppWidgetInfo(1)).thenReturn(providerInfo1)
+            whenever(appWidgetManager.getAppWidgetInfo(2)).thenReturn(providerInfo2)
+            underTest.refreshProviders()
+
+            with(providerInfoValues!!) {
+                assertThat(size).isEqualTo(1)
+                assertThat(containsKey(2)).isTrue()
+            }
+        }
+
+    @Test
+    fun onAllocateAppWidgetId_handlesDeadObjectException() =
+        kosmos.runTest {
+            whenever(appWidgetHost.setListener(eq(1), org.mockito.kotlin.any())).thenAnswer {
+                throw DeadObjectException()
+            }
+            underTest.onAllocateAppWidgetId(1)
         }
 
     private fun selectUser() {
@@ -401,9 +412,8 @@ class CommunalWidgetHostTest : SysuiTestCase() {
             )
     }
 
-    private fun TestScope.start(): CommunalAppWidgetHost.Observer {
+    private fun start(): CommunalAppWidgetHost.Observer {
         underTest.startObservingHost()
-        runCurrent()
 
         val observer =
             withArgCaptor<CommunalAppWidgetHost.Observer> {

@@ -65,7 +65,9 @@ public final class Adjustment implements Parcelable {
             KEY_SENSITIVE_CONTENT,
             KEY_RANKING_SCORE,
             KEY_NOT_CONVERSATION,
-            KEY_TYPE
+            KEY_TYPE,
+            KEY_UNCLASSIFY,
+            KEY_SUMMARIZATION
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Keys {}
@@ -188,7 +190,7 @@ public final class Adjustment implements Parcelable {
             TYPE_PROMOTION,
             TYPE_SOCIAL_MEDIA,
             TYPE_NEWS,
-            TYPE_CONTENT_RECOMMENDATION
+            TYPE_CONTENT_RECOMMENDATION,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Types {}
@@ -221,6 +223,22 @@ public final class Adjustment implements Parcelable {
      */
     @FlaggedApi(Flags.FLAG_NOTIFICATION_CLASSIFICATION)
     public static final int TYPE_CONTENT_RECOMMENDATION = 4;
+
+    /**
+     * Data type: NotificationChannel; the presence of this key indicates that the notification
+     * classification should be removed and the channel reverted to its original channel (provided).
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_NOTIFICATION_CLASSIFICATION)
+    public static final String KEY_UNCLASSIFY = "key_unclassify";
+
+    /**
+     * Data type: CharSequence, a summarization of the text of the notification, or, if provided for
+     * a group summary, a summarization of the text of all of the notificatrions in the group.
+     * Send this key with a null value to remove an existing summarization.
+     */
+    @FlaggedApi(android.app.Flags.FLAG_NM_SUMMARIZATION)
+    public static final String KEY_SUMMARIZATION = "key_summarization";
 
     /**
      * Create a notification adjustment.
@@ -259,6 +277,16 @@ public final class Adjustment implements Parcelable {
         mSignals = signals;
         mExplanation = explanation;
         mUser = userHandle.getIdentifier();
+    }
+
+    /**
+     * Create a deep copy of a {@link Adjustment}
+     * @hide
+     */
+    public Adjustment(Adjustment src) {
+        this(src.mPackage, src.mKey, src.mSignals != null ? src.mSignals.deepCopy() : new Bundle(),
+                src.mExplanation, src.mUser);
+        this.mIssuer = src.mIssuer;
     }
 
     /**

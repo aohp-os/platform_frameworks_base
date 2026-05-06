@@ -17,16 +17,25 @@
 
 package com.android.systemui.user.data.repository
 
+import android.app.activityManager
+import android.app.admin.DevicePolicyManager
 import android.app.admin.devicePolicyManager
+import android.content.Intent
+import android.content.applicationContext
 import android.content.pm.UserInfo
 import android.internal.statusbar.fakeStatusBarService
 import android.os.UserHandle
 import android.os.UserManager
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
+import android.platform.test.flag.junit.FlagsParameterization
+import android.platform.test.flag.junit.FlagsParameterization.allCombinationsOf
 import android.provider.Settings
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags.FLAG_DO_NOT_USE_RUN_BLOCKING
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.broadcast.broadcastDispatcher
+import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.kosmos.useUnconfinedTestDispatcher
@@ -40,7 +49,6 @@ import com.android.systemui.util.settings.fakeGlobalSettings
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runTest
@@ -51,11 +59,14 @@ import org.mockito.Mock
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4
+import platform.test.runner.parameterized.Parameters
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
-@RunWith(AndroidJUnit4::class)
-class UserRepositoryImplTest : SysuiTestCase() {
+@RunWith(ParameterizedAndroidJunit4::class)
+class UserRepositoryImplTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     private val kosmos = testKosmos().useUnconfinedTestDispatcher()
     private val testDispatcher = kosmos.testDispatcher
@@ -64,6 +75,7 @@ class UserRepositoryImplTest : SysuiTestCase() {
     private val broadcastDispatcher = kosmos.broadcastDispatcher
     private val devicePolicyManager = kosmos.devicePolicyManager
     private val statusBarService = kosmos.fakeStatusBarService
+    private val activityManager = kosmos.activityManager
 
     @Mock private lateinit var manager: UserManager
 
@@ -71,14 +83,15 @@ class UserRepositoryImplTest : SysuiTestCase() {
 
     private lateinit var tracker: FakeUserTracker
 
+    init {
+        mSetFlagsRule.setFlagsParameterization(flags)
+    }
+
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
         tracker = FakeUserTracker()
-        context.orCreateTestableResources.addOverride(
-            R.bool.config_userSwitchingMustGoThroughLoginScreen,
-            false,
-        )
+        setUserSwitchingMustGoThroughLoginScreen(false)
     }
 
     @Test
@@ -174,6 +187,39 @@ class UserRepositoryImplTest : SysuiTestCase() {
         }
 
     @Test
+    fun userUnlockedFlow_tracksBroadcastedChanges() =
+        testScope.runTest {
+            val userHandle: UserHandle = mock()
+            underTest = create(testScope.backgroundScope)
+            val latest by collectLastValue(underTest.isUserUnlocked(userHandle))
+            whenever(manager.isUserUnlocked(eq(userHandle))).thenReturn(false)
+            broadcastDispatcher.sendIntentToMatchingReceiversOnly(
+                context,
+                Intent(Intent.ACTION_USER_UNLOCKED),
+            )
+
+            assertThat(latest).isFalse()
+
+            whenever(manager.isUserUnlocked(eq(userHandle))).thenReturn(true)
+            broadcastDispatcher.sendIntentToMatchingReceiversOnly(
+                context,
+                Intent(Intent.ACTION_USER_UNLOCKED),
+            )
+
+            assertThat(latest).isTrue()
+        }
+
+    @Test
+    fun userUnlockedFlow_initialValueReported() =
+        testScope.runTest {
+            val userHandle: UserHandle = mock()
+            underTest = create(testScope.backgroundScope)
+            whenever(manager.isUserUnlocked(eq(userHandle))).thenReturn(true)
+            val latest by collectLastValue(underTest.isUserUnlocked(userHandle))
+            assertThat(latest).isTrue()
+        }
+
+    @Test
     fun refreshUsers_sortsByCreationTime_guestUserLast() =
         testScope.runTest {
             underTest = create(testScope.backgroundScope)
@@ -198,13 +244,26 @@ class UserRepositoryImplTest : SysuiTestCase() {
     private fun setUpUsers(
         count: Int,
         isLastGuestUser: Boolean = false,
+        isFirstSystemUser: Boolean = false,
         selectedIndex: Int = 0,
     ): List<UserInfo> {
         val userInfos =
             (0 until count).map { index ->
-                createUserInfo(index, isGuest = isLastGuestUser && index == count - 1)
+                createUserInfo(
+                    index,
+                    isSystem = isFirstSystemUser && index == 0,
+                    isGuest = isLastGuestUser && index == count - 1,
+                )
             }
         whenever(manager.aliveUsers).thenReturn(userInfos)
+        whenever(manager.getUserLogoutability(userInfos[selectedIndex].id))
+            .thenReturn(
+                if (isFirstSystemUser && selectedIndex == 0) {
+                    UserManager.LOGOUTABILITY_STATUS_CANNOT_LOGOUT_SYSTEM_USER
+                } else {
+                    UserManager.LOGOUTABILITY_STATUS_OK
+                }
+            )
         tracker.set(userInfos, selectedIndex)
         return userInfos
     }
@@ -273,14 +332,173 @@ class UserRepositoryImplTest : SysuiTestCase() {
             job.cancel()
         }
 
-    private fun createUserInfo(id: Int, isGuest: Boolean): UserInfo {
+    @Test
+    fun isPolicyManagerLogoutEnabled_policyManagerLogoutDisabled_alwaysFalse() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            mockPolicyManagerLogoutUser(LogoutUserResult.NON_SYSTEM_CURRENT)
+            setPolicyManagerLogoutEnabled(false)
+            setUpUsers(count = 2, selectedIndex = 0)
+            tracker.onProfileChanged()
+
+            val policyManagerLogoutEnabled by
+                collectLastValue(underTest.isPolicyManagerLogoutEnabled)
+
+            assertThat(policyManagerLogoutEnabled).isFalse()
+
+            setUpUsers(count = 2, selectedIndex = 1)
+            tracker.onProfileChanged()
+            assertThat(policyManagerLogoutEnabled).isFalse()
+        }
+
+    @Test
+    fun isPolicyManagerLogoutEnabled_policyManagerLogoutEnabled_NullLogoutUser_alwaysFalse() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            mockPolicyManagerLogoutUser(LogoutUserResult.NONE)
+            setPolicyManagerLogoutEnabled(true)
+            setUpUsers(count = 2, selectedIndex = 0)
+            tracker.onProfileChanged()
+
+            val policyManagerLogoutEnabled by
+                collectLastValue(underTest.isPolicyManagerLogoutEnabled)
+
+            assertThat(policyManagerLogoutEnabled).isFalse()
+
+            setUpUsers(count = 2, selectedIndex = 1)
+            tracker.onProfileChanged()
+            assertThat(policyManagerLogoutEnabled).isFalse()
+        }
+
+    @Test
+    fun isPolicyManagerLogoutEnabled_policyManagerLogoutEnabled_NonSystemLogoutUser_trueWhenNonSystem() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            mockPolicyManagerLogoutUser(LogoutUserResult.NON_SYSTEM_CURRENT)
+            setPolicyManagerLogoutEnabled(true)
+            setUpUsers(count = 2, selectedIndex = 0)
+            tracker.onProfileChanged()
+
+            val policyManagerLogoutEnabled by
+                collectLastValue(underTest.isPolicyManagerLogoutEnabled)
+
+            assertThat(policyManagerLogoutEnabled).isFalse()
+
+            setUpUsers(count = 2, selectedIndex = 1)
+            tracker.onProfileChanged()
+            assertThat(policyManagerLogoutEnabled).isTrue()
+        }
+
+    @Test
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutDisabled_alwaysFalse() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            mockPolicyManagerLogoutUser(LogoutUserResult.NON_SYSTEM_CURRENT)
+            setUserSwitchingMustGoThroughLoginScreen(false)
+            setUpUsers(count = 2, selectedIndex = 0)
+            tracker.onProfileChanged()
+
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            assertThat(userManagerLogoutEnabled).isFalse()
+
+            setUpUsers(count = 2, selectedIndex = 1)
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isFalse()
+        }
+
+    @Test
+    @EnableFlags(android.multiuser.Flags.FLAG_LOGOUT_USER_API)
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutEnabled_systemUserLogoutDisabled() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            setUserSwitchingMustGoThroughLoginScreen(true)
+            setUpUsers(
+                count = 3,
+                selectedIndex = 0,
+                isFirstSystemUser = true,
+                isLastGuestUser = true,
+            )
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isFalse()
+        }
+
+    @Test
+    @EnableFlags(android.multiuser.Flags.FLAG_LOGOUT_USER_API)
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutEnabled_regularUserLogoutEnabled() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            setUserSwitchingMustGoThroughLoginScreen(true)
+            setUpUsers(
+                count = 3,
+                selectedIndex = 1,
+                isFirstSystemUser = true,
+                isLastGuestUser = true,
+            )
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isTrue()
+        }
+
+    @Test
+    @EnableFlags(android.multiuser.Flags.FLAG_LOGOUT_USER_API)
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutEnabled_guestUserLogoutEnabled() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            setUserSwitchingMustGoThroughLoginScreen(true)
+            setUpUsers(
+                count = 3,
+                selectedIndex = 2,
+                isFirstSystemUser = true,
+                isLastGuestUser = true,
+            )
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isTrue()
+        }
+
+    @Test
+    @DisableFlags(android.multiuser.Flags.FLAG_LOGOUT_USER_API)
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutEnabled_noLogoutApi_systemUserLogoutDisabled() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            setUserSwitchingMustGoThroughLoginScreen(true)
+            setUpUsers(count = 2, selectedIndex = 0, isFirstSystemUser = true)
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isFalse()
+        }
+
+    @Test
+    @DisableFlags(android.multiuser.Flags.FLAG_LOGOUT_USER_API)
+    fun isLogoutWithUserManagerEnabled_userManagerLogoutEnabled_noLogoutApi_regularUserLogoutEnabled() =
+        testScope.runTest {
+            underTest = create(testScope.backgroundScope)
+            setUserSwitchingMustGoThroughLoginScreen(true)
+            setUpUsers(count = 2, selectedIndex = 1, isFirstSystemUser = true)
+            val userManagerLogoutEnabled by collectLastValue(underTest.isUserManagerLogoutEnabled)
+
+            tracker.onProfileChanged()
+            assertThat(userManagerLogoutEnabled).isTrue()
+        }
+
+    private fun createUserInfo(id: Int, isSystem: Boolean, isGuest: Boolean): UserInfo {
         val flags = 0
         return UserInfo(
             id,
             "user_$id",
             /* iconPath= */ "",
             flags,
-            if (isGuest) UserManager.USER_TYPE_FULL_GUEST else UserInfo.getDefaultUserType(flags),
+            when {
+                isSystem -> UserManager.USER_TYPE_FULL_SYSTEM
+                isGuest -> UserManager.USER_TYPE_FULL_GUEST
+                else -> UserInfo.getDefaultUserType(flags)
+            },
         )
     }
 
@@ -319,6 +537,39 @@ class UserRepositoryImplTest : SysuiTestCase() {
         assertThat(model.isUserSwitcherEnabled).isEqualTo(expectedUserSwitcherEnabled)
     }
 
+    private fun setPolicyManagerLogoutEnabled(enabled: Boolean) {
+        whenever(devicePolicyManager.isLogoutEnabled).thenReturn(enabled)
+        broadcastDispatcher.sendIntentToMatchingReceiversOnly(
+            kosmos.applicationContext,
+            Intent(DevicePolicyManager.ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED),
+        )
+    }
+
+    private fun setUserSwitchingMustGoThroughLoginScreen(enabled: Boolean) {
+        context.orCreateTestableResources.addOverride(
+            com.android.internal.R.bool.config_userSwitchingMustGoThroughLoginScreen,
+            enabled,
+        )
+    }
+
+    private fun mockPolicyManagerLogoutUser(result: LogoutUserResult) {
+        when (result) {
+            LogoutUserResult.NONE -> {
+                whenever(devicePolicyManager.logoutUser).thenReturn(null)
+            }
+
+            LogoutUserResult.NON_SYSTEM_CURRENT -> {
+                whenever(devicePolicyManager.logoutUser).thenAnswer {
+                    if (tracker.userHandle != UserHandle.SYSTEM) {
+                        tracker.userHandle
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+    }
+
     private fun create(scope: CoroutineScope): UserRepositoryImpl {
         return UserRepositoryImpl(
             appContext = context,
@@ -332,10 +583,22 @@ class UserRepositoryImplTest : SysuiTestCase() {
             devicePolicyManager = devicePolicyManager,
             resources = context.resources,
             statusBarService = statusBarService,
+            activityManager = activityManager,
         )
     }
 
     companion object {
         @JvmStatic private val IMMEDIATE = Dispatchers.Main.immediate
+
+        @JvmStatic
+        @Parameters(name = "{0}")
+        fun getParams(): List<FlagsParameterization> {
+            return allCombinationsOf(FLAG_DO_NOT_USE_RUN_BLOCKING)
+        }
+    }
+
+    private enum class LogoutUserResult {
+        NONE,
+        NON_SYSTEM_CURRENT,
     }
 }

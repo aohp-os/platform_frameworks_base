@@ -17,11 +17,10 @@
 package com.android.systemui.qs.tiles
 
 import android.os.Handler
-import android.platform.test.flag.junit.FlagsParameterization
-import android.platform.test.flag.junit.FlagsParameterization.allCombinationsOf
 import android.service.quicksettings.Tile
 import android.testing.TestableLooper
 import android.testing.TestableLooper.RunWithLooper
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.logging.MetricsLogger
 import com.android.systemui.SysuiTestCase
@@ -30,59 +29,55 @@ import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.qs.QSHost
 import com.android.systemui.qs.QsEventLogger
-import com.android.systemui.qs.flags.QSComposeFragment
 import com.android.systemui.qs.logging.QSLogger
+import com.android.systemui.qs.tiles.dialog.InternetDetailsViewModel
 import com.android.systemui.qs.tiles.dialog.InternetDialogManager
-import com.android.systemui.qs.tiles.dialog.WifiStateWorker
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.connectivity.AccessPointController
-import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
+import com.android.systemui.statusbar.pipeline.airplane.data.repository.airplaneModeRepository
+import com.android.systemui.statusbar.pipeline.airplane.data.repository.fake
+import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.airplaneModeInteractor
 import com.android.systemui.statusbar.pipeline.ethernet.domain.EthernetInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.FakeMobileIconsInteractor
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeMobileMappingsProxy
 import com.android.systemui.statusbar.pipeline.shared.data.model.DefaultConnectionModel
 import com.android.systemui.statusbar.pipeline.shared.data.model.DefaultConnectionModel.Wifi
-import com.android.systemui.statusbar.pipeline.shared.data.repository.FakeConnectivityRepository
+import com.android.systemui.statusbar.pipeline.shared.data.repository.connectivityRepository
+import com.android.systemui.statusbar.pipeline.shared.data.repository.fake
 import com.android.systemui.statusbar.pipeline.shared.ui.viewmodel.InternetTileViewModel
 import com.android.systemui.statusbar.pipeline.wifi.data.repository.FakeWifiRepository
 import com.android.systemui.statusbar.pipeline.wifi.domain.interactor.WifiInteractorImpl
 import com.android.systemui.statusbar.pipeline.wifi.shared.model.WifiNetworkModel
 import com.android.systemui.statusbar.pipeline.wifi.shared.model.WifiScanEntry
-import com.android.systemui.util.mockito.mock
+import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
-import org.mockito.kotlin.eq
-import org.mockito.kotlin.times
-import org.mockito.kotlin.verify
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import platform.test.runner.parameterized.ParameterizedAndroidJunit4
-import platform.test.runner.parameterized.Parameters
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWithLooper(setAsMainLooper = true)
-@RunWith(ParameterizedAndroidJunit4::class)
-class InternetTileNewImplTest(flags: FlagsParameterization) : SysuiTestCase() {
-    init {
-        mSetFlagsRule.setFlagsParameterization(flags)
-    }
+@RunWith(AndroidJUnit4::class)
+class InternetTileNewImplTest : SysuiTestCase() {
 
     lateinit var underTest: InternetTileNewImpl
 
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = TestScope(testDispatcher)
+    private val kosmos = testKosmos()
 
-    private var airplaneModeRepository = FakeAirplaneModeRepository()
-    private var connectivityRepository = FakeConnectivityRepository()
+    private var airplaneModeRepository = kosmos.airplaneModeRepository.fake
+    private var airplaneModeInteractor = kosmos.airplaneModeInteractor
+    private var connectivityRepository = kosmos.connectivityRepository.fake
     private var ethernetInteractor = EthernetInteractor(connectivityRepository)
     private var mobileIconsInteractor = FakeMobileIconsInteractor(FakeMobileMappingsProxy(), mock())
     private var wifiRepository = FakeWifiRepository()
@@ -99,8 +94,8 @@ class InternetTileNewImplTest(flags: FlagsParameterization) : SysuiTestCase() {
     @Mock private lateinit var activityStarter: ActivityStarter
     @Mock private lateinit var logger: QSLogger
     @Mock private lateinit var dialogManager: InternetDialogManager
-    @Mock private lateinit var wifiStateWorker: WifiStateWorker
     @Mock private lateinit var accessPointController: AccessPointController
+    @Mock private lateinit var internetDetailsViewModelFactory: InternetDetailsViewModel.Factory
 
     @Before
     fun setUp() {
@@ -113,10 +108,11 @@ class InternetTileNewImplTest(flags: FlagsParameterization) : SysuiTestCase() {
 
         viewModel =
             InternetTileViewModel(
-                airplaneModeRepository,
+                airplaneModeInteractor,
                 connectivityRepository,
                 ethernetInteractor,
                 mobileIconsInteractor,
+                mock(),
                 wifiInteractor,
                 context,
                 testScope.backgroundScope,
@@ -135,13 +131,20 @@ class InternetTileNewImplTest(flags: FlagsParameterization) : SysuiTestCase() {
                 logger,
                 viewModel,
                 dialogManager,
-                wifiStateWorker,
                 accessPointController,
+                internetDetailsViewModelFactory,
             )
 
         underTest.initialize()
+
         underTest.setListening(Object(), true)
 
+        looper.processAllMessages()
+    }
+
+    @After
+    fun tearDown() {
+        underTest.destroy()
         looper.processAllMessages()
     }
 
@@ -236,35 +239,9 @@ class InternetTileNewImplTest(flags: FlagsParameterization) : SysuiTestCase() {
             assertThat(underTest.state.secondaryLabel).isEqualTo(WIFI_SSID)
         }
 
-    @Test
-    fun secondaryClick_turnsWifiOff() {
-        whenever(wifiStateWorker.isWifiEnabled).thenReturn(true)
-
-        underTest.secondaryClick(null)
-        looper.processAllMessages()
-
-        verify(wifiStateWorker, times(1)).isWifiEnabled = eq(false)
-    }
-
-    @Test
-    fun secondaryClick_turnsWifiOn() {
-        whenever(wifiStateWorker.isWifiEnabled).thenReturn(false)
-
-        underTest.secondaryClick(null)
-        looper.processAllMessages()
-
-        verify(wifiStateWorker, times(1)).isWifiEnabled = eq(true)
-    }
-
     companion object {
         const val WIFI_SSID = "test ssid"
         val ACTIVE_WIFI =
             WifiNetworkModel.Active.of(isValidated = true, level = 4, ssid = WIFI_SSID)
-
-        @JvmStatic
-        @Parameters(name = "{0}")
-        fun getParams(): List<FlagsParameterization> {
-            return allCombinationsOf(QSComposeFragment.FLAG_NAME)
-        }
     }
 }

@@ -37,11 +37,13 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.Logger
 import com.android.systemui.log.dagger.CommunalLog
+import com.android.systemui.user.domain.interactor.UserLockedInteractor
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Provider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 /**
  * Callback that will be invoked when the Room database is created. Then the database will be
@@ -57,6 +59,7 @@ constructor(
     @Named(DEFAULT_WIDGETS) private val defaultWidgets: Array<String>,
     @CommunalLog logBuffer: LogBuffer,
     private val userManager: UserManager,
+    private val userLockedInteractor: UserLockedInteractor,
 ) : RoomDatabase.Callback() {
     companion object {
         private const val TAG = "DefaultWidgetPopulation"
@@ -79,38 +82,36 @@ constructor(
         }
 
         bgScope.launch {
-            // Default widgets should be associated with the main user.
-            val user = userManager.mainUser
+            userLockedInteractor.isUserUnlocked(userManager.mainUser).first { it }
+            populateDefaultWidgets()
+        }
+    }
 
-            if (user == null) {
-                logger.w(
-                    "Skipped populating default widgets. Reason: device does not have a main user"
-                )
-                return@launch
-            }
+    private fun populateDefaultWidgets() {
+        // Default widgets should be associated with the main user.
+        val user = userManager.mainUser ?: return
 
-            val userSerialNumber = userManager.getUserSerialNumber(user.identifier)
+        val userSerialNumber = userManager.getUserSerialNumber(user.identifier)
 
-            defaultWidgets.forEachIndexed { index, name ->
-                val provider = ComponentName.unflattenFromString(name)
-                provider?.let {
-                    val id = communalWidgetHost.allocateIdAndBindWidget(provider, user)
-                    id?.let {
-                        communalWidgetDaoProvider
-                            .get()
-                            .addWidget(
-                                widgetId = id,
-                                componentName = name,
-                                rank = index,
-                                userSerialNumber = userSerialNumber,
-                                spanY = SpanValue.Fixed(3),
-                            )
-                    }
+        defaultWidgets.forEachIndexed { index, name ->
+            val provider = ComponentName.unflattenFromString(name)
+            provider?.let {
+                val id = communalWidgetHost.allocateIdAndBindWidget(provider, user)
+                id?.let {
+                    communalWidgetDaoProvider
+                        .get()
+                        .addWidget(
+                            widgetId = id,
+                            componentName = name,
+                            rank = index,
+                            userSerialNumber = userSerialNumber,
+                            spanY = SpanValue.Fixed(3),
+                        )
                 }
             }
-
-            logger.i("Populated default widgets in the database.")
         }
+
+        logger.i("Populated default widgets in the database.")
     }
 
     /**
@@ -170,6 +171,9 @@ interface CommunalWidgetDao {
         spanYNew: Int,
     ): Long
 
+    @Query("SELECT COUNT(widget_id) FROM communal_widget_table WHERE widget_id = :widgetId")
+    fun getWidgetCount(widgetId: Int): Long
+
     @Query("INSERT INTO communal_item_rank_table(rank) VALUES(:rank)")
     fun insertItemRank(rank: Int): Long
 
@@ -228,6 +232,10 @@ interface CommunalWidgetDao {
         userSerialNumber: Int,
         spanY: SpanValue,
     ): Long {
+        // Remove any existing entry with the same widget id  to prevent issue where multiple
+        // entries are linked to the same widget. This should not normally happen if all widgets
+        // are requested from the same provider.
+        removeAllWidgetsById(widgetId)
         val widgets = getWidgetsNow()
 
         // If rank is not specified (null or less than 0), rank it last by finding the current
@@ -250,6 +258,14 @@ interface CommunalWidgetDao {
             spanY = spanY.toFixed().value,
             spanYNew = spanY.toResponsive().value,
         )
+    }
+
+    @Transaction
+    fun removeAllWidgetsById(widgetId: Int) {
+        var continueRemoving = false
+        do {
+            continueRemoving = deleteWidgetById(widgetId)
+        } while (continueRemoving)
     }
 
     @Transaction

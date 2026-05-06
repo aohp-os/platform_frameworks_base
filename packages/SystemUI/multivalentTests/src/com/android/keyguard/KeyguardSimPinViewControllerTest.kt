@@ -16,6 +16,7 @@
 
 package com.android.keyguard
 
+import android.hardware.input.InputManager
 import android.telephony.TelephonyManager
 import android.testing.TestableLooper
 import android.view.LayoutInflater
@@ -35,6 +36,7 @@ import com.android.systemui.testKosmos
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
+import com.android.systemui.util.wrapper.LockPatternCheckerWrapper
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,7 +65,6 @@ class KeyguardSimPinViewControllerTest : SysuiTestCase() {
     @Mock private lateinit var keyguardSecurityCallback: KeyguardSecurityCallback
     @Mock private lateinit var messageAreaControllerFactory: KeyguardMessageAreaController.Factory
     @Mock private lateinit var latencyTracker: LatencyTracker
-    @Mock private lateinit var liftToActivateListener: LiftToActivateListener
     @Mock private lateinit var telephonyManager: TelephonyManager
     @Mock private lateinit var falsingCollector: FalsingCollector
     @Mock private lateinit var emergencyButtonController: EmergencyButtonController
@@ -74,6 +75,8 @@ class KeyguardSimPinViewControllerTest : SysuiTestCase() {
     @Mock private lateinit var mUserActivityNotifier: UserActivityNotifier
     private val updateMonitorCallbackArgumentCaptor =
         ArgumentCaptor.forClass(KeyguardUpdateMonitorCallback::class.java)
+    @Mock private lateinit var inputManager: InputManager
+    @Mock private lateinit var lockPatternChecker: LockPatternCheckerWrapper
 
     private val kosmos = testKosmos()
 
@@ -100,7 +103,6 @@ class KeyguardSimPinViewControllerTest : SysuiTestCase() {
                 keyguardSecurityCallback,
                 messageAreaControllerFactory,
                 latencyTracker,
-                liftToActivateListener,
                 telephonyManager,
                 falsingCollector,
                 emergencyButtonController,
@@ -109,7 +111,10 @@ class KeyguardSimPinViewControllerTest : SysuiTestCase() {
                 keyguardKeyboardInteractor,
                 kosmos.bouncerHapticPlayer,
                 mUserActivityNotifier,
+                inputManager,
+                lockPatternChecker,
             )
+        underTest.mIsInTestMode = true
         underTest.init()
         underTest.onViewAttached()
         underTest.onResume(0)

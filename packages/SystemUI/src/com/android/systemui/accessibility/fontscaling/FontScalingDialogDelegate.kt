@@ -36,6 +36,8 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.res.R
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.shade.domain.interactor.ShadeDialogContextInteractor
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.util.concurrency.DelayableExecutor
 import com.android.systemui.util.settings.SecureSettings
@@ -49,7 +51,7 @@ import kotlin.math.roundToInt
 class FontScalingDialogDelegate
 @Inject
 constructor(
-    private val context: Context,
+    @ShadeDisplayAware private val context: Context,
     private val systemUIDialogFactory: SystemUIDialog.Factory,
     private val layoutInflater: LayoutInflater,
     private val systemSettings: SystemSettings,
@@ -58,6 +60,7 @@ constructor(
     private val userTracker: UserTracker,
     @Main mainHandler: Handler,
     @Background private val backgroundDelayableExecutor: DelayableExecutor,
+    private val shadeDialogContextInteractor: ShadeDialogContextInteractor,
 ) : SystemUIDialog.Delegate {
     private val MIN_UPDATE_INTERVAL_MS: Long = 800
     private val CHANGE_BY_SEEKBAR_DELAY_MS: Long = 100
@@ -80,7 +83,8 @@ constructor(
             }
         }
 
-    override fun createDialog(): SystemUIDialog = systemUIDialogFactory.create(this)
+    override fun createDialog(): SystemUIDialog =
+        systemUIDialogFactory.create(this, shadeDialogContextInteractor.context)
 
     override fun beforeCreate(dialog: SystemUIDialog, savedInstanceState: Bundle?) {
         dialog.setTitle(R.string.font_scaling_dialog_title)
@@ -88,7 +92,7 @@ constructor(
         dialog.setPositiveButton(
             R.string.quick_settings_done,
             /* onClick = */ null,
-            /* dismissOnClick = */ true
+            /* dismissOnClick = */ true,
         )
     }
 
@@ -102,7 +106,7 @@ constructor(
             labelArray[i] =
                 context.resources.getString(
                     com.android.settingslib.R.string.font_scale_percentage,
-                    (strEntryValues[i].toFloat() * 100).roundToInt()
+                    (strEntryValues[i].toFloat() * 100).roundToInt(),
                 )
         }
         seekBarWithIconButtonsView.setProgressStateLabels(labelArray)
@@ -132,7 +136,7 @@ constructor(
 
                 override fun onUserInteractionFinalized(
                     seekBar: SeekBar,
-                    @ControlUnitType control: Int
+                    @ControlUnitType control: Int,
                 ) {
                     if (control == ControlUnitType.BUTTON) {
                         // The seekbar progress is changed by icon buttons
@@ -216,7 +220,7 @@ constructor(
             !systemSettings.putStringForUser(
                 Settings.System.FONT_SCALE,
                 strEntryValues[lastProgress.get()],
-                userTracker.userId
+                userTracker.userId,
             )
         ) {
             title.post { doneButton.isEnabled = true }
@@ -228,13 +232,13 @@ constructor(
         if (
             secureSettings.getStringForUser(
                 Settings.Secure.ACCESSIBILITY_FONT_SCALING_HAS_BEEN_CHANGED,
-                userTracker.userId
+                userTracker.userId,
             ) != ON
         ) {
             secureSettings.putStringForUser(
                 Settings.Secure.ACCESSIBILITY_FONT_SCALING_HAS_BEEN_CHANGED,
                 ON,
-                userTracker.userId
+                userTracker.userId,
             )
         }
     }
@@ -249,7 +253,7 @@ constructor(
 
         title.setTextSize(
             TypedValue.COMPLEX_UNIT_PX,
-            previewConfigContext.resources.getDimension(R.dimen.dialog_title_text_size)
+            previewConfigContext.resources.getDimension(R.dimen.dialog_title_text_size),
         )
     }
 

@@ -22,15 +22,18 @@ import android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFI
 import android.hardware.devicestate.feature.flags.Flags
 import android.platform.test.annotations.RequiresFlagsDisabled
 import android.platform.test.annotations.RequiresFlagsEnabled
+import android.platform.test.flag.junit.CheckFlagsRule
+import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import android.testing.TestableResources
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.deviceStateManager
-import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.testKosmos
 import junit.framework.Assert.assertFalse
 import junit.framework.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.kotlin.whenever
@@ -38,8 +41,9 @@ import org.mockito.kotlin.whenever
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class UtilsTest : SysuiTestCase() {
+    @get:Rule val checkFlagsRule: CheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
 
-    private val kosmos = Kosmos()
+    private val kosmos = testKosmos()
     private val deviceStateManager = kosmos.deviceStateManager
     private lateinit var testableResources: TestableResources
 
@@ -53,7 +57,7 @@ class UtilsTest : SysuiTestCase() {
     fun isFoldableReturnsFalse_overlayConfigurationValues() {
         testableResources.addOverride(
             com.android.internal.R.array.config_foldedDeviceStates,
-            intArrayOf() // empty array <=> device is not foldable
+            intArrayOf(), // empty array <=> device is not foldable
         )
         whenever(deviceStateManager.supportedDeviceStates).thenReturn(listOf(DEFAULT_DEVICE_STATE))
         assertFalse(Utils.isDeviceFoldable(testableResources.resources, deviceStateManager))
@@ -64,7 +68,7 @@ class UtilsTest : SysuiTestCase() {
     fun isFoldableReturnsFalse_deviceStateManager() {
         testableResources.addOverride(
             com.android.internal.R.array.config_foldedDeviceStates,
-            intArrayOf() // empty array <=> device is not foldable
+            intArrayOf(), // empty array <=> device is not foldable
         )
         whenever(deviceStateManager.supportedDeviceStates).thenReturn(listOf(DEFAULT_DEVICE_STATE))
         assertFalse(Utils.isDeviceFoldable(testableResources.resources, deviceStateManager))
@@ -75,7 +79,7 @@ class UtilsTest : SysuiTestCase() {
     fun isFoldableReturnsTrue_overlayConfigurationValues() {
         testableResources.addOverride(
             com.android.internal.R.array.config_foldedDeviceStates,
-            intArrayOf(FOLDED_DEVICE_STATE.identifier)
+            intArrayOf(FOLDED_DEVICE_STATE.identifier),
         )
         whenever(deviceStateManager.supportedDeviceStates)
             .thenReturn(listOf(FOLDED_DEVICE_STATE, UNFOLDED_DEVICE_STATE))
@@ -87,7 +91,7 @@ class UtilsTest : SysuiTestCase() {
     fun isFoldableReturnsTrue_deviceStateManager() {
         testableResources.addOverride(
             com.android.internal.R.array.config_foldedDeviceStates,
-            intArrayOf(FOLDED_DEVICE_STATE.identifier)
+            intArrayOf(FOLDED_DEVICE_STATE.identifier),
         )
         whenever(deviceStateManager.supportedDeviceStates)
             .thenReturn(listOf(FOLDED_DEVICE_STATE, UNFOLDED_DEVICE_STATE))

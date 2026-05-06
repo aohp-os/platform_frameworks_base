@@ -25,21 +25,26 @@ import static android.view.WindowManager.REMOVE_CONTENT_MODE_UNDEFINED;
 
 import static com.android.server.wm.DisplayContent.FORCE_SCALING_MODE_AUTO;
 import static com.android.server.wm.DisplayContent.FORCE_SCALING_MODE_DISABLED;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.WindowConfiguration;
 import android.provider.Settings;
+import android.util.Slog;
 import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.IWindowManager;
 import android.view.Surface;
 import android.view.WindowManager;
 import android.view.WindowManager.DisplayImePolicy;
+import android.window.DesktopExperienceFlags;
 
 import com.android.server.policy.WindowManagerPolicy;
 import com.android.server.wm.DisplayContent.ForceScalingMode;
 
+import java.io.PrintWriter;
 import java.util.Objects;
 
 /**
@@ -47,6 +52,7 @@ import java.util.Objects;
  * delegates the persistence and lookup of settings values to the supplied {@link SettingsProvider}.
  */
 class DisplayWindowSettings {
+    private static final String TAG = TAG_WITH_CLASS_NAME ? "DisplayWindowSettings" : TAG_WM;
     @NonNull
     private final WindowManagerService mService;
     @NonNull
@@ -98,6 +104,13 @@ class DisplayWindowSettings {
         mSettingsProvider.updateOverrideSettings(info, overrideSettings);
     }
 
+    void setForcedDensityRatio(@NonNull DisplayInfo info, float ratio) {
+        final SettingsProvider.SettingsEntry overrideSettings =
+                mSettingsProvider.getOverrideSettings(info);
+        overrideSettings.mForcedDensityRatio = ratio;
+        mSettingsProvider.updateOverrideSettings(info, overrideSettings);
+    }
+
     void setForcedScalingMode(@NonNull DisplayContent displayContent, @ForceScalingMode int mode) {
         if (displayContent.isDefaultDisplay) {
             Settings.Global.putInt(mService.mContext.getContentResolver(),
@@ -120,7 +133,7 @@ class DisplayWindowSettings {
     }
 
     void setIgnoreOrientationRequest(@NonNull DisplayContent displayContent,
-            boolean ignoreOrientationRequest) {
+            @Nullable Boolean ignoreOrientationRequest) {
         final DisplayInfo displayInfo = displayContent.getDisplayInfo();
         final SettingsProvider.SettingsEntry overrideSettings =
                 mSettingsProvider.getOverrideSettings(displayInfo);
@@ -135,7 +148,7 @@ class DisplayWindowSettings {
         // This display used to be in freeform, but we don't support freeform anymore, so fall
         // back to fullscreen.
         if (windowingModeFromDisplaySettings == WindowConfiguration.WINDOWING_MODE_FREEFORM
-                && !mService.mAtmService.mSupportsFreeformWindowManagement) {
+                && !dc.isWindowingModeSupported(WindowConfiguration.WINDOWING_MODE_FREEFORM)) {
             return WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
         }
         if (windowingModeFromDisplaySettings != WindowConfiguration.WINDOWING_MODE_UNDEFINED) {
@@ -232,6 +245,13 @@ class DisplayWindowSettings {
         mSettingsProvider.updateOverrideSettings(displayInfo, overrideSettings);
     }
 
+    /**
+     * Returns {@code true} if either the display is the default display, or the display is allowed
+     * to dynamically add/remove system decorations and the system decorations should be shown on it
+     * currently.
+     *
+     * Note that the display should not mirror when this returns {@code true}.
+     */
     boolean shouldShowSystemDecorsLocked(@NonNull DisplayContent dc) {
         if (dc.getDisplayId() == Display.DEFAULT_DISPLAY) {
             // Default display should show system decors.
@@ -244,6 +264,29 @@ class DisplayWindowSettings {
     }
 
     void setShouldShowSystemDecorsLocked(@NonNull DisplayContent dc, boolean shouldShow) {
+        final boolean changed = (shouldShow != shouldShowSystemDecorsLocked(dc));
+        setShouldShowSystemDecorsInternalLocked(dc, shouldShow);
+
+        if (DesktopExperienceFlags.ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()) {
+            if (dc.isDefaultDisplay || dc.isPrivate() || !changed) {
+                return;
+            }
+
+            dc.getDisplayPolicy().updateHasNavigationBarIfNeeded();
+
+            if (shouldShow) {
+                mService.mRoot.startSystemDecorations(dc, "setShouldShowSystemDecorsLocked");
+            } else {
+                dc.getDisplayPolicy().notifyDisplayRemoveSystemDecorations();
+            }
+        }
+    }
+
+     void setShouldShowSystemDecorsInternalLocked(@NonNull DisplayContent dc,
+            boolean shouldShow) {
+        final int displayId = dc.getDisplayId();
+        Slog.i(TAG, "Set shouldShowSystemDecors for display: displayId=" + displayId
+                + ", shouldShow=" + shouldShow);
         final DisplayInfo displayInfo = dc.getDisplayInfo();
         final SettingsProvider.SettingsEntry overrideSettings =
                 mSettingsProvider.getOverrideSettings(displayInfo);
@@ -309,8 +352,19 @@ class DisplayWindowSettings {
 
         final DisplayInfo displayInfo = dc.getDisplayInfo();
         final SettingsProvider.SettingsEntry settings = mSettingsProvider.getSettings(displayInfo);
-        return settings.mImePolicy != null ? settings.mImePolicy
-                : DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
+
+        if (settings.mImePolicy != null) {
+            return settings.mImePolicy;
+        }
+        // Show IME locally if display is eligible for desktop mode and the flag is enabled or the
+        // display has not explicitly requested for the IME to be hidden then it shall show the IME
+        // locally.
+        if (dc.isPublicSecondaryDisplayWithDesktopModeForceEnabled()
+                || (DesktopExperienceFlags.ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()
+                && dc.isSystemDecorationsSupported() && dc.allowContentModeSwitch())) {
+            return DISPLAY_IME_POLICY_LOCAL;
+        }
+        return DISPLAY_IME_POLICY_FALLBACK_DISPLAY;
     }
 
     void setDisplayImePolicy(@NonNull DisplayContent dc, @DisplayImePolicy int imePolicy) {
@@ -345,6 +399,7 @@ class DisplayWindowSettings {
                 mFixedToUserRotation);
 
         final boolean hasDensityOverride = settings.mForcedDensity != 0;
+        final boolean hasDensityOverrideRatio = settings.mForcedDensityRatio != 0.0f;
         final boolean hasSizeOverride = settings.mForcedWidth != 0 && settings.mForcedHeight != 0;
         dc.mIsDensityForced = hasDensityOverride;
         dc.mIsSizeForced = hasSizeOverride;
@@ -356,6 +411,10 @@ class DisplayWindowSettings {
         final int height = hasSizeOverride ? settings.mForcedHeight : dc.mInitialDisplayHeight;
         final int density = hasDensityOverride ? settings.mForcedDensity
                 : dc.getInitialDisplayDensity();
+        if (hasDensityOverrideRatio) {
+            dc.mForcedDisplayDensityRatio = settings.mForcedDensityRatio;
+        }
+
         dc.updateBaseDisplayMetrics(width, height, density, dc.mBaseDisplayPhysicalXDpi,
                 dc.mBaseDisplayPhysicalYDpi);
 
@@ -374,9 +433,12 @@ class DisplayWindowSettings {
         final DisplayInfo displayInfo = dc.getDisplayInfo();
         final SettingsProvider.SettingsEntry settings = mSettingsProvider.getSettings(displayInfo);
 
-        final boolean ignoreOrientationRequest = settings.mIgnoreOrientationRequest != null
-                ? settings.mIgnoreOrientationRequest : false;
-        dc.setIgnoreOrientationRequest(ignoreOrientationRequest);
+        if (settings.mIgnoreOrientationRequest != null) {
+            dc.setIgnoreOrientationRequest(settings.mIgnoreOrientationRequest);
+        } else if (dc.mHasSetIgnoreOrientationRequest) {
+            // Null entry is default behavior, i.e. do not ignore.
+            dc.setIgnoreOrientationRequest(false);
+        }
 
         dc.getDisplayRotation().resetAllowAllRotations();
     }
@@ -405,6 +467,13 @@ class DisplayWindowSettings {
      */
     void onDisplayRemoved(@NonNull DisplayContent dc) {
         mSettingsProvider.onDisplayRemoved(dc.getDisplayInfo());
+    }
+
+    void dump(@NonNull DisplayContent dc, @NonNull String prefix, @NonNull PrintWriter pw) {
+        final DisplayInfo displayInfo = dc.getDisplayInfo();
+        final SettingsProvider.SettingsEntry settings = mSettingsProvider.getSettings(displayInfo);
+        pw.println(prefix + "DisplayWindowSettingsProvider");
+        pw.println(prefix + "  " + settings);
     }
 
     /**
@@ -471,6 +540,13 @@ class DisplayWindowSettings {
             int mForcedWidth;
             int mForcedHeight;
             int mForcedDensity;
+            /**
+             * The ratio of the forced density to the initial density of the display. This is only
+             * saved for external displays, and used to make sure ratio between forced density and
+             * initial density persist when a resolution change happens. Ratio is updated when
+             * mForcedDensity is changed.
+             */
+            float mForcedDensityRatio;
             @Nullable
             @ForceScalingMode
             Integer mForcedScalingMode;
@@ -534,6 +610,10 @@ class DisplayWindowSettings {
                 }
                 if (other.mForcedDensity != mForcedDensity) {
                     mForcedDensity = other.mForcedDensity;
+                    changed = true;
+                }
+                if (other.mForcedDensityRatio != mForcedDensityRatio) {
+                    mForcedDensityRatio = other.mForcedDensityRatio;
                     changed = true;
                 }
                 if (!Objects.equals(other.mForcedScalingMode, mForcedScalingMode)) {
@@ -624,6 +704,11 @@ class DisplayWindowSettings {
                     mForcedDensity = delta.mForcedDensity;
                     changed = true;
                 }
+                if (delta.mForcedDensityRatio != 0
+                        && delta.mForcedDensityRatio != mForcedDensityRatio) {
+                    mForcedDensityRatio = delta.mForcedDensityRatio;
+                    changed = true;
+                }
                 if (delta.mForcedScalingMode != null
                         && !Objects.equals(delta.mForcedScalingMode, mForcedScalingMode)) {
                     mForcedScalingMode = delta.mForcedScalingMode;
@@ -688,6 +773,7 @@ class DisplayWindowSettings {
                         && mUserRotationMode == null
                         && mUserRotation == null
                         && mForcedWidth == 0 && mForcedHeight == 0 && mForcedDensity == 0
+                        && mForcedDensityRatio == 0.0f
                         && mForcedScalingMode == null
                         && mRemoveContentMode == REMOVE_CONTENT_MODE_UNDEFINED
                         && mShouldShowWithInsecureKeyguard == null
@@ -711,6 +797,7 @@ class DisplayWindowSettings {
                         && mForcedHeight == that.mForcedHeight
                         && mForcedDensity == that.mForcedDensity
                         && mRemoveContentMode == that.mRemoveContentMode
+                        && mForcedDensityRatio == that.mForcedDensityRatio
                         && Objects.equals(mUserRotationMode, that.mUserRotationMode)
                         && Objects.equals(mUserRotation, that.mUserRotation)
                         && Objects.equals(mForcedScalingMode, that.mForcedScalingMode)
@@ -730,10 +817,11 @@ class DisplayWindowSettings {
             @Override
             public int hashCode() {
                 return Objects.hash(mWindowingMode, mUserRotationMode, mUserRotation, mForcedWidth,
-                        mForcedHeight, mForcedDensity, mForcedScalingMode, mRemoveContentMode,
-                        mShouldShowWithInsecureKeyguard, mShouldShowSystemDecors, mIsHomeSupported,
-                        mImePolicy, mFixedToUserRotation, mIgnoreOrientationRequest,
-                        mIgnoreDisplayCutout, mDontMoveToTop, mIgnoreActivitySizeRestrictions);
+                        mForcedHeight, mForcedDensity, mForcedDensityRatio, mForcedScalingMode,
+                        mRemoveContentMode, mShouldShowWithInsecureKeyguard,
+                        mShouldShowSystemDecors, mIsHomeSupported, mImePolicy, mFixedToUserRotation,
+                        mIgnoreOrientationRequest, mIgnoreDisplayCutout, mDontMoveToTop,
+                        mIgnoreActivitySizeRestrictions);
             }
 
             @Override
@@ -745,6 +833,7 @@ class DisplayWindowSettings {
                         + ", mForcedWidth=" + mForcedWidth
                         + ", mForcedHeight=" + mForcedHeight
                         + ", mForcedDensity=" + mForcedDensity
+                        + ", mForcedDensityRatio=" + mForcedDensityRatio
                         + ", mForcedScalingMode=" + mForcedScalingMode
                         + ", mRemoveContentMode=" + mRemoveContentMode
                         + ", mShouldShowWithInsecureKeyguard=" + mShouldShowWithInsecureKeyguard

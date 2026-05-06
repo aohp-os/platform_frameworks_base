@@ -25,31 +25,33 @@ import android.content.pm.ActivityInfo
 import android.platform.test.annotations.EnableFlags
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper.RunWithLooper
+import android.view.Display
 import android.view.Display.DEFAULT_DISPLAY
 import android.view.SurfaceControl
 import androidx.test.filters.SmallTest
 import com.android.dx.mockito.inline.extended.ExtendedMockito.anyBoolean
-import com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn
 import com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession
 import com.android.window.flags.Flags
-import com.android.wm.shell.shared.desktopmode.DesktopModeStatus
 import junit.framework.Assert.assertFalse
 import junit.framework.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.times
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 import org.mockito.quality.Strictness
 
 /**
  * Tests of [DesktopModeWindowDecorViewModelAppHandleOnlyTest]
  *
- * A subset of tests from [DesktopModeWindowDecorViewModel] for when DesktopMode is not active
- * but we still need to show AppHandle
- * Usage: atest WMShellUnitTests:DesktopModeWindowDecorViewModelAppHandleOnlyTest
+ * A subset of tests from [DesktopModeWindowDecorViewModel] for when DesktopMode is not active but
+ * we still need to show AppHandle Usage: atest
+ * WMShellUnitTests:DesktopModeWindowDecorViewModelAppHandleOnlyTest
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @SmallTest
@@ -59,17 +61,21 @@ import org.mockito.quality.Strictness
 class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
     DesktopModeWindowDecorViewModelTestsBase() {
 
+    protected val mockDisplay = mock<Display>()
+
     @Before
     fun setUp() {
         mockitoSession =
             mockitoSession()
                 .strictness(Strictness.LENIENT)
-                .spyStatic(DesktopModeStatus::class.java)
                 .spyStatic(DragPositioningCallbackUtility::class.java)
                 .startMocking()
-        doReturn(false).`when` { DesktopModeStatus.isDesktopModeSupported(any()) }
-        doReturn(true).`when` { DesktopModeStatus.overridesShowAppHandle(any())}
+        desktopState.canEnterDesktopMode = false
+        desktopState.overridesShowAppHandle = true
+
         setUpCommon()
+        whenever(mockDisplayController.getDisplay(anyInt())).thenReturn(mockDisplay)
+        setDisplayInTopology(true)
     }
 
     @Test
@@ -85,7 +91,7 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
     @Test
     fun testWindowDecor_dontShowAppHandle_decorNotCreated() {
         // Simulate device that doesn't support showing app handle
-        doReturn(false).`when` { DesktopModeStatus.overridesShowAppHandle(any())}
+        desktopState.overridesShowAppHandle = false
 
         val task = createTask()
 
@@ -113,6 +119,8 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
     fun testDecor_invokeOpenHandleMenuCallback_openHandleMenu() {
         val task = createTask()
         val decor = setUpMockDecorationForTask(task)
+        val handleMenuController = mock<HandleMenuController>()
+        whenever(decor.handleMenuController).thenReturn(handleMenuController)
         val openHandleMenuCallbackCaptor = argumentCaptor<(Int) -> Unit>()
         // Set task as gmail
         val gmailPackageName = "com.google.android.gm"
@@ -120,15 +128,13 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
         task.baseActivity = baseComponent
 
         onTaskOpening(task)
-        verify(
-            mockAppHandleEducationController,
-            times(1)
-        ).setAppHandleEducationTooltipCallbacks(openHandleMenuCallbackCaptor.capture(), any())
+        verify(mockAppHandleEducationController, times(1))
+            .setAppHandleEducationTooltipCallbacks(openHandleMenuCallbackCaptor.capture(), any())
         openHandleMenuCallbackCaptor.lastValue.invoke(task.taskId)
         bgExecutor.flushAll()
         testShellExecutor.flushAll()
 
-        verify(decor, times(1)).createHandleMenu(anyBoolean())
+        verify(handleMenuController, times(1)).createHandleMenu(anyBoolean())
     }
 
     @Test
@@ -137,8 +143,8 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
         val task = createTask()
 
         // Set task as systemUI package
-        val systemUIPackageName = context.resources.getString(
-            com.android.internal.R.string.config_systemUi)
+        val systemUIPackageName =
+            context.resources.getString(com.android.internal.R.string.config_systemUi)
         val baseComponent = ComponentName(systemUIPackageName, /* class */ "")
         task.baseActivity = baseComponent
 
@@ -155,8 +161,22 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
         onTaskOpening(task, taskSurface)
         assertTrue(windowDecorByTaskIdSpy.contains(task.taskId))
 
+        setLargeScreen(false)
+        setUpMockDecorationForTask(task)
+        onTaskChanging(task, taskSurface)
+        assertFalse(windowDecorByTaskIdSpy.contains(task.taskId))
+    }
 
-        task.setOnLargeScreen(false)
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_BUG_FIXES_FOR_SECONDARY_DISPLAY)
+    fun testAppHandleShowsOnlyOnDisplayInTopology() {
+        val task = createTask()
+        val taskSurface = SurfaceControl()
+        setUpMockDecorationForTask(task)
+        onTaskOpening(task, taskSurface)
+        assertTrue(windowDecorByTaskIdSpy.contains(task.taskId))
+
+        setDisplayInTopology(false)
         setUpMockDecorationForTask(task)
         onTaskChanging(task, taskSurface)
         assertFalse(windowDecorByTaskIdSpy.contains(task.taskId))
@@ -168,15 +188,20 @@ class DesktopModeWindowDecorViewModelAppHandleOnlyTest :
         activityType: Int = ACTIVITY_TYPE_STANDARD,
         activityInfo: ActivityInfo = ActivityInfo(),
         requestingImmersive: Boolean = false,
-        shouldShowAspectRatioButton: Boolean = true
+        shouldShowAspectRatioButton: Boolean = true,
     ): RunningTaskInfo {
-        val task = createTask(
-            displayId, windowingMode, activityType, activityInfo, requestingImmersive)
-        task.setOnLargeScreen(shouldShowAspectRatioButton)
+        val task =
+            createTask(displayId, windowingMode, activityType, activityInfo, requestingImmersive)
+        setLargeScreen(shouldShowAspectRatioButton)
         return task
     }
 
-    private fun RunningTaskInfo.setOnLargeScreen(large: Boolean) {
-        configuration.smallestScreenWidthDp = if (large) 1000 else 100
+    private fun setLargeScreen(large: Boolean) {
+        val size: Float = if (large) 1000f else 100f
+        whenever(mockDisplay.getMinSizeDimensionDp()).thenReturn(size)
+    }
+
+    private fun setDisplayInTopology(inTopology: Boolean) {
+        whenever(mockDisplayController.isDisplayInTopology(anyInt())).thenReturn(inTopology)
     }
 }

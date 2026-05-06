@@ -18,11 +18,14 @@ package com.android.systemui.qs.ui.viewmodel
 
 import com.android.systemui.brightness.ui.viewmodel.brightnessSliderViewModelFactory
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.media.controls.domain.pipeline.interactor.mediaCarouselInteractor
+import com.android.systemui.media.remedia.ui.viewmodel.factory.mediaViewModelFactory
 import com.android.systemui.qs.panels.ui.viewmodel.detailsViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.editModeViewModel
-import com.android.systemui.qs.panels.ui.viewmodel.quickQuickSettingsViewModelFactory
-import com.android.systemui.qs.panels.ui.viewmodel.tileGridViewModel
-import com.android.systemui.qs.panels.ui.viewmodel.toolbar.toolbarViewModelFactory
+import com.android.systemui.qs.panels.ui.viewmodel.mediaInRowInLandscapeViewModelFactory
+import com.android.systemui.qs.panels.ui.viewmodel.tileGridViewModelFactory
+import com.android.systemui.shade.domain.interactor.shadeDisplaysInteractor
+import com.android.systemui.shade.ui.viewmodel.shadeHeaderViewModelFactory
 
 val Kosmos.quickSettingsContainerViewModelFactory by
     Kosmos.Fixture {
@@ -31,13 +34,16 @@ val Kosmos.quickSettingsContainerViewModelFactory by
                 supportsBrightnessMirroring: Boolean
             ): QuickSettingsContainerViewModel {
                 return QuickSettingsContainerViewModel(
-                    brightnessSliderViewModelFactory,
-                    quickQuickSettingsViewModelFactory,
-                    supportsBrightnessMirroring,
-                    tileGridViewModel,
-                    editModeViewModel,
-                    detailsViewModel,
-                    toolbarViewModelFactory,
+                    brightnessSliderViewModelFactory = brightnessSliderViewModelFactory,
+                    shadeHeaderViewModelFactory = shadeHeaderViewModelFactory,
+                    tileGridViewModelFactory = tileGridViewModelFactory,
+                    supportsBrightnessMirroring = supportsBrightnessMirroring,
+                    editModeViewModel = editModeViewModel,
+                    detailsViewModel = detailsViewModel,
+                    shadeDisplaysInteractor = { shadeDisplaysInteractor },
+                    mediaCarouselInteractor = mediaCarouselInteractor,
+                    mediaViewModelFactory = mediaViewModelFactory,
+                    mediaInRowInLandscapeViewModelFactory = mediaInRowInLandscapeViewModelFactory,
                 )
             }
         }

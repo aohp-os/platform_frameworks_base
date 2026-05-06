@@ -2,11 +2,19 @@
 #include "Bitmap.h"
 
 #include <android-base/unique_fd.h>
+#ifdef __linux__
+#include <com_android_graphics_hwui_flags.h>
+#endif
+#include <fcntl.h>
 #include <hwui/Bitmap.h>
 #include <hwui/Paint.h>
 #include <inttypes.h>
 #include <renderthread/RenderProxy.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <utils/Trace.h>
 
 #include <memory>
 
@@ -28,7 +36,17 @@
 #include "SkRefCnt.h"
 #include "SkStream.h"
 #include "SkTypes.h"
+#ifdef __linux__  // Only Linux support parcel
+#include "android/binder_parcel.h"
+#endif
 #include "android_nio_utils.h"
+#include "perfetto/public/abi/track_event_abi.h"
+#include "perfetto/public/producer.h"
+#include "perfetto/public/protos/trace/track_event/track_event.pzc.h"
+#include "perfetto/public/te_category_macros.h"
+#include "perfetto/public/te_macros.h"
+#include "perfetto/public/track_event.h"
+#include "tracing_perfetto.h"
 
 #define DEBUG_PARCEL 0
 
@@ -165,6 +183,70 @@ private:
 
 namespace bitmap {
 
+#define PROTO_FIELDS(size, width, height, density, config, is_mutable, pixel_storage_type,         \
+                     bitmap_id)                                                                    \
+    PERFETTO_TE_PROTO_FIELDS(PERFETTO_TE_PROTO_FIELD_NESTED(                                       \
+            /* perfetto_protos_TrackEvent_android_bitmap_field_number */ 2005,                     \
+            PERFETTO_TE_PROTO_FIELD_VARINT(1, size), PERFETTO_TE_PROTO_FIELD_VARINT(2, width),     \
+            PERFETTO_TE_PROTO_FIELD_VARINT(3, height), PERFETTO_TE_PROTO_FIELD_VARINT(4, density), \
+            PERFETTO_TE_PROTO_FIELD_VARINT(5, config),                                             \
+            PERFETTO_TE_PROTO_FIELD_VARINT(6, is_mutable ? 1 : 0),                                 \
+            PERFETTO_TE_PROTO_FIELD_VARINT(7, pixel_storage_type),                                 \
+            PERFETTO_TE_PROTO_FIELD_VARINT(8, bitmap_id)))
+
+static void traceSliceBeginWithGlobalFlow(const char* name, uint64_t bitmap_id, int64_t size,
+                                          int32_t width, int32_t height, int32_t density,
+                                          int32_t config, bool is_mutable,
+                                          int32_t pixel_storage_type, uint64_t parcel_id) {
+    struct PerfettoTeCategory* perfettoTeCategory =
+            tracing_perfetto::getPerfettoCategory(ATRACE_TAG_GRAPHICS);
+
+    if (perfettoTeCategory) {
+        PERFETTO_TE(*perfettoTeCategory, PERFETTO_TE_SLICE_BEGIN(name),
+                    PROTO_FIELDS(size, width, height, density, config, is_mutable,
+                                 pixel_storage_type, bitmap_id),
+                    PERFETTO_TE_FLOW(PerfettoTeGlobalFlow(parcel_id)));
+    }
+}
+
+static void traceSliceBeginWithGlobalTerminatingFlow(const char* name, uint64_t bitmap_id,
+                                                     int64_t size, int32_t width, int32_t height,
+                                                     int32_t density, int32_t config,
+                                                     bool is_mutable, int32_t pixel_storage_type,
+                                                     uint64_t parcel_id) {
+    struct PerfettoTeCategory* perfettoTeCategory =
+            tracing_perfetto::getPerfettoCategory(ATRACE_TAG_GRAPHICS);
+
+    if (perfettoTeCategory) {
+        PERFETTO_TE(*perfettoTeCategory, PERFETTO_TE_SLICE_BEGIN(name),
+                    PROTO_FIELDS(size, width, height, density, config, is_mutable,
+                                 pixel_storage_type, bitmap_id),
+                    PERFETTO_TE_TERMINATING_FLOW(PerfettoTeGlobalFlow(parcel_id)));
+    }
+}
+
+static void traceSliceBegin(const char* name, uint64_t bitmap_id, int64_t size, int32_t width,
+                            int32_t height, int32_t density, int32_t config, bool is_mutable,
+                            int32_t pixel_storage_type) {
+    struct PerfettoTeCategory* perfettoTeCategory =
+            tracing_perfetto::getPerfettoCategory(ATRACE_TAG_GRAPHICS);
+
+    if (perfettoTeCategory) {
+        PERFETTO_TE(*perfettoTeCategory, PERFETTO_TE_SLICE_BEGIN(name),
+                    PROTO_FIELDS(size, width, height, density, config, is_mutable,
+                                 pixel_storage_type, bitmap_id));
+    }
+}
+
+static void traceSliceEnd(void) {
+    struct PerfettoTeCategory* perfettoTeCategory =
+            tracing_perfetto::getPerfettoCategory(ATRACE_TAG_GRAPHICS);
+
+    if (perfettoTeCategory) {
+        PERFETTO_TE(*perfettoTeCategory, PERFETTO_TE_SLICE_END());
+    }
+}
+
 // Assert that bitmap's SkAlphaType is consistent with isPremultiplied.
 static void assert_premultiplied(const SkImageInfo& info, bool isPremultiplied) {
     // kOpaque_SkAlphaType and kIgnore_SkAlphaType mean that isPremultiplied is
@@ -191,9 +273,8 @@ void reinitBitmap(JNIEnv* env, jobject javaBitmap, const SkImageInfo& info,
             info.width(), info.height(), isPremultiplied);
 }
 
-jobject createBitmap(JNIEnv* env, Bitmap* bitmap,
-        int bitmapCreateFlags, jbyteArray ninePatchChunk, jobject ninePatchInsets,
-        int density) {
+jobject createBitmap(JNIEnv* env, Bitmap* bitmap, int bitmapCreateFlags, jbyteArray ninePatchChunk,
+                     jobject ninePatchInsets, int density) {
     static jmethodID gBitmap_constructorMethodID =
         GetMethodIDOrDie(env, gBitmap_class,
             "<init>", "(JJIIIZ[BLandroid/graphics/NinePatch$InsetStruct;Z)V");
@@ -209,9 +290,10 @@ jobject createBitmap(JNIEnv* env, Bitmap* bitmap,
         bitmapWrapper->bitmap().setImmutable();
     }
     jobject obj = env->NewObject(gBitmap_class, gBitmap_constructorMethodID,
-            static_cast<jlong>(bitmap->getId()), reinterpret_cast<jlong>(bitmapWrapper),
-            bitmap->width(), bitmap->height(), density,
-            isPremultiplied, ninePatchChunk, ninePatchInsets, fromMalloc);
+                                 static_cast<jlong>(bitmap->getId()),
+                                 reinterpret_cast<jlong>(bitmapWrapper), bitmap->width(),
+                                 bitmap->height(), density, isPremultiplied, ninePatchChunk,
+                                 ninePatchInsets, fromMalloc);
 
     if (env->ExceptionCheck() != 0) {
         ALOGE("*** Uncaught exception returned from Java call!\n");
@@ -384,6 +466,9 @@ static jobject Bitmap_copy(JNIEnv* env, jobject, jlong srcHandle, jint dstConfig
     const bool hasGainmap = original.hasGainmap();
     SkBitmap src;
     bitmapHolder->getSkBitmap(&src);
+    traceSliceBegin("bitmap_copy", original.getId(), src.computeByteSize(), src.width(),
+                    src.height(), 0, -1, getPremulBitmapCreateFlags(isMutable),
+                    (int32_t)original.pixelStorageType());
 
     if (dstConfigHandle == GraphicsJNI::hardwareLegacyBitmapConfig()) {
         sk_sp<Bitmap> bitmap(Bitmap::allocateHardwareBitmap(src));
@@ -396,6 +481,7 @@ static jobject Bitmap_copy(JNIEnv* env, jobject, jlong srcHandle, jint dstConfig
                 bitmap->setGainmap(std::move(gm));
             }
         }
+        traceSliceEnd();
         return createBitmap(env, bitmap.release(), getPremulBitmapCreateFlags(isMutable));
     }
 
@@ -419,6 +505,7 @@ static jobject Bitmap_copy(JNIEnv* env, jobject, jlong srcHandle, jint dstConfig
         gainmap->bitmap = sk_sp<Bitmap>(destAllocator.getStorageObjAndReset());
         bitmap->setGainmap(std::move(gainmap));
     }
+    traceSliceEnd();
     return createBitmap(env, bitmap, getPremulBitmapCreateFlags(isMutable));
 }
 
@@ -436,10 +523,16 @@ static Bitmap* Bitmap_copyAshmemImpl(JNIEnv* env, SkBitmap& src, SkColorType& ds
 
 static jobject Bitmap_copyAshmem(JNIEnv* env, jobject, jlong srcHandle) {
     SkBitmap src;
-    reinterpret_cast<BitmapWrapper*>(srcHandle)->getSkBitmap(&src);
+    BitmapWrapper* wrapper = reinterpret_cast<BitmapWrapper*>(srcHandle);
+    wrapper->getSkBitmap(&src);
+    Bitmap& original = wrapper->bitmap();
+
     SkColorType dstCT = src.colorType();
+    traceSliceBegin("Bitmap_copyAshmemConfig", original.getId(), src.computeByteSize(), src.width(),
+                    src.height(), 0, -1, !src.isImmutable(), (int32_t)original.pixelStorageType());
     auto bitmap = Bitmap_copyAshmemImpl(env, src, dstCT);
     jobject ret = createBitmap(env, bitmap, getPremulBitmapCreateFlags(false));
+    traceSliceEnd();
     return ret;
 }
 
@@ -468,6 +561,13 @@ static jlong Bitmap_getNativeFinalizer(JNIEnv*, jobject) {
 static void Bitmap_recycle(JNIEnv* env, jobject, jlong bitmapHandle) {
     LocalScopedBitmap bitmap(bitmapHandle);
     bitmap->freePixels();
+}
+
+static void Bitmap_noop(BitmapWrapper* bitmap) {
+}
+
+static jlong Bitmap_getNativeNoop(JNIEnv*, jobject) {
+    return static_cast<jlong>(reinterpret_cast<uintptr_t>(&Bitmap_noop));
 }
 
 static void Bitmap_reconfigure(JNIEnv* env, jobject clazz, jlong bitmapHandle,
@@ -612,7 +712,7 @@ static void Bitmap_setHasMipMap(JNIEnv* env, jobject, jlong bitmapHandle,
 ///////////////////////////////////////////////////////////////////////////////
 
 // TODO: Move somewhere else
-#ifdef __ANDROID__  // Layoutlib does not support parcel
+#ifdef __linux__  // Only Linux support parcel
 #define ON_ERROR_RETURN(X) \
     if ((error = (X)) != STATUS_OK) return error
 
@@ -669,10 +769,10 @@ static binder_status_t writeBlobFromFd(AParcel* parcel, int32_t size, int fd) {
     return STATUS_OK;
 }
 
-static binder_status_t writeBlob(AParcel* parcel, uint64_t bitmapId, const SkBitmap& bitmap) {
+static binder_status_t writeBlob(AParcel* parcel, uint64_t bitmapId, const SkBitmap& bitmap,
+                                 bool immutable) {
     const size_t size = bitmap.computeByteSize();
     const void* data = bitmap.getPixels();
-    const bool immutable = bitmap.isImmutable();
 
     if (size <= 0 || data == nullptr) {
         return STATUS_NOT_ENOUGH_DATA;
@@ -682,23 +782,52 @@ static binder_status_t writeBlob(AParcel* parcel, uint64_t bitmapId, const SkBit
         // Create new ashmem region with read/write priv
         auto ashmemId = Bitmap::getAshmemId("writeblob", bitmapId,
                                             bitmap.width(), bitmap.height(), size);
-        base::unique_fd fd(ashmem_create_region(ashmemId.c_str(), size));
-        if (fd.get() < 0) {
-            return STATUS_NO_MEMORY;
-        }
+        base::unique_fd fd;
 
-        {
-            void* dest = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
-            if (dest == MAP_FAILED) {
+        if (com::android::graphics::hwui::flags::bitmap_use_memfd()) {
+            fd.reset(syscall(__NR_memfd_create, ashmemId.c_str(), MFD_CLOEXEC | MFD_ALLOW_SEALING));
+            if (fd.get() < 0) {
                 return STATUS_NO_MEMORY;
             }
-            memcpy(dest, data, size);
-            munmap(dest, size);
+
+            ssize_t written = write(fd.get(), data, size);
+            if (written != size) {
+                return STATUS_NO_MEMORY;
+            }
+
+            if (fcntl(fd, F_ADD_SEALS,
+                      // Disallow growing / shrinking.
+                      F_SEAL_GROW | F_SEAL_SHRINK
+                      // If immutable, disallow writing.
+                      // Use F_SEAL_FUTURE_WRITE instead of F_SEAL_WRITE to work around a bug in
+                      // pre-6.7 kernels.
+                      // There are no writable mappings made prior to this, so both seals are
+                      // functionally equivalent.
+                      // See: b/409846908#comment39
+                      | (immutable ? F_SEAL_FUTURE_WRITE : 0))) {
+                return STATUS_UNKNOWN_ERROR;
+            }
+
+        } else {
+            fd.reset(ashmem_create_region(ashmemId.c_str(), size));
+            if (fd.get() < 0) {
+                return STATUS_NO_MEMORY;
+            }
+
+            {
+                void* dest = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
+                if (dest == MAP_FAILED) {
+                    return STATUS_NO_MEMORY;
+                }
+                memcpy(dest, data, size);
+                munmap(dest, size);
+            }
+
+            if (immutable && ashmem_set_prot_region(fd.get(), PROT_READ) < 0) {
+                return STATUS_UNKNOWN_ERROR;
+            }
         }
 
-        if (immutable && ashmem_set_prot_region(fd.get(), PROT_READ) < 0) {
-            return STATUS_UNKNOWN_ERROR;
-        }
         // Workaround b/149851140 in AParcel_writeParcelFileDescriptor
         int rawFd = fd.release();
         error = writeBlobFromFd(parcel, size, rawFd);
@@ -716,7 +845,7 @@ static binder_status_t writeBlob(AParcel* parcel, uint64_t bitmapId, const SkBit
 
 #undef ON_ERROR_RETURN
 
-#endif // __ANDROID__ // Layoutlib does not support parcel
+#endif // __linux__ // Only Linux support parcel
 
 // This is the maximum possible size because the SkColorSpace must be
 // representable (and therefore serializable) using a matrix and numerical
@@ -732,7 +861,7 @@ static bool validateImageInfo(const SkImageInfo& info, int32_t rowBytes) {
 }
 
 static jobject Bitmap_createFromParcel(JNIEnv* env, jobject, jobject parcel) {
-#ifdef __ANDROID__ // Layoutlib does not support parcel
+#ifdef __linux__ // Only Linux support parcel
     if (parcel == NULL) {
         jniThrowNullPointerException(env, "parcel cannot be null");
         return NULL;
@@ -759,6 +888,16 @@ static jobject Bitmap_createFromParcel(JNIEnv* env, jobject, jobject parcel) {
     const int32_t height = p.readInt32();
     const int32_t rowBytes = p.readInt32();
     const int32_t density = p.readInt32();
+    const int64_t sourceId = p.readInt64();
+    const int64_t parcel_id = p.readInt64();
+
+    if (sourceId != UNDEFINED_BITMAP_ID) {
+        traceSliceBeginWithGlobalTerminatingFlow("Bitmap_createFromParcel", sourceId, rowBytes,
+                                                 width, height, density, -1, false, -1, parcel_id);
+    } else {
+        traceSliceBegin("Bitmap_createFromParcel", sourceId, rowBytes, width, height, density, -1,
+                        false, -1);
+    }
 
     if (kN32_SkColorType != colorType &&
             kRGBA_F16_SkColorType != colorType &&
@@ -814,8 +953,8 @@ static jobject Bitmap_createFromParcel(JNIEnv* env, jobject, jobject parcel) {
                     ALOGW("mmap failed, error %d (%s)", err, strerror(err));
                     return STATUS_NO_MEMORY;
                 }
-                nativeBitmap =
-                        Bitmap::createFrom(imageInfo, rowBytes, fd.release(), addr, size, !isMutable);
+                nativeBitmap = Bitmap::createFrom(imageInfo, rowBytes, fd.release(),
+                                                  addr, size, !isMutable);
                 return STATUS_OK;
             });
 
@@ -830,17 +969,42 @@ static jobject Bitmap_createFromParcel(JNIEnv* env, jobject, jobject parcel) {
         return nullptr;
     }
 
+    nativeBitmap->setSourceId(sourceId);
+    traceSliceEnd();
     return createBitmap(env, nativeBitmap.release(), getPremulBitmapCreateFlags(isMutable), nullptr,
                         nullptr, density);
 #else
-    jniThrowRuntimeException(env, "Cannot use parcels outside of Android");
+    jniThrowRuntimeException(env, "Cannot use parcels outside of Linux");
     return NULL;
 #endif
 }
 
-static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject,
-                                     jlong bitmapHandle, jint density, jobject parcel) {
-#ifdef __ANDROID__ // Layoutlib does not support parcel
+#ifdef __linux__  // Only Linux support parcel
+// Returns whether this bitmap should be written to the parcel as mutable.
+static bool shouldParcelAsMutable(SkBitmap& bitmap, AParcel* parcel) {
+    // If the bitmap is immutable, then parcel as immutable.
+    if (bitmap.isImmutable()) {
+        return false;
+    }
+
+    // If we're going to copy the bitmap to ashmem and write that to the parcel,
+    // then parcel as immutable, since we won't be mutating the bitmap after
+    // writing it to the parcel.
+    return !shouldUseAshmem(parcel, bitmap.computeByteSize());
+}
+#endif
+
+uint64_t getParcelId() {
+    static std::atomic<uint64_t> parcelCounter{0};
+    uint32_t pid = getpid();
+    uint32_t count = parcelCounter.fetch_add(1);
+
+    return (uint64_t)pid << 32 | count;
+}
+
+static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject, jlong bitmapHandle, jint density,
+                                     jobject parcel) {
+#ifdef __linux__ // Only Linux support parcel
     if (parcel == NULL) {
         ALOGD("------- writeToParcel null parcel\n");
         return JNI_FALSE;
@@ -851,8 +1015,10 @@ static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject,
 
     auto bitmapWrapper = reinterpret_cast<BitmapWrapper*>(bitmapHandle);
     bitmapWrapper->getSkBitmap(&bitmap);
+    uint64_t id = bitmapWrapper->bitmap().getId();
 
-    p.writeInt32(!bitmap.isImmutable());
+    const bool asMutable = shouldParcelAsMutable(bitmap, p.get());
+    p.writeInt32(asMutable);
     p.writeInt32(bitmap.colorType());
     p.writeInt32(bitmap.alphaType());
     SkColorSpace* colorSpace = bitmap.colorSpace();
@@ -865,6 +1031,18 @@ static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject,
     p.writeInt32(bitmap.height());
     p.writeInt32(bitmap.rowBytes());
     p.writeInt32(density);
+    p.writeInt64(id);
+    const uint64_t parcel_id = getParcelId();
+    p.writeInt64(parcel_id);
+
+    if (id != UNDEFINED_BITMAP_ID) {
+        traceSliceBeginWithGlobalFlow("Bitmap_writeToParcel", id, bitmap.computeByteSize(),
+                                      bitmap.width(), bitmap.height(), density, -1,
+                                      !bitmap.isImmutable(), -1, parcel_id);
+    } else {
+        traceSliceBegin("Bitmap_writeToParcel", id, bitmap.computeByteSize(), bitmap.width(),
+                        bitmap.height(), density, -1, !bitmap.isImmutable(), -1);
+    }
 
     // Transfer the underlying ashmem region if we have one and it's immutable.
     binder_status_t status;
@@ -881,6 +1059,7 @@ static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject,
             doThrowRE(env, "Could not write bitmap blob file descriptor.");
             return JNI_FALSE;
         }
+        traceSliceEnd();
         return JNI_TRUE;
     }
 
@@ -889,15 +1068,15 @@ static jboolean Bitmap_writeToParcel(JNIEnv* env, jobject,
     ALOGD("Bitmap.writeToParcel: copying bitmap into new blob (fds %s)",
           p.allowFds() ? "allowed" : "forbidden");
 #endif
-
-    status = writeBlob(p.get(), bitmapWrapper->bitmap().getId(), bitmap);
+    status = writeBlob(p.get(), id, bitmap, !asMutable);
     if (status) {
         doThrowRE(env, "Could not copy bitmap to parcel blob.");
         return JNI_FALSE;
     }
+    traceSliceEnd();
     return JNI_TRUE;
 #else
-    doThrowRE(env, "Cannot use parcels outside of Android");
+    doThrowRE(env, "Cannot use parcels outside of Linux");
     return JNI_FALSE;
 #endif
 }
@@ -1222,6 +1401,18 @@ static void Bitmap_setGainmap(JNIEnv*, jobject, jlong bitmapHandle, jlong gainma
     bitmapHolder->bitmap().setGainmap(sp<uirenderer::Gainmap>::fromExisting(gainmap));
 }
 
+static jlong Bitmap_getSourceId(JNIEnv*, jobject, jlong bitmapHandle) {
+    LocalScopedBitmap bitmapHolder(bitmapHandle);
+    return bitmapHolder.valid() ? bitmapHolder->bitmap().getSourceId() : UNDEFINED_BITMAP_ID;
+}
+
+static void Bitmap_setSourceId(JNIEnv*, jobject, jlong bitmapHandle, jlong sourceId) {
+    LocalScopedBitmap bitmapHolder(bitmapHandle);
+    if (bitmapHolder.valid()) {
+        bitmapHolder->bitmap().setSourceId(sourceId);
+    }
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 static const JNINativeMethod gBitmapMethods[] = {
@@ -1231,6 +1422,7 @@ static const JNINativeMethod gBitmapMethods[] = {
         {"nativeCopyAshmemConfig", "(JI)Landroid/graphics/Bitmap;", (void*)Bitmap_copyAshmemConfig},
         {"nativeGetAshmemFD", "(J)I", (void*)Bitmap_getAshmemFd},
         {"nativeGetNativeFinalizer", "()J", (void*)Bitmap_getNativeFinalizer},
+        {"nativeGetNativeNoop", "()J", (void*)Bitmap_getNativeNoop},
         {"nativeRecycle", "(J)V", (void*)Bitmap_recycle},
         {"nativeReconfigure", "(JIIIZ)V", (void*)Bitmap_reconfigure},
         {"nativeCompress", "(JIILjava/io/OutputStream;[B)Z", (void*)Bitmap_compress},
@@ -1274,6 +1466,8 @@ static const JNINativeMethod gBitmapMethods[] = {
         {"nativeSetImmutable", "(J)V", (void*)Bitmap_setImmutable},
         {"nativeExtractGainmap", "(J)Landroid/graphics/Gainmap;", (void*)Bitmap_extractGainmap},
         {"nativeSetGainmap", "(JJ)V", (void*)Bitmap_setGainmap},
+        {"nativeGetSourceId", "(J)J", (void*)Bitmap_getSourceId},
+        {"nativeSetSourceId", "(JJ)V", (void*)Bitmap_setSourceId},
 
         // ------------ @CriticalNative ----------------
         {"nativeIsImmutable", "(J)Z", (void*)Bitmap_isImmutable},

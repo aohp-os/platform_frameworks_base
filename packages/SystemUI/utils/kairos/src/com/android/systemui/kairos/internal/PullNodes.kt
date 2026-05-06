@@ -16,29 +16,44 @@
 
 package com.android.systemui.kairos.internal
 
-import com.android.systemui.kairos.internal.util.Key
-import com.android.systemui.kairos.util.Maybe
-import com.android.systemui.kairos.util.map
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
+import com.android.systemui.kairos.internal.util.logDuration
+import com.android.systemui.kairos.util.NameData
+import com.android.systemui.kairos.util.forceInit
 
-internal val neverImpl: TFlowImpl<Nothing> = TFlowCheap { null }
+internal val neverImpl: EventsImpl<Nothing> = EventsImplCheap { null }
 
-internal class MapNode<A, B>(val upstream: PullNode<A>, val transform: suspend EvalScope.(A) -> B) :
-    PullNode<B> {
-    override suspend fun getPushEvent(evalScope: EvalScope): Maybe<B> =
-        upstream.getPushEvent(evalScope).map { evalScope.transform(it) }
+internal class MapNode<A, B>(
+    val nameData: NameData,
+    val upstream: PullNode<A>,
+    val transform: EvalScope.(A, Int) -> B,
+) : PullNode<B> {
+
+    init {
+        nameData.forceInit()
+    }
+
+    override fun getPushEvent(logIndent: Int, evalScope: EvalScope): B =
+        logDuration(logIndent, { "MapNode.getPushEvent" }) {
+            val upstream =
+                logDuration({ "upstream event" }) {
+                    upstream.getPushEvent(currentLogIndent, evalScope)
+                }
+            logDuration({ "transform" }) { evalScope.transform(upstream, currentLogIndent) }
+        }
+
+    override fun toString(): String = "${super.toString()}[$nameData]"
 }
 
 internal inline fun <A, B> mapImpl(
-    crossinline upstream: suspend EvalScope.() -> TFlowImpl<A>,
-    noinline transform: suspend EvalScope.(A) -> B,
-): TFlowImpl<B> = TFlowCheap { downstream ->
+    crossinline upstream: EvalScope.() -> EventsImpl<A>,
+    nameData: NameData,
+    noinline transform: EvalScope.(A, Int) -> B,
+): EventsImpl<B> = EventsImplCheap { downstream ->
     upstream().activate(evalScope = this, downstream)?.let { (connection, needsEval) ->
         ActivationResult(
             connection =
                 NodeConnection(
-                    directUpstream = MapNode(connection.directUpstream, transform),
+                    directUpstream = MapNode(nameData, connection.directUpstream, transform),
                     schedulerUpstream = connection.schedulerUpstream,
                 ),
             needsEval = needsEval,
@@ -46,25 +61,42 @@ internal inline fun <A, B> mapImpl(
     }
 }
 
-internal class CachedNode<A>(val key: Key<Deferred<Maybe<A>>>, val upstream: PullNode<A>) :
-    PullNode<A> {
-    override suspend fun getPushEvent(evalScope: EvalScope): Maybe<A> {
-        val deferred =
-            evalScope.transactionStore.getOrPut(key) {
-                evalScope.deferAsync(CoroutineStart.LAZY) { upstream.getPushEvent(evalScope) }
-            }
-        return deferred.await()
+internal class CachedNode<A>(
+    val nameData: NameData,
+    private val transactionCache: TransactionCache<Lazy<A>>,
+    val upstream: PullNode<A>,
+) : PullNode<A> {
+
+    init {
+        nameData.forceInit()
     }
+
+    override fun getPushEvent(logIndent: Int, evalScope: EvalScope): A =
+        logDuration(logIndent, { "CachedNode.getPushEvent" }) {
+            val deferred =
+                logDuration({ "CachedNode.getOrPut" }, start = false) {
+                    transactionCache.getOrPut(evalScope) {
+                        evalScope.deferAsync {
+                            logDuration({ "CachedNode.getUpstreamEvent" }) {
+                                upstream.getPushEvent(currentLogIndent, evalScope)
+                            }
+                        }
+                    }
+                }
+            logDuration({ "await" }) { deferred.value }
+        }
+
+    override fun toString(): String = "${super.toString()}[$nameData]"
 }
 
-internal fun <A> TFlowImpl<A>.cached(): TFlowImpl<A> {
-    val key = object : Key<Deferred<Maybe<A>>> {}
-    return TFlowCheap {
+internal fun <A> EventsImpl<A>.cached(nameData: NameData): EventsImpl<A> {
+    val key = TransactionCache<Lazy<A>>()
+    return EventsImplCheap { it ->
         activate(this, it)?.let { (connection, needsEval) ->
             ActivationResult(
                 connection =
                     NodeConnection(
-                        directUpstream = CachedNode(key, connection.directUpstream),
+                        directUpstream = CachedNode(nameData, key, connection.directUpstream),
                         schedulerUpstream = connection.schedulerUpstream,
                     ),
                 needsEval = needsEval,

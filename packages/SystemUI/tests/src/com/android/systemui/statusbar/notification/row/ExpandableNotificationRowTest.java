@@ -16,9 +16,10 @@
 
 package com.android.systemui.statusbar.notification.row;
 
-import static com.android.systemui.statusbar.notification.row.NotificationRowContentBinder.FLAG_CONTENT_VIEW_ALL;
-import static com.android.systemui.statusbar.notification.row.NotificationTestHelper.PKG;
-import static com.android.systemui.statusbar.notification.row.NotificationTestHelper.USER_HANDLE;
+import static android.app.Flags.FLAG_NOTIFICATIONS_REDESIGN_TEMPLATES;
+import static android.app.Notification.FLAG_FSI_REQUESTED_BUT_DENIED;
+
+import static com.android.systemui.log.LogAssertKt.assertRunnableLogsWtf;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -29,13 +30,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import android.app.Notification;
@@ -44,13 +45,16 @@ import android.graphics.Color;
 import android.graphics.drawable.AnimatedVectorDrawable;
 import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.Icon;
 import android.os.UserHandle;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.testing.TestableLooper;
 import android.testing.TestableLooper.RunWithLooper;
 import android.util.DisplayMetrics;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.widget.ImageView;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -62,16 +66,24 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.SysuiTestableContext;
 import com.android.systemui.flags.FakeFeatureFlagsClassic;
 import com.android.systemui.flags.Flags;
+import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.notification.AboveShelfChangedListener;
 import com.android.systemui.statusbar.notification.FeedbackIcon;
 import com.android.systemui.statusbar.notification.SourceType;
+import com.android.systemui.statusbar.notification.collection.BundleEntryAdapter;
+import com.android.systemui.statusbar.notification.collection.BundleSpec;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
+import com.android.systemui.statusbar.notification.collection.PipelineEntry;
 import com.android.systemui.statusbar.notification.headsup.PinnedStatus;
+import com.android.systemui.statusbar.notification.icon.IconPack;
+import com.android.systemui.statusbar.notification.promoted.PromotedNotificationUi;
 import com.android.systemui.statusbar.notification.row.ExpandableView.OnHeightChangedListener;
 import com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper;
-import com.android.systemui.statusbar.notification.shared.NotificationContentAlphaOptimization;
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi;
 import com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
 
@@ -94,24 +106,26 @@ import java.util.function.Consumer;
 public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     private final FakeFeatureFlagsClassic mFeatureFlags = new FakeFeatureFlagsClassic();
-    private NotificationTestHelper mNotificationTestHelper;
+    private KosmosJavaAdapter mKosmos;
     @Rule public MockitoRule mockito = MockitoJUnit.rule();
 
     @Before
     public void setUp() throws Exception {
         allowTestableLooperAsMainThread();
         mFeatureFlags.set(Flags.ENABLE_NOTIFICATIONS_SIMULATE_SLOW_MEASURE, false);
-        mNotificationTestHelper = new NotificationTestHelper(
-                mContext,
-                mDependency,
-                TestableLooper.get(this),
-                mFeatureFlags);
-        mNotificationTestHelper.setDefaultInflationFlags(FLAG_CONTENT_VIEW_ALL);
+        mKosmos = new KosmosJavaAdapter(this);
+
+        mKosmos.getGroupExpansionManager().registerGroupExpansionChangeListener(
+                (changedRow, expanded) -> {
+                    if (changedRow.isGroupRoot()) {
+                        changedRow.setChildrenExpanded(expanded);
+                    }
+                });
     }
 
     @Test
     public void testCanShowHeadsUp_notOnKeyguard_true() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
 
         row.setOnKeyguard(false);
 
@@ -120,21 +134,19 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testCanShowHeadsUp_dozing_true() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
 
-        StatusBarStateController statusBarStateControllerMock =
-                mNotificationTestHelper.getStatusBarStateController();
-        when(statusBarStateControllerMock.isDozing()).thenReturn(true);
+        mKosmos.getStatusBarStateController().setIsDozing(true);
 
         assertTrue(row.canShowHeadsUp());
     }
 
     @Test
     public void testCanShowHeadsUp_bypassEnabled_true() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
 
         KeyguardBypassController keyguardBypassControllerMock =
-                mNotificationTestHelper.getKeyguardBypassController();
+                mKosmos.getKeyguardBypassController();
         when(keyguardBypassControllerMock.getBypassEnabled()).thenReturn(true);
 
         assertTrue(row.canShowHeadsUp());
@@ -142,31 +154,36 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testCanShowHeadsUp_stickyAndNotDemoted_true() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createStickyRow();
+        ExpandableNotificationRow row = mKosmos.createRow(
+                new Notification.Builder(mContext, "channel")
+                        .setSmallIcon(R.drawable.ic_menu_archive)
+                        .setFlag(FLAG_FSI_REQUESTED_BUT_DENIED, true)
+                        .build());
 
         assertTrue(row.canShowHeadsUp());
     }
 
     @Test
     public void testCanShowHeadsUp_false() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
 
         row.setOnKeyguard(true);
 
         StatusBarStateController statusBarStateControllerMock =
-                mNotificationTestHelper.getStatusBarStateController();
+                mKosmos.getStatusBarStateController();
         when(statusBarStateControllerMock.isDozing()).thenReturn(false);
 
         KeyguardBypassController keyguardBypassControllerMock =
-                mNotificationTestHelper.getKeyguardBypassController();
+                mKosmos.getKeyguardBypassController();
         when(keyguardBypassControllerMock.getBypassEnabled()).thenReturn(false);
 
         assertFalse(row.canShowHeadsUp());
     }
 
     @Test
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
     public void testUpdateBackgroundColors_isRecursive() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         group.setTintColor(Color.RED);
         group.getChildNotificationAt(0).setTintColor(Color.GREEN);
         group.getChildNotificationAt(1).setTintColor(Color.BLUE);
@@ -188,9 +205,57 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(FLAG_NOTIFICATIONS_REDESIGN_TEMPLATES)
+    public void setSensitive_doesNothingIfCalledAgain() throws Exception {
+        ExpandableNotificationRow row = mKosmos.createRow();
+        measureAndLayout(row);
+
+        // GIVEN a mocked public layout
+        NotificationContentView mockPublicLayout = mock(NotificationContentView.class);
+        row.setPublicLayout(mockPublicLayout);
+
+        // GIVEN a sensitive notification row that's currently redacted
+        row.setHideSensitiveForIntrinsicHeight(true);
+        row.setSensitive(true, true);
+        assertThat(row.getShowingLayout()).isSameInstanceAs(row.getPublicLayout());
+        verify(mockPublicLayout).requestSelectLayout(eq(true));
+        clearInvocations(mockPublicLayout);
+
+        // WHEN the row is set to the same sensitive settings
+        row.setSensitive(true, true);
+
+        // VERIFY that the layout is not updated again
+        assertThat(row.getShowingLayout()).isSameInstanceAs(row.getPublicLayout());
+        verify(mockPublicLayout, never()).requestSelectLayout(anyBoolean());
+    }
+
+    @Test
+    @EnableFlags(FLAG_NOTIFICATIONS_REDESIGN_TEMPLATES)
+    public void testSetSensitiveOnNotifRowUpdatesLayout() throws Exception {
+        // GIVEN a sensitive notification row that's currently redacted
+        ExpandableNotificationRow row = mKosmos.createRow();
+        measureAndLayout(row);
+        row.setHideSensitiveForIntrinsicHeight(true);
+        row.setSensitive(true, true);
+        assertThat(row.getShowingLayout()).isSameInstanceAs(row.getPublicLayout());
+
+        // GIVEN a mocked private layout
+        NotificationContentView mockPrivateLayout = mock(NotificationContentView.class);
+        row.setPrivateLayout(mockPrivateLayout);
+
+        // WHEN the row is set to no longer be sensitive
+        row.setSensitive(false, true);
+
+        // VERIFY that the layout is updated
+        assertThat(row.getShowingLayout()).isSameInstanceAs(row.getPrivateLayout());
+        verify(mockPrivateLayout).requestSelectLayout(eq(true));
+    }
+
+    @Test
+    @DisableFlags(FLAG_NOTIFICATIONS_REDESIGN_TEMPLATES)
     public void testSetSensitiveOnNotifRowNotifiesOfHeightChange() throws Exception {
         // GIVEN a sensitive notification row that's currently redacted
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         measureAndLayout(row);
         row.setHideSensitiveForIntrinsicHeight(true);
         row.setSensitive(true, true);
@@ -213,7 +278,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void testSetSensitiveOnGroupRowNotifiesOfHeightChange() throws Exception {
         // GIVEN a sensitive group row that's currently redacted
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         measureAndLayout(group);
         group.setHideSensitiveForIntrinsicHeight(true);
         group.setSensitive(true, true);
@@ -234,11 +299,143 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testGroupWithinGroupIntrinsicHeightCalculationWhenGroupExpanded() throws Exception {
+        // GIVEN a group within a group
+        final ExpandableNotificationRow bundle = mKosmos.createRowBundle(
+                BundleSpec.Companion.getNEWS());
+        final PipelineEntry bundleEntry =
+                ((BundleEntryAdapter) bundle.getEntryAdapter()).getEntry();
+
+        Notification groupNotif = new Notification.Builder(mContext, "channel")
+                .setSmallIcon(R.drawable.ic_menu)
+                .setGroupSummary(true)
+                .setGroup("group2")
+                .build();
+        NotificationEntry groupEntry = new NotificationEntryBuilder()
+                .setNotification(groupNotif)
+                .setParent(bundleEntry)
+                .build();
+
+        ExpandableNotificationRow group = mKosmos.createRow(groupEntry);
+        ExpandableNotificationRow child = mKosmos.createRow();
+        bundle.addChildNotification(group, 0);
+        group.addChildNotification(child, 0);
+
+        // WHEN group is expanded
+        group.expandNotification();
+        mKosmos.getGroupExpansionManager().setGroupExpanded(group.getEntryAdapter(), true);
+
+        // THEN group is expanded and has correct intrinsic height
+        assertThat(group.isGroupExpanded()).isEqualTo(true);
+        assertThat(group.getIntrinsicHeight())
+                .isEqualTo(group.getChildrenContainer().getIntrinsicHeight());
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testGroupWithinGroupIntrinsicHeightCalculationWhenGroupCollapsed() {
+        // GIVEN a group within a group
+        final ExpandableNotificationRow bundle = mKosmos.createRowBundle(
+                BundleSpec.Companion.getNEWS());
+        final PipelineEntry bundleEntry =
+                ((BundleEntryAdapter) bundle.getEntryAdapter()).getEntry();
+
+        Notification groupNotif = new Notification.Builder(mContext, "channel")
+                .setSmallIcon(R.drawable.ic_menu)
+                .setGroupSummary(true)
+                .setGroup("group2")
+                .build();
+        NotificationEntry groupEntry = new NotificationEntryBuilder()
+                .setNotification(groupNotif)
+                .setParent(bundleEntry)
+                .build();
+
+        ExpandableNotificationRow group = mKosmos.createRow(groupEntry);
+        ExpandableNotificationRow child = mKosmos.createRow();
+        bundle.addChildNotification(group, 0);
+        group.addChildNotification(child, 0);
+
+        // WHEN group is collapsed
+        group.expandNotification();
+        mKosmos.getGroupExpansionManager().setGroupExpanded(group.getEntryAdapter(), false);
+
+        // THEN group is collapsed and has correct intrinsic height
+        assertThat(group.isGroupExpanded()).isEqualTo(false);
+        assertThat(group.getIntrinsicHeight())
+                .isEqualTo(group.getChildrenContainer().getIntrinsicHeight());
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testGroupsInsideBundles_clickableWhenExpanded() throws Exception {
+        // GIVEN a group within a group
+        final ExpandableNotificationRow bundle = mKosmos.createRowBundle(
+                BundleSpec.Companion.getNEWS());
+        final PipelineEntry bundleEntry =
+                ((BundleEntryAdapter) bundle.getEntryAdapter()).getEntry();
+
+        Notification groupNotif = new Notification.Builder(mContext, "channel")
+                .setSmallIcon(R.drawable.ic_menu)
+                .setGroupSummary(true)
+                .setGroup("groupInBundle")
+                .build();
+        NotificationEntry groupEntry = new NotificationEntryBuilder()
+                .setNotification(groupNotif)
+                .setParent(bundleEntry)
+                .build();
+        ExpandableNotificationRow group = mKosmos.createRow(groupEntry);
+        ExpandableNotificationRow child = mKosmos.createRow();
+
+        bundle.addChildNotification(group, 0);
+        group.addChildNotification(child, 0);
+
+        OnClickListener l = mock(OnClickListener.class);
+        group.setOnClickListener(l);
+
+        // Check that the group summary is clickable before it is expanded
+        assertThat(group.isGroupExpanded()).isEqualTo(false);
+        assertThat(group.isClickable()).isTrue();
+        assertThat(group.isBundledSummaryClickable()).isTrue();
+        assertThat(group.isSummaryWithChildren()).isTrue();
+        assertThat(child.isClickable()).isFalse();
+
+        // Check that the touch events are handled
+        MotionEvent touchDown = MotionEvent.obtain(
+                /* downTime= */ 1234,
+                /* eventTime= */ 1234,
+                MotionEvent.ACTION_DOWN,
+                101,
+                201,
+                0);
+        assertThat(group.onTouchEvent(touchDown)).isTrue();
+        MotionEvent touchUp = MotionEvent.obtain(
+                /* downTime= */ 1235,
+                /* eventTime= */ 1235,
+                MotionEvent.ACTION_UP,
+                101,
+                201,
+                0);
+        assertThat(group.onTouchEvent(touchUp)).isTrue();
+
+        // WHEN group is expanded
+        group.expandNotification();
+        mKosmos.getGroupExpansionManager().setGroupExpanded(group.getEntryAdapter(), true);
+
+        // THEN group is expanded and is not clickable
+        assertThat(group.isGroupExpanded()).isEqualTo(true);
+        assertThat(group.isBundledSummaryClickable()).isFalse();
+    }
+
+    @Test
     public void testSetSensitiveOnPublicRowDoesNotNotifyOfHeightChange() throws Exception {
         // create a notification row whose public version is identical
-        Notification publicNotif = mNotificationTestHelper.createNotification();
-        publicNotif.publicVersion = mNotificationTestHelper.createNotification();
-        ExpandableNotificationRow publicRow = mNotificationTestHelper.createRow(publicNotif);
+        Notification publicNotif = new Notification();
+        publicNotif.setSmallIcon(Icon.createWithResource(mContext, R.drawable.ic_menu_archive));
+        publicNotif.publicVersion = new Notification();
+        publicNotif.publicVersion.setSmallIcon(
+                Icon.createWithResource(mContext, R.drawable.ic_menu_archive));
+        ExpandableNotificationRow publicRow = mKosmos.createRow(publicNotif);
 
         // GIVEN a sensitive public row that's currently redacted
         measureAndLayout(publicRow);
@@ -277,7 +474,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testGroupSummaryNotShowingIconWhenPublic() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         group.setSensitive(true, true);
         group.setHideSensitiveForIntrinsicHeight(true);
@@ -287,7 +484,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testNotificationHeaderVisibleWhenAnimating() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         group.setSensitive(true, true);
         group.setHideSensitive(true, false, 0, 0);
@@ -298,7 +495,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testUserLockedResetEvenWhenNoChildren() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         group.setUserLocked(true);
         group.setUserLocked(false);
@@ -307,10 +504,9 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
-    @EnableFlags(NotificationContentAlphaOptimization.FLAG_NAME)
     public void setHideSensitive_shouldNotDisturbAnimation() throws Exception {
         //Given: A row that is during alpha animation
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
 
         assertEquals(row.getPrivateLayout(), row.getContentView());
         row.setContentAlpha(0.5f);
@@ -329,14 +525,16 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
-    @EnableFlags(NotificationContentAlphaOptimization.FLAG_NAME)
     public void setHideSensitive_changeContent_shouldResetAlpha() throws Exception {
 
         // Given: A sensitive row that has public version but is not hiding sensitive,
         // and is during an animation that sets its alpha value to be 0.5f
-        Notification publicNotif = mNotificationTestHelper.createNotification();
-        publicNotif.publicVersion = mNotificationTestHelper.createNotification();
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow(publicNotif);
+        Notification publicNotif = new Notification();
+        publicNotif.setSmallIcon(Icon.createWithResource(mContext, R.drawable.ic_menu_archive));
+        publicNotif.publicVersion = new Notification();
+        publicNotif.publicVersion.setSmallIcon(
+                Icon.createWithResource(mContext, R.drawable.ic_menu_archive));
+        ExpandableNotificationRow row = mKosmos.createRow(publicNotif);
         row.setSensitive(true, false);
         row.setContentAlpha(0.5f);
 
@@ -363,19 +561,18 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testReinflatedOnDensityChange() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         NotificationChildrenContainer mockContainer = mock(NotificationChildrenContainer.class);
         row.setChildrenContainer(mockContainer);
 
         row.onDensityOrFontScaleChanged();
 
-        verify(mockContainer).reInflateViews(any(), any());
+        verify(mockContainer).reInflateViews(any());
     }
 
     @Test
     public void testIconColorShouldBeUpdatedWhenSensitive() throws Exception {
-        ExpandableNotificationRow row = spy(mNotificationTestHelper.createRow(
-                FLAG_CONTENT_VIEW_ALL));
+        ExpandableNotificationRow row = spy(mKosmos.createRow());
         row.setSensitive(true, true);
         row.setHideSensitive(true, false, 0, 0);
         verify(row).updateShelfIconColor();
@@ -383,7 +580,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testAboveShelfChangedListenerCalled() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         AboveShelfChangedListener listener = mock(AboveShelfChangedListener.class);
         row.setAboveShelfChangedListener(listener);
         row.setHeadsUp(true);
@@ -392,7 +589,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testAboveShelfChangedListenerCalledPinned() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         AboveShelfChangedListener listener = mock(AboveShelfChangedListener.class);
         row.setAboveShelfChangedListener(listener);
         row.setPinnedStatus(PinnedStatus.PinnedBySystem);
@@ -401,7 +598,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testAboveShelfChangedListenerCalledHeadsUpAnimatingAway() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         AboveShelfChangedListener listener = mock(AboveShelfChangedListener.class);
         row.setAboveShelfChangedListener(listener);
         row.setHeadsUpAnimatingAway(true);
@@ -409,7 +606,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
     @Test
     public void testAboveShelfChangedListenerCalledWhenGoingBelow() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         AboveShelfChangedListener listener = mock(AboveShelfChangedListener.class);
         row.setAboveShelfChangedListener(listener);
         Mockito.reset(listener);
@@ -420,11 +617,11 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testClickSound() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         assertTrue("Should play sounds by default.", group.isSoundEffectsEnabled());
-        StatusBarStateController mock = mNotificationTestHelper.getStatusBarStateController();
-        when(mock.isDozing()).thenReturn(true);
+        SysuiStatusBarStateController sbsc = mKosmos.getStatusBarStateController();
+        sbsc.setIsDozing(true);
         group.setSecureStateProvider(()-> false);
         assertFalse("Shouldn't play sounds when dark and trusted.",
                 group.isSoundEffectsEnabled());
@@ -435,7 +632,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testSetDismissed_longPressListenerRemoved() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         ExpandableNotificationRow.LongPressListener listener =
                 mock(ExpandableNotificationRow.LongPressListener.class);
@@ -453,7 +650,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testFeedback_noHeader() throws Exception {
-        ExpandableNotificationRow groupRow = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow groupRow = mKosmos.createRowGroup();
 
         // public notification is custom layout - no header
         groupRow.setSensitive(true, true);
@@ -463,7 +660,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testFeedback_header() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         NotificationContentView publicLayout = mock(NotificationContentView.class);
         group.setPublicLayout(publicLayout);
@@ -485,7 +682,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testFeedbackOnClick() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         ExpandableNotificationRow.CoordinateOnClickListener l = mock(
                 ExpandableNotificationRow.CoordinateOnClickListener.class);
@@ -499,7 +696,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testHeadsUpAnimatingAwayListener() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         Consumer<Boolean> headsUpListener = mock(Consumer.class);
         AboveShelfChangedListener aboveShelfChangedListener = mock(AboveShelfChangedListener.class);
         group.setHeadsUpAnimatingAwayListener(headsUpListener);
@@ -516,19 +713,23 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testIconScrollXAfterTranslationAndReset() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
-        group.setDismissUsingRowTranslationX(false);
+        group.setDismissUsingRowTranslationX(false, false);
         group.setTranslation(50);
-        assertEquals(50, -group.getEntry().getIcons().getShelfIcon().getScrollX());
+        IconPack icons = NotificationBundleUi.isEnabled()
+                ? group.getEntryAdapter().getIcons()
+                : group.getEntryLegacy().getIcons();
+
+        assertEquals(50, -icons.getShelfIcon().getScrollX());
 
         group.resetTranslation();
-        assertEquals(0, group.getEntry().getIcons().getShelfIcon().getScrollX());
+        assertEquals(0, icons.getShelfIcon().getScrollX());
     }
 
     @Test
     public void testIsExpanded_userExpanded() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
 
         group.setExpandable(true);
         Assert.assertFalse(group.isExpanded());
@@ -537,63 +738,50 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
     public void testGetIsNonblockable() throws Exception {
-        ExpandableNotificationRow row =
-                mNotificationTestHelper.createRow(mNotificationTestHelper.createNotification());
-        row.setEntry(null);
+        ExpandableNotificationRow row = mKosmos.createRow();
+        row.setEntryLegacy(null);
 
         assertTrue(row.getIsNonblockable());
 
         NotificationEntry entry = mock(NotificationEntry.class);
 
         Mockito.doReturn(false, true).when(entry).isBlockable();
-        row.setEntry(entry);
+        row.setEntryLegacy(entry);
         assertTrue(row.getIsNonblockable());
         assertFalse(row.getIsNonblockable());
     }
 
     @Test
-    @DisableFlags(com.android.systemui.Flags.FLAG_NOTIFICATION_REENTRANT_DISMISS)
-    public void testCanDismiss_immediately() throws Exception {
-        ExpandableNotificationRow row =
-                mNotificationTestHelper.createRow(mNotificationTestHelper.createNotification());
-        when(mNotificationTestHelper.getDismissibilityProvider().isDismissable(row.getEntry()))
-                .thenReturn(true);
-        row.performDismiss(false);
-        verify(mNotificationTestHelper.getOnUserInteractionCallback())
-                .registerFutureDismissal(any(), anyInt());
-    }
-
-    @Test
-    @EnableFlags(com.android.systemui.Flags.FLAG_NOTIFICATION_REENTRANT_DISMISS)
     public void testCanDismiss() throws Exception {
-        ExpandableNotificationRow row =
-                mNotificationTestHelper.createRow(mNotificationTestHelper.createNotification());
-        when(mNotificationTestHelper.getDismissibilityProvider().isDismissable(row.getEntry()))
+        ExpandableNotificationRow row = mKosmos.createRow();
+        when(mKosmos.getMockNotificationDismissibilityProvider().isDismissable(
+                row.getKey()))
                 .thenReturn(true);
         row.performDismiss(false);
         TestableLooper.get(this).processAllMessages();
-        verify(mNotificationTestHelper.getOnUserInteractionCallback())
-                .registerFutureDismissal(any(), anyInt());
+        verify(mKosmos.getMockNotifCollection())
+                .registerFutureDismissal(any(NotificationEntry.class), anyInt(), any());
     }
 
     @Test
     public void testCannotDismiss() throws Exception {
-        ExpandableNotificationRow row =
-                mNotificationTestHelper.createRow(mNotificationTestHelper.createNotification());
-        when(mNotificationTestHelper.getDismissibilityProvider().isDismissable(row.getEntry()))
-                .thenReturn(false);
+        ExpandableNotificationRow row = mKosmos.createRow();
+        when(mKosmos.getMockNotificationDismissibilityProvider().isDismissable(
+                row.getKey()))
+                .thenReturn(true);
         row.performDismiss(false);
-        verify(mNotificationTestHelper.getOnUserInteractionCallback(), never())
-                .registerFutureDismissal(any(), anyInt());
+        verify(mKosmos.getMockNotifCollection())
+                .registerFutureDismissal(any(NotificationEntry.class), anyInt(), any());
     }
 
     @Test
     public void testAddChildNotification() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup(0);
-        ExpandableNotificationRow child = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
+        ExpandableNotificationRow child = mKosmos.createRow();
 
-        group.addChildNotification(child);
+        group.addChildNotification(child, 0);
 
         Assert.assertEquals(child, group.getChildNotificationAt(0));
         Assert.assertEquals(group, child.getNotificationParent());
@@ -602,23 +790,28 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void testAddChildNotification_childSkipped() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup(0);
-        ExpandableNotificationRow child = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow group = mKosmos.createRow(
+                new Notification.Builder(mContext, "channel")
+                        .setSmallIcon(R.drawable.ic_menu)
+                        .setGroupSummary(true)
+                        .setGroup("group")
+                        .build());
+        ExpandableNotificationRow child = mKosmos.createRow();
         child.setKeepInParentForDismissAnimation(true);
 
         group.addChildNotification(child);
 
         Assert.assertTrue(group.getAttachedChildren().isEmpty());
         Assert.assertNotEquals(group, child.getNotificationParent());
-        verify(mNotificationTestHelper.getMockLogger()).logSkipAttachingKeepInParentChild(
-                /*child=*/ child.getEntry(),
-                /*newParent=*/ group.getEntry()
+        verify(mKosmos.getExpandableNotificationRowLogger()).logSkipAttachingKeepInParentChild(
+                /*child=*/ child.getLoggingKey(),
+                /*newParent=*/ group.getLoggingKey()
         );
     }
 
     @Test
     public void testRemoveChildNotification() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup(1);
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         ExpandableNotificationRow child = group.getAttachedChildren().get(0);
         child.setKeepInParentForDismissAnimation(true);
 
@@ -627,14 +820,11 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
         Assert.assertNull(child.getParent());
         Assert.assertNull(child.getNotificationParent());
         Assert.assertFalse(child.keepInParentForDismissAnimation());
-        verify(mNotificationTestHelper.getMockLogger())
-                .logCancelAppearDrawing(child.getEntry(), false);
-        verifyNoMoreInteractions(mNotificationTestHelper.getMockLogger());
     }
 
     @Test
     public void testRemoveChildrenWithKeepInParent_removesChildWithKeepInParent() throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup(1);
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         ExpandableNotificationRow child = group.getAttachedChildren().get(0);
         child.setKeepInParentForDismissAnimation(true);
 
@@ -643,23 +833,23 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
         Assert.assertNull(child.getParent());
         Assert.assertNull(child.getNotificationParent());
         Assert.assertFalse(child.keepInParentForDismissAnimation());
-        verify(mNotificationTestHelper.getMockLogger()).logKeepInParentChildDetached(
-                /*child=*/ child.getEntry(),
-                /*oldParent=*/ group.getEntry()
+        verify(mKosmos.getExpandableNotificationRowLogger()).logKeepInParentChildDetached(
+                /*child=*/ child.getLoggingKey(),
+                /*oldParent=*/ group.getLoggingKey()
         );
     }
 
     @Test
     public void testRemoveChildrenWithKeepInParent_skipsChildrenWithoutKeepInParent()
             throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup(1);
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         ExpandableNotificationRow child = group.getAttachedChildren().get(0);
 
         group.removeChildrenWithKeepInParent();
 
         Assert.assertEquals(group, child.getNotificationParent());
         Assert.assertFalse(child.keepInParentForDismissAnimation());
-        verify(mNotificationTestHelper.getMockLogger(), never()).logKeepInParentChildDetached(
+        verify(mKosmos.getExpandableNotificationRowLogger(), never()).logKeepInParentChildDetached(
                 /*child=*/ any(),
                 /*oldParent=*/ any()
         );
@@ -668,7 +858,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void applyRoundnessAndInvalidate_should_be_immediately_applied_on_childrenContainer()
             throws Exception {
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
         Assert.assertEquals(0f, group.getBottomRoundness(), 0.001f);
         Assert.assertEquals(0f, group.getChildrenContainer().getBottomRoundness(), 0.001f);
 
@@ -681,7 +871,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void testSetContentAnimationRunning_Run() throws Exception {
         // Create views for the notification row.
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         NotificationContentView publicLayout = mock(NotificationContentView.class);
         row.setPublicLayout(publicLayout);
         NotificationContentView privateLayout = mock(NotificationContentView.class);
@@ -695,7 +885,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void testSetContentAnimationRunning_Stop() throws Exception {
         // Create views for the notification row.
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         NotificationContentView publicLayout = mock(NotificationContentView.class);
         row.setPublicLayout(publicLayout);
         NotificationContentView privateLayout = mock(NotificationContentView.class);
@@ -709,19 +899,18 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void testSetContentAnimationRunningInGroupChild_Run() throws Exception {
         // Creates parent views on groupRow.
-        ExpandableNotificationRow groupRow = mNotificationTestHelper.createGroup();
+        ExpandableNotificationRow groupRow = mKosmos.createRowGroup();
         NotificationContentView publicParentLayout = mock(NotificationContentView.class);
         groupRow.setPublicLayout(publicParentLayout);
         NotificationContentView privateParentLayout = mock(NotificationContentView.class);
         groupRow.setPrivateLayout(privateParentLayout);
 
         // Create child views on row.
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow row = mKosmos.createRow();
         NotificationContentView publicChildLayout = mock(NotificationContentView.class);
         row.setPublicLayout(publicChildLayout);
         NotificationContentView privateChildLayout = mock(NotificationContentView.class);
         row.setPrivateLayout(privateChildLayout);
-        when(row.isGroupExpanded()).thenReturn(true);
         setMockChildrenContainer(groupRow, row);
 
         groupRow.setAnimationRunning(true);
@@ -736,20 +925,19 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void testSetIconAnimationRunningGroup_Run() throws Exception {
         // Create views for a group row.
-        ExpandableNotificationRow group = mNotificationTestHelper.createGroup();
-        ExpandableNotificationRow child = mNotificationTestHelper.createRow();
+        ExpandableNotificationRow group = mKosmos.createRowGroup();
+        ExpandableNotificationRow child = mKosmos.createRow();
         NotificationContentView publicParentLayout = mock(NotificationContentView.class);
         group.setPublicLayout(publicParentLayout);
         NotificationContentView privateParentLayout = mock(NotificationContentView.class);
         group.setPrivateLayout(privateParentLayout);
-        when(group.isGroupExpanded()).thenReturn(true);
+        group.expandNotification();
 
         // Add the child to the group.
         NotificationContentView publicChildLayout = mock(NotificationContentView.class);
         child.setPublicLayout(publicChildLayout);
         NotificationContentView privateChildLayout = mock(NotificationContentView.class);
         child.setPrivateLayout(privateChildLayout);
-        when(child.isGroupExpanded()).thenReturn(true);
 
         NotificationChildrenContainer mockContainer =
                 setMockChildrenContainer(group, child);
@@ -786,7 +974,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     public void isExpanded_hideSensitive_sensitiveNotExpanded()
             throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setUserExpanded(true);
         row.setOnKeyguard(false);
         row.setSensitive(/* sensitive= */true, /* hideSensitive= */false);
@@ -800,7 +988,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     public void isExpanded_hideSensitive_nonSensitiveExpanded()
             throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setUserExpanded(true);
         row.setOnKeyguard(false);
         row.setSensitive(/* sensitive= */true, /* hideSensitive= */false);
@@ -813,7 +1001,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_onKeyguard_allowOnKeyguardExpanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(true);
         row.setUserExpanded(true);
 
@@ -823,7 +1011,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_onKeyguard_notAllowOnKeyguardNotExpanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(true);
         row.setUserExpanded(true);
 
@@ -834,7 +1022,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_systemExpanded_expanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(false);
         row.setSystemExpanded(true);
 
@@ -845,7 +1033,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_systemChildExpanded_expanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(false);
         row.setSystemChildExpanded(true);
 
@@ -856,7 +1044,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_userExpanded_expanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(false);
         row.setSystemExpanded(true);
         row.setUserExpanded(true);
@@ -868,7 +1056,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     @Test
     public void isExpanded_userExpandedFalse_notExpanded() throws Exception {
         // GIVEN
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
         row.setOnKeyguard(false);
         row.setSystemExpanded(true);
         row.setUserExpanded(false);
@@ -878,9 +1066,88 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_sensitivePromotedNotification_notExpanded() throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setSensitive(/* sensitive= */true, /* hideSensitive= */false);
+        row.setHideSensitiveForIntrinsicHeight(/* hideSensitive= */true);
+
+        // THEN
+        assertThat(row.isExpanded()).isFalse();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_promotedNotificationNotOnKeyguard_expanded() throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setOnKeyguard(false);
+
+        // THEN
+        assertThat(row.isExpanded()).isTrue();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_promotedNotificationAllowOnKeyguard_expanded() throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setOnKeyguard(true);
+
+        // THEN
+        assertThat(row.isExpanded(/* allowOnKeyguard = */ true)).isTrue();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_promotedNotificationIgnoreLockscreenConstraints_expanded()
+            throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setOnKeyguard(true);
+        row.setIgnoreLockscreenConstraints(true);
+
+        // THEN
+        assertThat(row.isExpanded()).isTrue();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_promotedNotificationSaveSpaceOnLockScreen_notExpanded()
+            throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setOnKeyguard(true);
+        row.setSaveSpaceOnLockscreen(true);
+
+        // THEN
+        assertThat(row.isExpanded()).isFalse();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    @DisableFlags(NotificationBundleUi.FLAG_NAME)
+    public void isExpanded_promotedNotificationNotSaveSpaceOnLockScreen_expanded()
+            throws Exception {
+        // GIVEN
+        final ExpandableNotificationRow row = mKosmos.createPromotedOngoingRow();
+        row.setOnKeyguard(true);
+        row.setSaveSpaceOnLockscreen(false);
+
+        // THEN
+        assertThat(row.isExpanded()).isTrue();
+    }
+
+    @Test
     public void onDisappearAnimationFinished_shouldSetFalse_headsUpAnimatingAway()
             throws Exception {
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
 
         // Initial state: suppose heads up animation in progress
         row.setHeadsUpAnimatingAway(true);
@@ -893,7 +1160,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void onHUNAppear_cancelAppearDrawing_shouldResetAnimationState() throws Exception {
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
 
         row.performAddAnimation(/* delay */ 0, /* duration */ 1000, /* isHeadsUpAppear */ true);
 
@@ -908,7 +1175,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void onHUNDisappear_cancelAppearDrawing_shouldResetAnimationState() throws Exception {
-        final ExpandableNotificationRow row = mNotificationTestHelper.createRow();
+        final ExpandableNotificationRow row = mKosmos.createRow();
 
         row.performAddAnimation(/* delay */ 0, /* duration */ 1000, /* isHeadsUpAppear */ false);
 
@@ -923,8 +1190,7 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
 
     @Test
     public void imageResolver_sameNotificationUser_usesContext() throws Exception {
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow(PKG,
-                USER_HANDLE.getUid(1234), USER_HANDLE);
+        ExpandableNotificationRow row = mKosmos.createRow();
 
         assertThat(row.getImageResolver().getContext()).isSameInstanceAs(mContext);
     }
@@ -935,10 +1201,133 @@ public class ExpandableNotificationRowTest extends SysuiTestCase {
         Context userContext = new SysuiTestableContext(mContext);
         mContext.prepareCreateContextAsUser(user, userContext);
 
-        ExpandableNotificationRow row = mNotificationTestHelper.createRow(PKG,
-                user.getUid(1234), user);
+        NotificationEntry entry = mKosmos.buildNotificationEntry(builder -> {
+            builder.setUser(user);
+            builder.setUid(user.getUid(1234));
+            return builder.done();
+        });
+        ExpandableNotificationRow row = mKosmos.createRow(entry);
 
-        assertThat(row.getImageResolver().getContext()).isSameInstanceAs(userContext);
+        assertThat(row.getImageResolver().getContext().getUser()).isEqualTo(userContext.getUser());
+    }
+
+    @Test
+    public void mustStayOnScreen_false() throws Exception {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+        assertThat(row.mustStayOnScreen()).isFalse();
+    }
+
+    @Test
+    public void mustStayOnScreen_isHeadsUp_markedAsSeen() throws Exception {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+        // When the row is a HUN
+        row.setHeadsUp(true);
+        //Then it must stay on screen
+        assertThat(row.mustStayOnScreen()).isTrue();
+        // And when the user has seen it
+        row.markHeadsUpSeen();
+        // Then it should NOT stay on screen anymore
+        assertThat(row.mustStayOnScreen()).isFalse();
+    }
+
+    @Test
+    public void mustStayOnScreen_isPinned_markedAsSeen() throws Exception {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+        // When a HUN is pinned
+        row.setHeadsUp(true);
+        row.setPinnedStatus(PinnedStatus.PinnedBySystem);
+        //Then it must stay on screen
+        assertThat(row.mustStayOnScreen()).isTrue();
+        // And when the user has seen it
+        row.markHeadsUpSeen();
+        // Then it should still stay on screen
+        assertThat(row.mustStayOnScreen()).isTrue();
+    }
+
+    @Test
+    @DisableFlags(PromotedNotificationUi.FLAG_NAME)
+    public void hasStatusBarChipDuringHeadsUpAnimation_flagOff_false() throws Exception {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+
+        assertRunnableLogsWtf(() -> row.setHasStatusBarChipDuringHeadsUpAnimation(true));
+
+        assertThat(row.hasStatusBarChipDuringHeadsUpAnimation()).isFalse();
+    }
+
+    @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    public void hasStatusBarChipDuringHeadsUpAnimation_flagOn_returnsValue() throws Exception {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+
+        assertThat(row.hasStatusBarChipDuringHeadsUpAnimation()).isFalse();
+
+        row.setHasStatusBarChipDuringHeadsUpAnimation(true);
+        assertThat(row.hasStatusBarChipDuringHeadsUpAnimation()).isTrue();
+
+        row.setHasStatusBarChipDuringHeadsUpAnimation(false);
+        assertThat(row.hasStatusBarChipDuringHeadsUpAnimation()).isFalse();
+    }
+
+    @Test
+    public void testToggleNotificationExpansion() {
+        final ExpandableNotificationRow row = mKosmos.createRow();
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isTrue();
+        assertThat(row.isUserExpanded()).isTrue();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isFalse();
+        assertThat(row.isUserExpanded()).isFalse();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+    }
+
+    @Test
+    public void testToggleGroupNotificationExpansion() {
+        final ExpandableNotificationRow row = mKosmos.createRowGroup();
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isTrue();
+        assertThat(row.isUserExpanded()).isTrue();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+        assertThat(row.areChildrenExpanded()).isTrue();
+        assertThat(row.getAttachedChildren().get(0).isExpanded()).isFalse();
+
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isFalse();
+        assertThat(row.isUserExpanded()).isFalse();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+        assertThat(row.areChildrenExpanded()).isFalse();
+        assertThat(row.getAttachedChildren().get(0).isExpanded()).isFalse();
+    }
+
+    @Test
+    public void testToggleGroupNotificationExpansion_minimized() {
+        final ExpandableNotificationRow row = mKosmos.createRowGroup();
+        row.setIsMinimized(true);
+
+        // expand into the same state as collapsed non-minimized groups
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isTrue();
+        assertThat(row.isUserExpanded()).isTrue();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+        assertThat(row.areChildrenExpanded()).isFalse();
+        assertThat(row.getAttachedChildren().get(0).isExpanded()).isFalse();
+
+        // fully expand
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isTrue();
+        assertThat(row.isUserExpanded()).isTrue();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+        assertThat(row.areChildrenExpanded()).isTrue();
+        assertThat(row.getAttachedChildren().get(0).isExpanded()).isFalse();
+
+        // back to  fully minimized state
+        row.toggleExpansionState();
+        assertThat(row.isExpanded()).isFalse();
+        assertThat(row.isUserExpanded()).isFalse();
+        assertThat(row.hasUserChangedExpansion()).isTrue();
+        assertThat(row.areChildrenExpanded()).isFalse();
+        assertThat(row.getAttachedChildren().get(0).isExpanded()).isFalse();
     }
 
     private void setDrawableIconsInImageView(CachingIconView icon, Drawable iconDrawable,

@@ -16,6 +16,7 @@
 
 package com.android.systemui.keyguard.domain.interactor.scenetransition
 
+import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.SceneKey
 import com.android.systemui.CoreStartable
@@ -38,7 +39,6 @@ import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import com.android.app.tracing.coroutines.launchTraced as launch
 
 /**
  * This class listens to scene framework scene transitions and manages keyguard transition framework
@@ -111,12 +111,25 @@ constructor(
         if (currentTransitionId == null) return
         if (prevTransition !is ObservableTransitionState.Transition) return
 
-        if (idle.currentScene == prevTransition.toContent) {
+        // If the previous transition's fromContent is still in currentOverlays, we canceled a
+        // transition away from that overlay.
+        val canceledOverlayTransition = idle.currentOverlays.contains(prevTransition.fromContent)
+
+        val idleOnToContentAfterCompletedTransition =
+            idle.currentScene == prevTransition.toContent && !canceledOverlayTransition
+
+        // Finish the current transition if we've completed a scene transition to a new scene or a
+        // new overlay.
+        if (
+            idleOnToContentAfterCompletedTransition ||
+                idle.currentOverlays.contains(prevTransition.toContent)
+        ) {
             finishCurrentTransition()
         } else {
             val targetState =
                 if (idle.currentScene == Scenes.Lockscreen) {
-                    transitionInteractor.startedKeyguardTransitionStep.value.from
+                    repository.nextLockscreenTargetState.value
+                        ?: transitionInteractor.startedKeyguardTransitionStep.value.from
                 } else {
                     UNDEFINED
                 }
@@ -194,11 +207,11 @@ constructor(
             TransitionInfo(
                 ownerName = this::class.java.simpleName,
                 from = UNDEFINED,
-                to = repository.nextLockscreenTargetState.value,
+                to = repository.nextLockscreenTargetState.value ?: DEFAULT_STATE,
                 animator = null,
                 modeOnCanceled = TransitionModeOnCanceled.RESET,
             )
-        repository.nextLockscreenTargetState.value = DEFAULT_STATE
+        repository.nextLockscreenTargetState.value = null
         startTransition(newTransition)
     }
 
@@ -212,6 +225,7 @@ constructor(
                 animator = null,
                 modeOnCanceled = TransitionModeOnCanceled.RESET,
             )
+        repository.nextLockscreenTargetState.value = null
         startTransition(newTransition)
     }
 

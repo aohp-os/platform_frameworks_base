@@ -20,34 +20,59 @@ import static android.appwidget.flags.Flags.remoteAdapterConversion;
 
 import static com.android.internal.R.id.pending_intent_tag;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyBoolean;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import static java.time.temporal.ChronoUnit.MINUTES;
+
 import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetHostView;
+import android.appwidget.AppWidgetManager.ServiceCollectionCache;
+import android.appwidget.flags.Flags;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Binder;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Parcel;
+import android.os.RemoteException;
+import android.os.SystemClock;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.AttributeSet;
 import android.util.SizeF;
+import android.util.proto.ProtoInputStream;
+import android.util.proto.ProtoOutputStream;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.RemoteViewsAdapterTest.ViewsFactory;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -62,11 +87,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
@@ -82,6 +112,9 @@ public class RemoteViewsTest {
 
     @Rule
     public final ExpectedException exception = ExpectedException.none();
+
+    @Rule
+    public SetFlagsRule setFlagsRule = new SetFlagsRule();
 
     private Context mContext;
     private String mPackage;
@@ -932,6 +965,285 @@ public class RemoteViewsTest {
         TextView replacedTextView = inflated.findViewById(R.id.text);
         assertSame(replacement, replacedTextView);
         assertEquals(testText, replacedTextView.getText());
+    }
+
+    @Test
+    public void estimateMemoryUsage() {
+        Bitmap b1 = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888);
+        int b1Memory = b1.getAllocationByteCount();
+        Bitmap b2 = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+        int b2Memory = b2.getAllocationByteCount();
+        Bitmap b3 = Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888);
+        int b3Memory = b3.getAllocationByteCount();
+
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        assertEquals(0, rv.estimateMemoryUsage());
+        assertEquals(0, rv.estimateIconMemoryUsage());
+        assertEquals(0, rv.estimateTotalBitmapMemoryUsage());
+
+        rv.setBitmap(R.id.view, "", b1);
+        rv.setImageViewBitmap(R.id.view, b1); // second instance of b1 is cached
+        rv.setBitmap(R.id.view, "", b2);
+        assertEquals(b1Memory + b2Memory, rv.estimateMemoryUsage());
+        assertEquals(0, rv.estimateIconMemoryUsage());
+        assertEquals(b1Memory + b2Memory, rv.estimateTotalBitmapMemoryUsage());
+
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b2));
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b3));
+        rv.setImageViewIcon(R.id.view, Icon.createWithBitmap(b3));
+        assertEquals(b1Memory + b2Memory, rv.estimateMemoryUsage());
+        assertEquals(b2Memory + (2 * b3Memory), rv.estimateIconMemoryUsage());
+        assertEquals(b1Memory + (2 * b2Memory) + (2 * b3Memory),
+                rv.estimateTotalBitmapMemoryUsage());
+    }
+
+    @Test
+    public void estimateMemoryUsage_landscapePortrait() {
+        Bitmap b1 = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888);
+        int b1Memory = b1.getAllocationByteCount();
+        Bitmap b2 = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+        int b2Memory = b2.getAllocationByteCount();
+        Bitmap b3 = Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888);
+        int b3Memory = b3.getAllocationByteCount();
+        Bitmap b4 = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888);
+        int b4Memory = b4.getAllocationByteCount();
+
+        // Landscape and portrait using same bitmaps get counted twice.
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setBitmap(R.id.view, "", b1);
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b2));
+        RemoteViews landscapePortraitViews = new RemoteViews(rv, rv);
+        assertEquals(b1Memory, landscapePortraitViews.estimateMemoryUsage());
+        assertEquals(2 * b2Memory, landscapePortraitViews.estimateIconMemoryUsage());
+        assertEquals(b1Memory + (2 * b2Memory),
+                landscapePortraitViews.estimateTotalBitmapMemoryUsage());
+
+        final RemoteViews rv2 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setBitmap(R.id.view, "", b3);
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b4));
+        landscapePortraitViews = new RemoteViews(rv, rv2);
+        assertEquals(b1Memory + b3Memory, landscapePortraitViews.estimateMemoryUsage());
+        assertEquals(b2Memory + b4Memory, landscapePortraitViews.estimateIconMemoryUsage());
+        assertEquals(b1Memory + b2Memory + b3Memory + b4Memory,
+                landscapePortraitViews.estimateTotalBitmapMemoryUsage());
+    }
+
+    @Test
+    public void estimateMemoryUsage_sizedViews() {
+        Bitmap b1 = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888);
+        int b1Memory = b1.getAllocationByteCount();
+        Bitmap b2 = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+        int b2Memory = b2.getAllocationByteCount();
+        Bitmap b3 = Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888);
+        int b3Memory = b3.getAllocationByteCount();
+        Bitmap b4 = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888);
+        int b4Memory = b4.getAllocationByteCount();
+
+        // Sized views using same bitmaps do not get counted twice.
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setBitmap(R.id.view, "", b1);
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b2));
+        RemoteViews sizedViews = new RemoteViews(
+                Map.of(new SizeF(0f, 0f), rv, new SizeF(1f, 1f), rv));
+        assertEquals(b1Memory, sizedViews.estimateMemoryUsage());
+        assertEquals(2 * b2Memory, sizedViews.estimateIconMemoryUsage());
+        assertEquals(b1Memory + (2 * b2Memory), sizedViews.estimateTotalBitmapMemoryUsage());
+
+        final RemoteViews rv2 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setBitmap(R.id.view, "", b3);
+        rv.setIcon(R.id.view, "", Icon.createWithBitmap(b4));
+        sizedViews = new RemoteViews(Map.of(new SizeF(0f, 0f), rv, new SizeF(1f, 1f), rv2));
+        assertEquals(b1Memory + b3Memory, sizedViews.estimateMemoryUsage());
+        assertEquals(b2Memory + b4Memory, sizedViews.estimateIconMemoryUsage());
+        assertEquals(b1Memory + b2Memory + b3Memory + b4Memory,
+                sizedViews.estimateTotalBitmapMemoryUsage());
+    }
+
+    @Test
+    public void estimateMemoryUsage_nestedViews() {
+        Bitmap b1 = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888);
+        int b1Memory = b1.getAllocationByteCount();
+        Bitmap b2 = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+        int b2Memory = b2.getAllocationByteCount();
+
+        final RemoteViews rv1 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv1.setBitmap(R.id.view, "", b1);
+        final RemoteViews rv2 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv2.setIcon(R.id.view, "", Icon.createWithBitmap(b2));
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.addView(R.id.view, rv1);
+        rv.addView(R.id.view, rv2);
+        assertEquals(b1Memory, rv.estimateMemoryUsage());
+        assertEquals(b2Memory, rv.estimateIconMemoryUsage());
+        assertEquals(b1Memory + b2Memory, rv.estimateTotalBitmapMemoryUsage());
+    }
+
+    @Test
+    public void estimateMemoryUsage_remoteCollectionItems() {
+        Bitmap b1 = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888);
+        int b1Memory = b1.getAllocationByteCount();
+        Bitmap b2 = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+        int b2Memory = b2.getAllocationByteCount();
+
+        final RemoteViews rv1 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv1.setBitmap(R.id.view, "", b1);
+        final RemoteViews rv2 = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv2.setIcon(R.id.view, "", Icon.createWithBitmap(b2));
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setRemoteAdapter(R.id.view, new RemoteViews.RemoteCollectionItems.Builder().addItem(0L,
+                rv1).addItem(1L, rv2).build());
+        assertEquals(b1Memory, rv.estimateMemoryUsage());
+        assertEquals(b2Memory, rv.estimateIconMemoryUsage());
+        assertEquals(b1Memory + b2Memory, rv.estimateTotalBitmapMemoryUsage());
+    }
+
+    @Test
+    public void remoteResponse_FillInIntentNestedIntentKeysCollected() {
+        Intent fillInIntent = new Intent();
+        fillInIntent.putExtra("extraIntent", new Intent());
+        RemoteViews.RemoteResponse.fromFillInIntent(fillInIntent);
+        assertNotEquals(0, fillInIntent.getExtendedFlags()
+                & Intent.EXTENDED_FLAG_NESTED_INTENT_KEYS_COLLECTED);
+
+        fillInIntent = new Intent();
+        fillInIntent.putExtra("extraIntent", new Intent());
+        RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        rv.setOnClickFillInIntent(R.id.view, fillInIntent);
+        assertNotEquals(0, fillInIntent.getExtendedFlags()
+                & Intent.EXTENDED_FLAG_NESTED_INTENT_KEYS_COLLECTED);
+
+        RemoteViews.RemoteResponse rr = RemoteViews.RemoteResponse.fromFillInIntent(null);
+        assertNotNull(rr);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_REMOTE_ADAPTER_CONVERSION)
+    public void collectAllIntents_collects_results_from_binder() throws Exception {
+        assumeTrue(remoteAdapterConversion());
+        Intent testIntent = new Intent("action_1")
+                .setComponent(new ComponentName(mPackage, "dummy"));
+        RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_list);
+        views.setRemoteAdapter(R.id.list, testIntent);
+
+        ServiceCollectionCache cache = mock(ServiceCollectionCache.class);
+        CompletableFuture<Void> result = views.collectAllIntents(10, true, cache);
+
+        ArgumentCaptor<Consumer<IBinder>> taskCaptor = ArgumentCaptor.forClass(Consumer.class);
+        verify(cache).connectAndConsume(eq(testIntent), taskCaptor.capture());
+
+        assertFalse(result.isDone());
+        ViewsFactory factory = spy(new ViewsFactory(0));
+        doReturn(factory).when(factory).queryLocalInterface(any());
+        taskCaptor.getValue().accept(factory);
+
+        verify(factory).getRemoteCollectionItems(anyInt(), eq(10), eq(true));
+        assertTrue(result.isDone());
+        assertFalse(result.isCompletedExceptionally());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_REMOTE_ADAPTER_CONVERSION)
+    public void collectAllIntents_captures_errors_from_binder() throws Exception {
+        assumeTrue(remoteAdapterConversion());
+        Intent testIntent = new Intent("action_1")
+                .setComponent(new ComponentName(mPackage, "dummy"));
+        RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_list);
+        views.setRemoteAdapter(R.id.list, testIntent);
+
+        ServiceCollectionCache cache = mock(ServiceCollectionCache.class);
+        CompletableFuture<Void> result = views.collectAllIntents(10, true, cache);
+
+        ArgumentCaptor<Consumer<IBinder>> taskCaptor = ArgumentCaptor.forClass(Consumer.class);
+        verify(cache).connectAndConsume(eq(testIntent), taskCaptor.capture());
+
+        assertFalse(result.isDone());
+        ViewsFactory factory = spy(new ViewsFactory(0));
+        doReturn(factory).when(factory).queryLocalInterface(any());
+
+        doThrow(new RemoteException("test_error")).when(factory)
+                .getRemoteCollectionItems(anyInt(), anyInt(), anyBoolean());
+        taskCaptor.getValue().accept(factory);
+        assertTrue(result.isDone());
+        assertTrue(result.isCompletedExceptionally());
+    }
+
+    @Test
+    public void setChronometer_withElapsedRealtime() {
+        long elapsedRealtime = SystemClock.elapsedRealtime();
+        RemoteViews remoteViews = new RemoteViews(mPackage, R.layout.chronometer_layout);
+        remoteViews.setChronometer(R.id.chronometer, elapsedRealtime, null, false);
+
+        View inflated = remoteViews.apply(mContext, mContainer);
+        Chronometer chronometer = inflated.findViewById(R.id.chronometer);
+
+        assertThat(chronometer).isNotNull();
+        assertThat(chronometer.getBase()).isEqualTo(elapsedRealtime);
+    }
+
+    @Test
+    public void setChronometer_withSystemClockInstant() {
+        Instant instant = InstantSource.system().instant();
+        long elapsedRealtime = SystemClock.elapsedRealtime();
+        RemoteViews remoteViews = new RemoteViews(mPackage, R.layout.chronometer_layout);
+        remoteViews.setChronometer(R.id.chronometer, instant, null, false);
+
+        View inflated = remoteViews.apply(mContext, mContainer);
+        Chronometer chronometer = inflated.findViewById(R.id.chronometer);
+
+        assertThat(chronometer).isNotNull();
+        assertThat(chronometer.getBase()).isWithin(500).of(elapsedRealtime);
+    }
+
+    @Test
+    public void setPausedChronometer_showsDuration() {
+        long elapsedRealtime = SystemClock.elapsedRealtime();
+        Duration pausedDuration = Duration.ofMinutes(3);
+        RemoteViews remoteViews = new RemoteViews(mPackage, R.layout.chronometer_layout);
+        remoteViews.setChronometerPaused(R.id.chronometer, pausedDuration);
+
+        View inflated = remoteViews.apply(mContext, mContainer);
+        Chronometer chronometer = inflated.findViewById(R.id.chronometer);
+
+        assertThat(chronometer).isNotNull();
+        assertThat(chronometer.getText()).isEqualTo("03:00");
+        assertThat(chronometer.getBase()).isWithin(500)
+                .of(elapsedRealtime - pausedDuration.toMillis());
+    }
+
+    @Test
+    public void createPreviewFromProto_afterWritePreviewToProto_restoresActionWithInstant()
+            throws Exception {
+        RemoteViews original = new RemoteViews(mPackage, R.layout.chronometer_layout);
+        Instant instant = InstantSource.system().instant().minus(30, MINUTES);
+        original.setChronometer(R.id.chronometer, instant, null, false);
+
+        ProtoOutputStream outputStream = new ProtoOutputStream();
+        original.writePreviewToProto(mContext, outputStream);
+        ProtoInputStream inputStream = new ProtoInputStream(outputStream.getBytes());
+        RemoteViews restored = RemoteViews.createPreviewFromProto(mContext, inputStream);
+
+        // Verify by applying.
+        View inflated = restored.apply(mContext, mContainer);
+        Chronometer chronometer = inflated.findViewById(R.id.chronometer);
+        assertThat(chronometer.getText()).isEqualTo("30:00");
+    }
+
+    @Test
+    public void createPreviewFromProto_afterWritePreviewToProto_restoresActionWithDuration()
+            throws Exception {
+        RemoteViews original = new RemoteViews(mPackage, R.layout.chronometer_layout);
+        Duration pausedDuration = Duration.ofMinutes(5);
+        original.setChronometerPaused(R.id.chronometer, pausedDuration);
+
+        ProtoOutputStream outputStream = new ProtoOutputStream();
+        original.writePreviewToProto(mContext, outputStream);
+        ProtoInputStream inputStream = new ProtoInputStream(outputStream.getBytes());
+        RemoteViews restored = RemoteViews.createPreviewFromProto(mContext, inputStream);
+
+        // Verify by applying.
+        View inflated = restored.apply(mContext, mContainer);
+        Chronometer chronometer = inflated.findViewById(R.id.chronometer);
+        assertThat(chronometer.getText()).isEqualTo("05:00");
     }
 
     private static LayoutInflater.Factory2 createLayoutInflaterFactory(String viewTypeToReplace,

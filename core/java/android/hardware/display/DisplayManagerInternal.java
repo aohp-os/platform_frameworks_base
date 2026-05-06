@@ -16,7 +16,9 @@
 
 package android.hardware.display;
 
+import android.annotation.FloatRange;
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.companion.virtual.IVirtualDevice;
 import android.graphics.Point;
@@ -32,7 +34,7 @@ import android.view.SurfaceControl;
 import android.view.SurfaceControl.RefreshRateRange;
 import android.view.SurfaceControl.Transaction;
 import android.window.DisplayWindowPolicyController;
-import android.window.ScreenCapture;
+import android.window.ScreenCaptureInternal;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -51,7 +53,8 @@ public abstract class DisplayManagerInternal {
             REFRESH_RATE_LIMIT_HIGH_BRIGHTNESS_MODE
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface RefreshRateLimitType {}
+    public @interface RefreshRateLimitType {
+    }
 
     /** Refresh rate should be limited when High Brightness Mode is active. */
     public static final int REFRESH_RATE_LIMIT_HIGH_BRIGHTNESS_MODE = 1;
@@ -68,7 +71,13 @@ public abstract class DisplayManagerInternal {
      */
     public abstract int createVirtualDisplay(VirtualDisplayConfig config,
             IVirtualDisplayCallback callback, IVirtualDevice virtualDevice,
-            DisplayWindowPolicyController dwpc, String packageName);
+            DisplayWindowPolicyController dwpc, String packageName, int ownerUid);
+
+    /**
+     * Releases a virtual display previously created via {@link #createVirtualDisplay}.
+     * @hide
+     */
+    public abstract void releaseVirtualDisplay(@NonNull IVirtualDisplayCallback callback);
 
     /**
      * Called by the power manager to request a new power state.
@@ -114,23 +123,40 @@ public abstract class DisplayManagerInternal {
     public abstract void unregisterDisplayGroupListener(DisplayGroupListener listener);
 
     /**
-     * Screenshot for internal system-only use such as rotation, etc.  This method includes
-     * secure layers and the result should never be exposed to non-system applications.
-     * This method does not apply any rotation and provides the output in natural orientation.
+     * Screenshot for internal system-only use such as rotation, etc. This method includes secure
+     * layers and the result should never be exposed to non-system applications. This method does
+     * not apply any rotation and provides the output in natural orientation.
      *
      * @param displayId The display id to take the screenshot of.
      * @return The buffer or null if we have failed.
      */
-    public abstract ScreenCapture.ScreenshotHardwareBuffer systemScreenshot(int displayId);
+    public abstract ScreenCaptureInternal.ScreenshotHardwareBuffer systemScreenshot(int displayId);
 
     /**
-     * General screenshot functionality that excludes secure layers and applies appropriate
-     * rotation that the device is currently in.
+     * Captures a screenshot of the specified display for internal system use.
+     *
+     * <p>This method allows for more granular control over the screenshot process
+     * compared to {@link #systemScreenshot(int)}.
+     *
+     * @param displayId The display id to take the screenshot of.
+     * @param argsBuilder A {@link ScreenCaptureInternal.DisplayCaptureArgs.Builder}
+     *                    to specify screenshot parameters.
+     * @param callback A {@link ScreenCaptureInternal.ScreenCaptureListener} to receive
+     *                 the screenshot result or an error.
+     */
+    public abstract void systemScreenshot(
+            int displayId,
+            ScreenCaptureInternal.DisplayCaptureArgs.Builder argsBuilder,
+            ScreenCaptureInternal.ScreenCaptureListener callback);
+
+    /**
+     * General screenshot functionality that excludes secure layers and applies appropriate rotation
+     * that the device is currently in.
      *
      * @param displayId The display id to take the screenshot of.
      * @return The buffer or null if we have failed.
      */
-    public abstract ScreenCapture.ScreenshotHardwareBuffer userScreenshot(int displayId);
+    public abstract ScreenCaptureInternal.ScreenshotHardwareBuffer userScreenshot(int displayId);
 
     /**
      * Returns information about the specified logical display.
@@ -140,6 +166,14 @@ public abstract class DisplayManagerInternal {
      * returned object must be treated as immutable.
      */
     public abstract DisplayInfo getDisplayInfo(int displayId);
+
+    /**
+     * Returns the ids of all logical displays known to DisplayManager, without applying
+     * per-uid {@link DisplayInfo#hasAccess} filtering. For system diagnostics (e.g. AOHP)
+     * only.
+     * @hide
+     */
+    public abstract int[] getAllLogicalDisplayIds();
 
     /**
      * Returns a set of DisplayInfo, for the states that may be assumed by either the given display,
@@ -182,7 +216,7 @@ public abstract class DisplayManagerInternal {
      * to the display information synchronously so that applications will immediately
      * observe the new state.
      *
-     * NOTE: This method must be the only entry point by which the window manager
+     * <p>NOTE: This method must be the only entry point by which the window manager
      * influences the logical configuration of displays.
      *
      * @param displayId The logical display id.
@@ -238,10 +272,10 @@ public abstract class DisplayManagerInternal {
      *                                window that has a preference.
      * @param requestedMinimalPostProcessing The preferred minimal post processing setting for the
      * display. This is true when there is at least one visible window that wants minimal post
-     * processng on.
+     * processing on.
      * @param disableHdrConversion The preferred HDR conversion setting for the window.
      * @param inTraversal True if called from WindowManagerService during a window traversal
-     * prior to call to performTraversalInTransactionFromWindowManager.
+     * prior to call to performTraversal.
      */
     public abstract void setDisplayProperties(int displayId, boolean hasContent,
             float requestedRefreshRate, int requestedModeId, float requestedMinRefreshRate,
@@ -281,6 +315,21 @@ public abstract class DisplayManagerInternal {
      * Persist brightness slider events and ambient brightness stats.
      */
     public abstract void persistBrightnessTrackerState();
+
+    /**
+     * Sets a maximum brightness cap for the display.
+     *
+     * <p>A cap of {@code 1f} will remove the cap.
+     *
+     * @param displayId id of the display to cap the maximum brightness for
+     * @param cap the brightness cap between {@code 0f} and {@code 1f}
+     * @param reason reason for capping brightness. Using the same reason again for a display
+     *     replaces the previous cap
+     */
+    public abstract void setBrightnessCap(
+            int displayId,
+            @FloatRange(from = 0f, to = 1f) float cap,
+            @BrightnessInfo.BrightnessMaxReason int reason);
 
     /**
      * Notifies the display manager that resource overlays have changed.
@@ -333,6 +382,25 @@ public abstract class DisplayManagerInternal {
     public abstract void ignoreProximitySensorUntilChanged();
 
     /**
+     * Sets the persistent connection preference for a given display. This preference
+     * determines whether to show a dialog, mirror, or use desktop mode automatically.
+     *
+     * @param uniqueId The unique ID of the display.
+     * @param preference The integer constant for the new preference to save.
+     * @hide
+     */
+    public abstract void setConnectionPreference(String uniqueId, int preference);
+
+    /**
+     * Retrieves the saved connection preference for a given display.
+     *
+     * @param uniqueId The unique ID of the display.
+     * @return The integer constant for the saved preference.
+     * @hide
+     */
+    public abstract int getConnectionPreference(String uniqueId);
+
+    /**
      * Returns the refresh rate switching type.
      */
     @DisplayManager.SwitchingType
@@ -350,7 +418,7 @@ public abstract class DisplayManagerInternal {
      * @param name The name of the sensor.
      * @param type The type of sensor.
      *
-     * @return The min/max refresh-rate restriction as a {@link Pair} of floats, or null if not
+     * @return The min/max refresh-rate restriction as a pair of floats, or {@code null} if not
      * restricted.
      */
     public abstract RefreshRateRange getRefreshRateForDisplayAndSensor(
@@ -449,6 +517,11 @@ public abstract class DisplayManagerInternal {
     public abstract IntArray getDisplayIds();
 
     /**
+     * Get group id for given display id
+     */
+    public abstract int getGroupIdForDisplay(int displayId);
+
+    /**
      * Called upon presentation started/ended on the display.
      * @param displayId the id of the display where presentation started.
      * @param isShown whether presentation is shown.
@@ -470,18 +543,39 @@ public abstract class DisplayManagerInternal {
      */
     public abstract boolean isDisplayReadyForMirroring(int displayId);
 
+    /**
+     * Called by {@link com.android.server.wm.WindowManagerService} to notify whether a display
+     * should be in the topology.
+     * @param displayId The logical ID of the display
+     * @param inTopology Whether the display should be in the topology. This being true does not
+     *                   guarantee that the display will be in the topology - Display Manager might
+     *                   also check other parameters.
+     */
+    public abstract void onDisplayBelongToTopologyChanged(int displayId, boolean inTopology);
+
+    /**
+     * Called by {@link  com.android.server.display.DisplayBackupHelper} when backup files were
+     * restored and are ready to be reloaded.
+     */
+    public abstract void reloadTopologies(int userId);
+
 
     /**
      * Used by the window manager to override the per-display screen brightness based on the
      * current foreground activity.
      *
-     * The key of the array is the displayId. If a displayId is missing from the array, this is
+     * <p>The key of the array is the displayId. If a displayId is missing from the array, this is
      * equivalent to clearing any existing brightness overrides for that display.
      *
-     * This method must only be called by the window manager.
+     * <p>This method must only be called by the window manager.
      */
     public abstract void setScreenBrightnessOverrideFromWindowManager(
             SparseArray<DisplayBrightnessOverrideRequest> brightnessOverrides);
+
+    /**
+     * Gets the flags set for the supplied DisplayGroupId
+     */
+    public abstract long getDisplayGroupFlags(int groupId);
 
     /**
      * Describes a request for overriding the brightness of a single display.
@@ -498,7 +592,7 @@ public abstract class DisplayManagerInternal {
     /**
      * Describes the requested power state of the display.
      *
-     * This object is intended to describe the general characteristics of the
+     * <p>This object is intended to describe the general characteristics of the
      * power state, such as whether the screen should be on or off and the current
      * brightness controls leaving the DisplayPowerController to manage the
      * details of how the transitions between states should occur.  The goal is for
@@ -757,7 +851,8 @@ public abstract class DisplayManagerInternal {
      * range as well as information about when it applies, such as high-brightness-mode.
      */
     public static final class RefreshRateLimitation {
-        @RefreshRateLimitType public int type;
+        @RefreshRateLimitType
+        public int type;
 
         /** The range the that refresh rate should be limited to. */
         public RefreshRateRange range;
@@ -844,9 +939,9 @@ public abstract class DisplayManagerInternal {
 
         /**
          * Update the brightness from the offload chip.
-         * @param brightness The brightness value between {@link PowerManager.BRIGHTNESS_MIN} and
-         *                   {@link PowerManager.BRIGHTNESS_MAX}, or
-         *                   {@link PowerManager.BRIGHTNESS_INVALID_FLOAT} which removes
+         * @param brightness The brightness value between {@link PowerManager#BRIGHTNESS_MIN} and
+         *                   {@link PowerManager#BRIGHTNESS_MAX}, or
+         *                   {@link PowerManager#BRIGHTNESS_INVALID_FLOAT} which removes
          *                   the brightness from offload. Other values will be ignored.
          */
         void updateBrightness(float brightness);
@@ -871,7 +966,7 @@ public abstract class DisplayManagerInternal {
          * @param mode The auto-brightness mode
          *             (AutomaticBrightnessController.AutomaticBrightnessMode)
          * @return The brightness levels for the specified mode. The values are between
-         * {@link PowerManager.BRIGHTNESS_MIN} and {@link PowerManager.BRIGHTNESS_MAX}.
+         * {@link PowerManager#BRIGHTNESS_MIN} and {@link PowerManager#BRIGHTNESS_MAX}.
          */
         float[] getAutoBrightnessLevels(int mode);
 

@@ -15,6 +15,8 @@
  */
 package android.app.blob;
 
+import static android.annotation.RestrictedForEnvironment.ENVIRONMENT_SDK_RUNTIME;
+
 import android.annotation.BytesLong;
 import android.annotation.CallbackExecutor;
 import android.annotation.CurrentTimeMillisLong;
@@ -22,9 +24,11 @@ import android.annotation.IdRes;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RestrictedForEnvironment;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.content.Context;
+import android.os.Build;
 import android.os.LimitExceededException;
 import android.os.ParcelFileDescriptor;
 import android.os.ParcelableException;
@@ -32,11 +36,13 @@ import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.UserHandle;
 
+import com.android.internal.util.Preconditions;
 import com.android.internal.util.function.pooled.PooledLambda;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -140,6 +146,8 @@ import java.util.function.Consumer;
  *     }
  * </pre>
  */
+@RestrictedForEnvironment(
+        environments = ENVIRONMENT_SDK_RUNTIME, from = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @SystemService(Context.BLOB_STORE_SERVICE)
 public class BlobStoreManager {
     /** @hide */
@@ -152,6 +160,26 @@ public class BlobStoreManager {
 
     private final Context mContext;
     private final IBlobStoreManager mService;
+
+    // TODO: b/404309424 - Make these constants available using a test-api to avoid hardcoding
+    // them in tests.
+    /**
+     * The maximum allowed length for the package name, provided using
+     * {@link BlobStoreManager.Session#allowPackageAccess(String, byte[])}.
+     *
+     * This is the same limit that is already used for limiting the length of the package names
+     * at android.content.pm.parsing.FrameworkParsingPackageUtils#MAX_FILE_NAME_SIZE.
+     *
+     * @hide
+     */
+    public static final int MAX_PACKAGE_NAME_LENGTH = 223;
+    /**
+     * The maximum allowed length for the certificate, provided using
+     * {@link BlobStoreManager.Session#allowPackageAccess(String, byte[])}.
+     *
+     * @hide
+     */
+    public static final int MAX_CERTIFICATE_LENGTH = 32;
 
     /** @hide */
     public BlobStoreManager(@NonNull Context context, @NonNull IBlobStoreManager service) {
@@ -786,6 +814,12 @@ public class BlobStoreManager {
          */
         public void allowPackageAccess(@NonNull String packageName, @NonNull byte[] certificate)
                 throws IOException {
+            Objects.requireNonNull(packageName);
+            Preconditions.checkArgument(packageName.length() <= MAX_PACKAGE_NAME_LENGTH,
+                    "packageName is longer than " + MAX_PACKAGE_NAME_LENGTH + " chars");
+            Objects.requireNonNull(certificate);
+            Preconditions.checkArgument(certificate.length <= MAX_CERTIFICATE_LENGTH,
+                    "certificate is longer than " + MAX_CERTIFICATE_LENGTH + " chars");
             try {
                 mSession.allowPackageAccess(packageName, certificate);
             } catch (ParcelableException e) {

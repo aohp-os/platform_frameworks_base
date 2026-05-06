@@ -18,11 +18,10 @@ package android.net.http;
 
 import static com.android.org.conscrypt.flags.Flags.certificateTransparencyCheckservertrustedApi;
 
-import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
-import android.net.platform.flags.Flags;
+import android.security.Flags;
 import android.security.net.config.UserCertificateSource;
 
 import com.android.org.conscrypt.TrustManagerImpl;
@@ -86,8 +85,8 @@ public class X509TrustManagerExtensions {
         try {
             checkServerTrustedOcspAndTlsData = tm.getClass().getMethod("checkServerTrusted",
                     X509Certificate[].class,
-                    Byte[].class,
-                    Byte[].class,
+                    byte[].class,
+                    byte[].class,
                     String.class,
                     String.class);
         } catch (ReflectiveOperationException ignored) { }
@@ -140,26 +139,25 @@ public class X509TrustManagerExtensions {
      *
      * <p>See {@link X509TrustManager#checkServerTrusted(X509Certificate[], String)} for a
      * description of the chain and authType parameters. The final parameter, host, should be the
-     * hostname of the server.</p>
+     * hostname of the server.
      *
      * <p>ocspData and tlsSctData may be provided to verify any Signed Certificate Timestamp (SCT)
-     * attached to the connection. These are ASN.1 octet strings (SignedCertificateTimestampList)
-     * as described in RFC 6962, Section 3.3. Note that SCTs embedded in the certificate chain
-     * will automatically be processed.
-     * </p>
+     * attached to the connection. These are ASN.1 octet strings (SignedCertificateTimestampList) as
+     * described in RFC 6962, Section 3.3. Note that SCTs embedded in the certificate chain will
+     * automatically be processed.
      *
      * @throws CertificateException if the chain does not verify correctly.
      * @throws IllegalArgumentException if the TrustManager is not compatible.
      * @return the properly ordered chain used for verification as a list of X509Certificates.
      */
-    @FlaggedApi(Flags.FLAG_X509_EXTENSIONS_CERTIFICATE_TRANSPARENCY)
     @NonNull
     public List<X509Certificate> checkServerTrusted(
             @SuppressLint("ArrayReturn") @NonNull X509Certificate[] chain,
             @Nullable byte[] ocspData,
             @Nullable byte[] tlsSctData,
             @NonNull String authType,
-            @NonNull String host) throws CertificateException {
+            @NonNull String host)
+            throws CertificateException {
         List<X509Certificate> result;
         if (mDelegate != null) {
             if (certificateTransparencyCheckservertrustedApi()) {
@@ -179,7 +177,7 @@ public class X509TrustManagerExtensions {
         }
         try {
             result = (List<X509Certificate>) mCheckServerTrustedOcspAndTlsData.invoke(mTrustManager,
-                    ocspData, tlsSctData, chain, authType, host);
+                    chain, ocspData, tlsSctData, authType, host);
             return result == null ? Collections.emptyList() : result;
         } catch (IllegalAccessException e) {
             throw new CertificateException("Failed to call checkServerTrusted", e);

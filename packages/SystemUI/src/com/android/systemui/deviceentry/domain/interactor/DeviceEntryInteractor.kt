@@ -16,7 +16,6 @@
 
 package com.android.systemui.deviceentry.domain.interactor
 
-import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.internal.policy.IKeyguardDismissCallback
 import com.android.systemui.authentication.domain.interactor.AuthenticationInteractor
 import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
@@ -25,15 +24,20 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.data.repository.DeviceEntryRepository
 import com.android.systemui.keyguard.DismissCallbackRegistry
+import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.scene.data.model.asIterable
+import com.android.systemui.scene.data.model.peek
+import com.android.systemui.scene.domain.SceneFrameworkTableLog
 import com.android.systemui.scene.domain.interactor.SceneBackInteractor
 import com.android.systemui.scene.domain.interactor.SceneInteractor
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.util.kotlin.pairwise
 import com.android.systemui.utils.coroutines.flow.mapLatestConflated
+import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +48,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * Hosts application business logic related to device entry.
@@ -51,19 +56,19 @@ import kotlinx.coroutines.flow.stateIn
  * Device entry occurs when the user successfully dismisses (or bypasses) the lockscreen, regardless
  * of the authentication method used.
  */
-@ExperimentalCoroutinesApi
 @SysUISingleton
 class DeviceEntryInteractor
 @Inject
 constructor(
     @Application private val applicationScope: CoroutineScope,
-    private val repository: DeviceEntryRepository,
-    private val authenticationInteractor: AuthenticationInteractor,
-    private val sceneInteractor: SceneInteractor,
-    private val deviceUnlockedInteractor: DeviceUnlockedInteractor,
-    private val alternateBouncerInteractor: AlternateBouncerInteractor,
-    private val dismissCallbackRegistry: DismissCallbackRegistry,
-    sceneBackInteractor: SceneBackInteractor,
+    private val repository: Lazy<DeviceEntryRepository>,
+    private val authenticationInteractor: Lazy<AuthenticationInteractor>,
+    private val sceneInteractor: Lazy<SceneInteractor>,
+    private val deviceUnlockedInteractor: Lazy<DeviceUnlockedInteractor>,
+    private val alternateBouncerInteractor: Lazy<AlternateBouncerInteractor>,
+    private val dismissCallbackRegistry: Lazy<DismissCallbackRegistry>,
+    private val sceneBackInteractor: Lazy<SceneBackInteractor>,
+    @SceneFrameworkTableLog private val tableLogBuffer: Lazy<TableLogBuffer>,
 ) {
     /**
      * Whether the device is unlocked.
@@ -74,14 +79,17 @@ constructor(
      * of this flow will always be `true`, even if the lockscreen is showing and still needs to be
      * dismissed by the user to proceed.
      */
-    val isUnlocked: StateFlow<Boolean> =
-        deviceUnlockedInteractor.deviceUnlockStatus
+    val isUnlocked: StateFlow<Boolean> by lazy {
+        deviceUnlockedInteractor
+            .get()
+            .deviceUnlockStatus
             .map { it.isUnlocked }
             .stateIn(
                 scope = applicationScope,
                 started = SharingStarted.WhileSubscribed(),
-                initialValue = deviceUnlockedInteractor.deviceUnlockStatus.value.isUnlocked,
+                initialValue = deviceUnlockedInteractor.get().deviceUnlockStatus.value.isUnlocked,
             )
+    }
 
     /**
      * Emits `true` when the current scene switches to [Scenes.Gone] for the first time after having
@@ -93,8 +101,10 @@ constructor(
      * [Scenes.Gone] but the bottommost entry of the navigation back stack switched from
      * [Scenes.Lockscreen] to [Scenes.Gone] while the user is staring at another scene.
      */
-    val isDeviceEnteredDirectly: StateFlow<Boolean> =
-        sceneInteractor.currentScene
+    val isDeviceEnteredDirectly: StateFlow<Boolean> by lazy {
+        sceneInteractor
+            .get()
+            .currentScene
             .filter { currentScene ->
                 currentScene == Scenes.Gone || currentScene == Scenes.Lockscreen
             }
@@ -102,7 +112,7 @@ constructor(
                 if (scene == Scenes.Gone) {
                     // Make sure device unlock status is definitely unlocked before we
                     // consider the device "entered".
-                    deviceUnlockedInteractor.deviceUnlockStatus.first { it.isUnlocked }
+                    deviceUnlockedInteractor.get().deviceUnlockStatus.first { it.isUnlocked }
                     true
                 } else {
                     false
@@ -113,6 +123,7 @@ constructor(
                 started = SharingStarted.Eagerly,
                 initialValue = false,
             )
+    }
 
     /**
      * Whether the device has been entered (i.e. the lockscreen has been dismissed, by any method).
@@ -126,7 +137,7 @@ constructor(
      * navigation back stack into account and will only produce a `true` value even when the current
      * scene is actually [Scenes.Gone].
      */
-    val isDeviceEntered: StateFlow<Boolean> =
+    val isDeviceEntered: StateFlow<Boolean> by lazy {
         combine(
                 // This flow emits true when the currentScene switches to Gone for the first time
                 // after having been on Lockscreen.
@@ -134,7 +145,9 @@ constructor(
                 // This flow emits true only if the bottom of the navigation back stack has been
                 // switched from Lockscreen to Gone. In other words, only if the device was unlocked
                 // while visiting at least one scene "above" the Lockscreen scene.
-                sceneBackInteractor.backStack
+                sceneBackInteractor
+                    .get()
+                    .backStack
                     // The bottom of the back stack, which is Lockscreen, Gone, or null if empty.
                     .map { it.asIterable().lastOrNull() }
                     // Filter out cases where the stack changes but the bottom remains unchanged.
@@ -149,14 +162,20 @@ constructor(
             ) { enteredDirectly, enteredOnBackStack ->
                 enteredOnBackStack || enteredDirectly
             }
+            .logDiffsForTable(
+                tableLogBuffer = tableLogBuffer.get(),
+                columnName = "isDeviceEntered",
+                initialValue = false,
+            )
             .stateIn(
                 scope = applicationScope,
                 started = SharingStarted.Eagerly,
                 initialValue = false,
             )
+    }
 
     val isLockscreenEnabled: Flow<Boolean> by lazy {
-        repository.isLockscreenEnabled.onStart { refreshLockscreenEnabled() }
+        repository.get().isLockscreenEnabled.onStart { refreshLockscreenEnabled() }
     }
 
     /**
@@ -173,11 +192,11 @@ constructor(
      */
     val canSwipeToEnter: StateFlow<Boolean?> by lazy {
         combine(
-                authenticationInteractor.authenticationMethod.map {
+                authenticationInteractor.get().authenticationMethod.map {
                     it == AuthenticationMethodModel.None
                 },
                 isLockscreenEnabled,
-                deviceUnlockedInteractor.deviceUnlockStatus,
+                deviceUnlockedInteractor.get().deviceUnlockStatus,
                 isDeviceEntered,
             ) { isNoneAuthMethod, isLockscreenEnabled, deviceUnlockStatus, isDeviceEntered ->
                 val isSwipeAuthMethod = isNoneAuthMethod && isLockscreenEnabled
@@ -186,6 +205,11 @@ constructor(
                         deviceUnlockStatus.deviceUnlockSource?.dismissesLockscreen == false)) &&
                     !isDeviceEntered
             }
+            .logDiffsForTable(
+                tableLogBuffer = tableLogBuffer.get(),
+                columnName = "canSwipeToEnter",
+                initialValue = false,
+            )
             .stateIn(
                 scope = applicationScope,
                 started = SharingStarted.Eagerly,
@@ -197,14 +221,6 @@ constructor(
     }
 
     /**
-     * Whether lockscreen bypass is enabled. When enabled, the lockscreen will be automatically
-     * dismissed once the authentication challenge is completed. For example, completing a biometric
-     * authentication challenge via face unlock or fingerprint sensor can automatically bypass the
-     * lockscreen.
-     */
-    val isBypassEnabled: StateFlow<Boolean> = repository.isBypassEnabled
-
-    /**
      * Attempt to enter the device and dismiss the lockscreen. If authentication is required to
      * unlock the device it will transition to bouncer.
      *
@@ -212,8 +228,8 @@ constructor(
      *   canceled
      */
     @JvmOverloads
-    fun attemptDeviceEntry(callback: IKeyguardDismissCallback? = null) {
-        callback?.let { dismissCallbackRegistry.addCallback(it) }
+    fun attemptDeviceEntry(loggingReason: String, callback: IKeyguardDismissCallback? = null) {
+        callback?.let { dismissCallbackRegistry.get().addCallback(it) }
 
         // TODO (b/307768356),
         //       1. Check if the device is already authenticated by trust agent/passive biometrics
@@ -223,19 +239,33 @@ constructor(
         //       4. Transition to bouncer scene
         applicationScope.launch {
             if (isAuthenticationRequired()) {
-                if (alternateBouncerInteractor.canShowAlternateBouncer.value) {
-                    alternateBouncerInteractor.forceShow()
+                if (alternateBouncerInteractor.get().canShowAlternateBouncer.value) {
+                    alternateBouncerInteractor.get().forceShow()
                 } else {
-                    sceneInteractor.changeScene(
-                        toScene = Scenes.Bouncer,
-                        loggingReason = "request to unlock device while authentication required",
-                    )
+                    sceneInteractor
+                        .get()
+                        .showOverlay(
+                            overlay = Overlays.Bouncer,
+                            loggingReason =
+                                "request to unlock device while authentication" +
+                                    " required, original reason for request: $loggingReason",
+                        )
                 }
             } else {
-                sceneInteractor.changeScene(
-                    toScene = Scenes.Gone,
-                    loggingReason = "request to unlock device while authentication isn't required",
-                )
+                if (sceneBackInteractor.get().backStack.value.peek() != null) {
+                    // If there is a back stack, replacing the Lockscreen scene at the bottom of the
+                    // stack triggers device entry without necessarily dismissing the current scene.
+                    sceneBackInteractor.get().replaceLockscreenSceneOnBackStack()
+                } else {
+                    sceneInteractor
+                        .get()
+                        .changeScene(
+                            toScene = Scenes.Gone,
+                            loggingReason =
+                                "request to unlock device while authentication isn't " +
+                                    "required, original reason for request: $loggingReason",
+                        )
+                }
             }
         }
     }
@@ -245,8 +275,8 @@ constructor(
      * `false` if the device can be entered without authenticating first.
      */
     suspend fun isAuthenticationRequired(): Boolean {
-        return !deviceUnlockedInteractor.deviceUnlockStatus.value.isUnlocked &&
-            authenticationInteractor.getAuthenticationMethod().isSecure
+        return !deviceUnlockedInteractor.get().deviceUnlockStatus.value.isUnlocked &&
+            authenticationInteractor.get().getAuthenticationMethod().isSecure
     }
 
     /**
@@ -255,7 +285,7 @@ constructor(
      * when the user swipes on it.
      */
     suspend fun isLockscreenEnabled(): Boolean {
-        return repository.isLockscreenEnabled()
+        return repository.get().isLockscreenEnabled()
     }
 
     /**
@@ -270,7 +300,7 @@ constructor(
     }
 
     /** Locks the device instantly. */
-    fun lockNow() {
-        deviceUnlockedInteractor.lockNow()
+    fun lockNow(debuggingReason: String) {
+        deviceUnlockedInteractor.get().lockNow(debuggingReason)
     }
 }

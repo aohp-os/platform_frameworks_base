@@ -19,14 +19,18 @@ package com.android.server.wm;
 import static android.app.ActivityManager.START_DELIVERED_TO_TOP;
 import static android.app.ActivityManager.START_TASK_TO_FRONT;
 import static android.app.ITaskStackListener.FORCED_RESIZEABLE_REASON_SECONDARY_DISPLAY;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.doCallRealMethod;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.never;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.reset;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
+import static com.android.server.display.feature.flags.Flags.FLAG_ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -36,6 +40,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -44,19 +49,26 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 
+import android.annotation.NonNull;
 import android.app.ActivityOptions;
 import android.app.WaitResult;
+import android.app.WindowConfiguration;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.graphics.Rect;
 import android.os.Binder;
 import android.os.ConditionVariable;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.view.Display;
 
 import androidx.test.filters.MediumTest;
+
+import com.android.window.flags.Flags;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -68,13 +80,15 @@ import java.util.concurrent.TimeUnit;
  * Tests for the {@link ActivityTaskSupervisor} class.
  *
  * Build/Install/Run:
- *  atest WmTests:ActivityTaskSupervisorTests
+ * atest WmTests:ActivityTaskSupervisorTests
  */
 @MediumTest
 @Presubmit
 @RunWith(WindowTestRunner.class)
 public class ActivityTaskSupervisorTests extends WindowTestsBase {
     private static final long TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10);
+    private static final int DEFAULT_CALLING_PID = -1;
+    private static final int DEFAULT_CALLING_UID = -1;
 
     /**
      * Ensures that an activity is removed from the stopping activities list once it is resumed.
@@ -103,7 +117,7 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
                 .setCreateTask(true).build();
         final ConditionVariable condition = new ConditionVariable();
         final WaitResult taskToFrontWait = new WaitResult();
-        final ComponentName[] launchedComponent = { null };
+        final ComponentName[] launchedComponent = {null};
         // Create a new thread so the waiting method in test can be notified.
         new Thread(() -> {
             synchronized (mAtm.mGlobalLock) {
@@ -205,6 +219,7 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
     @Test
     public void testRemoveTask() {
         final ActivityRecord activity1 = new ActivityBuilder(mAtm).setCreateTask(true).build();
+        activity1.setVisibleRequested(false);
         activity1.setVisible(false);
         activity1.finishing = true;
         activity1.setState(ActivityRecord.State.STOPPING, "test");
@@ -221,6 +236,7 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
         assertEquals(ActivityRecord.State.DESTROYING, activity2.getState());
         assertEquals(ActivityRecord.State.STOPPING, activity1.getState());
         assertTrue(mSupervisor.mStoppingActivities.contains(activity1));
+        waitHandlerIdle(mAtm.mH);
         // Assume that it is called by scheduleIdle from addToStopping. And because
         // mStoppingActivities remembers the finishing activity, it can continue to destroy.
         mSupervisor.processStoppingAndFinishingActivities(null /* launchedActivity */,
@@ -245,6 +261,35 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
                 new Intent(), null /* intentGrants */, "other.package2",
                 /* isShareIdentityEnabled */ false, /* userId */ -1, /* recipientAppId */ -1);
         verify(activity).getFilteredReferrer(eq("other.package2"));
+    }
+
+    /**
+     * Ensures that {@link ActivityRecord#makeActiveIfNeeded(ActivityRecord)} is called for non-top
+     * visible activities when launching an activity into an existing task which won't make other
+     * activities pause (i.e. no subsequent ensureActivitiesVisible with notifyClients=true).
+     */
+    @Test
+    public void testNonTopVisibleActivitiesActiveWhenLaunchingTranslucent() {
+        final Task freeformTask = new TaskBuilder(mSupervisor)
+                .setWindowingMode(WINDOWING_MODE_FREEFORM).build();
+        final ActivityRecord activity = new ActivityBuilder(mAtm).setTask(freeformTask)
+                .setVisible(false).build();
+        activity.setState(ActivityRecord.State.STOPPED, "test");
+        final ActivityRecord translucentTop = new ActivityBuilder(mAtm).setTask(freeformTask)
+                .setActivityTheme(android.R.style.Theme_Translucent)
+                .setVisible(false).build();
+        doCallRealMethod().when(mRootWindowContainer).ensureActivitiesVisible(
+                any() /* starting */, anyBoolean() /* notifyClients */);
+        try {
+            mSupervisor.realStartActivityLocked(translucentTop, translucentTop.app,
+                    true /* andResume */, true /* checkConfig */);
+        } catch (RemoteException ignored) {
+        }
+
+        assertTrue(activity.isVisibleRequested());
+        assertTrue(translucentTop.isVisibleRequested());
+        assertEquals(ActivityRecord.State.RESUMED, translucentTop.getState());
+        assertEquals(ActivityRecord.State.STARTED, activity.getState());
     }
 
     /**
@@ -293,7 +338,7 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
      * Ensures that a trusted display can launch arbitrary activity and an untrusted display can't.
      */
     @Test
-    public void testDisplayCanLaunchActivities() {
+    public void testDisplayCanLaunchActivities_trustedDisplay() {
         final Display display = mDisplayContent.mDisplay;
         // An empty info without FLAG_ALLOW_EMBEDDED.
         final ActivityInfo activityInfo = new ActivityInfo();
@@ -312,6 +357,34 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
                 callingUid, display.getDisplayId(), activityInfo);
 
         assertThat(allowedOnUntrusted).isFalse();
+    }
+
+    /**
+     * Ensures that an arbitrary activity can be launched on a display the can host tasks, and
+     * cannot be launched on a display that cannot host tasks.
+     */
+    @Test
+    @RequiresFlagsEnabled({
+            FLAG_ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT,
+            Flags.FLAG_ENABLE_MIRROR_DISPLAY_NO_ACTIVITY
+    })
+    public void testDisplayCanLaunchActivities_canHostTasksDisplay() {
+        final Display display = mDisplayContent.mDisplay;
+        // An empty info without FLAG_ALLOW_EMBEDDED.
+        final ActivityInfo activityInfo = new ActivityInfo();
+        final int callingPid = 12345;
+        final int callingUid = 12345;
+        spyOn(display);
+
+        doReturn(true).when(display).canHostTasks();
+        final boolean allowedOnCanHostTasks = mSupervisor.isCallerAllowedToLaunchOnDisplay(
+                callingPid, callingUid, display.getDisplayId(), activityInfo);
+        assertThat(allowedOnCanHostTasks).isTrue();
+
+        doReturn(false).when(display).canHostTasks();
+        final boolean allowedOnCannotHostTasks = mSupervisor.isCallerAllowedToLaunchOnDisplay(
+                callingPid, callingUid, display.getDisplayId(), activityInfo);
+        assertThat(allowedOnCannotHostTasks).isFalse();
     }
 
     /**
@@ -337,8 +410,11 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
             return null;
         }).when(mAtm.mAmInternal).addPendingTopUid(anyInt(), anyInt(), any());
         clearInvocations(mAtm);
+        spyOn(activity1.app);
         activity1.moveFocusableActivityToTop("test");
         assertEquals(activity1.getUid(), pendingTopUid[0]);
+        verify(activity1.app).updateProcessInfo(false /* updateServiceConnectionActivities */,
+                true /* activityChange */, false /* updateOomAdj */, true /* addPendingTopUid */);
         verify(mAtm).updateOomAdj();
         verify(mAtm).setLastResumedActivityUncheckLocked(any(), eq("test"));
     }
@@ -401,7 +477,8 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
         doNothing().when(mSupervisor.mService).moveTaskToFrontLocked(eq(null), eq(null), anyInt(),
                 anyInt(), any());
 
-        mSupervisor.startActivityFromRecents(-1, -1, activity.getRootTaskId(), safeOptions);
+        mSupervisor.startActivityFromRecents(DEFAULT_CALLING_PID, DEFAULT_CALLING_UID,
+                activity.getRootTaskId(), safeOptions);
 
         assertThat(activity.mLaunchCookie).isEqualTo(launchCookie);
         verify(mAtm).moveTaskToFrontLocked(any(), eq(null), anyInt(), anyInt(), eq(safeOptions));
@@ -419,9 +496,194 @@ public class ActivityTaskSupervisorTests extends WindowTestsBase {
         doNothing().when(mSupervisor.mService).moveTaskToFrontLocked(eq(null), eq(null), anyInt(),
                 anyInt(), any());
 
-        mSupervisor.startActivityFromRecents(-1, -1, activity.getRootTaskId(), safeOptions);
+        mSupervisor.startActivityFromRecents(DEFAULT_CALLING_PID, DEFAULT_CALLING_UID,
+                activity.getRootTaskId(), safeOptions);
 
         assertThat(activity.mLaunchCookie).isNull();
         verify(mAtm).moveTaskToFrontLocked(any(), eq(null), anyInt(), anyInt(), eq(safeOptions));
+    }
+
+    /** Verifies that launch from recents doesn't set the launch cookie on the activity. */
+    @Test
+    public void testStartActivityFromRecents_inMultiWindowRootTask_homeNotMoved() {
+        final Task multiWindowRootTask = new TaskBuilder(mSupervisor).setWindowingMode(
+                WINDOWING_MODE_MULTI_WINDOW).setOnTop(true).build();
+
+        final ActivityRecord activity = new ActivityBuilder(mAtm).setParentTask(
+                multiWindowRootTask).setCreateTask(true).build();
+
+        SafeActivityOptions safeOptions = SafeActivityOptions.fromBundle(
+                ActivityOptions.makeBasic().toBundle(),
+                Binder.getCallingPid(), Binder.getCallingUid());
+
+        doNothing().when(mSupervisor.mService).moveTaskToFrontLocked(eq(null), eq(null), anyInt(),
+                anyInt(), any());
+
+        mSupervisor.startActivityFromRecents(DEFAULT_CALLING_PID, DEFAULT_CALLING_UID,
+                activity.getRootTaskId(), safeOptions);
+
+        verify(mAtm).moveTaskToFrontLocked(any(), eq(null), anyInt(), anyInt(), eq(safeOptions));
+        verify(mRootWindowContainer.getDefaultTaskDisplayArea(), never()).moveHomeRootTaskToFront(
+                any());
+        verify(multiWindowRootTask.getDisplayArea(), never()).moveHomeRootTaskToFront(any());
+    }
+
+    /** Verifies that launch from recents doesn't set the launch cookie on the activity. */
+    @Test
+    public void testStartActivityFromRecents_inFullScreenRootTask_homeMovedToFront() {
+        final Task fullscreenRootTask = new TaskBuilder(mSupervisor).setWindowingMode(
+                WINDOWING_MODE_FULLSCREEN).setOnTop(true).build();
+
+        final ActivityRecord activity = new ActivityBuilder(mAtm).setParentTask(
+                fullscreenRootTask).setCreateTask(true).build();
+
+        SafeActivityOptions safeOptions = SafeActivityOptions.fromBundle(
+                ActivityOptions.makeBasic().toBundle(),
+                Binder.getCallingPid(), Binder.getCallingUid());
+
+        doNothing().when(mSupervisor.mService).moveTaskToFrontLocked(eq(null), eq(null), anyInt(),
+                anyInt(), any());
+
+        mSupervisor.startActivityFromRecents(DEFAULT_CALLING_PID, DEFAULT_CALLING_UID,
+                activity.getRootTaskId(), safeOptions);
+
+        verify(mAtm).moveTaskToFrontLocked(any(), eq(null), anyInt(), anyInt(), eq(safeOptions));
+        verify(mRootWindowContainer.getDefaultTaskDisplayArea()).moveHomeRootTaskToFront(any());
+        verify(fullscreenRootTask.getDisplayArea()).moveHomeRootTaskToFront(any());
+    }
+
+    @Test
+    public void testOpaque_leafTask_occludingActivity_isOpaque() {
+        final ActivityRecord activity = new ActivityBuilder(mAtm).setCreateTask(true).build();
+        activity.setOccludesParent(true);
+        final TaskFragment tf = activity.getTaskFragment();
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(tf)).isTrue();
+    }
+
+    @Test
+    public void testOpaque_leafTask_nonOccludingActivity_isTranslucent() {
+        final ActivityRecord activity = new ActivityBuilder(mAtm).setCreateTask(true).build();
+        activity.setOccludesParent(false);
+        final TaskFragment tf = activity.getTaskFragment();
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(tf)).isFalse();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testOpaque_rootTask_translucentFillingChild_isTranslucent() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setOnTop(true).build();
+        createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_FREEFORM, /* opaque */ false, /* filling */ true);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(rootTask)).isFalse();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testOpaque_rootTask_opaqueAndNotFillingChild_isTranslucent() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setOnTop(true).build();
+        createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_FREEFORM, /* opaque */ true, /* filling */ false);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(rootTask)).isFalse();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testOpaque_rootTask_opaqueAndFillingChild_isOpaque() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setOnTop(true).build();
+        createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_FREEFORM, /* opaque */ true, /* filling */ true);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(rootTask)).isTrue();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testOpaque_rootTask_nonFillingOpaqueAdjacentChildren_isOpaque() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setOnTop(true).build();
+        final TaskFragment tf1 = createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_MULTI_WINDOW, /* opaque */ true, /* filling */ false);
+        final TaskFragment tf2 = createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_MULTI_WINDOW, /* opaque */ true, /* filling */ false);
+        tf1.setAdjacentTaskFragments(new TaskFragment.AdjacentSet(tf1, tf2));
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(rootTask)).isTrue();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testOpaque_rootTask_nonFillingOpaqueAdjacentChildren_multipleAdjacent_isOpaque() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setOnTop(true).build();
+        final TaskFragment tf1 = createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_MULTI_WINDOW, /* opaque */ true, /* filling */ false);
+        final TaskFragment tf2 = createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_MULTI_WINDOW, /* opaque */ true, /* filling */ false);
+        final TaskFragment tf3 = createChildTaskFragment(/* parent */ rootTask,
+                WINDOWING_MODE_MULTI_WINDOW, /* opaque */ true, /* filling */ false);
+        tf1.setAdjacentTaskFragments(new TaskFragment.AdjacentSet(tf1, tf2, tf3));
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(rootTask)).isTrue();
+    }
+
+    @Test
+    public void testOpaque_nonLeafTaskFragmentWithDirectActivity_opaque() {
+        final ActivityRecord directChildActivity = new ActivityBuilder(mAtm).setCreateTask(true)
+                .build();
+        directChildActivity.setOccludesParent(true);
+        final Task nonLeafTask = directChildActivity.getTask();
+        final TaskFragment directChildFragment = new TaskFragment(mAtm, new Binder(),
+                true /* createdByOrganizer */, false /* isEmbedded */);
+        nonLeafTask.addChild(directChildFragment, 0);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(nonLeafTask)).isTrue();
+    }
+
+    @Test
+    public void testOpaque_nonLeafTaskFragmentWithDirectActivity_transparent() {
+        final ActivityRecord directChildActivity = new ActivityBuilder(mAtm).setCreateTask(true)
+                .build();
+        directChildActivity.setOccludesParent(false);
+        final Task nonLeafTask = directChildActivity.getTask();
+        final TaskFragment directChildFragment = new TaskFragment(mAtm, new Binder(),
+                true /* createdByOrganizer */, false /* isEmbedded */);
+        nonLeafTask.addChild(directChildFragment, 0);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(nonLeafTask)).isFalse();
+    }
+
+    @Test
+    public void testOpaque_leafTaskUpdated() {
+        final Task rootTask = new TaskBuilder(mSupervisor).setCreatedByOrganizer(true).build();
+        final TaskFragment opaqueTask = createChildTaskFragment(rootTask,
+                WINDOWING_MODE_FREEFORM, /* opaque */ true, /* filling */ true);
+        final Task childTask = new TaskBuilder(mSupervisor).setParentTask(rootTask).build();
+        final ActivityRecord directChildActivity = new ActivityBuilder(mAtm).setTask(childTask)
+                .build();
+
+        directChildActivity.setOccludesParent(false);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(childTask)).isFalse();
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(opaqueTask)).isTrue();
+
+        directChildActivity.setOccludesParent(true);
+
+        assertThat(mSupervisor.mOpaqueContainerHelper.isOpaque(childTask)).isTrue();
+    }
+
+    @NonNull
+    private TaskFragment createChildTaskFragment(@NonNull Task parent,
+            @WindowConfiguration.WindowingMode int windowingMode,
+            boolean opaque,
+            boolean filling) {
+        final ActivityRecord activity = new ActivityBuilder(mAtm)
+                .setCreateTask(true).setParentTask(parent).build();
+        activity.setOccludesParent(opaque);
+        final TaskFragment tf = activity.getTaskFragment();
+        tf.setWindowingMode(windowingMode);
+        tf.setBounds(filling ? new Rect() : new Rect(100, 100, 200, 200));
+        return tf;
     }
 }

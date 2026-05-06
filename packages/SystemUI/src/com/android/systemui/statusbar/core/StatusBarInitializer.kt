@@ -21,8 +21,9 @@ import androidx.annotation.VisibleForTesting
 import com.android.systemui.CoreStartable
 import com.android.systemui.fragments.FragmentHostManager
 import com.android.systemui.res.R
-import com.android.systemui.statusbar.core.StatusBarInitializer.OnStatusBarViewInitializedListener
 import com.android.systemui.statusbar.core.StatusBarInitializer.OnStatusBarViewUpdatedListener
+import com.android.systemui.statusbar.core.StatusBarInitializer.StatusBarViewLifecycleListener
+import com.android.systemui.statusbar.data.repository.StatusBarConfigurationController
 import com.android.systemui.statusbar.data.repository.StatusBarModePerDisplayRepository
 import com.android.systemui.statusbar.phone.PhoneStatusBarTransitions
 import com.android.systemui.statusbar.phone.PhoneStatusBarView
@@ -34,7 +35,6 @@ import com.android.systemui.statusbar.window.StatusBarWindowController
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import java.lang.IllegalStateException
 import javax.inject.Provider
 
 /**
@@ -52,7 +52,10 @@ interface StatusBarInitializer : CoreStartable {
      */
     fun initializeStatusBar()
 
-    interface OnStatusBarViewInitializedListener {
+    /** Called when the status bar associated with this instance is being destroyed. */
+    fun stop()
+
+    interface StatusBarViewLifecycleListener {
 
         /**
          * The status bar view has been initialized.
@@ -62,6 +65,9 @@ interface StatusBarInitializer : CoreStartable {
          *   view.
          */
         fun onStatusBarViewInitialized(component: HomeStatusBarComponent)
+
+        /** The status bar view has been destroyed. */
+        fun onStatusBarViewDestroyed(component: HomeStatusBarComponent) {}
     }
 
     interface OnStatusBarViewUpdatedListener {
@@ -75,6 +81,10 @@ interface StatusBarInitializer : CoreStartable {
         fun create(
             statusBarWindowController: StatusBarWindowController,
             statusBarModePerDisplayRepository: StatusBarModePerDisplayRepository,
+            statusBarConfigurationController: StatusBarConfigurationController,
+            collapsedStatusBarFragmentProvider: Provider<CollapsedStatusBarFragment>,
+            statusBarRootFactory: StatusBarRootFactory,
+            componentFactory: HomeStatusBarComponent.Factory,
         ): StatusBarInitializer
     }
 }
@@ -84,10 +94,11 @@ class StatusBarInitializerImpl
 constructor(
     @Assisted private val statusBarWindowController: StatusBarWindowController,
     @Assisted private val statusBarModePerDisplayRepository: StatusBarModePerDisplayRepository,
-    private val collapsedStatusBarFragmentProvider: Provider<CollapsedStatusBarFragment>,
-    private val statusBarRootFactory: StatusBarRootFactory,
-    private val componentFactory: HomeStatusBarComponent.Factory,
-    private val creationListeners: Set<@JvmSuppressWildcards OnStatusBarViewInitializedListener>,
+    @Assisted private val statusBarConfigurationController: StatusBarConfigurationController,
+    @Assisted private val collapsedStatusBarFragmentProvider: Provider<CollapsedStatusBarFragment>,
+    @Assisted private val statusBarRootFactory: StatusBarRootFactory,
+    @Assisted private val componentFactory: HomeStatusBarComponent.Factory,
+    private val lifecycleListeners: Set<@JvmSuppressWildcards StatusBarViewLifecycleListener>,
 ) : StatusBarInitializer {
     private var component: HomeStatusBarComponent? = null
 
@@ -131,23 +142,30 @@ constructor(
                 ->
                 val phoneStatusBarView = cv.findViewById<PhoneStatusBarView>(R.id.status_bar)
                 component =
-                    componentFactory.create(phoneStatusBarView).also { component ->
-                        // CollapsedStatusBarFragment used to be responsible initializing
-                        component.init()
-
-                        statusBarViewUpdatedListener?.onStatusBarViewUpdated(
-                            component.phoneStatusBarViewController,
-                            component.phoneStatusBarTransitions,
+                    componentFactory
+                        .create(
+                            phoneStatusBarView,
+                            statusBarConfigurationController,
+                            statusBarWindowController,
                         )
+                        .also { component ->
+                            // CollapsedStatusBarFragment used to be responsible initializing
+                            component.init()
 
-                        if (StatusBarConnectedDisplays.isEnabled) {
-                            statusBarModePerDisplayRepository.onStatusBarViewInitialized(component)
-                        } else {
-                            creationListeners.forEach { listener ->
+                            statusBarViewUpdatedListener?.onStatusBarViewUpdated(
+                                component.phoneStatusBarViewController,
+                                component.phoneStatusBarTransitions,
+                            )
+
+                            if (StatusBarConnectedDisplays.isEnabled) {
+                                statusBarModePerDisplayRepository.onStatusBarViewInitialized(
+                                    component
+                                )
+                            }
+                            lifecycleListeners.forEach { listener ->
                                 listener.onStatusBarViewInitialized(component)
                             }
                         }
-                    }
             }
 
         // Add the new compose view to the hierarchy because we don't use fragment transactions
@@ -163,14 +181,16 @@ constructor(
                 CollapsedStatusBarFragment.TAG,
                 object : FragmentHostManager.FragmentListener {
                     override fun onFragmentViewCreated(tag: String, fragment: Fragment) {
-                        component =
-                            (fragment as CollapsedStatusBarFragment).homeStatusBarComponent
-                                ?: throw IllegalStateException()
+                        val statusBarFragment = fragment as CollapsedStatusBarFragment
+                        if (statusBarFragment.homeStatusBarComponent == null) {
+                            return
+                        }
+                        component = fragment.homeStatusBarComponent
                         statusBarViewUpdatedListener?.onStatusBarViewUpdated(
                             component!!.phoneStatusBarViewController,
                             component!!.phoneStatusBarTransitions,
                         )
-                        creationListeners.forEach { listener ->
+                        lifecycleListeners.forEach { listener ->
                             listener.onStatusBarViewInitialized(component!!)
                         }
                     }
@@ -190,11 +210,21 @@ constructor(
             .commit()
     }
 
+    override fun stop() {
+        StatusBarConnectedDisplays.unsafeAssertInNewMode()
+        val component = this.component ?: return
+        lifecycleListeners.forEach { it.onStatusBarViewDestroyed(component) }
+    }
+
     @AssistedFactory
     interface Factory : StatusBarInitializer.Factory {
         override fun create(
             statusBarWindowController: StatusBarWindowController,
             statusBarModePerDisplayRepository: StatusBarModePerDisplayRepository,
+            statusBarConfigurationController: StatusBarConfigurationController,
+            collapsedStatusBarFragmentProvider: Provider<CollapsedStatusBarFragment>,
+            statusBarRootFactory: StatusBarRootFactory,
+            componentFactory: HomeStatusBarComponent.Factory,
         ): StatusBarInitializerImpl
     }
 }

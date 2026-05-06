@@ -16,7 +16,10 @@
 
 package com.android.systemui.statusbar.notification.collection.coordinator;
 
+import static android.app.NotificationChannel.SYSTEM_RESERVED_IDS;
 import static android.app.NotificationManager.IMPORTANCE_DEFAULT;
+import static android.app.NotificationManager.IMPORTANCE_LOW;
+import static android.app.NotificationManager.IMPORTANCE_MIN;
 import static android.app.NotificationManager.Policy.SUPPRESSED_EFFECT_AMBIENT;
 import static android.app.NotificationManager.Policy.SUPPRESSED_EFFECT_NOTIFICATION_LIST;
 
@@ -34,7 +37,7 @@ import static org.mockito.Mockito.when;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
-import android.app.NotificationManager;
+import android.platform.test.annotations.EnableFlags;
 
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -44,6 +47,8 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.RankingBuilder;
 import com.android.systemui.statusbar.SbnBuilder;
+import com.android.systemui.statusbar.notification.collection.BundleEntry;
+import com.android.systemui.statusbar.notification.collection.BundleSpec;
 import com.android.systemui.statusbar.notification.collection.ListEntry;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
@@ -54,6 +59,7 @@ import com.android.systemui.statusbar.notification.collection.listbuilder.plugga
 import com.android.systemui.statusbar.notification.collection.provider.HighPriorityProvider;
 import com.android.systemui.statusbar.notification.collection.render.NodeController;
 import com.android.systemui.statusbar.notification.collection.render.SectionHeaderController;
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -61,10 +67,13 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -83,6 +92,7 @@ public class RankingCoordinatorTest extends SysuiTestCase {
 
     private NotificationEntry mEntry;
     private NotifFilter mCapturedSuspendedFilter;
+    private NotifFilter mCapturedDndStatelessFilter;
     private NotifFilter mCapturedDozingFilter;
     private StatusBarStateController.StateListener mStatusBarStateCallback;
     private RankingCoordinator mRankingCoordinator;
@@ -107,6 +117,15 @@ public class RankingCoordinatorTest extends SysuiTestCase {
         mRankingCoordinator.attach(mNotifPipeline);
         verify(mNotifPipeline, times(2)).addPreGroupFilter(mNotifFilterCaptor.capture());
         mCapturedSuspendedFilter = mNotifFilterCaptor.getAllValues().get(0);
+        if (com.android.systemui.Flags.notificationAmbientSuppressionAfterInflation()) {
+            verify(mNotifPipeline).addFinalizeFilter(mNotifFilterCaptor.capture());
+            mCapturedDndStatelessFilter = mNotifFilterCaptor.getAllValues().get(1);
+            mCapturedDozingFilter = mNotifFilterCaptor.getAllValues().get(2);
+        } else {
+            verify(mNotifPipeline, never()).addFinalizeFilter(any());
+            mCapturedDndStatelessFilter = null;
+            mCapturedDozingFilter = mNotifFilterCaptor.getAllValues().get(1);
+        }
         mCapturedDozingFilter = mNotifFilterCaptor.getAllValues().get(1);
         mCapturedDozingFilter.setInvalidationListener(mInvalidationListener);
 
@@ -139,6 +158,25 @@ public class RankingCoordinatorTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testSilentHeader_clearableBundle_enableClearSectionTrue() {
+        // Set up bundle with clearable listEntry child
+        BundleEntry bundleEntry = new BundleEntry(BundleSpec.Companion.getNEWS());
+        ListEntry listEntry = new ListEntry(mEntry.getKey(), 0L) {
+            @Nullable
+            @Override
+            public NotificationEntry getRepresentativeEntry() {
+                return mEntry;
+            }
+        };
+        setSbnClearable(true);
+        bundleEntry.addChild(listEntry);
+
+        mSilentSectioner.onEntriesUpdated(Arrays.asList(bundleEntry));
+        verify(mSilentHeaderController).setClearSectionEnabled(eq(true));
+    }
+
+    @Test
     public void testUnfilteredState() {
         // GIVEN no suppressed visual effects + app not suspended
         mEntry.setRanking(getRankingForUnfilteredNotif().build());
@@ -156,6 +194,40 @@ public class RankingCoordinatorTest extends SysuiTestCase {
 
         // THEN filter out the notification
         assertTrue(mCapturedSuspendedFilter.shouldFilterOut(mEntry, 0));
+    }
+
+    @Test
+    @EnableFlags(com.android.systemui.Flags.FLAG_NOTIFICATION_AMBIENT_SUPPRESSION_AFTER_INFLATION)
+    public void filterStatelessVisualEffectsSuppression() {
+        Mockito.clearInvocations(mStatusBarStateController);
+
+        // WHEN should suppress ambient
+        mEntry.setRanking(getRankingForUnfilteredNotif()
+                .setSuppressedVisualEffects(SUPPRESSED_EFFECT_AMBIENT)
+                .build());
+
+        // THEN do not filter out the notification
+        assertFalse(mCapturedDozingFilter.shouldFilterOut(mEntry, 0));
+
+        // WHEN should suppress list
+        mEntry.setRanking(getRankingForUnfilteredNotif()
+                .setSuppressedVisualEffects(SUPPRESSED_EFFECT_NOTIFICATION_LIST)
+                .build());
+
+        // THEN do not filter out the notification
+        assertFalse(mCapturedDozingFilter.shouldFilterOut(mEntry, 0));
+
+        // WHEN should suppress both ambient and list
+        mEntry.setRanking(getRankingForUnfilteredNotif()
+                .setSuppressedVisualEffects(
+                    SUPPRESSED_EFFECT_AMBIENT | SUPPRESSED_EFFECT_NOTIFICATION_LIST)
+                .build());
+
+        // THEN we should filter out the notification!
+        assertTrue(mCapturedDozingFilter.shouldFilterOut(mEntry, 0));
+
+        // VERIFY that we don't check the dozing state
+        verify(mStatusBarStateController, never()).isDozing();
     }
 
     @Test
@@ -200,7 +272,7 @@ public class RankingCoordinatorTest extends SysuiTestCase {
 
         // WHEN it's not dozing (showing the notification list)
         when(mStatusBarStateController.isDozing()).thenReturn(false);
-        
+
         // THEN filter out the notification
         assertTrue(mCapturedDozingFilter.shouldFilterOut(mEntry, 0));
     }
@@ -216,28 +288,98 @@ public class RankingCoordinatorTest extends SysuiTestCase {
     }
 
     @Test
-    public void testIncludeInSectionSilent() {
-        // GIVEN the entry isn't high priority
+    public void testSilentSectioner_accepts_highPriorityFalse_ambientFalse() {
         when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(false);
         setRankingAmbient(false);
+        assertOnlyInSection(mEntry, mSilentSectioner);
+    }
 
-        // THEN entry is in the silent section
-        assertFalse(mAlertingSectioner.isInSection(mEntry));
-        assertTrue(mSilentSectioner.isInSection(mEntry));
+    @Test
+    public void testSilentSectioner_rejects_highPriorityFalse_ambientTrue() {
+        when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(false);
+        setRankingAmbient(true);
+        assertFalse(mSilentSectioner.isInSection(mEntry));
+    }
+
+    @Test
+    public void testSilentSectioner_rejects_highPriorityTrue_ambientFalse() {
+        when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(true);
+        setRankingAmbient(false);
+        assertFalse(mSilentSectioner.isInSection(mEntry));
+    }
+
+    @Test
+    public void testSilentSectioner_rejects_highPriorityTrue_ambientTrue() {
+        when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(true);
+        setRankingAmbient(true);
+        assertFalse(mSilentSectioner.isInSection(mEntry));
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testSilentSectioner_accepts_bundle() {
+        BundleEntry bundleEntry = new BundleEntry(BundleSpec.Companion.getNEWS());
+        assertTrue(mSilentSectioner.isInSection(bundleEntry));
+    }
+
+    @Test
+    public void testSilentSectioner_rejects_classified() {
+        for (String id : SYSTEM_RESERVED_IDS) {
+            assertFalse(mSilentSectioner.isInSection(makeClassifiedNotifEntry(id, IMPORTANCE_LOW)));
+        }
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testSilentSectionComparator_sortsBundlesByPrefixedKeys() {
+        // This is the sorted order
+        BundleEntry socialBundle = new BundleEntry(BundleSpec.Companion.getSOCIAL_MEDIA());
+        BundleEntry newsBundle = new BundleEntry(BundleSpec.Companion.getNEWS());
+        BundleEntry recsBundle = new BundleEntry(BundleSpec.Companion.getRECOMMENDED());
+        BundleEntry promoBundle = new BundleEntry(BundleSpec.Companion.getPROMOTIONS());
+
+        // Add them in unsorted order
+        List<BundleEntry> bundles = new ArrayList<>(Arrays.asList(
+                promoBundle, newsBundle, socialBundle, recsBundle
+        ));
+        Collections.sort(bundles, mSilentSectioner.getComparator());
+
+        assertEquals("i=0 expected Social", socialBundle, bundles.get(0));
+        assertEquals("i=1 expected News", newsBundle, bundles.get(1));
+        assertEquals("i=2 expected Recs", recsBundle, bundles.get(2));
+        assertEquals("i=3 expected Promo", promoBundle, bundles.get(3));
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testSilentSectionComparator_sortsBundlesBeforeNotifs() {
+        BundleEntry bundleEntry = new BundleEntry(BundleSpec.Companion.getSOCIAL_MEDIA());
+        int comparison = mSilentSectioner.getComparator().compare(bundleEntry, mEntry);
+        assertTrue("Expected BundleEntry before NotifEntry (comparison < 0) but was: "
+                        + comparison,
+                comparison < 0);
+    }
+
+    @Test
+    @EnableFlags(NotificationBundleUi.FLAG_NAME)
+    public void testMinimizedSectioner_rejectsBundle() {
+        BundleEntry bundleEntry = new BundleEntry(BundleSpec.Companion.getNEWS());
+        assertFalse(mMinimizedSectioner.isInSection(bundleEntry));
+    }
+
+    @Test
+    public void testMinimizedSectioner_rejects_classified() {
+        for (String id : SYSTEM_RESERVED_IDS) {
+            assertFalse(mMinimizedSectioner.isInSection(
+                    makeClassifiedNotifEntry(id, IMPORTANCE_LOW)));
+        }
     }
 
     @Test
     public void testMinSection() {
         when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(false);
         setRankingAmbient(true);
-        assertInSection(mEntry, mMinimizedSectioner);
-    }
-
-    @Test
-    public void testSilentSection() {
-        when(mHighPriorityProvider.isHighPriority(mEntry)).thenReturn(false);
-        setRankingAmbient(false);
-        assertInSection(mEntry, mSilentSectioner);
+        assertOnlyInSection(mEntry, mMinimizedSectioner);
     }
 
     @Test
@@ -281,6 +423,22 @@ public class RankingCoordinatorTest extends SysuiTestCase {
     }
 
     @Test
+    public void testAlertingSectioner_rejectsBundle() {
+        for (String id : SYSTEM_RESERVED_IDS) {
+            assertFalse(
+                    mAlertingSectioner.isInSection(makeClassifiedNotifEntry(id, IMPORTANCE_LOW)));
+        }
+    }
+
+    @Test
+    public void testAlertingSectioner_rejects_classified() {
+        for (String id : SYSTEM_RESERVED_IDS) {
+            assertFalse(
+                    mAlertingSectioner.isInSection(makeClassifiedNotifEntry(id, IMPORTANCE_LOW)));
+        }
+    }
+
+    @Test
     public void statusBarStateCallbackTest() {
         mStatusBarStateCallback.onDozeAmountChanged(1f, 1f);
         verify(mInvalidationListener, times(1))
@@ -301,7 +459,7 @@ public class RankingCoordinatorTest extends SysuiTestCase {
         reset(mInvalidationListener);
     }
 
-    private void assertInSection(NotificationEntry entry, NotifSectioner section) {
+    private void assertOnlyInSection(NotificationEntry entry, NotifSectioner section) {
         for (NotifSectioner current: mSections) {
             if (current == section) {
                 assertTrue(current.isInSection(entry));
@@ -328,9 +486,17 @@ public class RankingCoordinatorTest extends SysuiTestCase {
     private void setRankingAmbient(boolean ambient) {
         mEntry.setRanking(new RankingBuilder(mEntry.getRanking())
                 .setImportance(ambient
-                        ? NotificationManager.IMPORTANCE_MIN
+                        ? IMPORTANCE_MIN
                         : IMPORTANCE_DEFAULT)
                 .build());
         assertEquals(ambient, mEntry.getRanking().isAmbient());
+    }
+
+    private NotificationEntry makeClassifiedNotifEntry(String channelId, int importance) {
+        NotificationChannel channel = new NotificationChannel(channelId, channelId, importance);
+        return new NotificationEntryBuilder()
+                .updateRanking((rankingBuilder ->
+                        rankingBuilder.setChannel(channel).setImportance(importance)))
+                .build();
     }
 }

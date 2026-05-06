@@ -16,6 +16,9 @@
 
 package com.android.server.wm;
 
+import static android.internal.perfetto.protos.Windowmanagerservice.WindowStateAnimatorProto.DRAW_STATE;
+import static android.internal.perfetto.protos.Windowmanagerservice.WindowStateAnimatorProto.SURFACE;
+import static android.internal.perfetto.protos.Windowmanagerservice.WindowSurfaceControllerProto.SHOWN;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.SurfaceControl.METADATA_OWNER_PID;
 import static android.view.SurfaceControl.METADATA_OWNER_UID;
@@ -25,18 +28,15 @@ import static android.view.WindowManager.LayoutParams.PRIVATE_FLAG_IS_ROUNDED_CO
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
-import static android.view.WindowManager.TRANSIT_OLD_NONE;
 
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_ANIM;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_DRAW;
-import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_ORIENTATION;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_STARTING_WINDOW;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_SHOW_SURFACE_ALLOC;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_SHOW_TRANSACTIONS;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_WINDOW_ANIMATION;
-import static com.android.server.wm.WindowContainer.AnimationFlags.TRANSITION;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_LAYOUT_REPEATS;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_STARTING_WINDOW_VERBOSE;
@@ -45,15 +45,10 @@ import static com.android.server.wm.WindowManagerDebugConfig.SHOW_LIGHT_TRANSACT
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 import static com.android.server.wm.WindowManagerService.logWithStack;
-import static com.android.server.wm.WindowStateAnimatorProto.DRAW_STATE;
-import static com.android.server.wm.WindowStateAnimatorProto.SURFACE;
-import static com.android.server.wm.WindowStateAnimatorProto.SYSTEM_DECOR_RECT;
-import static com.android.server.wm.WindowSurfaceControllerProto.SHOWN;
 import static com.android.window.flags.Flags.setScPropertiesInClient;
 
 import android.content.Context;
 import android.graphics.PixelFormat;
-import android.graphics.Rect;
 import android.os.Debug;
 import android.os.Trace;
 import android.util.EventLog;
@@ -63,6 +58,7 @@ import android.view.Surface.OutOfResourcesException;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
+import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 
@@ -110,12 +106,6 @@ class WindowStateAnimator {
     float mShownAlpha = 0;
     float mAlpha = 0;
     float mLastAlpha = 0;
-
-    /**
-     * This is rectangle of the window's surface that is not covered by
-     * system decorations.
-     */
-    private final Rect mSystemDecorRect = new Rect();
 
     // Set to true if, when the window gets displayed, it should perform
     // an enter animation.
@@ -285,10 +275,7 @@ class WindowStateAnimator {
         if (mWin.mActivityRecord == null) {
             return;
         }
-
-        if (!mWin.mActivityRecord.isAnimating(TRANSITION)) {
-            mWin.mActivityRecord.clearAllDrawn();
-        }
+        mWin.mActivityRecord.clearAllDrawn();
     }
 
     SurfaceControl createSurfaceLocked() {
@@ -303,8 +290,6 @@ class WindowStateAnimator {
         ProtoLog.i(WM_DEBUG_ANIM, "createSurface %s: mDrawState=DRAW_PENDING", this);
 
         resetDrawState();
-
-        mService.makeWindowFreezingScreenIfNeededLocked(w);
 
         int flags = SurfaceControl.HIDDEN;
         final WindowManager.LayoutParams attrs = w.mAttrs;
@@ -400,15 +385,10 @@ class WindowStateAnimator {
                 logWithStack(TAG, "Window " + this + " destroying surface "
                         + mSurfaceControl + ", session " + mSession);
             }
-            ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY: %s. %s",
-                    mWin, new RuntimeException().fillInStackTrace());
+            ProtoLog.i(WM_SHOW_SURFACE_ALLOC, "SURFACE DESTROY: %s", mWin);
             destroySurface(t);
-            if (mService.mFlags.mEnsureWallpaperInTransitions) {
-                if (mWallpaperControllerLocked.isWallpaperTarget(mWin)) {
-                    mWin.requestUpdateWallpaperIfNeeded();
-                }
-            } else {
-                mWallpaperControllerLocked.hideWallpapers(mWin);
+            if (mWallpaperControllerLocked.isWallpaperTarget(mWin)) {
+                mWin.requestUpdateWallpaperIfNeeded();
             }
         } catch (RuntimeException e) {
             Slog.w(TAG, "Exception thrown when destroying Window " + this
@@ -417,55 +397,18 @@ class WindowStateAnimator {
         }
     }
 
-    void computeShownFrameLocked() {
-        if (mWin.mIsWallpaper && mService.mRoot.mWallpaperActionPending) {
-            return;
-        } else if (mWin.isDragResizeChanged()) {
-            // This window is awaiting a relayout because user just started (or ended)
-            // drag-resizing. The shown frame (which affects surface size and pos)
-            // should not be updated until we get next finished draw with the new surface.
-            // Otherwise one or two frames rendered with old settings would be displayed
-            // with new geometry.
-            return;
-        }
-
-        if (DEBUG) {
-            Slog.v(TAG, "computeShownFrameLocked: " + this
-                    + " not attached, mAlpha=" + mAlpha);
-        }
-
-        mShownAlpha = mAlpha;
-    }
-
     void prepareSurfaceLocked(SurfaceControl.Transaction t) {
         final WindowState w = mWin;
         if (!hasSurface()) {
-
-            // There is no need to wait for an animation change if our window is gone for layout
-            // already as we'll never be visible.
-            if (w.getOrientationChanging() && w.isGoneForLayout()) {
-                ProtoLog.v(WM_DEBUG_ORIENTATION, "Orientation change skips hidden %s", w);
-                w.setOrientationChanging(false);
-            }
             return;
         }
 
-        computeShownFrameLocked();
+        mShownAlpha = mAlpha;
 
         if (!w.isOnScreen()) {
             hide(t, "prepareSurfaceLocked");
-            if (!w.mIsWallpaper || !mService.mFlags.mEnsureWallpaperInTransitions) {
+            if (!w.mIsWallpaper) {
                 mWallpaperControllerLocked.hideWallpapers(w);
-            }
-
-            // If we are waiting for this window to handle an orientation change. If this window is
-            // really hidden (gone for layout), there is no point in still waiting for it.
-            // Note that this does introduce a potential glitch if the window becomes unhidden
-            // before it has drawn for the new orientation.
-            if (w.getOrientationChanging() && w.isGoneForLayout()) {
-                w.setOrientationChanging(false);
-                ProtoLog.v(WM_DEBUG_ORIENTATION,
-                        "Orientation change skips hidden %s", w);
             }
         } else if (mLastAlpha != mShownAlpha
                 || mLastHidden) {
@@ -480,33 +423,7 @@ class WindowStateAnimator {
                 if (mLastHidden) {
                     showRobustly(t);
                     mLastHidden = false;
-                    final DisplayContent displayContent = w.getDisplayContent();
-                    if (!displayContent.getLastHasContent()) {
-                        // This draw means the difference between unique content and mirroring.
-                        // Run another pass through performLayout to set mHasContent in the
-                        // LogicalDisplay.
-                        displayContent.pendingLayoutChanges |= FINISH_LAYOUT_REDO_ANIM;
-                        if (DEBUG_LAYOUT_REPEATS) {
-                            mService.mWindowPlacerLocked.debugLayoutRepeats(
-                                    "showSurfaceRobustlyLocked " + w,
-                                    displayContent.pendingLayoutChanges);
-                        }
-                    }
                 }
-            }
-        }
-
-        if (w.getOrientationChanging()) {
-            if (!w.isDrawn()) {
-                if (w.mDisplayContent.shouldSyncRotationChange(w)) {
-                    w.mWmService.mRoot.mOrientationChangeComplete = false;
-                    mAnimator.mLastWindowFreezeSource = w;
-                }
-                ProtoLog.v(WM_DEBUG_ORIENTATION,
-                        "Orientation continue waiting for draw in %s", w);
-            } else {
-                w.setOrientationChanging(false);
-                ProtoLog.v(WM_DEBUG_ORIENTATION, "Orientation change complete in %s", w);
             }
         }
     }
@@ -592,7 +509,7 @@ class WindowStateAnimator {
             }
         }
 
-        if (mWin.mControllableInsetProvider != null) {
+        if (mWin.getControllableInsetProvider() != null) {
             // All our animations should be driven by the insets control target.
             return false;
         }
@@ -611,6 +528,10 @@ class WindowStateAnimator {
                     a = AnimationUtils.loadAnimation(mContext, anim);
                     Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
                 }
+            } else if (!isEntrance && mWin.isForceHiddenNonSystemOverlayWindow()) {
+                a = new AlphaAnimation(1f, 0f);
+                a.setDuration(mContext.getResources().getInteger(
+                        com.android.internal.R.integer.config_shortAnimTime));
             } else {
                 switch (transit) {
                     case WindowManagerPolicy.TRANSIT_ENTER:
@@ -627,8 +548,8 @@ class WindowStateAnimator {
                         break;
                 }
                 if (attr >= 0) {
-                    a = mWin.getDisplayContent().mAppTransition.loadAnimationAttr(
-                            mWin.mAttrs, attr, TRANSIT_OLD_NONE);
+                    a = mWin.mDisplayContent.mTransitionAnimation.loadAnimationAttr(
+                            mWin.mAttrs, attr);
                 }
             }
             if (ProtoLog.isEnabled(WM_DEBUG_ANIM, LogLevel.VERBOSE)) {
@@ -657,7 +578,6 @@ class WindowStateAnimator {
             proto.end(dumpToken);
         }
         proto.write(DRAW_STATE, mDrawState);
-        mSystemDecorRect.dumpDebug(proto, SYSTEM_DECOR_RECT);
         proto.end(token);
     }
 
@@ -675,7 +595,6 @@ class WindowStateAnimator {
             pw.print(prefix); pw.print("mDrawState="); pw.print(drawStateToString());
             pw.print(prefix); pw.print(" mLastHidden="); pw.println(mLastHidden);
             pw.print(prefix); pw.print("mEnterAnimationPending=" + mEnterAnimationPending);
-            pw.print(prefix); pw.print("mSystemDecorRect="); mSystemDecorRect.printShortString(pw);
 
             pw.println();
         }

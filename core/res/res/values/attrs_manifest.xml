@@ -846,16 +846,39 @@
             This enum value is introduced in API level 31. -->
         <enum name="singleInstancePerTask" value="4" />
     </attr>
-    <!-- Specify the orientation an activity should be run in.  If not
-         specified, it will run in the current preferred orientation
-         of the screen.
+    <!-- Specify the orientation an activity should run in. If the orientation is not specified, the
+         system determines the best orientation for the activity.
          <p>This attribute is supported by the <a
             href="{@docRoot}guide/topics/manifest/activity-element.html">{@code <activity>}</a>
             element.
-         <aside class="note"><b>Note:</b> Device manufacturers can configure devices to override
-            (ignore) this attribute to improve the layout of apps. See
-            <a href="{@docRoot}guide/practices/device-compatibility-mode">
-            Device compatibility mode</a>.
+         <aside class="note"><b>Note:</b>
+            <ul>
+                <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+                    system ignores the following values of this attribute for apps that target
+                    Android 16 (API level 36) or higher:
+                    <ul>
+                      <li><code>portrait</code></li>
+                      <li><code>landscape</code></li>
+                      <li><code>reversePortrait</code></li>
+                      <li><code>reverseLandscape</code></li>
+                      <li><code>sensorPortrait</code></li>
+                      <li><code>sensorLandscape</code></li>
+                      <li><code>userPortrait</code></li>
+                      <li><code>userLandscape</code></li>
+                    </ul>
+                    <p>The values are treated as if the app had set orientation as
+                       <code>unspecified</code>.</p>
+                </li>
+                <li>Device manufacturers can configure devices to override (ignore) this attribute
+                    to improve the layout of apps.</li>
+                <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+                    owners (select trusted and privileged apps) can configure devices they manage to
+                    override (ignore) this attribute to improve app layout. See also
+                    <a href="https://source.android.com/docs/core/permissions/app-streaming">
+                    Companion app streaming</a>.</li>
+             </ul>
+             <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode">Device
+             compatibility mode</a>.</p>
          </aside> -->
     <attr name="screenOrientation">
         <!-- No preference specified: let the system decide the best
@@ -1474,13 +1497,21 @@
             <ul>
                 <li>On Android 11 (API level 30) and lower, the value of
                     {@link android.R.attr#screenOrientation} is ignored for resizeable activities
-                    in multi-window mode.
+                    in multi-window mode.</li>
+                <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+                    system ignores this attribute for apps that target Android 16 (API level 36) or
+                    higher.</li>
                 <li>Device manufacturers can configure devices to override (ignore) this attribute
                     to force apps to resize. The override does not affect the app's support for
-                    multi-window mode. See
-                    <a href="{@docRoot}guide/practices/device-compatibility-mode">
-                    Device compatibility mode</a>.
+                    multi-window mode.</li>
+                <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+                    owners (select trusted and privileged apps) can configure devices they manage to
+                    override (ignore) this attribute to force apps to resize. See
+                    also <a href="https://source.android.com/docs/core/permissions/app-streaming">
+                    Companion app streaming</a>.</li>
             </ul>
+            <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode"> Device
+            compatibility mode</a>.</p>
          </aside> -->
     <attr name="resizeableActivity" format="boolean" />
 
@@ -1504,12 +1535,20 @@
          <aside class="note"><b>Note:</b>
             <ul>
                 <li>This attribute is ignored if the activity has
-                    {@link android.R.attr#resizeableActivity} set to {@code true}.
+                    {@link android.R.attr#resizeableActivity} set to {@code true}.</li>
+                <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+                    system ignores this attribute for apps that target Android 16 (API level 36) or
+                    higher.</li>
                 <li>Device manufacturers can configure devices to override (ignore) this attribute
-                    to improve the layout of apps. See
-                    <a href="{@docRoot}guide/practices/device-compatibility-mode">
-                    Device compatibility mode</a>.
+                    to improve the layout of apps.</li>
+                <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+                    owners (select trusted and privileged apps) can configure devices they manage to
+                    override (ignore) this attribute to improve app layout. See
+                    <a href="https://source.android.com/docs/core/permissions/app-streaming">
+                    Companion app streaming</a>.</li>
             </ul>
+            <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode"> Device
+            compatibility mode</a>.</p>
          </aside> -->
     <attr name="maxAspectRatio" format="float" />
 
@@ -1519,17 +1558,25 @@
          <p>Minimum aspect ratio, expressed as (longer dimension / shorter dimension) in decimal
             form. For example, if the minimum aspect ratio is 4:3, set value to 1.33.
          <p>Value needs to be greater or equal to 1.0, otherwise it is ignored.
-         <aside class="note"><b>Note:</b>
+          <aside class="note"><b>Note:</b>
             <ul>
                 <li>This attribute is ignored if the activity has
-                    {@link android.R.attr#resizeableActivity} set to {@code true}.
+                    {@link android.R.attr#resizeableActivity} set to {@code true}.</li>
+                <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+                    system ignores this attribute for apps that target Android 16 (API level 36) or
+                    higher.</li>
                 <li>Device manufacturers can configure devices to override (ignore) this attribute
-                    to improve the layout of apps. See
-                    <a href="{@docRoot}guide/practices/device-compatibility-mode">
-                    Device compatibility mode</a>.
+                    to improve the layout of apps.</li>
+                <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+                    owners (select trusted and privileged apps) can configure devices they manage to
+                    override (ignore) this attribute to improve app layout. See
+                    <a href="https://source.android.com/docs/core/permissions/app-streaming">
+                    Companion app streaming</a>.</li>
             </ul>
+            <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode"> Device
+            compatibility mode</a>.</p>
          </aside> -->
-    <attr name="minAspectRatio" format="float" />
+   <attr name="minAspectRatio" format="float" />
 
     <!-- This value indicates how tasks rooted at this activity will behave in lockTask mode.
          While in lockTask mode the system will not launch non-permitted tasks until
@@ -1862,9 +1909,38 @@
        <enum name="sync" value="2" />
     </attr>
 
-    <!-- This attribute will be used to override app compatibility mode on 16 KB devices.
-         If set to enabled, Natives lib will be extracted from APK if they are not page aligned on
-         16 KB device. 4 KB natives libs will be loaded app-compat mode if they are eligible.
+    <!-- This attribute overrides the user-set or platform-set 16 KB page size
+         compatibility mode, so that page agnostic compatibility is always enabled
+         or always disabled, rather than according to the user's preference.
+
+         <p>On 4 KB systems, this attribute is ignored and apps are installed
+         normally.
+
+         <p>On 16 KB systems, if an app is built for 16 KB page sizes, this
+         attribute is ignored and apps are installed normally.
+
+         <p>This attribute only affects 16 KB systems for apps that are built
+         with 4 KB page size (old) options.
+
+         <p>When page agnostic compatibility is enabled (either through this
+         flag or via the user's preference), the system specializes the app
+         installation process in ways known to improve compatibility of 4 KB
+         built apps on 16 KB systems. That is, apps which do not have aligned
+         libraries in APK files are extracted, requiring more space on the
+         device. An additional specialization when this option is enabled is
+         that the linker loads the application in a special mode intended
+         to allow 4 KB aligned program segments to load on a 16 KB page system.
+
+         <p>Here are the situations where this attribute should be most useful:
+         <ul>
+            <li>If an app works on 16 KB mode, but is not built for it, enabling this
+            attribute forces the app to be installed in 16 KB mode without
+            the user having to set these options themself.
+            <li>If an app is fully working in 16 KB mode, you can set this
+            attribute to disabled, so that any regression causes a clear failure
+            and this compatibility mode is not used.
+         </ul>
+
          @FlaggedApi(android.content.pm.Flags.FLAG_APP_COMPAT_OPTION_16KB) -->
     <attr name="pageSizeCompat">
         <!-- value for enabled must match with
@@ -2004,7 +2080,6 @@
              other applications in the same task. If set to false, activity launches which would
              replace this application with another when in the user's view will be blocked.
              The default is true. -->
-        <!-- @FlaggedApi("android.security.asm_restrictions_enabled") -->
         <attr name="allowCrossUidActivitySwitchFromBelow" format="boolean" />
         <attr name="persistent" />
         <attr name="persistentWhenFeatureAvailable" />
@@ -2306,6 +2381,13 @@
              {@link android.content.pm.PackageManager#changeLauncherIconConfig}
              @FlaggedApi(android.content.pm.Flags.FLAG_CHANGE_LAUNCHER_BADGING) -->
         <attr name="alternateLauncherLabels" format="reference" />
+
+        <!-- Specifies whether this app should run in the Private Compute Core sandbox.
+             If true, the app will be subject to system restrictions, limiting access to some
+             system resources and restricting communication with non-PCC apps.
+             @FlaggedApi(android.app.privatecompute.flags.Flags.FLAG_ENABLE_PCC_FRAMEWORK_SUPPORT)
+        -->
+        <attr name="runInPccSandbox" format="boolean"/>
     </declare-styleable>
 
     <!-- An attribution is a logical part of an app and is identified by a tag.
@@ -2367,6 +2449,38 @@
              of Android higher than the number given here, the permission will not
              be created.  -->
         <attr name="maxSdkVersion" />
+        <!-- Optional: specify if valid purpose is required for this permission. True indicates
+             it is required, false or not specifying the element indicates optional.
+
+             <p>If set to true, {@link #AndroidManifestValidPurpose valid-purpose} tag must be used
+             to specify at least one valid purpose. As a result of doing that, to prevent automatic
+             revocation at install time, all permission requests made using the
+             {@link #AndroidManifestUsesPermission uses-permission} tag will need to specify at
+             least one of these configured valid purposes. This enforcement of purpose validation
+             is currently only supported for normal permissions defined within the platform
+             manifest. -->
+        <attr name="requiresPurpose" format="boolean" />
+        <!-- Required to be set when {@code requiresPurpose} is {@code true}; optional otherwise.
+             Use it to specify the app's minimum target SDK version for which purpose validation
+             should be enforced in order to prevent app compatibility issues. This must be set to
+             at least SDK version 37. -->
+        <attr name="requiresPurposeTargetSdkVersion"  format="integer" />
+</declare-styleable>
+
+    <!-- The <code>valid-purpose</code> tag is used to specify valid purpose(s) for a permission.
+         If there are multiple valid purposes, use multiple <code>valid-purpose</code> tags.
+
+         <p>This appears as a child tag of the
+         {@link #AndroidManifestPermission permission} tag. -->
+    <declare-styleable name="AndroidManifestValidPurpose" parent="AndroidManifestPermission">
+        <!-- Specify the name of the valid purpose. -->
+        <attr name="name" />
+        <!-- Optional: This is mainly intended to deprecate a pre-defined purpose. Specify the max
+             target SDK version for which this purpose is valid. Not specifying this attribute
+             signifies the purpose is valid indefinitely. To avoid app compatibility issues, DO NOT
+             simply delete the purpose from the manifest. Note that deprecation of purposes cannot
+             be done retroactively on older platform versions. -->
+        <attr name="maxTargetSdkVersion" format="integer" />
     </declare-styleable>
 
     <!-- The <code>permission-group</code> tag declares a logical grouping of
@@ -2472,7 +2586,10 @@
         request it at all. -->
         <attr name="requiredNotFeature" format="string" />
         <!-- Optional: set of flags that should apply to this permission request. Note that
-             these flags start at 0x4 to match PackageInfo.requestedPermissionsFlags. -->
+             these flags start at 0x4 to match PackageInfo.requestedPermissionsFlags.
+
+             <p>Please refrain from using this for purpose related flags; use
+             {@link #AndroidManifestPurpose purpose} child tag instead. -->
         <attr name="usesPermissionFlags">
             <!-- Strong assertion by a developer that they will never use this
                  permission to derive the physical location of the device, even
@@ -2480,6 +2597,28 @@
                  ACCESS_COARSE_LOCATION permissions. -->
             <flag name="neverForLocation" value="0x00010000" />
         </attr>
+    </declare-styleable>
+
+    <!-- Use <code>purpose</code> tag to specify purpose(s) for requesting a permission.
+         Purpose(s) will need to be provided if the requested
+         {@link #AndroidManifestPermission permission} tag's <code>requiresPurpose</code> attribute
+         is set to true. Only valid purposes from the permission's
+         {@link #AndroidManifestValidPurpose valid-purpose} tags can be specified. If there are
+         multiple purposes for requesting the permission, use multiple <code>purpose</code> tags.
+
+         <p>This appears as a child tag of the
+         {@link #AndroidManifestUsesPermission uses-permission} tag. -->
+    <declare-styleable name="AndroidManifestPurpose" parent="AndroidManifestUsesPermission">
+        <!-- Specify the name of the purpose. -->
+        <attr name="name" />
+        <!-- Optional: specify the min SDK version for which the permission is requested with the
+             declared purpose. Not specifying this element implies there’s no lower bound on the
+             SDK version for which the purpose is declared. -->
+        <attr name="minSdkVersion" format="integer|string" />
+        <!-- Optional: specify the max SDK version for which the permission is requested with the
+             declared purpose. Not specifying this element implies there’s no upper bound on the SDK
+             version for which the purpose is declared. -->
+        <attr name="maxSdkVersion" format="integer" />
     </declare-styleable>
 
     <!-- <code>required-feature</code> and <code>required-not-feature</code> elements inside
@@ -2572,8 +2711,6 @@
              against a development branch, in which case it will only work against
              the development builds. -->
         <attr name="minSdkVersion" format="integer|string" />
-        <!-- @FlaggedApi(android.sdk.Flags.FLAG_MAJOR_MINOR_VERSIONING_SCHEME) -->
-        <attr name="minSdkVersionFull" format="string" />
         <!-- This is the SDK version number that the application is targeting.
              It is able to run on older versions (down to minSdkVersion), but
              was explicitly tested to work with the version specified here.
@@ -2887,6 +3024,17 @@
          <p>This appears as a child tag of the root
          {@link #AndroidManifest manifest} tag. -->
     <declare-styleable name="AndroidManifestOriginalPackage" parent="AndroidManifest">
+        <attr name="name" />
+    </declare-styleable>
+
+    <!-- Private tag to declare the package name that the permissions of this package
+         is based on.  Only used for packages installed in the system image.  If
+         given, the permissions from the other package will be propagated into the
+         new package.
+
+         <p>This appears as a child tag of the root
+         {@link #AndroidManifest manifest} tag. -->
+    <declare-styleable name="AndroidManifestAdoptPermissions" parent="AndroidManifest">
         <attr name="name" />
     </declare-styleable>
 

@@ -16,6 +16,7 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
+import com.android.systemui.Flags
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor
 import com.android.systemui.keyguard.domain.interactor.FromGoneTransitionInteractor.Companion.TO_DOZING_DURATION
@@ -27,19 +28,18 @@ import com.android.systemui.keyguard.ui.transitions.DeviceEntryIconTransition
 import com.android.systemui.scene.shared.model.Scenes
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 
 /** Breaks down GONE->DOZING transition into discrete steps for corresponding views to consume. */
-@ExperimentalCoroutinesApi
 @SysUISingleton
 class GoneToDozingTransitionViewModel
 @Inject
 constructor(
     deviceEntryUdfpsInteractor: DeviceEntryUdfpsInteractor,
     animationFlow: KeyguardTransitionAnimationFlow,
+    dozingTransitionFlows: DozingTransitionFlows,
 ) : DeviceEntryIconTransition {
 
     private val transitionAnimation =
@@ -48,17 +48,21 @@ constructor(
                 duration = TO_DOZING_DURATION,
                 edge = Edge.create(from = Scenes.Gone, to = DOZING),
             )
-            .setupWithoutSceneContainer(
-                edge = Edge.create(from = GONE, to = DOZING),
-            )
+            .setupWithoutSceneContainer(edge = Edge.create(from = GONE, to = DOZING))
 
     val lockscreenAlpha: Flow<Float> =
-        transitionAnimation.sharedFlow(
-            duration = 500.milliseconds,
-            onStep = { 0f },
-            onCancel = { 1f },
-            onFinish = { 1f },
-        )
+        if (Flags.newDozingKeyguardStates()) {
+            dozingTransitionFlows.lockscreenAlpha(from = GONE)
+        } else {
+            transitionAnimation.sharedFlow(
+                duration = 500.milliseconds,
+                onStep = { 0f },
+                onCancel = { 1f },
+                onFinish = { 1f },
+            )
+        }
+
+    val nonAuthUIAlpha: Flow<Float> = dozingTransitionFlows.nonAuthUIAlpha(from = GONE)
 
     val notificationAlpha: Flow<Float> =
         transitionAnimation.sharedFlow(

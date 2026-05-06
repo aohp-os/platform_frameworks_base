@@ -28,20 +28,21 @@ import com.android.systemui.flags.fakeFeatureFlagsClassic
 import com.android.systemui.keyguard.data.repository.fakeDeviceEntryFingerprintAuthRepository
 import com.android.systemui.keyguard.shared.model.SuccessFingerprintAuthenticationStatus
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.runTest
 import com.android.systemui.kosmos.testCase
-import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
-import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shade.domain.interactor.enableDualShade
+import com.android.systemui.shade.domain.interactor.enableSingleShade
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.statusbar.CommandQueue
+import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.mock
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -49,38 +50,34 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @EnableSceneContainer
 class ShadeControllerSceneImplTest : SysuiTestCase() {
-    private val kosmos = Kosmos()
-    private val testScope = kosmos.testScope
-    private val sceneInteractor by lazy { kosmos.sceneInteractor }
-    private val deviceEntryInteractor by lazy { kosmos.deviceEntryInteractor }
 
-    private lateinit var shadeInteractor: ShadeInteractor
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
+
     private lateinit var underTest: ShadeControllerSceneImpl
 
     @Before
     fun setup() {
-        kosmos.testCase = this
-        kosmos.fakeFeatureFlagsClassic.apply {
-            set(Flags.FULL_SCREEN_USER_SWITCHER, false)
-            set(Flags.NSSL_DEBUG_LINES, false)
-            set(Flags.FULL_SCREEN_USER_SWITCHER, false)
+        with(kosmos) {
+            testCase = this@ShadeControllerSceneImplTest
+            fakeFeatureFlagsClassic.apply {
+                set(Flags.FULL_SCREEN_USER_SWITCHER, false)
+                set(Flags.NSSL_DEBUG_LINES, false)
+                set(Flags.FULL_SCREEN_USER_SWITCHER, false)
+            }
+            fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
+                SuccessFingerprintAuthenticationStatus(0, true)
+            )
+            underTest = shadeControllerSceneImpl
         }
-        kosmos.fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
-            SuccessFingerprintAuthenticationStatus(0, true)
-        )
-        testScope.runCurrent()
-        shadeInteractor = kosmos.shadeInteractor
-        underTest = kosmos.shadeControllerSceneImpl
     }
 
     @Test
     fun animateCollapseShade_noForceNoExpansion() =
-        testScope.runTest {
+        kosmos.runTest {
             // GIVEN shade is collapsed and a post-collapse action is enqueued
             val testRunnable = mock<Runnable>()
             setDeviceEntered(true)
@@ -89,7 +86,6 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
             // WHEN a collapse is requested
             underTest.animateCollapseShade(0, force = false, delayed = false, 1f)
-            runCurrent()
 
             // THEN the shade remains collapsed and the post-collapse action ran
             assertThat(sceneInteractor.currentScene.value).isEqualTo(Scenes.Gone)
@@ -98,8 +94,9 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
     @Test
     fun animateCollapseShade_expandedExcludeFlagOn() =
-        testScope.runTest {
-            // GIVEN shade is fully expanded and a post-collapse action is enqueued
+        kosmos.runTest {
+            // GIVEN single shade is fully expanded and a post-collapse action is enqueued
+            enableSingleShade()
             val testRunnable = mock<Runnable>()
             underTest.addPostCollapseAction(testRunnable)
             setDeviceEntered(true)
@@ -107,7 +104,6 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
             // WHEN a collapse is requested with FLAG_EXCLUDE_NOTIFICATION_PANEL
             underTest.animateCollapseShade(CommandQueue.FLAG_EXCLUDE_NOTIFICATION_PANEL)
-            runCurrent()
 
             // THEN the shade remains expanded and the post-collapse action did not run
             assertThat(sceneInteractor.currentScene.value).isEqualTo(Scenes.Shade)
@@ -117,14 +113,14 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
     @Test
     fun animateCollapseShade_locked() =
-        testScope.runTest {
-            // GIVEN shade is fully expanded on lockscreen
+        kosmos.runTest {
+            // GIVEN single shade is fully expanded on lockscreen
+            enableSingleShade()
             setDeviceEntered(false)
             setShadeFullyExpanded()
 
             // WHEN a collapse is requested
             underTest.animateCollapseShade()
-            runCurrent()
 
             // THEN the shade collapses back to lockscreen and the post-collapse action ran
             assertThat(sceneInteractor.currentScene.value).isEqualTo(Scenes.Lockscreen)
@@ -132,14 +128,14 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
     @Test
     fun animateCollapseShade_unlocked() =
-        testScope.runTest {
-            // GIVEN shade is fully expanded on an unlocked device
+        kosmos.runTest {
+            // GIVEN single shade is fully expanded on an unlocked device
+            enableSingleShade()
             setDeviceEntered(true)
             setShadeFullyExpanded()
 
             // WHEN a collapse is requested
             underTest.animateCollapseShade()
-            runCurrent()
 
             // THEN the shade collapses back to lockscreen and the post-collapse action ran
             assertThat(sceneInteractor.currentScene.value).isEqualTo(Scenes.Gone)
@@ -147,8 +143,9 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
     @Test
     fun onCollapseShade_runPostCollapseActionsCalled() =
-        testScope.runTest {
-            // GIVEN shade is expanded and a post-collapse action is enqueued
+        kosmos.runTest {
+            // GIVEN single shade is expanded and a post-collapse action is enqueued
+            enableSingleShade()
             val testRunnable = mock<Runnable>()
             setShadeFullyExpanded()
             underTest.addPostCollapseAction(testRunnable)
@@ -162,13 +159,13 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
 
     @Test
     fun postOnShadeExpanded() =
-        testScope.runTest {
-            // GIVEN shade is collapsed and a post-collapse action is enqueued
+        kosmos.runTest {
+            // GIVEN single shade is collapsed and a post-collapse action is enqueued
+            enableSingleShade()
             val testRunnable = mock<Runnable>()
-            kosmos.fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
+            fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
                 SuccessFingerprintAuthenticationStatus(0, true)
             )
-            runCurrent()
             setCollapsed()
             underTest.postOnShadeExpanded(testRunnable)
 
@@ -179,38 +176,76 @@ class ShadeControllerSceneImplTest : SysuiTestCase() {
             verify(testRunnable, times(1)).run()
         }
 
-    private fun setScene(key: SceneKey) {
+    @Test
+    fun instantCollapseShade_notificationShadeHidden() =
+        kosmos.runTest {
+            val currentOverlays by collectLastValue(sceneInteractor.currentOverlays)
+            // GIVEN the dual shade configuration with the notification shade overlay visible
+            enableDualShade()
+            sceneInteractor.showOverlay(Overlays.NotificationsShade, "test")
+            assertThat(currentOverlays).isEqualTo(setOf(Overlays.NotificationsShade))
+
+            // WHEN shade instantly collapses
+            underTest.instantCollapseShade()
+
+            // THEN overlay was hidden
+            assertThat(currentOverlays).isEmpty()
+        }
+
+    @Test
+    fun instantCollapseShade_qsShadeHidden() =
+        kosmos.runTest {
+            val currentOverlays by collectLastValue(sceneInteractor.currentOverlays)
+            // GIVEN the dual shade configuration with the QS shade overlay visible
+            enableDualShade()
+            sceneInteractor.showOverlay(Overlays.QuickSettingsShade, "test")
+            assertThat(currentOverlays).isEqualTo(setOf(Overlays.QuickSettingsShade))
+
+            // WHEN shade instantly collapses
+            underTest.instantCollapseShade()
+
+            // THEN overlay was hidden
+            assertThat(currentOverlays).isEmpty()
+        }
+
+    @Test
+    fun instantCollapseShade_singleShade_doesntSwitchToShadeScene() =
+        kosmos.runTest {
+            enableSingleShade()
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
+            val homeScene = currentScene
+            sceneInteractor.changeScene(Scenes.QuickSettings, "")
+            assertThat(currentScene).isEqualTo(Scenes.QuickSettings)
+
+            underTest.instantCollapseShade()
+
+            assertThat(currentScene).isEqualTo(homeScene)
+        }
+
+    private fun Kosmos.setScene(key: SceneKey) {
         sceneInteractor.changeScene(key, "test")
         sceneInteractor.setTransitionState(
             MutableStateFlow<ObservableTransitionState>(ObservableTransitionState.Idle(key))
         )
-        testScope.runCurrent()
     }
 
-    private fun TestScope.setDeviceEntered(isEntered: Boolean) {
+    private fun Kosmos.setDeviceEntered(isEntered: Boolean) {
         if (isEntered) {
             // Unlock the device marking the device has entered.
-            kosmos.fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
+            fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
                 SuccessFingerprintAuthenticationStatus(0, true)
             )
-            runCurrent()
         }
-        setScene(
-            if (isEntered) {
-                Scenes.Gone
-            } else {
-                Scenes.Lockscreen
-            }
-        )
+        setScene(if (isEntered) Scenes.Gone else Scenes.Lockscreen)
         assertThat(deviceEntryInteractor.isDeviceEntered.value).isEqualTo(isEntered)
     }
 
-    private fun setCollapsed() {
+    private fun Kosmos.setCollapsed() {
         setScene(Scenes.Gone)
         assertThat(shadeInteractor.isAnyExpanded.value).isFalse()
     }
 
-    private fun setShadeFullyExpanded() {
+    private fun Kosmos.setShadeFullyExpanded() {
         setScene(Scenes.Shade)
         assertThat(shadeInteractor.isAnyFullyExpanded.value).isTrue()
     }

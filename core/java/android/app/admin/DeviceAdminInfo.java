@@ -409,6 +409,8 @@ public final class DeviceAdminInfo implements Parcelable {
         } catch (NameNotFoundException e) {
             throw new XmlPullParserException(
                     "Unable to create context for: " + mActivityInfo.packageName);
+        } catch (OutOfMemoryError e) {
+            throw new XmlPullParserException("Out of memory when parsing", null, e);
         } finally {
             if (parser != null) parser.close();
         }
@@ -558,6 +560,11 @@ public final class DeviceAdminInfo implements Parcelable {
     }
 
     public void dump(Printer pw, String prefix) {
+        pw.println("mVisible: " + mVisible);
+        pw.println("mUsesPolicies: " + mUsesPolicies);
+        pw.println("mSupportsTransferOwnership: " + mSupportsTransferOwnership);
+        pw.println("mHeadlessDeviceOwnerMode: " + mHeadlessDeviceOwnerMode);
+
         pw.println(prefix + "Receiver:");
         mActivityInfo.dump(pw, prefix + "  ");
     }

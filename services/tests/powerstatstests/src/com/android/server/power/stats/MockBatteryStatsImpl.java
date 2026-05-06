@@ -22,6 +22,7 @@ import static org.mockito.Mockito.when;
 import android.annotation.NonNull;
 import android.app.usage.NetworkStatsManager;
 import android.net.NetworkStats;
+import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.SparseArray;
@@ -38,17 +39,30 @@ import com.android.internal.os.KernelCpuUidTimeReader.KernelCpuUidUserSysTimeRea
 import com.android.internal.os.KernelSingleUidTimeReader;
 import com.android.internal.os.MonotonicClock;
 import com.android.internal.os.PowerProfile;
-import com.android.internal.power.EnergyConsumerStats;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Queue;
 
 /**
  * Mocks a BatteryStatsImpl object.
  */
 public class MockBatteryStatsImpl extends BatteryStatsImpl {
+    public static final BatteryHistoryDirectory.Compressor PASS_THROUGH_COMPRESSOR =
+            new BatteryHistoryDirectory.Compressor() {
+                @Override
+                public void compress(OutputStream stream, byte[] data) throws IOException {
+                    stream.write(data);
+                }
+
+                @Override
+                public void uncompress(byte[] data, InputStream stream) throws IOException {
+                    readFully(data, stream);
+                }
+            };
     public boolean mForceOnBattery;
     // The mNetworkStats will be used for both wifi and mobile categories
     private NetworkStats mNetworkStats;
@@ -65,28 +79,37 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
     }
 
     MockBatteryStatsImpl(Clock clock, File historyDirectory) {
-        this(clock, historyDirectory, new Handler(Looper.getMainLooper()));
+        this(clock, historyDirectory, new Handler(Looper.getMainLooper()), mockPowerProfile());
     }
 
-    MockBatteryStatsImpl(Clock clock, File historyDirectory, Handler handler) {
-        this(DEFAULT_CONFIG, clock, historyDirectory, handler, new PowerStatsUidResolver());
-    }
-
-    MockBatteryStatsImpl(BatteryStatsConfig config, Clock clock, File historyDirectory) {
-        this(config, clock, historyDirectory, new Handler(Looper.getMainLooper()),
-                new PowerStatsUidResolver());
+    MockBatteryStatsImpl(Clock clock, File historyDirectory, Handler handler,
+            PowerProfile powerProfile) {
+        this(DEFAULT_CONFIG, clock, new MonotonicClock(0, clock), historyDirectory, handler,
+                powerProfile, new PowerStatsUidResolver());
     }
 
     MockBatteryStatsImpl(BatteryStatsConfig config, Clock clock, File historyDirectory,
             Handler handler, PowerStatsUidResolver powerStatsUidResolver) {
-        super(config, clock, new MonotonicClock(0, clock), historyDirectory, handler,
+        this(config, clock, new MonotonicClock(0, clock), historyDirectory, handler,
+                mockPowerProfile(), powerStatsUidResolver);
+    }
+
+    MockBatteryStatsImpl(BatteryStatsConfig config, Clock clock, MonotonicClock monotonicClock,
+            File historyDirectory, Handler handler, PowerProfile powerProfile,
+            PowerStatsUidResolver powerStatsUidResolver) {
+        super(config, clock, monotonicClock, historyDirectory,
+                historyDirectory != null ? new BatteryHistoryDirectory(
+                        new File(historyDirectory, "battery-history"),
+                        config.getMaxHistorySizeBytes(), PASS_THROUGH_COMPRESSOR) : null,
+                handler,
                 mock(PlatformIdleStateCallback.class), mock(EnergyStatsRetriever.class),
-                mock(UserInfoProvider.class), mockPowerProfile(),
+                mock(UserInfoProvider.class), powerProfile,
                 new CpuScalingPolicies(new SparseArray<>(), new SparseArray<>()),
                 powerStatsUidResolver, mock(FrameworkStatsLogger.class),
                 mock(BatteryStatsHistory.TraceDelegate.class),
                 mock(BatteryStatsHistory.EventLogger.class));
-        setMaxHistoryBuffer(128 * 1024);
+        mConstants.MAX_HISTORY_BUFFER = 128 * 1024;
+        mConstants.onChange();
 
         setExternalStatsSyncLocked(mExternalStatsSync);
         informThatAllExternalStatsAreFlushed();
@@ -103,15 +126,10 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
         return powerProfile;
     }
 
-    public void initMeasuredEnergyStats(String[] customBucketNames) {
-        final boolean[] supportedStandardBuckets =
-                new boolean[EnergyConsumerStats.NUMBER_STANDARD_POWER_BUCKETS];
-        Arrays.fill(supportedStandardBuckets, true);
-        synchronized (this) {
-            mEnergyConsumerStatsConfig = new EnergyConsumerStats.Config(supportedStandardBuckets,
-                    customBucketNames, new int[0], new String[]{""});
-            mGlobalEnergyConsumerStats = new EnergyConsumerStats(mEnergyConsumerStatsConfig);
-        }
+    public void awaitCompletion() {
+        ConditionVariable done = new ConditionVariable();
+        mHandler.post(done::open);
+        done.block();
     }
 
     public TimeBase getOnBatteryTimeBase() {
@@ -127,9 +145,7 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
     }
 
     public Queue<UidToRemove> getPendingRemovedUids() {
-        synchronized (this) {
-            return mPendingRemovedUids;
-        }
+        return mPendingRemovedUids;
     }
 
     public boolean isOnBattery() {
@@ -163,12 +179,6 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
     protected NetworkStats readWifiNetworkStatsLocked(
             @NonNull NetworkStatsManager networkStatsManager) {
         return mNetworkStats;
-    }
-
-    public MockBatteryStatsImpl setPowerProfile(PowerProfile powerProfile) {
-        mPowerProfile = powerProfile;
-        setTestCpuScalingPolicies();
-        return this;
     }
 
     public MockBatteryStatsImpl setTestCpuScalingPolicies() {
@@ -224,12 +234,6 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
         return this;
     }
 
-    public MockBatteryStatsImpl setSystemServerCpuThreadReader(
-            SystemServerCpuThreadReader systemServerCpuThreadReader) {
-        mSystemServerCpuThreadReader = systemServerCpuThreadReader;
-        return this;
-    }
-
     public MockBatteryStatsImpl setUserInfoProvider(UserInfoProvider provider) {
         mUserInfoProvider = provider;
         return this;
@@ -251,23 +255,15 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
     }
 
     @GuardedBy("this")
-    public MockBatteryStatsImpl setMaxHistoryFiles(int maxHistoryFiles) {
-        mConstants.MAX_HISTORY_FILES = maxHistoryFiles;
-        mConstants.onChange();
-        return this;
-    }
-
-    @GuardedBy("this")
-    public MockBatteryStatsImpl setMaxHistoryBuffer(int maxHistoryBuffer) {
-        mConstants.MAX_HISTORY_BUFFER = maxHistoryBuffer;
-        mConstants.onChange();
-        return this;
-    }
-
-    @GuardedBy("this")
     public MockBatteryStatsImpl setPerUidModemModel(int perUidModemModel) {
         mConstants.PER_UID_MODEM_MODEL = perUidModemModel;
         mConstants.onChange();
+        return this;
+    }
+
+    public MockBatteryStatsImpl setConsumedEnergyRetriever(
+            PowerStatsCollector.ConsumedEnergyRetriever retriever) {
+        mConsumedEnergyRetriever = retriever;
         return this;
     }
 
@@ -288,6 +284,11 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
 
     @Override
     protected void updateBatteryPropertiesLocked() {
+    }
+
+    @Override
+    protected NetworkStats networkStatsDelta(NetworkStats stats, NetworkStats oldStats) {
+        return NetworkStatsTestUtils.networkStatsDelta(stats, oldStats);
     }
 
     public static class DummyExternalStatsSync implements ExternalStatsSync {
@@ -317,10 +318,6 @@ public class MockBatteryStatsImpl extends BatteryStatsImpl {
 
         @Override
         public void cancelCpuSyncDueToWakelockChange() {
-        }
-
-        @Override
-        public void scheduleSyncDueToBatteryLevelChange(long delayMillis) {
         }
 
         @Override

@@ -15,6 +15,8 @@
  */
 package com.android.internal.widget.remotecompose.core.operations.utilities.easing;
 
+import android.annotation.NonNull;
+
 /**
  * This contains the class to provide the logic for an animation to come to a stop using a spring
  * model. String debug(String desc, float time); float getVelocity(float time); float
@@ -42,9 +44,9 @@ public class SpringStopEngine {
     private float mStopThreshold;
     private int mBoundaryMode = 0;
 
-    public String debug(String desc, float time) {
-        return null;
-    }
+    //    public String debug(String desc, float time) {
+    //        return null;
+    //    }
 
     void log(String str) {
         StackTraceElement s = new Throwable().getStackTrace()[1];
@@ -53,21 +55,42 @@ public class SpringStopEngine {
         System.out.println(line + str);
     }
 
+    /** */
     public SpringStopEngine() {}
 
+    /**
+     * get the value the sping is pulling towards
+     *
+     * @return the value the sping is pulling towards
+     */
     public float getTargetValue() {
         return (float) mTargetPos;
     }
 
+    /**
+     * get the value the sping is starting from
+     *
+     * @param v the value the sping is starting from
+     */
     public void setInitialValue(float v) {
         mPos = v;
     }
 
+    /**
+     * set the value the sping is pulling towards
+     *
+     * @param v the value the sping is pulling towards
+     */
     public void setTargetValue(float v) {
         mTargetPos = v;
     }
 
-    public SpringStopEngine(float[] parameters) {
+    /**
+     * Create a sping engine with the parameters encoded as an array of floats
+     *
+     * @param parameters the parameters to use
+     */
+    public SpringStopEngine(@NonNull float [] parameters) {
         if (parameters[0] != 0) {
             throw new RuntimeException(" parameter[0] should be 0");
         }
@@ -83,9 +106,9 @@ public class SpringStopEngine {
     /**
      * Config the spring starting conditions
      *
-     * @param currentPos
-     * @param target
-     * @param currentVelocity
+     * @param currentPos the current position of the spring
+     * @param target the target position of the spring
+     * @param currentVelocity the current velocity of the spring
      */
     public void springStart(float currentPos, float target, float currentVelocity) {
         mTargetPos = target;
@@ -115,10 +138,22 @@ public class SpringStopEngine {
         mLastTime = 0;
     }
 
+    /**
+     * get the velocity of the spring at a time
+     *
+     * @param time the time to get the velocity at
+     * @return the velocity of the spring at a time
+     */
     public float getVelocity(float time) {
         return (float) mV;
     }
 
+    /**
+     * get the position of the spring at a time
+     *
+     * @param time the time to get the position at
+     * @return the position of the spring at a time
+     */
     public float get(float time) {
         compute(time - mLastTime);
         mLastTime = time;
@@ -128,6 +163,11 @@ public class SpringStopEngine {
         return (float) mPos;
     }
 
+    /**
+     * get the acceleration of the spring
+     *
+     * @return the acceleration of the spring
+     */
     public float getAcceleration() {
         double k = mStiffness;
         double c = mDamping;
@@ -135,10 +175,20 @@ public class SpringStopEngine {
         return (float) (-k * x - c * mV) / mMass;
     }
 
+    /**
+     * get the velocity of the spring
+     *
+     * @return the velocity of the spring
+     */
     public float getVelocity() {
         return 0;
     }
 
+    /**
+     * is the spring stopped
+     *
+     * @return true if the spring is stopped
+     */
     public boolean isStopped() {
         double x = (mPos - mTargetPos);
         double k = mStiffness;
@@ -149,6 +199,11 @@ public class SpringStopEngine {
         return max_def <= mStopThreshold;
     }
 
+    /**
+     * increment the spring position over time dt
+     *
+     * @param dt the time to increment the spring position over
+     */
     private void compute(double dt) {
         if (dt <= 0) {
             // Nothing to compute if there's no time difference

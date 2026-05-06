@@ -16,8 +16,10 @@
 
 package com.android.server.biometrics.sensors;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.content.Context;
+import android.content.Intent;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.BiometricRequestConstants;
 import android.hardware.face.FaceEnrollOptions;
@@ -26,9 +28,11 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Slog;
 
+import com.android.server.biometrics.AuthenticationStatsCollector;
 import com.android.server.biometrics.BiometricsProto;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
+import com.android.server.pm.PackageManagerService;
 
 import java.util.Arrays;
 import java.util.function.Supplier;
@@ -38,7 +42,7 @@ import java.util.function.Supplier;
  */
 public abstract class EnrollClient<T> extends AcquisitionClient<T> implements EnrollmentModifier {
 
-    private static final String TAG = "Biometrics/EnrollClient";
+    private static final String TAG = "EnrollClient";
 
     protected final byte[] mHardwareAuthToken;
     protected final int mTimeoutSec;
@@ -158,5 +162,15 @@ public abstract class EnrollClient<T> extends AcquisitionClient<T> implements En
                     BiometricRequestConstants.REASON_ENROLL_ENROLLING;
             default -> BiometricRequestConstants.REASON_UNKNOWN;
         };
+    }
+
+    protected void notifyLastEnrollmentTime(int modality) {
+        // Notify the last enrollment time to re-count authentication stats for frr.
+        final Intent intent = new Intent(
+                AuthenticationStatsCollector.ACTION_LAST_ENROLL_TIME_CHANGED);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE, getTargetUserId());
+        intent.putExtra(AuthenticationStatsCollector.EXTRA_MODALITY, modality);
+        intent.setPackage(PackageManagerService.PLATFORM_PACKAGE_NAME);
+        getContext().sendBroadcast(intent, Manifest.permission.USE_BIOMETRIC_INTERNAL);
     }
 }

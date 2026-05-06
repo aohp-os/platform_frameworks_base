@@ -106,16 +106,8 @@ class BroadcastProcessQueue {
      */
     private boolean mTimeoutScheduled;
 
-    /**
-     * Snapshotted value of {@link ProcessRecord#getCpuDelayTime()}, typically
-     * used when deciding if we should extend the soft ANR timeout.
-     *
-     * Required when Flags.anrTimerServiceEnabled is false.
-     */
-    long lastCpuDelayTime;
-
      /**
-     * Snapshotted value of {@link ProcessStateRecord#getCurProcState()} before
+     * Snapshotted value of {@link ProcessRecord#getCurProcState()} before
      * dispatching the current broadcast to the receiver in this process.
      */
     int lastProcessState;
@@ -244,6 +236,17 @@ class BroadcastProcessQueue {
      * List of outgoing broadcasts from a freezable process.
      */
     private final ArrayList<BroadcastRecord> mOutgoingBroadcasts = new ArrayList<>();
+
+    /**
+     * The timestamp, in {@link SystemClock#uptimeMillis()}, at which a cold start was initiated
+     * for the process associated with this queue.
+     *
+     * Note: We could use the already existing {@link ProcessRecord#getStartUptime()} instead
+     * of this, but the need for this timestamp is to identify an issue (b/393898613) where the
+     * suspicion is that process is not attached or getting changed. So, we don't want to rely on
+     * ProcessRecord directly for this purpose.
+     */
+    private long mProcessStartInitiatedTimestampMillis;
 
     public BroadcastProcessQueue(@NonNull BroadcastConstants constants,
             @NonNull String processName, int uid) {
@@ -453,7 +456,7 @@ class BroadcastProcessQueue {
      *
      * @return if this operation may have changed internal state, indicating
      *         that the caller is responsible for invoking
-     *         {@link BroadcastQueueModernImpl#updateRunnableList}
+     *         {@link BroadcastQueueImpl#updateRunnableList}
      */
     @CheckResult
     public boolean forEachMatchingBroadcast(@NonNull BroadcastPredicate predicate,
@@ -502,7 +505,7 @@ class BroadcastProcessQueue {
      *
      * @return if this operation may have changed internal state, indicating
      *         that the caller is responsible for invoking
-     *         {@link BroadcastQueueModernImpl#updateRunnableList}
+     *         {@link BroadcastQueueImpl#updateRunnableList}
      */
     @CheckResult
     public boolean setProcessAndUidState(@Nullable ProcessRecord app, boolean uidForeground,
@@ -652,6 +655,40 @@ class BroadcastProcessQueue {
         return mActiveFirstLaunch;
     }
 
+    public void setProcessStartInitiatedTimestampMillis(@UptimeMillisLong long timestampMillis) {
+        mProcessStartInitiatedTimestampMillis = timestampMillis;
+    }
+
+    @UptimeMillisLong
+    public long getProcessStartInitiatedTimestampMillis() {
+        return mProcessStartInitiatedTimestampMillis;
+    }
+
+    public boolean hasProcessStartInitiationTimedout() {
+        if (mProcessStartInitiatedTimestampMillis <= 0) {
+            return false;
+        }
+        return (SystemClock.uptimeMillis() - mProcessStartInitiatedTimestampMillis)
+                > constants.PENDING_COLD_START_ABANDON_TIMEOUT_MILLIS;
+    }
+
+    /**
+     * Returns if the process start initiation is expected to be timed out at this point. This
+     * allows us to dump necessary state for debugging before the process start is timed out
+     * and discarded.
+     */
+    public boolean isProcessStartInitiationTimeoutExpected() {
+        if (mProcessStartInitiatedTimestampMillis <= 0) {
+            return false;
+        }
+        return (SystemClock.uptimeMillis() - mProcessStartInitiatedTimestampMillis)
+                > constants.PENDING_COLD_START_ABANDON_TIMEOUT_MILLIS / 2;
+    }
+
+    public void clearProcessStartInitiatedTimestampMillis() {
+        mProcessStartInitiatedTimestampMillis = 0;
+    }
+
     /**
      * Get package name of the first application loaded into this process.
      */
@@ -692,10 +729,6 @@ class BroadcastProcessQueue {
     }
 
     public boolean wasActiveBroadcastReEnqueued() {
-        // If the flag is not enabled, treat as if the broadcast was never re-enqueued.
-        if (!Flags.avoidRepeatedBcastReEnqueues()) {
-            return false;
-        }
         return mActiveReEnqueued;
     }
 
@@ -810,7 +843,7 @@ class BroadcastProcessQueue {
      * Return the broadcast being actively dispatched in this process.
      */
     public @NonNull BroadcastRecord getActive() {
-        return Objects.requireNonNull(mActive);
+        return Objects.requireNonNull(mActive, toString());
     }
 
     /**
@@ -818,7 +851,7 @@ class BroadcastProcessQueue {
      * being actively dispatched in this process.
      */
     public int getActiveIndex() {
-        Objects.requireNonNull(mActive);
+        Objects.requireNonNull(mActive, toString());
         return mActiveIndex;
     }
 
@@ -837,7 +870,7 @@ class BroadcastProcessQueue {
     /**
      * @return if this operation may have changed internal state, indicating
      *         that the caller is responsible for invoking
-     *         {@link BroadcastQueueModernImpl#updateRunnableList}
+     *         {@link BroadcastQueueImpl#updateRunnableList}
      */
     @CheckResult
     boolean forceDelayBroadcastDelivery(long delayedDurationMs) {
@@ -921,7 +954,7 @@ class BroadcastProcessQueue {
      *
      * @return if this operation may have changed internal state, indicating
      *         that the caller is responsible for invoking
-     *         {@link BroadcastQueueModernImpl#updateRunnableList}
+     *         {@link BroadcastQueueImpl#updateRunnableList}
      */
     @CheckResult
     @VisibleForTesting
@@ -945,7 +978,7 @@ class BroadcastProcessQueue {
      *
      * @return if this operation may have changed internal state, indicating
      *         that the caller is responsible for invoking
-     *         {@link BroadcastQueueModernImpl#updateRunnableList}
+     *         {@link BroadcastQueueImpl#updateRunnableList}
      */
     @CheckResult
     boolean removePrioritizeEarliestRequest() {
@@ -1557,6 +1590,10 @@ class BroadcastProcessQueue {
         }
         if (mActiveReEnqueued) {
             pw.print("activeReEnqueued:"); pw.println(mActiveReEnqueued);
+        }
+        if (mProcessStartInitiatedTimestampMillis > 0) {
+            pw.print("processStartInitiatedTimestamp:"); pw.println(
+                    TimeUtils.formatUptime(mProcessStartInitiatedTimestampMillis));
         }
     }
 

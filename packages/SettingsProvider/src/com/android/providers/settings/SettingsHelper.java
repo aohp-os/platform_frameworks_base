@@ -16,14 +16,20 @@
 
 package com.android.providers.settings;
 
+import static com.android.settingslib.devicestate.DeviceStateAutoRotateSettingUtils.isDeviceStateRotationLockEnabled;
+
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.IActivityManager;
+import android.app.backup.BackupRestoreEventLogger;
 import android.app.backup.IBackupManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.res.Configuration;
 import android.hardware.display.ColorDisplayManager;
 import android.icu.util.ULocale;
@@ -31,6 +37,7 @@ import android.media.AudioManager;
 import android.media.RingtoneManager;
 import android.media.Utils;
 import android.net.Uri;
+import android.os.Build;
 import android.os.LocaleList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -43,11 +50,13 @@ import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.LocalePicker;
-import com.android.settingslib.devicestate.DeviceStateRotationLockSettingsManager;
+import com.android.server.backup.Flags;
 
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -59,6 +68,7 @@ public class SettingsHelper {
     private static final String UNICODE_LOCALE_EXTENSION_FW = "fw";
     private static final String UNICODE_LOCALE_EXTENSION_MU = "mu";
     private static final String UNICODE_LOCALE_EXTENSION_NU = "nu";
+    private static final String UNICODE_LOCALE_EXTENSION_MS = "ms";
     private static final float FLOAT_TOLERANCE = 0.01f;
 
     /** See frameworks/base/core/res/res/values/config.xml#config_longPressOnPowerBehavior **/
@@ -67,10 +77,19 @@ public class SettingsHelper {
     private static final int LONG_PRESS_POWER_FOR_ASSISTANT = 5;
     /** See frameworks/base/core/res/res/values/config.xml#config_keyChordPowerVolumeUp **/
     private static final int KEY_CHORD_POWER_VOLUME_UP_GLOBAL_ACTIONS = 2;
+    @VisibleForTesting
+    static final String HIGH_CONTRAST_TEXT_RESTORED_BROADCAST_ACTION =
+            "com.android.settings.accessibility.ACTION_HIGH_CONTRAST_TEXT_RESTORED";
+
+    // Error messages for logging metrics.
+    private static final String ERROR_REMOTE_EXCEPTION_SETTING_LOCALE_DATA =
+        "remote_exception_setting_locale_data";
+    private static final String ERROR_FAILED_TO_RESTORE_SETTING = "failed_to_restore_setting";
 
     private Context mContext;
     private AudioManager mAudioManager;
     private TelephonyManager mTelephonyManager;
+    @Nullable private BackupRestoreEventLogger mBackupRestoreEventLogger;
 
     /**
      * A few settings elements are special in that a restore of those values needs to
@@ -84,25 +103,30 @@ public class SettingsHelper {
      * @see Secure#SETTINGS_TO_BACKUP
      * @see Global#SETTINGS_TO_BACKUP
      *
-     * {@hide}
+     * @hide
      */
     private static final ArraySet<String> sBroadcastOnRestore;
     private static final ArraySet<String> sBroadcastOnRestoreSystemUI;
+    private static final ArraySet<String> sBroadcastOnRestoreAccessibility;
     static {
-        sBroadcastOnRestore = new ArraySet<String>(12);
+        sBroadcastOnRestore = new ArraySet<>(7);
         sBroadcastOnRestore.add(Settings.Secure.ENABLED_NOTIFICATION_LISTENERS);
         sBroadcastOnRestore.add(Settings.Secure.ENABLED_VR_LISTENERS);
-        sBroadcastOnRestore.add(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         sBroadcastOnRestore.add(Settings.Global.BLUETOOTH_ON);
         sBroadcastOnRestore.add(Settings.Secure.UI_NIGHT_MODE);
         sBroadcastOnRestore.add(Settings.Secure.DARK_THEME_CUSTOM_START_TIME);
         sBroadcastOnRestore.add(Settings.Secure.DARK_THEME_CUSTOM_END_TIME);
-        sBroadcastOnRestore.add(Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_NAVBAR_ENABLED);
-        sBroadcastOnRestore.add(Settings.Secure.ACCESSIBILITY_BUTTON_TARGETS);
-        sBroadcastOnRestore.add(Settings.Secure.ACCESSIBILITY_QS_TARGETS);
-        sBroadcastOnRestore.add(Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE);
         sBroadcastOnRestore.add(Settings.Secure.SCREEN_RESOLUTION_MODE);
-        sBroadcastOnRestoreSystemUI = new ArraySet<String>(2);
+
+        sBroadcastOnRestoreAccessibility = new ArraySet<>(5);
+        sBroadcastOnRestoreAccessibility.add(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        sBroadcastOnRestoreAccessibility.add(
+                Settings.Secure.ACCESSIBILITY_DISPLAY_MAGNIFICATION_NAVBAR_ENABLED);
+        sBroadcastOnRestoreAccessibility.add(Settings.Secure.ACCESSIBILITY_BUTTON_TARGETS);
+        sBroadcastOnRestoreAccessibility.add(Settings.Secure.ACCESSIBILITY_QS_TARGETS);
+        sBroadcastOnRestoreAccessibility.add(Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE);
+
+        sBroadcastOnRestoreSystemUI = new ArraySet<>(2);
         sBroadcastOnRestoreSystemUI.add(Settings.Secure.QS_TILES);
         sBroadcastOnRestoreSystemUI.add(Settings.Secure.QS_AUTO_ADDED_TILES);
     }
@@ -124,6 +148,7 @@ public class SettingsHelper {
     static {
         UNICODE_LOCALE_SUPPORTED_EXTENSIONS.add(UNICODE_LOCALE_EXTENSION_FW);
         UNICODE_LOCALE_SUPPORTED_EXTENSIONS.add(UNICODE_LOCALE_EXTENSION_MU);
+        UNICODE_LOCALE_SUPPORTED_EXTENSIONS.add(UNICODE_LOCALE_EXTENSION_MS);
     }
 
     private interface SettingsLookup {
@@ -175,6 +200,7 @@ public class SettingsHelper {
         String oldValue = null;
         boolean sendBroadcast = false;
         boolean sendBroadcastSystemUI = false;
+        boolean sendBroadcastAccessibility = false;
         final SettingsLookup table;
 
         if (destination.equals(Settings.Secure.CONTENT_URI)) {
@@ -185,13 +211,17 @@ public class SettingsHelper {
             table = sGlobalLookup;
         }
 
+        // Get datatype for B&R metrics logging.
+        String datatype = SettingsBackupRestoreKeys.getKeyFromUri(destination);
+
         sendBroadcast = sBroadcastOnRestore.contains(name);
         sendBroadcastSystemUI = sBroadcastOnRestoreSystemUI.contains(name);
+        sendBroadcastAccessibility = sBroadcastOnRestoreAccessibility.contains(name);
 
         if (sendBroadcast) {
             // TODO: http://b/22388012
             oldValue = table.lookup(cr, name, UserHandle.USER_SYSTEM);
-        } else if (sendBroadcastSystemUI) {
+        } else if (sendBroadcastSystemUI || sendBroadcastAccessibility) {
             // This is only done for broadcasts sent to system ui as the consumers are known.
             // It would probably be correct to do it for the ones sent to the system, but consumers
             // may be depending on the current behavior.
@@ -238,14 +268,27 @@ public class SettingsHelper {
             } else if (Settings.System.ACCELEROMETER_ROTATION.equals(name)
                     && shouldSkipAutoRotateRestore()) {
                 return;
-            } else if (Settings.Secure.ACCESSIBILITY_QS_TARGETS.equals(name)) {
+            } else if (shouldSkipAndLetBroadcastHandlesRestoreLogic(name)) {
                 // Don't write it to setting. Let the broadcast receiver in
                 // AccessibilityManagerService handle restore/merging logic.
                 return;
-            } else if (Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE.equals(name)) {
-                // Don't write it to setting. Let the broadcast receiver in
-                // AccessibilityManagerService handle restore/merging logic.
-                return;
+            } else if (com.android.graphics.hwui.flags.Flags.highContrastTextSmallTextRect()
+                    && Settings.Secure.ACCESSIBILITY_HIGH_TEXT_CONTRAST_ENABLED.equals(name)) {
+                final boolean currentlyEnabled = Settings.Secure.getInt(
+                        context.getContentResolver(),
+                        Settings.Secure.ACCESSIBILITY_HIGH_TEXT_CONTRAST_ENABLED, 0) == 1;
+                final boolean enabledInRestore = value != null && Integer.parseInt(value) == 1;
+
+                // If restoring from Android 15 or earlier and the user didn't already enable HCT
+                // on this new device, then don't restore and trigger custom migration logic.
+                final boolean needsCustomMigration = !currentlyEnabled
+                        && restoredFromSdkInt < Build.VERSION_CODES.BAKLAVA
+                        && enabledInRestore;
+                if (needsCustomMigration) {
+                    migrateHighContrastText(context);
+                    return;
+                }
+                // fall through to the ordinary write to settings
             }
 
             // Default case: write the restored value to settings
@@ -253,16 +296,24 @@ public class SettingsHelper {
             contentValues.put(Settings.NameValueTable.NAME, name);
             contentValues.put(Settings.NameValueTable.VALUE, value);
             cr.insert(destination, contentValues);
+            if (mBackupRestoreEventLogger != null) {
+                mBackupRestoreEventLogger.logItemsRestored(datatype, /* count= */ 1);
+            }
         } catch (Exception e) {
             // If we fail to apply the setting, by definition nothing happened
             sendBroadcast = false;
             sendBroadcastSystemUI = false;
+            sendBroadcastAccessibility = false;
             Log.e(TAG, "Failed to restore setting name: " + name + " + value: " + value, e);
+            if (mBackupRestoreEventLogger != null) {
+                mBackupRestoreEventLogger.logItemsRestoreFailed(
+                    datatype, /* count= */ 1, ERROR_FAILED_TO_RESTORE_SETTING);
+            }
         } finally {
             // If this was an element of interest, send the "we just restored it"
             // broadcast with the historical value now that the new value has
             // been committed and observers kicked off.
-            if (sendBroadcast || sendBroadcastSystemUI) {
+            if (sendBroadcast || sendBroadcastSystemUI || sendBroadcastAccessibility) {
                 Intent intent = new Intent(Intent.ACTION_SETTING_RESTORED)
                         .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY)
                         .putExtra(Intent.EXTRA_SETTING_NAME, name)
@@ -279,6 +330,10 @@ public class SettingsHelper {
                             context.getString(com.android.internal.R.string.config_systemUi));
                     context.sendBroadcastAsUser(intent, context.getUser(), null);
                 }
+                if (sendBroadcastAccessibility) {
+                    intent.setPackage("android");
+                    context.sendBroadcastAsUser(intent, context.getUser(), null);
+                }
             }
         }
     }
@@ -286,7 +341,7 @@ public class SettingsHelper {
     private boolean shouldSkipAutoRotateRestore() {
         // When device state based auto rotation settings are available, let's skip the restoring
         // of the standard auto rotation settings to avoid conflicting setting values.
-        return DeviceStateRotationLockSettingsManager.isDeviceStateRotationLockEnabled(mContext);
+        return isDeviceStateRotationLockEnabled(mContext);
     }
 
     public String onBackupValue(String name, String value) {
@@ -369,15 +424,6 @@ public class SettingsHelper {
             return;
         }
 
-        // If the ringtone/notification has vibration, we backup original value in onBackupValue.
-        // So use the value directly for restoring.
-        if ((ringtoneType == RingtoneManager.TYPE_RINGTONE
-                || ringtoneType == RingtoneManager.TYPE_NOTIFICATION)
-                && hasVibrationSettings(value, ringtoneType)) {
-            RingtoneManager.setActualDefaultRingtoneUri(mContext, ringtoneType, Uri.parse(value));
-            return;
-        }
-
         Uri ringtoneUri = null;
         try {
             ringtoneUri =
@@ -387,6 +433,23 @@ public class SettingsHelper {
             Log.w(TAG, "Failed to resolve " + value + ": " + e);
             // Unrecognized or invalid Uri, don't restore
             return;
+        }
+
+        // If the restored ringtoneUri for ringtone/notification has vibration, we backup the
+        // original value in onBackupValue. So use the value directly for restoring.
+        if ((ringtoneType == RingtoneManager.TYPE_RINGTONE
+                || ringtoneType == RingtoneManager.TYPE_NOTIFICATION)
+                && hasVibrationSettings(value, ringtoneType)) {
+            final Uri vibrationUri = Utils.getVibrationUri(Uri.parse(value));
+            if (ringtoneUri != null && vibrationUri != null) {
+                ringtoneUri = ringtoneUri.buildUpon()
+                        .appendQueryParameter(Utils.VIBRATION_URI_PARAM, vibrationUri.toString())
+                        .build();
+                Log.v(TAG, "setActualDefaultRingtoneUri type: " + ringtoneType + ", uri: "
+                        + ringtoneUri + ", vibration: " + vibrationUri);
+                RingtoneManager.setActualDefaultRingtoneUri(mContext, ringtoneType, ringtoneUri);
+                return;
+            }
         }
 
         Log.v(TAG, "setActualDefaultRingtoneUri type: " + ringtoneType + ", uri: " + ringtoneUri);
@@ -442,6 +505,13 @@ public class SettingsHelper {
             default:
                 return false;
         }
+    }
+
+    private boolean shouldSkipAndLetBroadcastHandlesRestoreLogic(String settingName) {
+        return Settings.Secure.ACCESSIBILITY_QS_TARGETS.equals(settingName)
+                || Settings.Secure.ACCESSIBILITY_SHORTCUT_TARGET_SERVICE.equals(settingName)
+                || Settings.Secure.ACCESSIBILITY_BUTTON_TARGETS.equals(settingName)
+                || Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES.equals(settingName);
     }
 
     private void setAutoRestore(boolean enabled) {
@@ -523,9 +593,38 @@ public class SettingsHelper {
         }
     }
 
+    private static void migrateHighContrastText(Context context) {
+        final Intent intent = new Intent(HIGH_CONTRAST_TEXT_RESTORED_BROADCAST_ACTION)
+                .setPackage(getSettingsAppPackage(context));
+        context.sendBroadcastAsUser(intent, context.getUser(), null);
+    }
+
+    /**
+     * Returns the System Settings application's package name
+     */
+    private static String getSettingsAppPackage(Context context) {
+        String settingsAppPackage = null;
+        PackageManager packageManager = context.getPackageManager();
+        if (packageManager != null) {
+            List<ResolveInfo> results = packageManager.queryIntentActivities(
+                    new Intent(Settings.ACTION_SETTINGS),
+                    PackageManager.MATCH_SYSTEM_ONLY);
+            if (!results.isEmpty()) {
+                settingsAppPackage = results.getFirst().activityInfo.applicationInfo.packageName;
+            }
+        }
+
+        return !TextUtils.isEmpty(settingsAppPackage) ? settingsAppPackage : "com.android.settings";
+    }
+
     /* package */ byte[] getLocaleData() {
         Configuration conf = mContext.getResources().getConfiguration();
         return conf.getLocales().toLanguageTags().getBytes();
+    }
+
+    LocaleList getLocaleList() {
+        Configuration conf = mContext.getResources().getConfiguration();
+        return conf.getLocales();
     }
 
     private static Locale toFullLocale(@NonNull Locale locale) {
@@ -547,6 +646,10 @@ public class SettingsHelper {
      *   e.g. current locale "en-US,zh-CN" and backup locale "ja-JP,zh-Hans-CN,en-US" are merged to
      *   "en-US,zh-CN,ja-JP".
      *
+     * - Same language codes and scripts are dropped.
+     *   e.g. current locale "en-US, zh-Hans-TW" and backup locale "en-UK, en-GB, zh-Hans-HK" are
+     *   merged to "en-US, zh-Hans-TW".
+     *
      * - Unsupported locales are dropped.
      *   e.g. current locale "en-US" and backup locale "ja-JP,zh-CN" but the supported locales
      *   are "en-US,zh-CN", the merged locale list is "en-US,zh-CN".
@@ -563,6 +666,7 @@ public class SettingsHelper {
     public static LocaleList resolveLocales(LocaleList restore, LocaleList current,
             String[] supportedLocales) {
         final HashMap<Locale, Locale> allLocales = new HashMap<>(supportedLocales.length);
+        final HashSet<String> existingLanguageAndScript = new HashSet<>();
         for (String supportedLocaleStr : supportedLocales) {
             final Locale locale = Locale.forLanguageTag(supportedLocaleStr);
             allLocales.put(toFullLocale(locale), locale);
@@ -570,28 +674,39 @@ public class SettingsHelper {
 
         // After restoring to reset locales, need to get extensions from restored locale. Get the
         // first restored locale to check its extension.
-        final Locale restoredLocale = restore.isEmpty()
+        final Locale firstRestoredLocale = restore.isEmpty()
                 ? Locale.ROOT
                 : restore.get(0);
         final ArrayList<Locale> filtered = new ArrayList<>(current.size());
         for (int i = 0; i < current.size(); i++) {
-            Locale locale = copyExtensionToTargetLocale(restoredLocale, current.get(i));
-            allLocales.remove(toFullLocale(locale));
-            filtered.add(locale);
+            Locale locale = copyExtensionToTargetLocale(firstRestoredLocale, current.get(i));
+
+            if (locale != null && existingLanguageAndScript.add(getLanguageAndScript(locale))) {
+                allLocales.remove(toFullLocale(locale));
+                filtered.add(locale);
+            }
         }
 
         for (int i = 0; i < restore.size(); i++) {
-            final Locale restoredLocaleWithExtension = copyExtensionToTargetLocale(restoredLocale,
-                    getFilteredLocale(restore.get(i), allLocales));
-            if (restoredLocaleWithExtension != null) {
+            final Locale restoredLocaleWithExtension = copyExtensionToTargetLocale(
+                    firstRestoredLocale, getFilteredLocale(restore.get(i), allLocales));
+
+            if (restoredLocaleWithExtension != null && existingLanguageAndScript.add(
+                    getLanguageAndScript(restoredLocaleWithExtension))) {
                 filtered.add(restoredLocaleWithExtension);
             }
         }
-        if (filtered.size() == current.size()) {
-            return current;  // Nothing added to current locale list.
+        return new LocaleList(filtered.toArray(new Locale[filtered.size()]));
+    }
+
+    private static String getLanguageAndScript(Locale locale) {
+        if (locale == null) {
+            return "";
         }
 
-        return new LocaleList(filtered.toArray(new Locale[filtered.size()]));
+        String language = locale.getLanguage();
+        String script = locale.getScript();
+        return script == null ? language : String.join("-", language, script);
     }
 
     private static Locale copyExtensionToTargetLocale(Locale restoredLocale,
@@ -634,7 +749,7 @@ public class SettingsHelper {
     }
 
     private boolean hasVibrationSettings(String value, int type) {
-        if (Utils.hasVibration(Uri.parse(value)) && mContext.getResources().getBoolean(
+        if (Utils.hasVibrationParameter(Uri.parse(value)) && mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_ringtoneVibrationSettingsSupported)) {
             if (type == RingtoneManager.TYPE_RINGTONE) {
                 return android.media.audio.Flags.enableRingtoneHapticsCustomization();
@@ -653,6 +768,7 @@ public class SettingsHelper {
      * code and {@code CC} is a two letter country code.
      *
      * @param data the comma separated BCP-47 language tags in bytes.
+     * @param size the size of the data in bytes.
      */
     /* package */ void setLocaleData(byte[] data, int size) {
         final Configuration conf = mContext.getResources().getConfiguration();
@@ -681,8 +797,18 @@ public class SettingsHelper {
 
             am.updatePersistentConfigurationWithAttribution(config, mContext.getOpPackageName(),
                     mContext.getAttributionTag());
+            if (mBackupRestoreEventLogger != null) {
+                mBackupRestoreEventLogger
+                    .logItemsRestored(SettingsBackupRestoreKeys.KEY_LOCALE, localeList.size());
+            }
         } catch (RemoteException e) {
-            // Intentionally left blank
+            if (mBackupRestoreEventLogger != null) {
+                mBackupRestoreEventLogger
+                    .logItemsRestoreFailed(
+                        SettingsBackupRestoreKeys.KEY_LOCALE,
+                        localeList.size(),
+                        ERROR_REMOTE_EXCEPTION_SETTING_LOCALE_DATA);
+            }
         }
     }
 
@@ -693,5 +819,14 @@ public class SettingsHelper {
     void applyAudioSettings() {
         AudioManager am = new AudioManager(mContext);
         am.reloadAudioSettings();
+    }
+
+    /**
+     * Sets the backup restore event logger.
+     *
+     * @param backupRestoreEventLogger the logger to log B&R metrics.
+     */
+    void setBackupRestoreEventLogger(BackupRestoreEventLogger backupRestoreEventLogger) {
+        mBackupRestoreEventLogger = backupRestoreEventLogger;
     }
 }

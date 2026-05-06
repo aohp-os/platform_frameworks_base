@@ -71,7 +71,6 @@ import java.util.Objects;
  *
  * @see <a href="http://sqlite.org/c3ref/stmt.html">sqlite3_stmt</a>
  */
-@FlaggedApi(Flags.FLAG_SQLITE_APIS_35)
 public final class SQLiteRawStatement implements Closeable {
 
     private static final String TAG = "SQLiteRawStatement";
@@ -533,11 +532,11 @@ public final class SQLiteRawStatement implements Closeable {
     }
 
     /**
-     * Return the number of columns in the current result row.
+     * Return the number of columns in the result set for the statement.
      *
      * @see <a href="http://sqlite.org/c3ref/column_count.html">sqlite3_column_count</a>
      *
-     * @return The number of columns in the result row.
+     * @return The number of columns in the result set.
      * @throws IllegalStateException if the statement is closed or this is a foreign thread.
      */
     public int getResultColumnCount() {

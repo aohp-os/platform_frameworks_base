@@ -26,8 +26,6 @@ import android.app.ActivityManager;
 import android.app.TaskInfo;
 import android.graphics.Rect;
 import android.platform.test.annotations.RequiresFlagsDisabled;
-import android.platform.test.flag.junit.CheckFlagsRule;
-import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.testing.AndroidTestingRunner;
 import android.util.Pair;
 import android.view.LayoutInflater;
@@ -45,11 +43,11 @@ import com.android.wm.shell.common.DisplayLayout;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.compatui.CompatUIController.CompatUIHintsState;
 import com.android.wm.shell.compatui.api.CompatUIEvent;
+import com.android.wm.shell.shared.desktopmode.FakeDesktopState;
 
 import junit.framework.Assert;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -70,10 +68,6 @@ public class CompatUILayoutTest extends ShellTestCase {
 
     private static final int TASK_ID = 1;
 
-    @Rule
-    public final CheckFlagsRule mCheckFlagsRule =
-            DeviceFlagsValueProvider.createCheckFlagsRule();
-
     @Mock private SyncTransactionQueue mSyncTransactionQueue;
     @Mock private Consumer<CompatUIEvent> mCallback;
     @Mock private Consumer<Pair<TaskInfo, ShellTaskOrganizer.TaskListener>> mOnRestartButtonClicked;
@@ -84,15 +78,17 @@ public class CompatUILayoutTest extends ShellTestCase {
     private CompatUIWindowManager mWindowManager;
     private CompatUILayout mLayout;
     private TaskInfo mTaskInfo;
+    private FakeDesktopState mDesktopState;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
+        mDesktopState = new FakeDesktopState();
         doReturn(100).when(mCompatUIConfiguration).getHideSizeCompatRestartButtonTolerance();
         mTaskInfo = createTaskInfo(/* hasSizeCompat= */ false);
         mWindowManager = new CompatUIWindowManager(mContext, mTaskInfo, mSyncTransactionQueue,
                 mCallback, mTaskListener, new DisplayLayout(), new CompatUIHintsState(),
-                mCompatUIConfiguration, mOnRestartButtonClicked);
+                mCompatUIConfiguration, mOnRestartButtonClicked, mDesktopState);
 
         mLayout = (CompatUILayout)
                 LayoutInflater.from(mContext).inflate(R.layout.compat_ui_layout, null);

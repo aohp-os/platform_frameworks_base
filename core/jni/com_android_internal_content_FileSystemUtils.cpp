@@ -29,6 +29,7 @@
 #include <sys/types.h>
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <vector>
@@ -201,8 +202,8 @@ bool punchHoles(const char *filePath, const uint64_t offset,
     return true;
 }
 
-bool getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
-                         std::vector<Elf64_Phdr> &programHeaders) {
+read_elf_status_t getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
+                                      std::vector<Elf64_Phdr> &programHeaders) {
     // Open Elf file
     Elf64_Ehdr ehdr;
     std::ifstream inputStream(filePath, std::ifstream::in);
@@ -212,13 +213,13 @@ bool getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
     // read executable headers
     inputStream.read((char *)&ehdr, sizeof(ehdr));
     if (!inputStream.good()) {
-        return false;
+        return ELF_READ_ERROR;
     }
 
-    // only consider elf64 for punching holes
+    // only consider ELF64 files
     if (ehdr.e_ident[EI_CLASS] != ELFCLASS64) {
         ALOGW("Provided file is not ELF64");
-        return false;
+        return ELF_IS_NOT_64_BIT;
     }
 
     // read the program headers from elf file
@@ -229,7 +230,7 @@ bool getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
     uint64_t phOffset;
     if (__builtin_add_overflow(offset, programHeaderOffset, &phOffset)) {
         ALOGE("Overflow occurred when calculating phOffset");
-        return false;
+        return ELF_READ_ERROR;
     }
     inputStream.seekg(phOffset);
 
@@ -237,7 +238,7 @@ bool getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
         Elf64_Phdr header;
         inputStream.read((char *)&header, sizeof(header));
         if (!inputStream.good()) {
-            return false;
+            return ELF_READ_ERROR;
         }
 
         if (header.p_type != PT_LOAD) {
@@ -246,13 +247,14 @@ bool getLoadSegmentPhdrs(const char *filePath, const uint64_t offset,
         programHeaders.push_back(header);
     }
 
-    return true;
+    return ELF_READ_OK;
 }
 
 bool punchHolesInElf64(const char *filePath, const uint64_t offset) {
     std::vector<Elf64_Phdr> programHeaders;
-    if (!getLoadSegmentPhdrs(filePath, offset, programHeaders)) {
-        ALOGE("Failed to read program headers from ELF file.");
+    read_elf_status_t status = getLoadSegmentPhdrs(filePath, offset, programHeaders);
+    if (status != ELF_READ_OK) {
+        ALOGE("Failed to read program headers from 64 bit ELF file.");
         return false;
     }
     return punchHoles(filePath, offset, programHeaders);

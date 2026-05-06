@@ -155,7 +155,7 @@ public final class DisconnectCause {
      * of a failure of the connection -- it is an additional message that accompanies
      * a successful connection giving the user important information about what happened.
      *
-     * {@hide}
+     * @hide
      */
     public static final int EXITED_ECM                     = 42;
 
@@ -366,7 +366,6 @@ public final class DisconnectCause {
     /**
      * Indicates that the call was unable to be made because the satellite modem is enabled.
      */
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_ENABLED = 82;
 
     //*********************************************************************************************

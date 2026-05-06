@@ -16,12 +16,15 @@
 
 package com.android.internal.policy;
 
+import android.annotation.DimenRes;
+import android.annotation.NonNull;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Insets;
 import android.view.Display;
 import android.view.DisplayCutout;
 import android.view.Surface;
+import android.window.DesktopExperienceFlags;
 
 import com.android.internal.R;
 
@@ -53,6 +56,9 @@ public final class SystemBarUtils {
 
     /**
      * Gets the status bar height for a specific rotation.
+     *
+     * @param context the Context to reflect the display containing the display cutout. The size and
+     *                the rotation will be used as a reference of the calculation.
      */
     public static int getStatusBarHeightForRotation(
             Context context, @Surface.Rotation int targetRot) {
@@ -97,5 +103,24 @@ public final class SystemBarUtils {
      */
     public static int getTaskbarHeight(Resources res) {
         return res.getDimensionPixelSize(R.dimen.taskbar_frame_height);
+    }
+
+    /**
+     * Gets the default app header height in desktop view in pixels.
+     */
+    public static int getDesktopViewAppHeaderHeightPx(@NonNull Context context) {
+        return context.getResources().getDimensionPixelSize(getDesktopViewAppHeaderHeightId());
+    }
+
+    /**
+     * Gets the dimen resource id of the default app header height in desktop view.
+     */
+    @DimenRes
+    public static int getDesktopViewAppHeaderHeightId() {
+        if (DesktopExperienceFlags.ENABLE_TALL_APP_HEADERS.isTrue()) {
+            return R.dimen.desktop_view_default_large_header_height;
+        } else {
+            return R.dimen.desktop_view_default_header_height;
+        }
     }
 }

@@ -16,10 +16,16 @@
 
 package com.android.wm.shell.compatui;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.window.DesktopExperienceFlags.ENABLE_COMPAT_UI_DESKTOP_MODE_SYNCHRONIZATION_BUGFIX;
+
+import static com.android.window.flags.Flags.enableCompatuiSysuiLauncherFix;
+import static com.android.wm.shell.compatui.impl.CompatUIRequestsKt.DISPLAY_COMPAT_SHOW_RESTART_DIALOG;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityOptions;
 import android.app.TaskInfo;
 import android.content.ComponentName;
 import android.content.Context;
@@ -36,10 +42,16 @@ import android.util.SparseArray;
 import android.view.Display;
 import android.view.InsetsSourceControl;
 import android.view.InsetsState;
+import android.view.View;
 import android.view.accessibility.AccessibilityManager;
+import android.window.DesktopModeFlags;
+import android.window.RemoteTransition;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.window.flags.Flags;
+import com.android.internal.util.function.TriConsumer;
+import com.android.systemui.animation.ActivityTransitionAnimator;
+import com.android.systemui.animation.DelegateTransitionAnimatorController;
+import com.android.systemui.animation.RemoteAnimationRunnerCompat;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.common.DisplayController;
 import com.android.wm.shell.common.DisplayController.OnDisplaysChangedListener;
@@ -53,8 +65,13 @@ import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.compatui.api.CompatUIEvent;
 import com.android.wm.shell.compatui.api.CompatUIHandler;
 import com.android.wm.shell.compatui.api.CompatUIInfo;
+import com.android.wm.shell.compatui.api.CompatUIRequest;
 import com.android.wm.shell.compatui.impl.CompatUIEvents.SizeCompatRestartButtonClicked;
+import com.android.wm.shell.compatui.impl.CompatUIRequests;
 import com.android.wm.shell.desktopmode.DesktopUserRepositories;
+import com.android.wm.shell.shared.desktopmode.DesktopState;
+import com.android.wm.shell.startingsurface.SplashscreenContentDrawer;
+import com.android.wm.shell.startingsurface.StartingWindowController;
 import com.android.wm.shell.sysui.KeyguardChangeListener;
 import com.android.wm.shell.sysui.ShellController;
 import com.android.wm.shell.sysui.ShellInit;
@@ -70,7 +87,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.IntPredicate;
 import java.util.function.Predicate;
 
 /**
@@ -105,6 +121,12 @@ public class CompatUIController implements OnDisplaysChangedListener,
      * currently visible
      */
     private final SparseArray<RestartDialogWindowManager> mTaskIdToRestartDialogWindowManagerMap =
+            new SparseArray<>(0);
+
+    /**
+     * {@link SparseArray} that maps task ids to {@link CompatUIInfo}.
+     */
+    private final SparseArray<CompatUIInfo> mTaskIdToCompatUIInfoMap =
             new SparseArray<>(0);
 
     /**
@@ -198,6 +220,16 @@ public class CompatUIController implements OnDisplaysChangedListener,
     @NonNull
     private final Optional<DesktopUserRepositories> mDesktopUserRepositories;
 
+    @NonNull
+    private final DesktopState mDesktopState;
+
+    @NonNull
+    private Lazy<ActivityTransitionAnimator> mActivityTransitionAnimatorLazy;
+
+    @NonNull
+    private Lazy<StartingWindowController> mStartingWindowController;
+
+
     public CompatUIController(@NonNull Context context,
             @NonNull ShellInit shellInit,
             @NonNull ShellController shellController,
@@ -212,7 +244,10 @@ public class CompatUIController implements OnDisplaysChangedListener,
             @NonNull CompatUIShellCommandHandler compatUIShellCommandHandler,
             @NonNull AccessibilityManager accessibilityManager,
             @NonNull CompatUIStatusManager compatUIStatusManager,
-            @NonNull Optional<DesktopUserRepositories> desktopUserRepositories) {
+            @NonNull Optional<DesktopUserRepositories> desktopUserRepositories,
+            @NonNull DesktopState desktopState,
+            @NonNull Lazy<ActivityTransitionAnimator> activityTransitionAnimator,
+            @NonNull Lazy<StartingWindowController> startingWindowController) {
         mContext = context;
         mShellController = shellController;
         mDisplayController = displayController;
@@ -229,6 +264,9 @@ public class CompatUIController implements OnDisplaysChangedListener,
                 DISAPPEAR_DELAY_MS, flags);
         mCompatUIStatusManager = compatUIStatusManager;
         mDesktopUserRepositories = desktopUserRepositories;
+        mDesktopState = desktopState;
+        mActivityTransitionAnimatorLazy = activityTransitionAnimator;
+        mStartingWindowController = startingWindowController;
         shellInit.addInitCallback(this::onInit, this);
     }
 
@@ -237,12 +275,51 @@ public class CompatUIController implements OnDisplaysChangedListener,
         mDisplayController.addDisplayWindowListener(this);
         mImeController.addPositionProcessor(this);
         mCompatUIShellCommandHandler.onInit();
+        initActivityTransitionAnimator();
+    }
+
+    private void initActivityTransitionAnimator() {
+        if (!enableCompatuiSysuiLauncherFix()) {
+            return;
+        }
+
+        mActivityTransitionAnimatorLazy.get().setCallback(
+                new ActivityTransitionAnimator.Callback() {
+                    @Override
+                    public int getBackgroundColor(@androidx.annotation.NonNull TaskInfo task) {
+                        if (mStartingWindowController.get() == null) {
+                            return SplashscreenContentDrawer.getSystemBGColor();
+                        }
+
+                        return mStartingWindowController.get().asStartingSurface()
+                                .getBackgroundColor(task);
+                    }
+                });
     }
 
     /** Sets the callback for UI interactions. */
     @Override
     public void setCallback(@Nullable Consumer<CompatUIEvent> callback) {
         mCallback = callback;
+    }
+
+    @Override
+    public void sendCompatUIRequest(CompatUIRequest compatUIRequest) {
+        switch(compatUIRequest.getRequestId()) {
+            case DISPLAY_COMPAT_SHOW_RESTART_DIALOG:
+                handleDisplayCompatShowRestartDialog(compatUIRequest.asType());
+                break;
+            default:
+        }
+    }
+
+    private void handleDisplayCompatShowRestartDialog(
+            CompatUIRequests.DisplayCompatShowRestartDialog request) {
+        final CompatUIInfo compatUIInfo = mTaskIdToCompatUIInfoMap.get(request.getTaskId());
+        if (compatUIInfo == null) {
+            return;
+        }
+        onRestartButtonClicked(new Pair<>(compatUIInfo.getTaskInfo(), compatUIInfo.getListener()));
     }
 
     /**
@@ -254,13 +331,22 @@ public class CompatUIController implements OnDisplaysChangedListener,
     public void onCompatInfoChanged(@NonNull CompatUIInfo compatUIInfo) {
         final TaskInfo taskInfo = compatUIInfo.getTaskInfo();
         final ShellTaskOrganizer.TaskListener taskListener = compatUIInfo.getListener();
-        if (taskInfo != null && !taskInfo.appCompatTaskInfo.isTopActivityInSizeCompat()) {
+        if (taskListener == null) {
+            mTaskIdToCompatUIInfoMap.delete(taskInfo.taskId);
+        } else {
+            mTaskIdToCompatUIInfoMap.put(taskInfo.taskId, compatUIInfo);
+        }
+        final boolean isInDisplayCompatMode =
+                taskInfo.appCompatTaskInfo.isRestartMenuEnabledForDisplayMove();
+        if (taskInfo != null && !taskInfo.appCompatTaskInfo.isTopActivityInSizeCompat()
+                && !isInDisplayCompatMode) {
             mSetOfTaskIdsShowingRestartDialog.remove(taskInfo.taskId);
         }
         mIsInDesktopMode = isInDesktopMode(taskInfo);
         // We close all the Compat UI educations in case TaskInfo has no configuration or
         // TaskListener or in desktop mode.
-        if (taskInfo.configuration == null || taskListener == null || mIsInDesktopMode) {
+        if (taskInfo.configuration == null || taskListener == null
+                || (mIsInDesktopMode && !isInDisplayCompatMode)) {
             // Null token means the current foreground activity is not in compatibility mode.
             removeLayouts(taskInfo.taskId);
             return;
@@ -317,7 +403,7 @@ public class CompatUIController implements OnDisplaysChangedListener,
             // The user aspect ratio button should not be handled when a new TaskInfo is
             // sent because of a double tap or when in multi-window mode.
             if (taskInfo.getWindowingMode() != WINDOWING_MODE_FULLSCREEN) {
-                if (mUserAspectRatioSettingsLayout != null) {
+                if (doesUserAspectRatioSettingsLayoutExist()) {
                     mUserAspectRatioSettingsLayout.release();
                     mUserAspectRatioSettingsLayout = null;
                 }
@@ -482,7 +568,7 @@ public class CompatUIController implements OnDisplaysChangedListener,
         return new CompatUIWindowManager(context,
                 taskInfo, mSyncQueue, mCallback, taskListener,
                 mDisplayController.getDisplayLayout(taskInfo.displayId), mCompatUIHintsState,
-                mCompatUIConfiguration, this::onRestartButtonClicked);
+                mCompatUIConfiguration, this::onRestartButtonClicked, mDesktopState);
     }
 
     private void onRestartButtonClicked(
@@ -552,8 +638,11 @@ public class CompatUIController implements OnDisplaysChangedListener,
             @Nullable ShellTaskOrganizer.TaskListener taskListener) {
         RestartDialogWindowManager layout =
                 mTaskIdToRestartDialogWindowManagerMap.get(taskInfo.taskId);
+        final boolean isInNonDisplayCompatDesktopMode = mIsInDesktopMode
+                && !taskInfo.appCompatTaskInfo.isRestartMenuEnabledForDisplayMove();
         if (layout != null) {
-            if (layout.needsToBeRecreated(taskInfo, taskListener) || mIsInDesktopMode) {
+            if (layout.needsToBeRecreated(taskInfo, taskListener)
+                    || isInNonDisplayCompatDesktopMode) {
                 mTaskIdToRestartDialogWindowManagerMap.remove(taskInfo.taskId);
                 layout.release();
             } else {
@@ -568,8 +657,9 @@ public class CompatUIController implements OnDisplaysChangedListener,
                 return;
             }
         }
-        if (mIsInDesktopMode) {
-            // Return if in desktop mode.
+        if (isInNonDisplayCompatDesktopMode) {
+            // No restart dialog can be shown in desktop mode unless the task is in display compat
+            // mode.
             return;
         }
         // Create a new UI layout.
@@ -665,11 +755,17 @@ public class CompatUIController implements OnDisplaysChangedListener,
         createOrUpdateUserAspectRatioSettingsLayout(taskInfo, taskListener);
     }
 
+    private boolean doesUserAspectRatioSettingsLayoutExist() {
+        return mUserAspectRatioSettingsLayout != null
+                && !mUserAspectRatioSettingsLayout.isAnimatingToHide();
+    }
+
     private void createOrUpdateUserAspectRatioSettingsLayout(@NonNull TaskInfo taskInfo,
             @Nullable ShellTaskOrganizer.TaskListener taskListener) {
-        if (mUserAspectRatioSettingsLayout != null) {
+        boolean overridesShowAppHandle = mDesktopState.overridesShowAppHandle();
+        if (doesUserAspectRatioSettingsLayoutExist()) {
             if (mUserAspectRatioSettingsLayout.needsToBeRecreated(taskInfo, taskListener)
-                    || mIsInDesktopMode) {
+                    || mIsInDesktopMode || overridesShowAppHandle) {
                 mUserAspectRatioSettingsLayout.release();
                 mUserAspectRatioSettingsLayout = null;
             } else {
@@ -682,8 +778,9 @@ public class CompatUIController implements OnDisplaysChangedListener,
                 return;
             }
         }
-        if (mIsInDesktopMode) {
-            // Return if in desktop mode.
+        if (mIsInDesktopMode || overridesShowAppHandle) {
+            // Return if in desktop mode or app handle menu is already showing change aspect ratio
+            // option.
             return;
         }
         // Create a new UI layout.
@@ -706,19 +803,87 @@ public class CompatUIController implements OnDisplaysChangedListener,
             @Nullable ShellTaskOrganizer.TaskListener taskListener) {
         return new UserAspectRatioSettingsWindowManager(context, taskInfo, mSyncQueue,
                 taskListener, mDisplayController.getDisplayLayout(taskInfo.displayId),
-                mCompatUIHintsState, this::launchUserAspectRatioSettings, mMainExecutor,
+                mCompatUIHintsState,
+                new TriConsumer<>() {
+                    @Override
+                    public void accept(TaskInfo taskInfo,
+                            ShellTaskOrganizer.TaskListener taskListener, View view) {
+                        launchUserAspectRatioSettings(mContext, taskInfo, view);
+                    }
+                }, mMainExecutor,
                 mDisappearTimeSupplier, this::hasShownUserAspectRatioSettingsButton,
                 this::setHasShownUserAspectRatioSettingsButton);
     }
 
-    private void launchUserAspectRatioSettings(
-            @NonNull TaskInfo taskInfo, @NonNull ShellTaskOrganizer.TaskListener taskListener) {
-        launchUserAspectRatioSettings(mContext, taskInfo);
+    /** Launch the user aspect ratio settings for the package of the given task. */
+    void launchUserAspectRatioSettings(
+            @NonNull Context context, @NonNull TaskInfo taskInfo, @Nullable View launchableView) {
+        if (!enableCompatuiSysuiLauncherFix()) {
+            launchUserAspectRatioSettingsNoAnimation(context, taskInfo);
+            return;
+        }
+
+        final ActivityTransitionAnimator.Controller delegate =
+                ActivityTransitionAnimator.Controller.fromView(
+                        launchableView, /* cujType */ null);
+        if (delegate == null) {
+            launchUserAspectRatioSettingsNoAnimation(context, taskInfo);
+            return;
+        }
+        final ActivityTransitionAnimator.Controller controller =
+                new DelegateTransitionAnimatorController(delegate) {
+                    @Override
+                    public void onTransitionAnimationEnd(boolean isExpandingFullyAbove) {
+                        if (mUserAspectRatioSettingsLayout != null) {
+                            mUserAspectRatioSettingsLayout.setIsAnimatingToHide(false);
+                            mUserAspectRatioSettingsLayout.release();
+                            mUserAspectRatioSettingsLayout = null;
+                        }
+                    }
+
+                    @Override
+                    public void onTransitionAnimationCancelled(Boolean newKeyguardOccludedState) {
+                        if (mUserAspectRatioSettingsLayout != null) {
+                            mUserAspectRatioSettingsLayout.setIsAnimatingToHide(false);
+                            mUserAspectRatioSettingsLayout.release();
+                            mUserAspectRatioSettingsLayout = null;
+                        }
+                    }
+
+                };
+
+        mUserAspectRatioSettingsLayout.setIsAnimatingToHide(true);
+
+        mActivityTransitionAnimatorLazy.get().startIntentWithAnimation(
+                controller,
+                true /* animate */,
+                null /* packageName */,
+                false /* showOverLockscreen */,
+                (animationAdapter) -> {
+                    ActivityOptions options = null;
+                    if (animationAdapter != null) {
+                        options = ActivityOptions.makeRemoteTransition(
+                                new RemoteTransition(
+                                        RemoteAnimationRunnerCompat
+                                                .wrap(animationAdapter.getRunner()),
+                                        animationAdapter.getCallingApplication(), "SysUILaunch"));
+                    }
+                    return launchUserAspectRatioSettingsNoAnimation(mContext, taskInfo, options);
+                }
+        );
     }
 
-    /** Launch the user aspect ratio settings for the package of the given task. */
-    public static void launchUserAspectRatioSettings(
-            @NonNull Context context, @NonNull TaskInfo taskInfo) {
+    /**
+     * Launches the User Aspect Ratio Settings page from a source different from the button in
+     * Compat UI.
+     */
+    public static int launchUserAspectRatioSettingsNoAnimation(@NonNull Context context,
+            @NonNull TaskInfo taskInfo) {
+        return launchUserAspectRatioSettingsNoAnimation(context, taskInfo, null /* options */);
+    }
+
+    private static int launchUserAspectRatioSettingsNoAnimation(@NonNull Context context,
+            @NonNull TaskInfo taskInfo, @Nullable ActivityOptions options) {
         final Intent intent = new Intent(Settings.ACTION_MANAGE_USER_ASPECT_RATIO_SETTINGS);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -728,7 +893,11 @@ public class CompatUIController implements OnDisplaysChangedListener,
             intent.setData(packageUri);
         }
         final UserHandle userHandle = UserHandle.of(taskInfo.userId);
-        context.startActivityAsUser(intent, userHandle);
+        if (options == null) {
+            options = ActivityOptions.makeBasic();
+        }
+        final Intent[] intents = {intent};
+        return context.startActivitiesAsUser(intents, options.toBundle(), userHandle);
     }
 
     @VisibleForTesting
@@ -739,10 +908,7 @@ public class CompatUIController implements OnDisplaysChangedListener,
             mActiveCompatLayouts.remove(taskId);
         }
 
-        if (mActiveLetterboxEduLayout != null && mActiveLetterboxEduLayout.getTaskId() == taskId) {
-            mActiveLetterboxEduLayout.release();
-            mActiveLetterboxEduLayout = null;
-        }
+        removeLetterboxEdu(taskId);
 
         final RestartDialogWindowManager restartLayout =
                 mTaskIdToRestartDialogWindowManagerMap.get(taskId);
@@ -757,10 +923,20 @@ public class CompatUIController implements OnDisplaysChangedListener,
             mActiveReachabilityEduLayout = null;
         }
 
-        if (mUserAspectRatioSettingsLayout != null
+        if (doesUserAspectRatioSettingsLayoutExist()
                 && mUserAspectRatioSettingsLayout.getTaskId() == taskId) {
             mUserAspectRatioSettingsLayout.release();
             mUserAspectRatioSettingsLayout = null;
+        }
+    }
+
+    @VisibleForTesting
+    void removeLetterboxEdu(int taskId) {
+        // When in desktop windowing the dialog will be removed in any case.
+        if (mActiveLetterboxEduLayout != null && (mActiveLetterboxEduLayout.getTaskId() == taskId
+                || mIsInDesktopMode)) {
+            mActiveLetterboxEduLayout.release();
+            mActiveLetterboxEduLayout = null;
         }
     }
 
@@ -865,12 +1041,27 @@ public class CompatUIController implements OnDisplaysChangedListener,
         boolean mHasShownUserAspectRatioSettingsButtonHint;
     }
 
+    /**
+     * Returns {@code true} if the given task is considered to be in desktop mode for the purpose
+     * of showing compat UI.
+     */
     private boolean isInDesktopMode(@Nullable TaskInfo taskInfo) {
-        if (mDesktopUserRepositories.isEmpty() || taskInfo == null) {
+        if (taskInfo == null) {
             return false;
         }
-        boolean isDesktopModeShowing = mDesktopUserRepositories.get().getCurrent()
-                .getVisibleTaskCount(taskInfo.displayId) > 0;
-        return Flags.skipCompatUiEducationInDesktopMode() && isDesktopModeShowing;
+        final boolean isDesktopModeShowing;
+        if (ENABLE_COMPAT_UI_DESKTOP_MODE_SYNCHRONIZATION_BUGFIX.isTrue()) {
+            // CompatUI is based on TaskListener and may not be synchronized with shell
+            // transitions. Checking the windowing mode in addition to desktop eligibility
+            // provides a more reliable state.
+            isDesktopModeShowing = taskInfo.getWindowingMode() == WINDOWING_MODE_FREEFORM
+                    && mDesktopState.isDesktopModeSupportedOnDisplay(taskInfo.displayId);
+        } else {
+            isDesktopModeShowing = mDesktopUserRepositories.isPresent()
+                    && mDesktopUserRepositories.get().getCurrent()
+                    .isAnyDeskActive(taskInfo.displayId);
+        }
+        return DesktopModeFlags.ENABLE_DESKTOP_SKIP_COMPAT_UI_EDUCATION_IN_DESKTOP_MODE_BUGFIX
+                .isTrue() && isDesktopModeShowing;
     }
 }

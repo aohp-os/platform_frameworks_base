@@ -20,20 +20,26 @@ import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPR
 import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_TOO_FAST;
 import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ERROR_TIMEOUT;
 
+import static com.android.server.biometrics.AuthenticationStatsCollector.ACTION_LAST_ENROLL_TIME_CHANGED;
+
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.same;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.content.Context;
+import android.content.Intent;
 import android.hardware.biometrics.BiometricRequestConstants;
 import android.hardware.biometrics.BiometricSourceType;
 import android.hardware.biometrics.BiometricsProtoEnums;
@@ -62,6 +68,7 @@ import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import com.android.internal.R;
+import com.android.server.biometrics.AuthenticationStatsCollector;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
 import com.android.server.biometrics.log.CallbackWithProbe;
@@ -72,6 +79,7 @@ import com.android.server.biometrics.sensors.AuthenticationStateListeners;
 import com.android.server.biometrics.sensors.BiometricUtils;
 import com.android.server.biometrics.sensors.ClientMonitorCallback;
 import com.android.server.biometrics.sensors.ClientMonitorCallbackConverter;
+import com.android.server.pm.PackageManagerService;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -149,6 +157,8 @@ public class FingerprintEnrollClientTest {
     private ArgumentCaptor<AuthenticationStartedInfo> mAuthenticationStartedCaptor;
     @Captor
     private ArgumentCaptor<AuthenticationStoppedInfo> mAuthenticationStoppedCaptor;
+    @Captor
+    private ArgumentCaptor<Intent> mIntentCaptor;
 
     @Rule
     public final MockitoRule mockito = MockitoJUnit.rule();
@@ -310,6 +320,38 @@ public class FingerprintEnrollClientTest {
 
         verify(mBiometricLogger).logOnEnrolled(anyInt(), anyLong(), anyBoolean(),
                 eq(BiometricsProtoEnums.ENROLLMENT_SOURCE_SUW), eq(1));
+    }
+
+    @Test
+    public void testEnrollWithBroadcastEnrollTime() throws RemoteException, InterruptedException {
+        int testUserId = 33;
+        int version = 4;
+
+        when(mHal.getInterfaceVersion()).thenReturn(version);
+        Context spiedContext = spy(mContext);
+        AidlSession aidl = new AidlSession(version, mHal, USER_ID, mAidlResponseHandler);
+        FingerprintEnrollClient client = new FingerprintEnrollClient(spiedContext, () -> aidl,
+                mToken, REQUEST_ID, mClientMonitorCallbackConverter, testUserId /* userId */,
+                HAT, "owner", mBiometricUtils, 8 /* sensorId */, mBiometricLogger,
+                mBiometricContext, mSensorProps, mUdfpsOverlayController,
+                mAuthenticationStateListeners, 6 /* maxTemplatesPerUser */,
+                FingerprintManager.ENROLL_ENROLL,
+                (new FingerprintEnrollOptions.Builder()).setEnrollReason(ENROLL_SOURCE).build()
+        );
+
+        client.start(mCallback);
+        client.onEnrollResult(new Fingerprint("fingerprint", 1 /* fingerId */, 20 /* deviceId */),
+                0);
+
+        verify(spiedContext).sendBroadcast(mIntentCaptor.capture(), anyString());
+        Intent capturedIntent = mIntentCaptor.getValue();
+        assertThat(capturedIntent).isNotNull();
+        assertThat(capturedIntent.getPackage()).isEqualTo(
+                PackageManagerService.PLATFORM_PACKAGE_NAME);
+        assertThat(capturedIntent.getAction()).isEqualTo(ACTION_LAST_ENROLL_TIME_CHANGED);
+        assertThat(capturedIntent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1)).isEqualTo(testUserId);
+        assertThat(capturedIntent.getIntExtra(AuthenticationStatsCollector.EXTRA_MODALITY, -1))
+                .isEqualTo(BiometricsProtoEnums.MODALITY_FINGERPRINT);
     }
 
     private void showHideOverlay(

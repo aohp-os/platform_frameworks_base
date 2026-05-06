@@ -58,6 +58,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.policy.IDeviceLockedStateListener;
 import com.android.internal.policy.IKeyguardDismissCallback;
 import com.android.internal.policy.IKeyguardLockedStateListener;
+import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.Preconditions;
 import com.android.internal.widget.IWeakEscrowTokenActivatedListener;
 import com.android.internal.widget.IWeakEscrowTokenRemovedListener;
@@ -205,6 +206,15 @@ public class KeyguardManager {
     public static final String EXTRA_DISALLOW_BIOMETRICS_IF_POLICY_EXISTS = "check_dpm";
 
     /**
+     * When switching to a secure user, system server will expect a callback when the UI has
+     * completed the switch.
+     *
+     * @hide
+     */
+    public static final String LOCK_ON_USER_SWITCH_CALLBACK = "onSwitchCallback";
+
+
+    /**
      *
      * Password lock type, see {@link #setLock}
      *
@@ -246,12 +256,16 @@ public class KeyguardManager {
             new IKeyguardLockedStateListener.Stub() {
                 @Override
                 public void onKeyguardLockedStateChanged(boolean isKeyguardLocked) {
-                    mKeyguardLockedStateListeners.forEach((listener, executor) -> {
-                        executor.execute(
-                                () -> listener.onKeyguardLockedStateChanged(isKeyguardLocked));
-                    });
+                    synchronized (mKeyguardLockedStateListeners) {
+                        mKeyguardLockedStateListeners.forEach((listener, executor) -> {
+                            executor.execute(
+                                    () -> listener.onKeyguardLockedStateChanged(isKeyguardLocked));
+                        });
+                    }
                 }
             };
+
+    @GuardedBy("itself")
     private final ArrayMap<KeyguardLockedStateListener, Executor>
             mKeyguardLockedStateListeners = new ArrayMap<>();
 
@@ -271,7 +285,7 @@ public class KeyguardManager {
                 }
             };
 
-    @GuardedBy("mDeviceLockedStateListeners")
+    @GuardedBy("itself")
     private final ArrayMap<DeviceLockedStateListener, Executor>
             mDeviceLockedStateListeners = new ArrayMap<>();
 
@@ -453,7 +467,7 @@ public class KeyguardManager {
      * Controls whether notifications can be shown atop a securely locked screen in their full
      * private form (same as when the device is unlocked).
      *
-     * <p>Other sources like the DevicePolicyManger and Settings app can modify this configuration.
+     * <p>Other sources like the DevicePolicyManager and Settings app can modify this configuration.
      * The result is that private notifications are only shown if all sources allow it.
      *
      * @param allow secure notifications can be shown if {@code true},
@@ -1063,7 +1077,7 @@ public class KeyguardManager {
             Log.e(TAG, "Save lock exception", e);
             success = false;
         } finally {
-            LockPatternUtils.zeroize(password);
+            ArrayUtils.zeroize(password);
         }
         return success;
     }
@@ -1271,7 +1285,7 @@ public class KeyguardManager {
             if (response == null) {
                 return false;
             }
-            return response.getResponseCode() == VerifyCredentialResponse.RESPONSE_OK;
+            return response.isMatched();
         }
     }
 

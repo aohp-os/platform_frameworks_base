@@ -16,6 +16,11 @@
 
 package android.os;
 
+import static android.app.PropertyInvalidatedCache.MODULE_SYSTEM;
+
+import static com.android.server.power.feature.flags.Flags.FLAG_PARTIAL_SLEEP_WAKELOCKS;
+import static com.android.server.power.feature.flags.Flags.FLAG_SHUTDOWN_SYSTEM_API;
+
 import android.Manifest.permission;
 import android.annotation.CallbackExecutor;
 import android.annotation.CurrentTimeMillisLong;
@@ -41,6 +46,7 @@ import android.util.Log;
 import android.util.proto.ProtoOutputStream;
 import android.view.Display;
 
+import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
 
@@ -167,7 +173,7 @@ public final class PowerManager {
      * Requires the {@link android.Manifest.permission#DEVICE_POWER} permission.
      * </p>
      *
-     * {@hide}
+     * @hide
      */
     public static final int DOZE_WAKE_LOCK = OsProtoEnums.DOZE_WAKE_LOCK; // 0x00000040
 
@@ -181,7 +187,7 @@ public final class PowerManager {
      * Requires the {@link android.Manifest.permission#DEVICE_POWER} permission.
      * </p>
      *
-     * {@hide}
+     * @hide
      */
     public static final int DRAW_WAKE_LOCK = OsProtoEnums.DRAW_WAKE_LOCK; // 0x00000080
 
@@ -200,6 +206,16 @@ public final class PowerManager {
      */
     public static final int SCREEN_TIMEOUT_OVERRIDE_WAKE_LOCK =
             OsProtoEnums.SCREEN_TIMEOUT_OVERRIDE_WAKE_LOCK; // 0x00000100
+
+    /**
+     * Wake lock level: Keep the device asleep - for the user, but ensure that the CPU
+     * remains awake.
+     * This level supersedes all other wakelocks - others will be ignored if this is held,
+     * and the device is asleep.
+     * @hide
+     */
+    public static final int PARTIAL_SLEEP_WAKE_LOCK =
+            OsProtoEnums.PARTIAL_SLEEP_WAKE_LOCK; // 0x00000200
 
     /**
      * Mask for the wake lock level component of a combined wake lock level and flags integer.
@@ -388,6 +404,53 @@ public final class PowerManager {
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UserActivityEvent{}
+
+    /**
+     * Flag to represent no suppression
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    public static final int FLAG_AMBIENT_SUPPRESSION_NONE = 0;
+
+    /**
+     * Flag to represent dream suppression
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    public static final int FLAG_AMBIENT_SUPPRESSION_DREAM = 1;
+
+    /**
+     * Flag to represent AOD suppression
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    public static final int FLAG_AMBIENT_SUPPRESSION_AOD = 1 << 1;
+
+    /**
+     * Flag to represent suppressing everything
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    public static final int FLAG_AMBIENT_SUPPRESSION_ALL =
+            FLAG_AMBIENT_SUPPRESSION_DREAM
+                    | FLAG_AMBIENT_SUPPRESSION_AOD;
+
+    /**
+     * @hide
+     */
+    @IntDef(flag = true, prefix = {"FLAG_AMBIENT_SUPPRESSION_"}, value = {
+            FLAG_AMBIENT_SUPPRESSION_NONE,
+            FLAG_AMBIENT_SUPPRESSION_DREAM,
+            FLAG_AMBIENT_SUPPRESSION_AOD,
+            FLAG_AMBIENT_SUPPRESSION_ALL,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    public @interface FlagAmbientSuppression{}
 
     /**
      *
@@ -614,6 +677,7 @@ public final class PowerManager {
             WAKE_REASON_WAKE_KEY,
             WAKE_REASON_WAKE_MOTION,
             WAKE_REASON_HDMI,
+            WAKE_REASON_LID,
             WAKE_REASON_DISPLAY_GROUP_ADDED,
             WAKE_REASON_DISPLAY_GROUP_TURNED_ON,
             WAKE_REASON_UNFOLD_DEVICE,
@@ -622,6 +686,8 @@ public final class PowerManager {
             WAKE_REASON_TAP,
             WAKE_REASON_LIFT,
             WAKE_REASON_BIOMETRIC,
+            WAKE_REASON_DOCK,
+            WAKE_REASON_DOZE_STOPPED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface WakeReason{}
@@ -763,6 +829,19 @@ public final class PowerManager {
     public static final int WAKE_REASON_BIOMETRIC = 17;
 
     /**
+     * Wake up reason code: Waking up due to a user docking the device.
+     * @hide
+     */
+    public static final int WAKE_REASON_DOCK = 18;
+
+    /**
+     * Wake up reason code: Waking the dream because the dozing was stopped directly through dream
+     * APIs rather than some other more specific reason.
+     * @hide
+     */
+    public static final int WAKE_REASON_DOZE_STOPPED = 19;
+
+    /**
      * Convert the wake reason to a string for debugging purposes.
      * @hide
      */
@@ -786,6 +865,8 @@ public final class PowerManager {
             case WAKE_REASON_TAP: return "WAKE_REASON_TAP";
             case WAKE_REASON_LIFT: return "WAKE_REASON_LIFT";
             case WAKE_REASON_BIOMETRIC: return "WAKE_REASON_BIOMETRIC";
+            case WAKE_REASON_DOCK: return "WAKE_REASON_DOCK";
+            case WAKE_REASON_DOZE_STOPPED: return "WAKE_REASON_DOZE_STOPPED";
             default: return Integer.toString(wakeReason);
         }
     }
@@ -931,6 +1012,13 @@ public final class PowerManager {
     public static final String SHUTDOWN_LOW_BATTERY = "battery";
 
     /**
+     * The value to pass as the 'reason' argument to android_reboot() when the device shutdown is
+     * being requested by a call to {@link PowerManager#shutdown(boolean)}
+     * @hide
+     */
+    public static final String SHUTDOWN_SERVICE_CALL = "service";
+
+    /**
      * @hide
      */
     @Retention(RetentionPolicy.SOURCE)
@@ -1049,6 +1137,29 @@ public final class PowerManager {
     }
 
     /**
+     * Screen timeout policy type: the screen turns off after a timeout
+     * @hide
+     */
+    public static final int SCREEN_TIMEOUT_ACTIVE = 0;
+
+    /**
+     * Screen timeout policy type: the screen is kept 'on' (no timeout)
+     * @hide
+     */
+    public static final int SCREEN_TIMEOUT_KEEP_DISPLAY_ON = 1;
+
+    /**
+     * @hide
+     */
+    @IntDef(prefix = { "SCREEN_TIMEOUT_" }, value = {
+            SCREEN_TIMEOUT_ACTIVE,
+            SCREEN_TIMEOUT_KEEP_DISPLAY_ON
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ScreenTimeoutPolicy{}
+
+
+    /**
      * Either the location providers shouldn't be affected by battery saver,
      * or battery saver is off.
      */
@@ -1153,17 +1264,23 @@ public final class PowerManager {
         }
     }
 
-    private static final String CACHE_KEY_IS_POWER_SAVE_MODE_PROPERTY =
-            PropertyInvalidatedCache.createSystemCacheKey("is_power_save_mode");
+    private static final String CACHE_KEY_IS_POWER_SAVE_MODE_API = "is_power_save_mode";
 
-    private static final String CACHE_KEY_IS_INTERACTIVE_PROPERTY =
-            PropertyInvalidatedCache.createSystemCacheKey("is_interactive");
+    private static final String CACHE_KEY_IS_INTERACTIVE_API = "is_interactive";
 
     private static final int MAX_CACHE_ENTRIES = 1;
 
+    private static PropertyInvalidatedCache.Args getCacheArgs(String api) {
+        return new PropertyInvalidatedCache.Args(MODULE_SYSTEM)
+                .maxEntries(MAX_CACHE_ENTRIES)
+                .isolateUids(false)
+                .cacheNulls(false)
+                .api(api);
+    }
+
     private final PropertyInvalidatedCache<Void, Boolean> mPowerSaveModeCache =
-            new PropertyInvalidatedCache<Void, Boolean>(MAX_CACHE_ENTRIES,
-                CACHE_KEY_IS_POWER_SAVE_MODE_PROPERTY) {
+            new PropertyInvalidatedCache<>(getCacheArgs(CACHE_KEY_IS_POWER_SAVE_MODE_API),
+                    CACHE_KEY_IS_POWER_SAVE_MODE_API, null) {
                 @Override
                 public Boolean recompute(Void query) {
                     try {
@@ -1175,8 +1292,8 @@ public final class PowerManager {
             };
 
     private final PropertyInvalidatedCache<Integer, Boolean> mInteractiveCache =
-            new PropertyInvalidatedCache<Integer, Boolean>(MAX_CACHE_ENTRIES,
-                CACHE_KEY_IS_INTERACTIVE_PROPERTY) {
+            new PropertyInvalidatedCache<>(getCacheArgs(CACHE_KEY_IS_INTERACTIVE_API),
+                    CACHE_KEY_IS_INTERACTIVE_API, null) {
                 @Override
                 public Boolean recompute(Integer displayId) {
                     try {
@@ -1208,8 +1325,11 @@ public final class PowerManager {
     private final ArrayMap<OnThermalHeadroomChangedListener, IThermalHeadroomListener>
             mThermalHeadroomListenerMap = new ArrayMap<>();
 
+    private final ArrayMap<ScreenTimeoutPolicyListener, IScreenTimeoutPolicyListener>
+            mScreenTimeoutPolicyListeners = new ArrayMap<>();
+
     /**
-     * {@hide}
+     * @hide
      */
     public PowerManager(Context context, IPowerManager service, IThermalService thermalService,
             Handler handler) {
@@ -1364,12 +1484,7 @@ public final class PowerManager {
      * @see #ON_AFTER_RELEASE
      */
     public WakeLock newWakeLock(int levelAndFlags, String tag) {
-        if (android.companion.virtualdevice.flags.Flags.displayPowerManagerApis()) {
-            return newWakeLock(levelAndFlags, tag, mContext.getDisplayId());
-        }
-        validateWakeLockParameters(levelAndFlags, tag);
-        return new WakeLock(levelAndFlags, tag, mContext.getOpPackageName(),
-                Display.INVALID_DISPLAY);
+        return newWakeLock(levelAndFlags, tag, mContext.getDisplayId());
     }
 
     /**
@@ -1404,6 +1519,12 @@ public final class PowerManager {
             case DRAW_WAKE_LOCK:
             case SCREEN_TIMEOUT_OVERRIDE_WAKE_LOCK:
                 break;
+            case PARTIAL_SLEEP_WAKE_LOCK:
+                if (com.android.server.power.feature.flags.Flags.partialSleepWakelocks()) {
+                    break;
+                }
+                throw new IllegalArgumentException(
+                        "Partial sleep wake lock flag not rolled out yet");
             default:
                 throw new IllegalArgumentException("Must specify a valid wake lock level.");
         }
@@ -1543,6 +1664,9 @@ public final class PowerManager {
      *
      * @hide Requires signature permission.
      */
+    @TestApi
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    @FlaggedApi(FLAG_PARTIAL_SLEEP_WAKELOCKS)
     @UnsupportedAppUsage
     public void goToSleep(long time, int reason, int flags) {
         try {
@@ -1749,6 +1873,77 @@ public final class PowerManager {
         }
     }
 
+    /**
+     * Adds a listener to be notified about changes in screen timeout policy.
+     *
+     * <p>The screen timeout policy determines the behavior of the device's screen
+     * after a period of inactivity. It can be used to understand if the display is going
+     * to be turned off after a timeout to conserve power, or if it will be kept on indefinitely.
+     * For example, it might be useful for adjusting display switch conditions on foldable
+     * devices based on the current timeout policy.
+     *
+     * <p>See {@link ScreenTimeoutPolicy} for possible values.
+     *
+     * <p>The listener will be fired with the initial state upon subscribing.
+     *
+     * <p>IScreenTimeoutPolicyListener is called on either system server's main thread or
+     * on a binder thread if subscribed outside the system service process.
+     *
+     * @param displayId display id for which to be notified about screen timeout policy changes
+     * @param executor executor on which to execute ScreenTimeoutPolicyListener methods
+     * @param listener listener that will be fired on screem timeout policy updates
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void addScreenTimeoutPolicyListener(int displayId,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull ScreenTimeoutPolicyListener listener) {
+        Objects.requireNonNull(listener, "listener cannot be null");
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Preconditions.checkArgument(!mScreenTimeoutPolicyListeners.containsKey(listener),
+                "Listener already registered: %s", listener);
+
+        final IScreenTimeoutPolicyListener stub = new IScreenTimeoutPolicyListener.Stub() {
+            public void onScreenTimeoutPolicyChanged(int screenTimeoutPolicy) {
+                final long token = Binder.clearCallingIdentity();
+                try {
+                    executor.execute(() ->
+                            listener.onScreenTimeoutPolicyChanged(screenTimeoutPolicy));
+                } finally {
+                    Binder.restoreCallingIdentity(token);
+                }
+            }
+        };
+
+        try {
+            mService.addScreenTimeoutPolicyListener(displayId, stub);
+            mScreenTimeoutPolicyListeners.put(listener, stub);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Removes a listener that is used to listen for screen timeout policy changes.
+     * @see PowerManager#addScreenTimeoutPolicyListener(int, ScreenTimeoutPolicyListener)
+     * @param displayId display id for which to be notified about screen timeout changes
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.DEVICE_POWER)
+    public void removeScreenTimeoutPolicyListener(int displayId,
+            @NonNull ScreenTimeoutPolicyListener listener) {
+        Objects.requireNonNull(listener, "listener cannot be null");
+        IScreenTimeoutPolicyListener internalListener = mScreenTimeoutPolicyListeners.get(listener);
+        Preconditions.checkArgument(internalListener != null, "Listener was not added");
+
+        try {
+            mService.removeScreenTimeoutPolicyListener(displayId, internalListener);
+            mScreenTimeoutPolicyListeners.remove(listener);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
    /**
      * Returns true if the specified wake lock level is supported.
      *
@@ -1757,11 +1952,7 @@ public final class PowerManager {
      */
     public boolean isWakeLockLevelSupported(int level) {
         try {
-            if (android.companion.virtualdevice.flags.Flags.displayPowerManagerApis()) {
-                return mService.isWakeLockLevelSupportedWithDisplayId(
-                        level, mContext.getDisplayId());
-            }
-            return mService.isWakeLockLevelSupported(level);
+            return mService.isWakeLockLevelSupportedWithDisplayId(level, mContext.getDisplayId());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1824,10 +2015,7 @@ public final class PowerManager {
      * @see android.content.Intent#ACTION_SCREEN_OFF
      */
     public boolean isInteractive() {
-        if (android.companion.virtualdevice.flags.Flags.displayPowerManagerApis()) {
-            return isInteractive(mContext.getDisplayId());
-        }
-        return mInteractiveCache.query(null);
+        return isInteractive(mContext.getDisplayId());
     }
 
     /**
@@ -1896,6 +2084,144 @@ public final class PowerManager {
             throw e.rethrowFromSystemServer();
         }
     }
+
+    /**
+     * Creates a new sleep lock, which is a wake lock that holds a {@link #PARTIAL_SLEEP_WAKE_LOCK}.
+     * <p>
+     * A sleep lock is a specialized, non-reference-counted wake lock that keeps the CPU running
+     * and keeps the display(s) off. When a sleep lock is held, it supersedes all other
+     * wake locks, meaning they will be ignored.
+     * </p><p>
+     * Since this is a non-reference-counted lock, a single call to {@link SleepLock#release()}
+     * is sufficient to release it, regardless of how many times {@link SleepLock#acquire(long)}
+     * was called.
+     * </p><p>
+     * Call {@link SleepLock#acquire(long)} with a timeout on the returned object to acquire the
+     * sleep lock, and {@link SleepLock#release()} to release it when you are done. It is important
+     * to release the lock as soon as the work is complete.
+     * </p>
+     *
+     * @param displayId The ID of the display with which this sleep lock is associated. The lock
+     *                  will apply to the display group of this display. Use
+     *                  {@link android.view.Display#DEFAULT_DISPLAY} for the default display.
+     * @param tag A tag for debugging purposes. Follow the naming conventions described in
+     *            {@link #newWakeLock(int, String)}.
+     * @return A new {@link SleepLock} object.
+     * @throws RuntimeException if partial sleep wake locks are not enabled on the device.
+     *
+     * @see SleepLock
+     * @see #PARTIAL_SLEEP_WAKE_LOCK
+     * @hide
+     */
+    @FlaggedApi(FLAG_PARTIAL_SLEEP_WAKELOCKS)
+    @SystemApi
+    @NonNull
+    @RequiresPermission(permission.ACQUIRE_SLEEP_LOCK)
+    public SleepLock newSleepLock(int displayId, @NonNull String tag) throws RuntimeException {
+        if (!mContext.getResources().getBoolean(R.bool.config_allowPartialSleepWakeLocks)) {
+            throw new RuntimeException("Partial Sleep WakeLocks are not allowed on this device "
+                    + "due to the configuration");
+        }
+
+        return new SleepLock(displayId, tag);
+    }
+
+    /**
+     * A specialized, non-reference-counted wake lock that keeps the CPU running
+     * and keeps the display(s) off.
+     * <p>
+     * An instance of this class can be obtained by calling
+     * {@link PowerManager#newSleepLock(int, String)}.
+     * </p><p>
+     * When a sleep lock is held, it supersedes all other wake locks, meaning they will be ignored.
+     * Since this is a non-reference-counted lock, a single call to {@link #release()}
+     * is sufficient to release it.
+     * </p><p>
+     * Use {@link #acquire(long)} to acquire the lock and {@link #release()} to release it.
+     * Use {@link #release()} to check whether the wakelock is currently held.
+     * </p>
+     *
+     * @see #newSleepLock(int, String)
+     * @hide
+     */
+    @FlaggedApi(FLAG_PARTIAL_SLEEP_WAKELOCKS)
+    @SystemApi
+    @SuppressLint("NotCloseable")
+    public final class SleepLock {
+        private static final int SLEEP_LOCK = PowerManager.PARTIAL_SLEEP_WAKE_LOCK;
+        @NonNull
+        private final String mTag;
+        private final int mDisplayId;
+        private final int mDefaultTimeoutMillis;
+        @NonNull
+        private final WakeLock mWakelock;
+
+        /**
+         *
+         * @param displayId The ID of the display with which this sleep lock is associated. The lock
+         *                  will apply to the display group of this display. Use
+         *                  {@link android.view.Display#DEFAULT_DISPLAY} for the default display.
+         * @param tag A tag for debugging purposes. Follow the naming conventions described in
+         *            {@link #newWakeLock(int, String)}.
+         *
+         * @hide
+         */
+        public SleepLock(int displayId, @NonNull String tag) {
+            mDisplayId = displayId;
+            mTag = tag;
+            mDefaultTimeoutMillis = mContext.getResources().getInteger(
+                    R.integer.config_maximumPartialSleepWakeLockDuration);
+            mWakelock = new WakeLock(SLEEP_LOCK, mTag, mContext.getOpPackageName(), mDisplayId);
+        }
+
+        /**
+         * Acquires the sleep lock for a given timeout.
+         * <p>
+         * The lock is automatically released after the specified timeout expires.
+         * </p><p>
+         * The requested timeout may be capped at a system-defined maximum value to
+         * prevent the lock from being held indefinitely.
+         * </p>
+         *
+         * @param timeoutMillis The amount of time to hold the lock for, in milliseconds.
+         */
+        @RequiresPermission(permission.ACQUIRE_SLEEP_LOCK)
+        public void acquire(long timeoutMillis) {
+            mWakelock.acquire(Math.min(timeoutMillis, mDefaultTimeoutMillis));
+        }
+
+
+        /**
+         * Releases the sleep lock.
+         */
+        @RequiresPermission(permission.ACQUIRE_SLEEP_LOCK)
+        public void release() {
+            try {
+                mWakelock.release();
+            } catch (RuntimeException ignore) {
+                // wakelock already released by system due to timeout
+            }
+        }
+
+        /**
+         * Returns whether the sleep lock has been acquired but not yet released.
+         *
+         * @return {@code true} if the lock is held, {@code false} otherwise.
+         */
+        public boolean isHeld() {
+            return mWakelock.isHeld();
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String toString() {
+            return "mTag: " + mTag + ", mDisplayId: " + mDisplayId + ", mDefaultTimeoutMillis: "
+                    + mDefaultTimeoutMillis + ", mWakelock: " + mWakelock;
+        }
+    }
+
 
     /**
      * Reboot the device. Will not return if the reboot is successful.
@@ -2605,6 +2931,26 @@ public final class PowerManager {
     }
 
     /**
+     * Shuts down the Android device.
+     *
+     * @param wait If true, this call waits for the shutdown to complete and does not return.
+     *             Clients can use this to catch exceptions that might be thrown while shutting
+     *             down the device
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(FLAG_SHUTDOWN_SYSTEM_API)
+    @RequiresPermission(android.Manifest.permission.REBOOT)
+    public void shutdown(boolean wait) {
+        try {
+            mService.shutdown(false, SHUTDOWN_SERVICE_CALL, wait);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * This function checks if the device has implemented Sustained Performance
      * Mode. This needs to be checked only once and is constant for a particular
      * device/release.
@@ -3060,6 +3406,27 @@ public final class PowerManager {
     }
 
     /**
+     * Suppresses the current ambient display configuration and disables ambient display.
+     *
+     * <p>This method has no effect if {@link #isAmbientDisplayAvailable()} is false.
+     *
+     * @param token A persistable identifier for the ambient display suppression that is unique
+     *              within the calling application.
+     * @param suppressionFlags Flags that describe how the ambient display should be suppressed.
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_LOW_LIGHT_DREAM_BEHAVIOR)
+    @RequiresPermission(android.Manifest.permission.WRITE_DREAM_STATE)
+    public void suppressAmbientDisplay(@NonNull String token,
+            @FlagAmbientSuppression  int suppressionFlags) {
+        try {
+            mService.suppressAmbientDisplayBehavior(token, suppressionFlags);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Returns true if ambient display is suppressed by the calling app with the given
      * {@code token}.
      *
@@ -3239,14 +3606,6 @@ public final class PowerManager {
     @SdkConstant(SdkConstant.SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_POWER_SAVE_WHITELIST_CHANGED
             = "android.os.action.POWER_SAVE_WHITELIST_CHANGED";
-
-    /**
-     * @hide Intent that is broadcast when the set of temporarily allowlisted apps has changed.
-     * This broadcast is only sent to registered receivers.
-     */
-    @SdkConstant(SdkConstant.SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_POWER_SAVE_TEMP_WHITELIST_CHANGED
-            = "android.os.action.POWER_SAVE_TEMP_WHITELIST_CHANGED";
 
     /**
      * Intent that is broadcast when Low Power Standby is enabled or disabled.
@@ -3825,6 +4184,21 @@ public final class PowerManager {
     }
 
     /**
+     * Listener for screen timeout policy changes
+     * @see PowerManager#addScreenTimeoutPolicyListener(int, ScreenTimeoutPolicyListener)
+     * @hide
+     */
+    public interface ScreenTimeoutPolicyListener {
+        /**
+         * Invoked on changes in screen timeout policy.
+         *
+         * @param screenTimeoutPolicy Screen timeout policy, one of {@link ScreenTimeoutPolicy}
+         * @see PowerManager#addScreenTimeoutPolicyListener
+         */
+        void onScreenTimeoutPolicyChanged(@ScreenTimeoutPolicy int screenTimeoutPolicy);
+    }
+
+    /**
      * A wake lock is a mechanism to indicate that your application needs
      * to have the device stay on.
      * <p>
@@ -4091,6 +4465,17 @@ public final class PowerManager {
             else mFlags &= ~UNIMPORTANT_FOR_LOGGING;
         }
 
+        /** @hide */
+        public void updateUids(int[] uids) {
+            synchronized (mToken) {
+                try {
+                    mService.updateWakeLockUids(mToken, uids);
+                } catch (RemoteException e) {
+                    throw e.rethrowFromSystemServer();
+                }
+            }
+        }
+
         @Override
         public String toString() {
             synchronized (mToken) {
@@ -4189,13 +4574,13 @@ public final class PowerManager {
      * @hide
      */
     public static void invalidatePowerSaveModeCaches() {
-        PropertyInvalidatedCache.invalidateCache(CACHE_KEY_IS_POWER_SAVE_MODE_PROPERTY);
+        PropertyInvalidatedCache.invalidateCache(MODULE_SYSTEM, CACHE_KEY_IS_POWER_SAVE_MODE_API);
     }
 
     /**
      * @hide
      */
     public static void invalidateIsInteractiveCaches() {
-        PropertyInvalidatedCache.invalidateCache(CACHE_KEY_IS_INTERACTIVE_PROPERTY);
+        PropertyInvalidatedCache.invalidateCache(MODULE_SYSTEM, CACHE_KEY_IS_INTERACTIVE_API);
     }
 }

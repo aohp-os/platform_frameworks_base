@@ -18,6 +18,7 @@ package com.android.systemui.qs
 
 import android.app.admin.devicePolicyManager
 import android.content.applicationContext
+import android.content.mockedContext
 import android.os.fakeExecutorHandler
 import android.os.looper
 import com.android.internal.logging.metricsLogger
@@ -33,14 +34,21 @@ import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.plugins.activityStarter
 import com.android.systemui.plugins.qs.QSFactory
 import com.android.systemui.plugins.qs.QSTile
+import com.android.systemui.qs.footer.domain.interactor.FakeFooterActionInteractor
+import com.android.systemui.qs.footer.domain.interactor.FooterActionsInteractor
 import com.android.systemui.qs.footer.domain.interactor.FooterActionsInteractorImpl
 import com.android.systemui.qs.footer.foregroundServicesRepository
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsViewModel
+import com.android.systemui.qs.panels.domain.interactor.textFeedbackInteractor
 import com.android.systemui.security.data.repository.securityRepository
 import com.android.systemui.settings.userTracker
+import com.android.systemui.shade.data.repository.shadeDialogContextInteractor
 import com.android.systemui.statusbar.policy.deviceProvisionedController
 import com.android.systemui.statusbar.policy.securityController
+import com.android.systemui.supervision.data.repository.supervisionRepository
 import com.android.systemui.user.data.repository.userSwitcherRepository
+import com.android.systemui.user.domain.interactor.headlessSystemUserMode
+import com.android.systemui.user.domain.interactor.selectedUserInteractor
 import com.android.systemui.user.domain.interactor.userSwitcherInteractor
 import com.android.systemui.util.mockito.mock
 
@@ -54,9 +62,7 @@ var Kosmos.qsTileFactory by Fixture<QSFactory> { FakeQSFactory(::tileCreator) }
 val Kosmos.fgsManagerController by Fixture { FakeFgsManagerController() }
 
 val Kosmos.footerActionsController by Fixture {
-    FooterActionsController(
-        fgsManagerController = fgsManagerController,
-    )
+    FooterActionsController(fgsManagerController = fgsManagerController)
 }
 
 val Kosmos.qsSecurityFooterUtils by Fixture {
@@ -69,10 +75,11 @@ val Kosmos.qsSecurityFooterUtils by Fixture {
         securityController,
         looper,
         dialogTransitionAnimator,
+        shadeDialogContextInteractor,
     )
 }
 
-val Kosmos.footerActionsInteractor by Fixture {
+var Kosmos.footerActionsInteractor: FooterActionsInteractor by Fixture {
     FooterActionsInteractorImpl(
         activityStarter = activityStarter,
         metricsLogger = metricsLogger,
@@ -86,8 +93,13 @@ val Kosmos.footerActionsInteractor by Fixture {
         userSwitcherRepository = userSwitcherRepository,
         broadcastDispatcher = broadcastDispatcher,
         bgDispatcher = testDispatcher,
+        context = mockedContext,
+        supervisionRepository = supervisionRepository,
     )
 }
+
+val FooterActionsInteractor.fake
+    get() = this as FakeFooterActionInteractor
 
 val Kosmos.footerActionsViewModelFactory by Fixture {
     FooterActionsViewModel.Factory(
@@ -95,8 +107,11 @@ val Kosmos.footerActionsViewModelFactory by Fixture {
         falsingManager = falsingManager,
         footerActionsInteractor = footerActionsInteractor,
         globalActionsDialogLiteProvider = { mock() },
-        activityStarter,
+        activityStarter = activityStarter,
+        textFeedbackInteractor = textFeedbackInteractor,
         showPowerButton = true,
+        selectedUserInteractor = selectedUserInteractor,
+        hsum = headlessSystemUserMode,
     )
 }
 

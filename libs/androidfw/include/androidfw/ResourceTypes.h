@@ -47,8 +47,10 @@
 
 namespace android {
 
+constexpr const bool kDeviceEndiannessSame = dtohs(0x1001) == 0x1001;
+
 constexpr const uint32_t kIdmapMagic = 0x504D4449u;
-constexpr const uint32_t kIdmapCurrentVersion = 0x0000000Au;
+constexpr const uint32_t kIdmapCurrentVersion = 0x0000000Bu;
 
 // This must never change.
 constexpr const uint32_t kFabricatedOverlayMagic = 0x4f525246; // FRRO (big endian)
@@ -226,10 +228,10 @@ struct ResChunk_header
     // (if any).
     uint16_t headerSize;
 
-    // Total size of this chunk (in bytes).  This is the chunkSize plus
+    // Total size of this chunk (in bytes).  This is the headerSize plus
     // the size of any data associated with the chunk.  Adding this value
     // to the chunk allows you to completely skip its contents (including
-    // any child chunks).  If this value is the same as chunkSize, there is
+    // any child chunks).  If this value is the same as headerSize, there is
     // no data associated with the chunk.
     uint32_t size;
 };
@@ -260,6 +262,9 @@ enum {
     RES_TABLE_OVERLAYABLE_TYPE        = 0x0204,
     RES_TABLE_OVERLAYABLE_POLICY_TYPE = 0x0205,
     RES_TABLE_STAGED_ALIAS_TYPE       = 0x0206,
+    RES_TABLE_FLAGGED                 = 0x0207,
+    RES_TABLE_FLAG_LIST               = 0x0208,
+
 };
 
 /**
@@ -408,7 +413,16 @@ struct Res_value
     typedef uint32_t data_type;
     data_type data;
 
-    void copyFrom_dtoh(const Res_value& src);
+    void copyFrom_dtoh(const Res_value& src) {
+      if constexpr (kDeviceEndiannessSame) {
+        *this = src;
+      } else {
+        copyFrom_dtoh_slow(src);
+      }
+    }
+
+   private:
+    void copyFrom_dtoh_slow(const Res_value& src);
 };
 
 /**
@@ -704,6 +718,29 @@ struct ResXMLTree_attrExt
     uint16_t styleIndex;
 };
 
+enum  ResXMLTreeExtDescriptor : uint8_t {
+    PADDING = 0x00,
+    FLAG_INFO = 0x01,
+};
+
+struct ResXMLTreeFlagExt {
+
+    // defines the type of the extended element structure
+    ResXMLTreeExtDescriptor descriptor;
+
+    // if the flag condition is negated
+    bool flag_negated;
+
+    // a hole for 4-byte alignment
+    uint16_t reserved;
+
+    // The reference into the string pool that the flag name is stored at
+    ResStringPool_ref flag_name;
+};
+
+static_assert(sizeof(ResXMLTreeFlagExt) == 8);
+
+
 struct ResXMLTree_attribute
 {
     // Namespace of this attribute.
@@ -747,6 +784,12 @@ public:
         const void*                 curExt;
     };
 
+    struct ResXMLFlagInfo
+    {
+      uint32_t flagNameIndex;
+      bool flagNegated;
+    };
+
     void restart();
 
     const ResStringPool& getStrings() const;
@@ -782,7 +825,9 @@ public:
     // associated with a START_TAG:
     
     size_t getAttributeCount() const;
-    
+
+    std::optional<ResXMLFlagInfo> getFlagInfo() const;
+
     // Returns -1 if no namespace, -2 if idx out of range.
     int32_t getAttributeNamespaceID(size_t idx) const;
     const char16_t* getAttributeNamespace(size_t idx, size_t* outLen) const;
@@ -977,7 +1022,7 @@ struct ResTable_config
             //   codes ('fr', 'en' etc. etc.). The high bit for both bytes is
             //   zero.
             //
-            // - A single 16 bit little endian packed value representing an
+            // - A single 16 bit big-endian packed value representing an
             //   ISO-639-2 3 letter language code. This will be of the form:
             //
             //   {1, t, t, t, t, t, s, s, s, s, s, f, f, f, f, f}
@@ -990,7 +1035,7 @@ struct ResTable_config
             // For backwards compatibility, languages that have unambiguous
             // two letter codes are represented in that format.
             //
-            // The layout is always bigendian irrespective of the runtime
+            // The layout is always big-endian irrespective of the runtime
             // architecture.
             char language[2];
             
@@ -1004,7 +1049,7 @@ struct ResTable_config
             //   in the same manner as the language codes, though we should need
             //   only 10 bits to represent them, instead of the 15.
             //
-            // The layout is always bigendian irrespective of the runtime
+            // The layout is always big-endian irrespective of the runtime
             // architecture.
             char country[2];
         };
@@ -1132,8 +1177,9 @@ struct ResTable_config
     union {
         struct {
             uint16_t sdkVersion;
-            // For now minorVersion must always be 0!!!  Its meaning
-            // is currently undefined.
+
+            // Until Baklava, this was always set to and assumed to be 0.
+            // After Baklava, this started to be used with minor SDK releases.
             uint16_t minorVersion;
         };
         uint32_t version;
@@ -1254,11 +1300,35 @@ struct ResTable_config
     // Varies in length from 3 to 8 chars. Zero-filled value.
     char localeNumberingSystem[8];
 
-    void copyFromDeviceNoSwap(const ResTable_config& o);
-    
-    void copyFromDtoH(const ResTable_config& o);
-    
-    void swapHtoD();
+    // Mark all padding explicitly so it's clear how much we can expand it.
+    char endPadding[3];
+
+    void copyFromDeviceNoSwap(const ResTable_config& o) {
+      const auto o_size = dtohl(o.size);
+      if (o_size >= sizeof(ResTable_config)) [[likely]] {
+        *this = o;
+      } else {
+        memcpy(this, &o, o_size);
+        memset(((uint8_t*)this) + o_size, 0, sizeof(ResTable_config) - o_size);
+      }
+      this->size = sizeof(*this);
+    }
+
+    void copyFromDtoH(const ResTable_config& o) {
+      if constexpr (kDeviceEndiannessSame) {
+        copyFromDeviceNoSwap(o);
+      } else {
+        copyFromDtoH_slow(o);
+      }
+    }
+
+    void swapHtoD() {
+      if constexpr (kDeviceEndiannessSame) {
+        ;  // noop
+      } else {
+        swapHtoD_slow();
+      }
+    }
 
     int compare(const ResTable_config& o) const;
     int compareLogical(const ResTable_config& o) const;
@@ -1381,10 +1451,24 @@ struct ResTable_config
     // match the requested configuration at all.
     bool isLocaleBetterThan(const ResTable_config& o, const ResTable_config* requested) const;
 
-    bool isBetterThanBeforeLocale(const ResTable_config& o, const ResTable_config* requested) const;
+    // The first part of isBetterThan() that only compares the fields that are higher priority than
+    // the locale. Use it when you need to do custom locale matching to filter out the configs prior
+    // to that.
+    bool isBetterThanBeforeLocale(const ResTable_config& o, const ResTable_config& requested) const;
 
     String8 toString() const;
+
+   private:
+    void copyFromDtoH_slow(const ResTable_config& o);
+    void swapHtoD_slow();
 };
+
+// Fix the struct size for backward compatibility
+static_assert(sizeof(ResTable_config) == 64);
+
+// Make sure there's no unaccounted padding in the structure.
+static_assert(offsetof(ResTable_config, endPadding) +
+                  sizeof(ResTable_config::endPadding) == sizeof(ResTable_config));
 
 /**
  * A specification of the resources defined by a particular type.
@@ -1519,6 +1603,37 @@ union ResTable_sparseTypeEntry {
 static_assert(sizeof(ResTable_sparseTypeEntry) == sizeof(uint32_t),
         "ResTable_sparseTypeEntry must be 4 bytes in size");
 
+/**
+ * A container for other chunks all of whose values are behind a given flag.
+ *
+ * The flag_name_index is the index of the flag name in the value string pool.
+ *
+ * When the android runtime encounters this chunk it will check the flag against its current value.
+ * If the flag is enabled and flag_negated is false or it is disabled and flag_negated is true, the
+ * runtime will then process all of the chunks inside of it normally. Otherwise the entire chunk is
+ * skipped.
+ *
+ * Currently this is chunk should be contained in a ResTable_typeSpec and contain any number of
+ * ResTable_type.
+ */
+struct ResTable_flagged {
+  struct ResChunk_header header;
+
+  ResStringPool_ref flag_name_index;
+  bool flag_negated;
+  uint8_t padding[3];
+};
+
+/**
+ * A chunk that contains a list of the names of all the read/write flags used by the
+ * ResTable_flagged chunks in the file. Specifically, all data after the header is an array of
+ * ResStringPool_ref objects for the flag names in no specific order. References use the global
+ * values stringpool.
+ */
+struct ResTable_flag_list {
+  struct ResChunk_header header;
+};
+
 struct ResTable_map_entry;
 
 /**
@@ -1547,6 +1662,8 @@ union ResTable_entry
         // If set, this is a compact entry with data type and value directly
         // encoded in the this entry, see ResTable_entry::compact
         FLAG_COMPACT = 0x0008,
+        // If set, this entry relies on read write android feature flags
+        FLAG_USES_FEATURE_FLAGS = 0x0010,
     };
 
     struct Full {
@@ -1576,6 +1693,7 @@ union ResTable_entry
     uint16_t flags()  const { return dtohs(full.flags); };
     bool is_compact() const { return flags() & FLAG_COMPACT; }
     bool is_complex() const { return flags() & FLAG_COMPLEX; }
+    bool uses_feature_flags() const { return flags() & FLAG_USES_FEATURE_FLAGS; }
 
     size_t size() const {
         return is_compact() ? sizeof(ResTable_entry) : dtohs(this->full.size);
@@ -1993,6 +2111,8 @@ public:
 
     bool getResourceFlags(uint32_t resID, uint32_t* outFlags) const;
 
+    bool getResourceEntryFlags(uint32_t resID, uint32_t* outFlags) const;
+
     /**
      * Returns whether or not the package for the given resource has been dynamically assigned.
      * If the resource can't be found, returns 'false'.
@@ -2267,7 +2387,7 @@ public:
             void** outData, size_t* outSize) const;
 
     static const size_t IDMAP_HEADER_SIZE_BYTES = 4 * sizeof(uint32_t) + 2 * 256;
-    static const uint32_t IDMAP_CURRENT_VERSION = 0x00000001;
+    static const size_t IDMAP_CONSTRAINTS_COUNT_SIZE_BYTES = sizeof(uint32_t);
 
     // Retrieve idmap meta-data.
     //

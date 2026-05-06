@@ -20,7 +20,6 @@ import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED;
 
 import android.annotation.RequiresPermission;
 import android.content.Context;
-import android.location.flags.Flags;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
@@ -203,12 +202,8 @@ class GnssNetworkConnectivityHandler {
 
         SubscriptionManager subManager = mContext.getSystemService(SubscriptionManager.class);
         if (subManager != null) {
-            if (Flags.subscriptionsChangedListenerThread()) {
-                subManager.addOnSubscriptionsChangedListener(FgThread.getExecutor(),
-                        mOnSubscriptionsChangeListener);
-            } else {
-                subManager.addOnSubscriptionsChangedListener(mOnSubscriptionsChangeListener);
-            }
+            subManager.addOnSubscriptionsChangedListener(FgThread.getExecutor(),
+                    mOnSubscriptionsChangeListener);
         }
 
         PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -612,25 +607,23 @@ class GnssNetworkConnectivityHandler {
         networkRequestBuilder.addCapability(getNetworkCapability(mAGpsType));
         networkRequestBuilder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
 
-        if (com.android.internal.telephony.flags.Flags.satelliteInternet()) {
-            // Add transport type NetworkCapabilities.TRANSPORT_SATELLITE on satellite network.
-            TelephonyManager telephonyManager = mContext.getSystemService(TelephonyManager.class);
-            if (telephonyManager != null) {
-                ServiceState state = telephonyManager.getServiceState();
-                if (state != null && state.isUsingNonTerrestrialNetwork()) {
-                    networkRequestBuilder.removeCapability(NET_CAPABILITY_NOT_RESTRICTED);
-                    try {
-                        networkRequestBuilder.addTransportType(NetworkCapabilities
-                                .TRANSPORT_SATELLITE);
-                        networkRequestBuilder.removeCapability(NetworkCapabilities
-                                .NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED);
-                    } catch (IllegalArgumentException ignored) {
-                        // In case TRANSPORT_SATELLITE or NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED
-                        // are not recognized, meaning an old connectivity module runs on new
-                        // android in which case no network with such capabilities will be brought
-                        // up, so it's safe to ignore the exception.
-                        // TODO: Can remove the try-catch in next quarter release.
-                    }
+        // Add transport type NetworkCapabilities.TRANSPORT_SATELLITE on satellite network.
+        TelephonyManager telephonyManager = mContext.getSystemService(TelephonyManager.class);
+        if (telephonyManager != null) {
+            ServiceState state = telephonyManager.getServiceState();
+            if (state != null && state.isUsingNonTerrestrialNetwork()) {
+                networkRequestBuilder.removeCapability(NET_CAPABILITY_NOT_RESTRICTED);
+                try {
+                    networkRequestBuilder.addTransportType(NetworkCapabilities
+                            .TRANSPORT_SATELLITE);
+                    networkRequestBuilder.removeCapability(NetworkCapabilities
+                            .NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED);
+                } catch (IllegalArgumentException ignored) {
+                    // In case TRANSPORT_SATELLITE or NET_CAPABILITY_NOT_BANDWIDTH_CONSTRAINED
+                    // are not recognized, meaning an old connectivity module runs on new
+                    // android in which case no network with such capabilities will be brought
+                    // up, so it's safe to ignore the exception.
+                    // TODO: Can remove the try-catch in next quarter release.
                 }
             }
         }
@@ -654,13 +647,11 @@ class GnssNetworkConnectivityHandler {
                     mSuplConnectivityCallback,
                     mHandler,
                     SUPL_NETWORK_REQUEST_TIMEOUT_MILLIS);
-            if (Flags.releaseSuplConnectionOnTimeout()) {
-                // Schedule to release the SUPL connection after timeout
-                mHandler.removeCallbacksAndMessages(mSuplConnectionReleaseOnTimeoutToken);
-                mHandler.postDelayed(() -> handleReleaseSuplConnection(GPS_RELEASE_AGPS_DATA_CONN),
-                        mSuplConnectionReleaseOnTimeoutToken,
-                        SUPL_CONNECTION_TIMEOUT_MILLIS);
-            }
+            // Schedule to release the SUPL connection after timeout
+            mHandler.removeCallbacksAndMessages(mSuplConnectionReleaseOnTimeoutToken);
+            mHandler.postDelayed(() -> handleReleaseSuplConnection(GPS_RELEASE_AGPS_DATA_CONN),
+                    mSuplConnectionReleaseOnTimeoutToken,
+                    SUPL_CONNECTION_TIMEOUT_MILLIS);
         } catch (RuntimeException e) {
             Log.e(TAG, "Failed to request network.", e);
             mSuplConnectivityCallback = null;
@@ -691,10 +682,8 @@ class GnssNetworkConnectivityHandler {
             Log.d(TAG, message);
         }
 
-        if (Flags.releaseSuplConnectionOnTimeout()) {
-            // Remove pending task to avoid releasing an incorrect connection
-            mHandler.removeCallbacksAndMessages(mSuplConnectionReleaseOnTimeoutToken);
-        }
+        // Remove pending task to avoid releasing an incorrect connection
+        mHandler.removeCallbacksAndMessages(mSuplConnectionReleaseOnTimeoutToken);
         if (mAGpsDataConnectionState == AGPS_DATA_CONNECTION_CLOSED) {
             return;
         }

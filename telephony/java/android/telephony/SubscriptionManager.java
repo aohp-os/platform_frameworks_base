@@ -1187,6 +1187,61 @@ public class SubscriptionManager {
     public static final String IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM =
             SimInfo.COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM;
 
+    /**
+     * TelephonyProvider column name for satellite entitlement barred plmns. The value of this
+     * column is set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_BARRED_PLMNS =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_BARRED_PLMNS;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement data plan for plmns. The value
+     * of this column is set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_DATA_PLAN_PLMNS =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_DATA_PLAN_PLMNS;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement service type map. The value of
+     * this column is set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_SERVICE_TYPE_MAP =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_SERVICE_TYPE_MAP;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement data service policy. The value
+     * of this column is set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_DATA_SERVICE_POLICY =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_DATA_SERVICE_POLICY;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement voice service policy. The value
+     * of this column is set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_VOICE_SERVICE_POLICY =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_VOICE_SERVICE_POLICY;
+
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = {"USAGE_SETTING_"},
@@ -2537,7 +2592,9 @@ public class SubscriptionManager {
      * Get the subscription id for specified logical SIM slot index.
      *
      * @param slotIndex The logical SIM slot index.
-     * @return The subscription id. {@link #INVALID_SUBSCRIPTION_ID} if SIM is absent.
+     * @return The subscription id. {@link SubscriptionManager#INVALID_SUBSCRIPTION_ID} if SIM is
+     * absent. If slotIndex is {@link SubscriptionManager#SLOT_INDEX_FOR_REMOTE_SIM_SUB}, the last
+     * inserted remote SIM subscription id will be returned.
      */
     public static int getSubscriptionId(int slotIndex) {
         if (!isValidSlotIndex(slotIndex)) {
@@ -3471,29 +3528,7 @@ public class SubscriptionManager {
     @SystemApi
     public boolean canManageSubscription(@NonNull SubscriptionInfo info,
             @NonNull String packageName) {
-        if (Flags.hsumPackageManager()) {
-            return canManageSubscriptionAsUser(info, packageName, mContext.getUser());
-        } else {
-            if (info == null || info.getAccessRules() == null || packageName == null) {
-                return false;
-            }
-            PackageManager packageManager = mContext.getPackageManager();
-            PackageInfo packageInfo;
-            try {
-                packageInfo = packageManager.getPackageInfo(packageName,
-                        PackageManager.GET_SIGNING_CERTIFICATES);
-            } catch (PackageManager.NameNotFoundException e) {
-                logd("Unknown package: " + packageName);
-                return false;
-            }
-            for (UiccAccessRule rule : info.getAccessRules()) {
-                if (rule.getCarrierPrivilegeStatus(packageInfo)
-                        == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS) {
-                    return true;
-                }
-            }
-            return false;
-        }
+        return canManageSubscriptionAsUser(info, packageName, mContext.getUser());
     }
 
     /**
@@ -4821,10 +4856,14 @@ public class SubscriptionManager {
                     + "Invalid subscriptionId: " + subscriptionId);
         }
 
+        String contextPkg = mContext != null ? mContext.getOpPackageName() : "<unknown>";
+        String contextAttributionTag = mContext != null ? mContext.getAttributionTag() : null;
+
         try {
             ISub iSub = TelephonyManager.getSubscriptionService();
             if (iSub != null) {
-                return iSub.isSubscriptionAssociatedWithCallingUser(subscriptionId);
+                return iSub.isSubscriptionAssociatedWithCallingUser(subscriptionId, contextPkg,
+                        contextAttributionTag);
             } else {
                 throw new IllegalStateException("subscription service unavailable.");
             }

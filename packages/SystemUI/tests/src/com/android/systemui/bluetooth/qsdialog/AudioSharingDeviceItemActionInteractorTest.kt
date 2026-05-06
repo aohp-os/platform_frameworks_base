@@ -32,7 +32,7 @@ import com.android.systemui.kosmos.testScope
 import com.android.systemui.plugins.activityStarter
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.testKosmos
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -51,11 +51,11 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
 import org.mockito.kotlin.whenever
+import org.mockito.quality.Strictness
 
 @SmallTest
 @RunWith(AndroidTestingRunner::class)
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
-@OptIn(ExperimentalCoroutinesApi::class)
 class AudioSharingDeviceItemActionInteractorTest : SysuiTestCase() {
     @get:Rule val mockitoRule: MockitoRule = MockitoJUnit.rule()
     private val kosmos = testKosmos().apply { testDispatcher = UnconfinedTestDispatcher() }
@@ -71,7 +71,11 @@ class AudioSharingDeviceItemActionInteractorTest : SysuiTestCase() {
     @Before
     fun setUp() {
         mockitoSession =
-            mockitoSession().initMocks(this).mockStatic(BluetoothUtils::class.java).startMocking()
+            mockitoSession()
+                .initMocks(this)
+                .mockStatic(BluetoothUtils::class.java)
+                .strictness(Strictness.LENIENT)
+                .startMocking()
         connectedMediaDeviceItem =
             DeviceItem(
                 type = DeviceItemType.AVAILABLE_MEDIA_BLUETOOTH_DEVICE,
@@ -219,6 +223,40 @@ class AudioSharingDeviceItemActionInteractorTest : SysuiTestCase() {
                         ArgumentMatchers.any(),
                         ArgumentMatchers.anyInt(),
                         ArgumentMatchers.any(),
+                    )
+            }
+        }
+    }
+
+    @Test
+    fun testOnActionIconClick_audioSharingMediaDevice_stopBroadcast() {
+        with(kosmos) {
+            testScope.runTest {
+                bluetoothTileDialogAudioSharingRepository.setAudioSharingAvailable(true)
+                actionInteractorImpl.onActionIconClick(inAudioSharingMediaDeviceItem) {}
+                assertThat(bluetoothTileDialogAudioSharingRepository.audioSharingStarted)
+                    .isEqualTo(false)
+                verify(bluetoothTileDialogLogger)
+                    .logAudioSharingButtonClick(
+                        AudioSharingButtonClick.CHECK_MARK,
+                        inAudioSharingMediaDeviceItem,
+                    )
+            }
+        }
+    }
+
+    @Test
+    fun testOnActionIconClick_availableAudioSharingMediaDevice_startBroadcast() {
+        with(kosmos) {
+            testScope.runTest {
+                bluetoothTileDialogAudioSharingRepository.setAudioSharingAvailable(true)
+                actionInteractorImpl.onActionIconClick(connectedAudioSharingMediaDeviceItem) {}
+                assertThat(bluetoothTileDialogAudioSharingRepository.audioSharingStarted)
+                    .isEqualTo(true)
+                verify(bluetoothTileDialogLogger)
+                    .logAudioSharingButtonClick(
+                        AudioSharingButtonClick.PLUS_BUTTON,
+                        connectedAudioSharingMediaDeviceItem,
                     )
             }
         }

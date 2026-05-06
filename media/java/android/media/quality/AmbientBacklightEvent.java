@@ -37,7 +37,7 @@ public final class AmbientBacklightEvent implements Parcelable {
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({AMBIENT_BACKLIGHT_EVENT_ENABLED, AMBIENT_BACKLIGHT_EVENT_DISABLED,
-            AMBIENT_BACKLIGHT_EVENT_METADATA,
+            AMBIENT_BACKLIGHT_EVENT_METADATA_AVAILABLE,
             AMBIENT_BACKLIGHT_EVENT_INTERRUPTED})
     public @interface Type {}
 
@@ -55,7 +55,7 @@ public final class AmbientBacklightEvent implements Parcelable {
      * Event type for ambient backlight events. The ambient backlight metadata is
      * available.
      */
-    public static final int AMBIENT_BACKLIGHT_EVENT_METADATA = 3;
+    public static final int AMBIENT_BACKLIGHT_EVENT_METADATA_AVAILABLE = 3;
 
     /**
      * Event type for ambient backlight events. The ambient backlight event is preempted by another
@@ -78,7 +78,8 @@ public final class AmbientBacklightEvent implements Parcelable {
 
     private AmbientBacklightEvent(Parcel in) {
         mEventType = in.readInt();
-        mMetadata = in.readParcelable(AmbientBacklightMetadata.class.getClassLoader());
+        mMetadata = in.readParcelable(AmbientBacklightMetadata.class.getClassLoader(),
+                AmbientBacklightMetadata.class);
     }
 
     /**
@@ -93,7 +94,7 @@ public final class AmbientBacklightEvent implements Parcelable {
      * Gets ambient backlight metadata.
      *
      * @return the metadata of the event. It's non-null only for
-     * {@link #AMBIENT_BACKLIGHT_EVENT_METADATA}.
+     * {@link #AMBIENT_BACKLIGHT_EVENT_METADATA_AVAILABLE}.
      */
     @Nullable
     public AmbientBacklightMetadata getMetadata() {

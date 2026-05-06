@@ -18,9 +18,6 @@ package com.android.systemui.qs.tiles;
 
 import static android.media.MediaRouter.ROUTE_TYPE_REMOTE_DISPLAY;
 
-import static com.android.systemui.flags.Flags.SIGNAL_CALLBACK_DEPRECATION;
-
-import android.annotation.NonNull;
 import android.app.Dialog;
 import android.content.Intent;
 import android.media.MediaRouter.RouteInfo;
@@ -29,6 +26,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.service.quicksettings.Tile;
+import android.text.TextUtils;
 import android.util.Log;
 import android.widget.Button;
 
@@ -44,19 +42,18 @@ import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.animation.Expandable;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile.BooleanState;
+import com.android.systemui.plugins.qs.TileDetailsViewModel;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
 import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
+import com.android.systemui.qs.tiles.dialog.CastDetailsViewModel;
 import com.android.systemui.res.R;
-import com.android.systemui.statusbar.connectivity.NetworkController;
-import com.android.systemui.statusbar.connectivity.SignalCallback;
-import com.android.systemui.statusbar.connectivity.WifiIndicators;
+import com.android.systemui.shade.domain.interactor.ShadeDialogContextInteractor;
 import com.android.systemui.statusbar.phone.SystemUIDialog;
 import com.android.systemui.statusbar.pipeline.shared.data.model.DefaultConnectionModel;
 import com.android.systemui.statusbar.pipeline.shared.data.repository.ConnectivityRepository;
@@ -79,18 +76,15 @@ public class CastTile extends QSTileImpl<BooleanState> {
 
     private static final String INTERACTION_JANK_TAG = TILE_SPEC;
 
-    private static final Intent CAST_SETTINGS =
-            new Intent(Settings.ACTION_CAST_SETTINGS);
-
     private final CastController mController;
     private final KeyguardStateController mKeyguard;
-    private final NetworkController mNetworkController;
     private final DialogTransitionAnimator mDialogTransitionAnimator;
     private final Callback mCallback = new Callback();
     private final TileJavaAdapter mJavaAdapter;
-    private final FeatureFlags mFeatureFlags;
+    private final ShadeDialogContextInteractor mShadeDialogContextInteractor;
     private boolean mCastTransportAllowed;
     private boolean mHotspotConnected;
+    private final CastDetailsViewModel.Factory mCastDetailsViewModelFactory;
 
     @Inject
     public CastTile(
@@ -105,32 +99,28 @@ public class CastTile extends QSTileImpl<BooleanState> {
             QSLogger qsLogger,
             CastController castController,
             KeyguardStateController keyguardStateController,
-            NetworkController networkController,
             HotspotController hotspotController,
             DialogTransitionAnimator dialogTransitionAnimator,
             ConnectivityRepository connectivityRepository,
             TileJavaAdapter javaAdapter,
-            FeatureFlags featureFlags
+            ShadeDialogContextInteractor shadeDialogContextInteractor,
+            CastDetailsViewModel.Factory castDetailsViewModelFactory
     ) {
         super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
                 statusBarStateController, activityStarter, qsLogger);
         mController = castController;
         mKeyguard = keyguardStateController;
-        mNetworkController = networkController;
         mDialogTransitionAnimator = dialogTransitionAnimator;
         mJavaAdapter = javaAdapter;
-        mFeatureFlags = featureFlags;
+        mShadeDialogContextInteractor = shadeDialogContextInteractor;
+        mCastDetailsViewModelFactory = castDetailsViewModelFactory;
         mController.observe(this, mCallback);
         mKeyguard.observe(this, mCallback);
-        if (!mFeatureFlags.isEnabled(SIGNAL_CALLBACK_DEPRECATION)) {
-            mNetworkController.observe(this, mSignalCallback);
-        } else {
-            mJavaAdapter.bind(
-                    this,
-                    connectivityRepository.getDefaultConnections(),
-                    mNetworkModelConsumer
-            );
-        }
+        mJavaAdapter.bind(
+                this,
+                connectivityRepository.getDefaultConnections(),
+                mNetworkModelConsumer
+        );
         hotspotController.observe(this, mHotspotCallback);
     }
 
@@ -168,31 +158,50 @@ public class CastTile extends QSTileImpl<BooleanState> {
 
     @Override
     protected void handleClick(@Nullable Expandable expandable) {
+        handleClick(() -> {
+            if (!mKeyguard.isShowing()) {
+                showDialog(expandable);
+            } else {
+                mActivityStarter.postQSRunnableDismissingKeyguard(() -> showDialog(expandable));
+            }
+        });
+    }
+
+    @Override
+    public boolean getDetailsViewModel(Consumer<TileDetailsViewModel> callback) {
+        CastDetailsViewModel viewModel = mCastDetailsViewModelFactory
+                .create(mShadeDialogContextInteractor.getContext(), ROUTE_TYPE_REMOTE_DISPLAY);
+        handleClick(() -> {
+            if (!mKeyguard.isShowing()) {
+                callback.accept(viewModel);
+            } else {
+                mActivityStarter.dismissKeyguardThenExecute(() -> {
+                    callback.accept(viewModel);
+                    return false;
+                },  null /* cancelAction */,  true/* afterKeyguardGone */);
+            }
+        });
+        return true;
+    }
+
+    private void handleClick(Runnable showPromptCallback) {
         if (getState().state == Tile.STATE_UNAVAILABLE) {
             return;
         }
 
         List<CastDevice> activeDevices = getActiveDevices();
-        if (willPopDialog()) {
-            if (!mKeyguard.isShowing()) {
-                showDialog(expandable);
-            } else {
-                mActivityStarter.postQSRunnableDismissingKeyguard(() -> {
-                    // Dismissing the keyguard will collapse the shade, so we don't animate from the
-                    // view here as it would not look good.
-                    showDialog(null /* view */);
-                });
-            }
+        if (willShowPrompt()) {
+            showPromptCallback.run();
         } else {
             mController.stopCasting(activeDevices.get(0), StopReason.STOP_QS_TILE);
         }
     }
 
-    // We want to pop up the media route selection dialog if we either have no active devices
-    // (neither routes nor projection), or if we have an active route. In other cases, we assume
-    // that a projection is active. This is messy, but this tile never correctly handled the
-    // case where multiple devices were active :-/.
-    private boolean willPopDialog() {
+    // We want to pop up the media route selection dialog (or show the cast details view) if we
+    // either have no active devices (neither routes nor projection), or if we have an active
+    // route. In other cases, we assume that a projection is active. This is messy, but this tile
+    // never correctly handled the case where multiple devices were active :-/.
+    private boolean willShowPrompt() {
         List<CastDevice> activeDevices = getActiveDevices();
         return activeDevices.isEmpty() || (activeDevices.get(0).getTag() instanceof RouteInfo);
     }
@@ -220,7 +229,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
         mUiHandler.post(() -> {
             final DialogHolder holder = new DialogHolder();
             final Dialog dialog = MediaRouteDialogPresenter.createDialog(
-                    mContext,
+                    mShadeDialogContextInteractor.getContext(),
                     ROUTE_TYPE_REMOTE_DISPLAY,
                     v -> {
                         ActivityTransitionAnimator.Controller controller =
@@ -269,7 +278,7 @@ public class CastTile extends QSTileImpl<BooleanState> {
     protected void handleUpdateState(BooleanState state, Object arg) {
         state.label = mContext.getString(R.string.quick_settings_cast_title);
         state.contentDescription = state.label;
-        state.stateDescription = "";
+        ArrayList<CharSequence> stateDescriptionParts = new ArrayList<>();
         state.value = false;
         final List<CastDevice> devices = mController.getCastDevices();
         boolean connecting = false;
@@ -279,9 +288,8 @@ public class CastTile extends QSTileImpl<BooleanState> {
             if (device.getState() == CastDevice.CastState.Connected) {
                 state.value = true;
                 state.secondaryLabel = getDeviceName(device);
-                state.stateDescription = state.stateDescription + ","
-                        + mContext.getString(
-                        R.string.accessibility_cast_name, state.label);
+                stateDescriptionParts
+                        .add(mContext.getString(R.string.accessibility_cast_name, state.label));
                 connecting = false;
                 break;
             } else if (device.getState() == CastDevice.CastState.Connecting) {
@@ -299,14 +307,17 @@ public class CastTile extends QSTileImpl<BooleanState> {
                 state.secondaryLabel = "";
             }
             state.expandedAccessibilityClassName = Button.class.getName();
-            state.forceExpandIcon = willPopDialog();
+            state.forceExpandIcon = willShowPrompt();
         } else {
             state.state = Tile.STATE_UNAVAILABLE;
             String noWifi = mContext.getString(R.string.quick_settings_cast_no_network);
             state.secondaryLabel = noWifi;
             state.forceExpandIcon = false;
         }
-        state.stateDescription = state.stateDescription + ", " + state.secondaryLabel;
+        if (!TextUtils.isEmpty(state.secondaryLabel)) {
+            stateDescriptionParts.add(state.secondaryLabel);
+        }
+        state.stateDescription = String.join(", ", stateDescriptionParts);
     }
 
     @Override
@@ -348,16 +359,6 @@ public class CastTile extends QSTileImpl<BooleanState> {
         boolean isEthernetDefault = model.getEthernet().isDefault();
         boolean hasCellularTransport = model.getMobile().isDefault();
         setCastTransportAllowed((isWifiDefault || isEthernetDefault) && !hasCellularTransport);
-    };
-
-    private final SignalCallback mSignalCallback = new SignalCallback() {
-        @Override
-        public void setWifiIndicators(@NonNull WifiIndicators indicators) {
-            // statusIcon.visible has the connected status information
-            boolean enabledAndConnected = indicators.enabled
-                    && (indicators.qsIcon != null && indicators.qsIcon.visible);
-            setCastTransportAllowed(enabledAndConnected);
-        }
     };
 
     private final HotspotController.Callback mHotspotCallback =

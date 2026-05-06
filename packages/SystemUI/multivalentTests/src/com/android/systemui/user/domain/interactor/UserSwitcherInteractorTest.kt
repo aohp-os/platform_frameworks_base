@@ -27,6 +27,8 @@ import android.graphics.drawable.Drawable
 import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.provider.Settings
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
@@ -34,6 +36,7 @@ import com.android.internal.logging.UiEventLogger
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.systemui.Flags as AConfigFlags
+import com.android.systemui.Flags.FLAG_USER_SWITCHER_ADD_SIGN_OUT_OPTION
 import com.android.systemui.GuestResetOrExitSessionReceiver
 import com.android.systemui.GuestResumeSessionReceiver
 import com.android.systemui.SysuiTestCase
@@ -68,7 +71,7 @@ import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import junit.framework.Assert.assertNotNull
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
@@ -87,7 +90,6 @@ import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class UserSwitcherInteractorTest : SysuiTestCase() {
@@ -103,10 +105,13 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
     @Mock private lateinit var resumeSessionReceiver: GuestResumeSessionReceiver
     @Mock private lateinit var resetOrExitSessionReceiver: GuestResetOrExitSessionReceiver
     @Mock private lateinit var keyguardUpdateMonitor: KeyguardUpdateMonitor
+    @Mock private lateinit var userLogoutInteractor: UserLogoutInteractor
 
     private val kosmos = testKosmos()
+    private val logoutEnabledStateFlow = MutableStateFlow<Boolean>(false)
     private val testScope = kosmos.testScope
     private lateinit var spyContext: Context
+
     private lateinit var userRepository: FakeUserRepository
     private lateinit var keyguardReply: KeyguardInteractorFactory.WithDependencies
     private lateinit var keyguardRepository: FakeKeyguardRepository
@@ -119,6 +124,8 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
         MockitoAnnotations.initMocks(this)
         whenever(manager.getUserIcon(anyInt())).thenReturn(ICON)
         whenever(manager.canAddMoreUsers(any())).thenReturn(true)
+
+        whenever(userLogoutInteractor.isLogoutEnabled).thenReturn(logoutEnabledStateFlow)
 
         overrideResource(com.android.settingslib.R.drawable.ic_account_circle, GUEST_ICON)
         overrideResource(R.dimen.max_avatar_size, 10)
@@ -150,8 +157,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
 
     @Test
     fun createUserInteractor_nonProcessUser_startsSecondaryService() {
-        val userId = Process.myUserHandle().identifier + 1
-        whenever(manager.aliveUsers).thenReturn(listOf(createUserInfo(userId, "abc")))
+        whenever(manager.isUserRunning(anyInt())).thenReturn(true)
 
         createUserInteractor(false /* startAsProcessUser */)
         verify(spyContext).startServiceAsUser(any(), any())
@@ -495,6 +501,42 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
     }
 
     @Test
+    @DisableFlags(FLAG_USER_SWITCHER_ADD_SIGN_OUT_OPTION)
+    fun actions_logoutEnabled_flagDisabled_signOutIsNotShown() {
+        createUserInteractor()
+        testScope.runTest {
+            val userInfos = createUserInfos(count = 1, includeGuest = false)
+            userRepository.setUserInfos(userInfos)
+            userRepository.setSelectedUserInfo(userInfos[0])
+            userRepository.setSettings(UserSwitcherSettingsModel(isUserSwitcherEnabled = false))
+            keyguardRepository.setKeyguardShowing(true)
+            logoutEnabledStateFlow.value = true
+
+            val value = collectLastValue(underTest.actions)
+
+            assertThat(value()).isEqualTo(emptyList<UserActionModel>())
+        }
+    }
+
+    @Test
+    @EnableFlags(FLAG_USER_SWITCHER_ADD_SIGN_OUT_OPTION)
+    fun actions_logoutEnabled_flagEnabled_signOutIsShown() {
+        createUserInteractor()
+        testScope.runTest {
+            val userInfos = createUserInfos(count = 1, includeGuest = false)
+            userRepository.setUserInfos(userInfos)
+            userRepository.setSelectedUserInfo(userInfos[0])
+            userRepository.setSettings(UserSwitcherSettingsModel(isUserSwitcherEnabled = false))
+            keyguardRepository.setKeyguardShowing(true)
+            logoutEnabledStateFlow.value = true
+
+            val value = collectLastValue(underTest.actions)
+
+            assertThat(value()).isEqualTo(listOf(UserActionModel.SIGN_OUT))
+        }
+    }
+
+    @Test
     fun executeAction_addUser_dismissesDialogAndStartsActivity() {
         createUserInteractor()
         testScope.runTest {
@@ -571,10 +613,19 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             verify(uiEventLogger, times(1))
                 .log(MultiUserActionsEvent.CREATE_GUEST_FROM_USER_SWITCHER)
             assertThat(dialogRequests)
-                .contains(
-                    ShowDialogRequestModel.ShowUserCreationDialog(isGuest = true),
-                )
+                .contains(ShowDialogRequestModel.ShowUserCreationDialog(isGuest = true))
             verify(activityManager).switchUser(guestUserInfo.id)
+        }
+    }
+
+    @Test
+    fun executeAction_signOut() {
+        createUserInteractor()
+        testScope.runTest {
+            underTest.executeAction(UserActionModel.SIGN_OUT)
+            runCurrent()
+
+            verify(userLogoutInteractor).logOut()
         }
     }
 
@@ -658,7 +709,9 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
     fun userSwitchedBroadcast() {
         testScope.runTest {
             val userInfos = createUserInfos(count = 2, includeGuest = false)
-            whenever(manager.aliveUsers).thenReturn(userInfos)
+            for (userInfo in userInfos) {
+                whenever(manager.isUserRunning(eq(userInfo.id))).thenReturn(true)
+            }
             createUserInteractor()
             userRepository.setUserInfos(userInfos)
             userRepository.setSelectedUserInfo(userInfos[0])
@@ -741,7 +794,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
 
             fakeBroadcastDispatcher.sendIntentToMatchingReceiversOnly(
                 spyContext,
-                Intent(Intent.ACTION_LOCALE_CHANGED)
+                Intent(Intent.ACTION_LOCALE_CHANGED),
             )
             runCurrent()
 
@@ -945,6 +998,48 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
     }
 
     @Test
+    fun showUserSwitcher_fullScreenDisabled_propagatesCustomContext() {
+        createUserInteractor()
+        testScope.runTest {
+            val expandable = mock<Expandable>()
+            val context = mock<Context>()
+            underTest.showUserSwitcher(expandable, context)
+
+            val dialogRequest = collectLastValue(underTest.dialogShowRequests)
+
+            // Dialog is shown.
+            assertThat(dialogRequest())
+                .isEqualTo(ShowDialogRequestModel.ShowUserSwitcherDialog(expandable, context))
+
+            underTest.onDialogShown()
+            assertThat(dialogRequest()).isNull()
+        }
+    }
+
+    @Test
+    fun showUserSwitcher_fullScreenEnabled_propagatesCustomContext() {
+        createUserInteractor()
+        testScope.runTest {
+            kosmos.fakeFeatureFlagsClassic.set(Flags.FULL_SCREEN_USER_SWITCHER, true)
+
+            val expandable = mock<Expandable>()
+            val context = mock<Context>()
+            underTest.showUserSwitcher(expandable, context)
+
+            val dialogRequest = collectLastValue(underTest.dialogShowRequests)
+
+            // Dialog is shown.
+            assertThat(dialogRequest())
+                .isEqualTo(
+                    ShowDialogRequestModel.ShowUserSwitcherFullscreenDialog(expandable, context)
+                )
+
+            underTest.onDialogShown()
+            assertThat(dialogRequest()).isNull()
+        }
+    }
+
+    @Test
     fun showUserSwitcher_fullScreenEnabled_launchesFullScreenDialog() {
         createUserInteractor()
         testScope.runTest {
@@ -974,7 +1069,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
                     50,
                     "Work Profile",
                     /* iconPath= */ "",
-                    /* flags= */ UserInfo.FLAG_MANAGED_PROFILE
+                    /* flags= */ UserInfo.FLAG_MANAGED_PROFILE,
                 )
             )
             userRepository.setUserInfos(userInfos)
@@ -994,8 +1089,13 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             userRepository.setUserInfos(userInfos)
             userRepository.setSelectedUserInfo(userInfos[1])
             userRepository.setSettings(UserSwitcherSettingsModel(isUserSwitcherEnabled = false))
+
             val selectedUser = collectLastValue(underTest.selectedUser)
-            assertThat(selectedUser()).isNotNull()
+            assertUser(selectedUser(), id = 1, isSelected = true)
+
+            val users = collectLastValue(underTest.users)
+            assertThat(users()?.size == 1).isTrue()
+            assertUser(users()?.firstOrNull(), id = 1, isSelected = true)
         }
     }
 
@@ -1012,7 +1112,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             userRepository.setSettings(
                 UserSwitcherSettingsModel(
                     isUserSwitcherEnabled = true,
-                    isAddUsersFromLockscreen = true
+                    isAddUsersFromLockscreen = true,
                 )
             )
 
@@ -1036,7 +1136,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             userRepository.setSettings(
                 UserSwitcherSettingsModel(
                     isUserSwitcherEnabled = true,
-                    isAddUsersFromLockscreen = true
+                    isAddUsersFromLockscreen = true,
                 )
             )
 
@@ -1048,8 +1148,8 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
     }
 
     @Test
-    fun initWithNoAliveUsers() {
-        whenever(manager.aliveUsers).thenReturn(listOf())
+    fun initWithNoRunningUsers() {
+        whenever(manager.isUserRunning(anyInt())).thenReturn(false)
         createUserInteractor()
         verify(spyContext, never()).startServiceAsUser(any(), any())
     }
@@ -1070,7 +1170,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             whenever(
                     manager.hasUserRestrictionForUser(
                         UserManager.DISALLOW_ADD_USER,
-                        UserHandle.of(id)
+                        UserHandle.of(id),
                     )
                 )
                 .thenReturn(true)
@@ -1172,7 +1272,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
             whenever(
                     manager.hasUserRestrictionForUser(
                         UserManager.DISALLOW_ADD_USER,
-                        UserHandle.of(0)
+                        UserHandle.of(0),
                     )
                 )
                 .thenReturn(true)
@@ -1197,7 +1297,7 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
                 model = model,
                 id = index,
                 isSelected = index == selectedIndex,
-                isGuest = includeGuest && index == count - 1
+                isGuest = includeGuest && index == count - 1,
             )
         }
     }
@@ -1265,14 +1365,12 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
         assertThat(record.isSwitchToEnabled).isEqualTo(isSwitchToEnabled)
     }
 
-    private fun assertRecordForAction(
-        record: UserRecord,
-        type: UserActionModel,
-    ) {
+    private fun assertRecordForAction(record: UserRecord, type: UserActionModel) {
         assertThat(record.isGuest).isEqualTo(type == UserActionModel.ENTER_GUEST_MODE)
         assertThat(record.isAddUser).isEqualTo(type == UserActionModel.ADD_USER)
         assertThat(record.isAddSupervisedUser)
             .isEqualTo(type == UserActionModel.ADD_SUPERVISED_USER)
+        assertThat(record.isSignOut).isEqualTo(type === UserActionModel.SIGN_OUT)
     }
 
     private fun createUserInteractor(startAsProcessUser: Boolean = true) {
@@ -1319,13 +1417,11 @@ class UserSwitcherInteractorTest : SysuiTestCase() {
                 featureFlags = kosmos.fakeFeatureFlagsClassic,
                 userRestrictionChecker = mock(),
                 processWrapper = kosmos.processWrapper,
+                userLogoutInteractor = userLogoutInteractor,
             )
     }
 
-    private fun createUserInfos(
-        count: Int,
-        includeGuest: Boolean,
-    ): List<UserInfo> {
+    private fun createUserInfos(count: Int, includeGuest: Boolean): List<UserInfo> {
         return (0 until count).map { index ->
             val isGuest = includeGuest && index == count - 1
             createUserInfo(

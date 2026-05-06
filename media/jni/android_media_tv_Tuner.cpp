@@ -701,6 +701,9 @@ void FilterClientCallbackImpl::getMediaEvent(const jobjectArray& arr, const int 
 
     // Protect mFilterClient from being set to null.
     android::Mutex::Autolock autoLock(mLock);
+    if (mFilterClient == nullptr) {
+        return;
+    }
     uint64_t avSharedMemSize = mFilterClient->getAvSharedHandleInfo().size;
     if (mediaEvent.avMemory.fds.size() > 0 || mediaEvent.avDataId != 0 ||
         (dataLength > 0 && (dataLength + offset) < avSharedMemSize)) {
@@ -868,10 +871,18 @@ void FilterClientCallbackImpl::getRestartEvent(const jobjectArray& arr, const in
 void FilterClientCallbackImpl::onFilterEvent(const vector<DemuxFilterEvent> &events) {
     ALOGV("FilterClientCallbackImpl::onFilterEvent");
     JNIEnv *env = AndroidRuntime::getJNIEnv();
+
     ScopedLocalRef<jobjectArray> array(env);
 
     if (!events.empty()) {
         array.reset(env->NewObjectArray(events.size(), mEventClass, nullptr));
+        if (env->IsSameObject(array.get(), nullptr)) {
+            // It can happen when FilterClientCallbackImpl release the resource
+            // in another thread.
+            ALOGE("FilterClientCallbackImpl::onFilterEvent:"
+                  "Unable to create object array of filter events. Ignoring callback.");
+            return;
+        }
     }
 
     for (int i = 0, arraySize = 0; i < events.size(); i++) {
@@ -1070,14 +1081,15 @@ FilterClientCallbackImpl::FilterClientCallbackImpl() {
 
 FilterClientCallbackImpl::~FilterClientCallbackImpl() {
     JNIEnv *env = AndroidRuntime::getJNIEnv();
-    {
-        android::Mutex::Autolock autoLock(mLock);
-        if (mFilterObj != nullptr) {
-            env->DeleteWeakGlobalRef(mFilterObj);
-            mFilterObj = nullptr;
-        }
-        mFilterClient = nullptr;
+
+    android::Mutex::Autolock autoLock(mLock);
+
+    if (mFilterObj != nullptr) {
+        env->DeleteWeakGlobalRef(mFilterObj);
+        mFilterObj = nullptr;
     }
+    mFilterClient = nullptr;
+
     env->DeleteGlobalRef(mEventClass);
     env->DeleteGlobalRef(mSectionEventClass);
     env->DeleteGlobalRef(mMediaEventClass);
@@ -2590,9 +2602,13 @@ jobject JTuner::getFrontendStatus(jintArray types) {
                 jfieldID field = env->GetFieldID(clazz, "mCodeRates", "[I");
                 std::vector<FrontendInnerFec> v = s.get<FrontendStatus::Tag::codeRates>();
 
-                ScopedLocalRef valObj(env, env->NewIntArray(v.size()));
-                env->SetIntArrayRegion(valObj.get(), 0, v.size(), reinterpret_cast<jint *>(&v[0]));
-
+                //Short-term fix for frontend status coderates not retrieved correctly.
+                ScopedLocalRef<jintArray> valObj(env, env->NewIntArray(v.size()));
+                std::vector<jint> temp(v.size());
+                for (size_t i = 0; i < v.size(); i++) {
+                    temp[i] = static_cast<jint>(v[i]);
+                }
+                env->SetIntArrayRegion(valObj.get(), 0, v.size(), temp.data());
                 env->SetObjectField(statusObj, field, valObj.get());
                 break;
             }

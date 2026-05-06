@@ -28,6 +28,8 @@ import com.android.internal.widget.remotecompose.core.documentation.Documentatio
 import com.android.internal.widget.remotecompose.core.operations.Utils;
 import com.android.internal.widget.remotecompose.core.operations.layout.Component;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -61,12 +63,18 @@ public class OffsetModifierOperation extends DecoratorModifierOperation {
     }
 
     @Override
-    public void write(WireBuffer buffer) {
+    public void write(@NonNull WireBuffer buffer) {
         apply(buffer, mX, mY);
     }
 
-    // @Override
-    public void serializeToString(int indent, StringSerializer serializer) {
+    /**
+     * Serialize the string
+     *
+     * @param indent padding to display
+     * @param serializer append the string
+     */
+    @Override
+    public void serializeToString(int indent, @NonNull StringSerializer serializer) {
         serializer.append(indent, "OFFSET = [" + mX + ", " + mY + "]");
     }
 
@@ -77,7 +85,7 @@ public class OffsetModifierOperation extends DecoratorModifierOperation {
     }
 
     @Override
-    public void paint(PaintContext context) {
+    public void paint(@NonNull PaintContext context) {
         float x = context.getContext().mRemoteComposeState.getFloat(Utils.idFromNan(mX));
         float y = context.getContext().mRemoteComposeState.getFloat(Utils.idFromNan(mY));
         float density = context.getContext().getDensity();
@@ -110,19 +118,37 @@ public class OffsetModifierOperation extends DecoratorModifierOperation {
         return OP_CODE;
     }
 
-    public static void apply(WireBuffer buffer, float x, float y) {
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     * @param x x offset
+     * @param y y offset
+     */
+    public static void apply(@NonNull WireBuffer buffer, float x, float y) {
         buffer.start(OP_CODE);
         buffer.writeFloat(x);
         buffer.writeFloat(y);
     }
 
-    public static void read(WireBuffer buffer, List<Operation> operations) {
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations that will be added to
+     */
+    public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         float x = buffer.readFloat();
         float y = buffer.readFloat();
         operations.add(new OffsetModifierOperation(x, y));
     }
 
-    public static void documentation(DocumentationBuilder doc) {
+    /**
+     * Populate the documentation with a description of this operation
+     *
+     * @param doc to append the description to.
+     */
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Modifier Operations", OP_CODE, CLASS_NAME)
                 .description("define the Offset Modifier")
                 .field(FLOAT, "x", "")
@@ -130,5 +156,18 @@ public class OffsetModifierOperation extends DecoratorModifierOperation {
     }
 
     @Override
-    public void layout(RemoteContext context, Component component, float width, float height) {}
+    public void layout(
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {}
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("OffsetModifierOperation")
+                .add("x", mX)
+                .add("y", mY);
+    }
 }

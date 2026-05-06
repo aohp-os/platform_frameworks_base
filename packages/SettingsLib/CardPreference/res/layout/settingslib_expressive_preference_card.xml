@@ -14,9 +14,13 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 -->
-<com.google.android.material.card.MaterialCardView
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    style="@style/SettingsLibCardStyle">
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd"
+    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
+    android:paddingVertical="@dimen/settingslib_expressive_space_extrasmall4">
 
     <LinearLayout
         android:id="@+id/card_container"
@@ -25,9 +29,10 @@
         android:baselineAligned="false"
         android:minHeight="@dimen/settingslib_expressive_space_large3"
         android:paddingStart="@dimen/settingslib_expressive_space_small1"
-        android:paddingEnd="@dimen/settingslib_expressive_space_small1"
+        android:paddingEnd="@dimen/settingslib_expressive_space_extrasmall6"
         android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:background="@drawable/settingslib_card_preference_background">
 
         <LinearLayout
             android:id="@+id/icon_frame"
@@ -35,16 +40,13 @@
             android:layout_height="wrap_content"
             android:minWidth="@dimen/settingslib_expressive_space_medium3"
             android:minHeight="@dimen/settingslib_expressive_space_medium3"
-            android:gravity="center"
-            android:orientation="horizontal">
-
+            android:gravity="center">
             <ImageView
                 android:id="@android:id/icon"
-                android:src="@drawable/settingslib_arrow_drop_down"
                 android:layout_width="@dimen/settingslib_expressive_space_medium3"
                 android:layout_height="@dimen/settingslib_expressive_space_medium3"
-                android:scaleType="centerInside"/>
-
+                android:scaleType="centerInside"
+                android:importantForAccessibility="no"/>
         </LinearLayout>
 
         <LinearLayout
@@ -52,37 +54,29 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:paddingHorizontal="@dimen/settingslib_expressive_space_small1"
-            android:paddingVertical="@dimen/settingslib_expressive_space_small2"
+            android:paddingStart="@dimen/settingslib_expressive_space_extrasmall6"
+            android:paddingVertical="@dimen/settingslib_expressive_space_small1"
             android:orientation="vertical">
-
             <TextView
                 android:id="@android:id/title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hyphenationFrequency="normalFast"
-                android:lineBreakWordStyle="phrase"
-                android:textAppearance="@style/TextAppearance.CardTitle.SettingsLib"/>
-
+                android:textAppearance="@style/TextAppearance.CardTitle.SettingsLib" />
             <TextView
                 android:id="@android:id/summary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hyphenationFrequency="normalFast"
-                android:lineBreakWordStyle="phrase"
-                android:textAppearance="@style/TextAppearance.CardSummary.SettingsLib"/>
-
+                android:textAppearance="@style/TextAppearance.CardSummary.SettingsLib" />
         </LinearLayout>
 
         <ImageView
-            android:id="@android:id/closeButton"
+            android:id="@android:id/icon1"
             android:layout_width="@dimen/settingslib_expressive_space_medium4"
             android:layout_height="@dimen/settingslib_expressive_space_medium4"
             android:padding="@dimen/settingslib_expressive_space_extrasmall4"
             android:layout_gravity="center"
-            android:src="@drawable/settingslib_expressive_icon_close"
-            android:background="?android:attr/selectableItemBackground" />
+            android:scaleType="centerInside"
+            android:tint="@color/settingslib_materialColorSecondary" />
 
     </LinearLayout>
-
-</com.google.android.material.card.MaterialCardView>
+</LinearLayout>

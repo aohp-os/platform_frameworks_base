@@ -16,9 +16,7 @@
 
 package com.android.wm.shell.compatui.impl
 
-
 import android.graphics.Point
-import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import android.testing.AndroidTestingRunner
 import android.view.View
 import androidx.test.filters.SmallTest
@@ -29,24 +27,19 @@ import com.android.wm.shell.compatui.api.CompatUISpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
  * Tests for {@link DefaultCompatUIRepository}.
  *
- * Build/Install/Run:
- *  atest WMShellUnitTests:DefaultCompatUIRepositoryTest
+ * Build/Install/Run: atest WMShellUnitTests:DefaultCompatUIRepositoryTest
  */
 @RunWith(AndroidTestingRunner::class)
 @SmallTest
 class DefaultCompatUIRepositoryTest {
 
     lateinit var repository: CompatUIRepository
-
-    @get:Rule
-    val mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()
 
     @Before
     fun setUp() {
@@ -65,12 +58,14 @@ class DefaultCompatUIRepositoryTest {
             addSpec(specById("one"))
             addSpec(specById("two"))
             addSpec(specById("three"))
-            val consumer = object : (CompatUISpec) -> Unit {
-                var acc = ""
-                override fun invoke(spec: CompatUISpec) {
-                    acc += spec.name
+            val consumer =
+                object : (CompatUISpec) -> Unit {
+                    var acc = ""
+
+                    override fun invoke(spec: CompatUISpec) {
+                        acc += spec.name
+                    }
                 }
-            }
             iterateOn(consumer)
             assertEquals("onetwothree", consumer.acc)
         }
@@ -93,14 +88,17 @@ class DefaultCompatUIRepositoryTest {
     }
 
     private fun specById(name: String): CompatUISpec =
-        CompatUISpec(name = name,
-            lifecycle = CompatUILifecyclePredicates(
-                creationPredicate = { _, _ -> true },
-                removalPredicate = { _, _, _ -> true }
-            ),
-            layout = CompatUILayout(
-                viewBuilder = { ctx, _, _ -> View(ctx) },
-                positionFactory = { _, _, _, _ -> Point(0, 0) }
-            )
+        CompatUISpec(
+            name = name,
+            lifecycle =
+                CompatUILifecyclePredicates(
+                    creationPredicate = { _, _ -> true },
+                    removalPredicate = { _, _, _ -> true },
+                ),
+            layout =
+                CompatUILayout(
+                    viewBuilder = { ctx, _, _ -> View(ctx) },
+                    positionFactory = { _, _, _, _ -> Point(0, 0) },
+                ),
         )
 }

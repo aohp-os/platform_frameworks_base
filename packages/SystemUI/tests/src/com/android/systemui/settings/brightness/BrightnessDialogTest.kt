@@ -134,10 +134,7 @@ class BrightnessDialogTest(val flags: FlagsParameterization) : SysuiTestCase() {
         val frame = activityRule.activity.requireViewById<View>(viewId)
 
         val lp = frame.layoutParams as ViewGroup.MarginLayoutParams
-        val horizontalMargin =
-            activityRule.activity.resources.getDimensionPixelSize(
-                R.dimen.notification_side_paddings
-            )
+        val horizontalMargin = 0
         assertThat(lp.leftMargin).isEqualTo(horizontalMargin)
         assertThat(lp.rightMargin).isEqualTo(horizontalMargin)
 
@@ -183,7 +180,7 @@ class BrightnessDialogTest(val flags: FlagsParameterization) : SysuiTestCase() {
 
         clock.advanceTime(BrightnessDialog.DIALOG_TIMEOUT_MILLIS.toLong() / 2)
         // Restart the timeout
-        activityRule.activity.onResume()
+        activityRule.runOnUiThread { activityRule.activity.onResume() }
 
         clock.advanceTime(BrightnessDialog.DIALOG_TIMEOUT_MILLIS.toLong() / 2)
         // The dialog should not have disappeared yet

@@ -15,7 +15,7 @@
  */
 package com.android.ravenwoodtest;
 
-import android.platform.test.annotations.IgnoreUnderRavenwood;
+import android.platform.test.annotations.DisabledOnRavenwood;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
@@ -37,13 +37,8 @@ public class RavenwoodMinimumTest {
     }
 
     @Test
-    @IgnoreUnderRavenwood
+    @DisabledOnRavenwood
     public void testIgnored() {
-        throw new RuntimeException("Shouldn't be executed under ravenwood");
-    }
-
-    @Test
-    public void testIgnored$noRavenwood() {
         throw new RuntimeException("Shouldn't be executed under ravenwood");
     }
 }

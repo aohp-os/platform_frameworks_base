@@ -18,7 +18,8 @@ package com.android.server.pm;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.content.pm.Flags;
+import android.annotation.SpecialUsers.CanBeALL;
+import android.annotation.UserIdInt;
 import android.content.pm.PackageManager;
 
 import dalvik.system.CloseGuard;
@@ -60,12 +61,12 @@ final class PackageFreezer implements AutoCloseable {
         }
     }
 
-    PackageFreezer(String packageName, int userId, String killReason,
+    PackageFreezer(String packageName, @CanBeALL @UserIdInt int userId, String killReason,
             PackageManagerService pm, int exitInfoReason, @Nullable InstallRequest request) {
         this(packageName, userId, killReason, pm, exitInfoReason, request, false);
     }
 
-    PackageFreezer(String packageName, int userId, String killReason,
+    PackageFreezer(String packageName, @CanBeALL @UserIdInt int userId, String killReason,
             PackageManagerService pm, int exitInfoReason, @Nullable InstallRequest request,
             boolean waitAppKilled) {
         mPm = pm;
@@ -83,7 +84,7 @@ final class PackageFreezer implements AutoCloseable {
             ps = mPm.mSettings.getPackageLPr(mPackageName);
         }
         if (ps != null) {
-            if (waitAppKilled && Flags.waitApplicationKilled()) {
+            if (waitAppKilled) {
                 mPm.killApplicationSync(ps.getPackageName(), ps.getAppId(), userId, killReason,
                         exitInfoReason);
             } else {

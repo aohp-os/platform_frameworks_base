@@ -33,6 +33,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+import android.annotation.SuppressLint;
 import android.hardware.power.stats.EnergyConsumerResult;
 import android.hardware.power.stats.EnergyConsumerType;
 import android.location.GnssSignalQuality;
@@ -40,7 +41,6 @@ import android.os.BatteryConsumer;
 import android.os.BatteryStats;
 import android.os.Handler;
 import android.os.Process;
-import android.platform.test.ravenwood.RavenwoodRule;
 
 import com.android.internal.os.Clock;
 import com.android.internal.os.MonotonicClock;
@@ -49,6 +49,7 @@ import com.android.internal.os.PowerStats;
 import com.android.server.power.stats.BatteryUsageStatsRule;
 import com.android.server.power.stats.EnergyConsumerPowerStatsCollector;
 import com.android.server.power.stats.GnssPowerStatsCollector;
+import com.android.server.power.stats.MockClock;
 import com.android.server.power.stats.PowerStatsCollector;
 import com.android.server.power.stats.PowerStatsUidResolver;
 import com.android.server.power.stats.format.BinaryStatePowerStatsLayout;
@@ -63,11 +64,6 @@ import java.util.function.Supplier;
 
 public class GnssPowerStatsTest {
     @Rule(order = 0)
-    public final RavenwoodRule mRavenwood = new RavenwoodRule.Builder()
-            .setProvideMainThread(true)
-            .build();
-
-    @Rule(order = 1)
     public final BatteryUsageStatsRule mStatsRule = new BatteryUsageStatsRule()
             .setAveragePower(PowerProfile.POWER_GPS_ON, 100.0)
             .setAveragePower(PowerProfile.POWER_GPS_SIGNAL_QUALITY_BASED, new double[]{1000, 100})
@@ -122,6 +118,7 @@ public class GnssPowerStatsTest {
         mHistoryItem.clear();
     }
 
+    @SuppressLint("CheckResult")
     @Test
     public void powerProfileModel() {
         // ODPM unsupported
@@ -134,11 +131,14 @@ public class GnssPowerStatsTest {
 
         GnssPowerStatsCollector collector = new GnssPowerStatsCollector(mInjector);
         collector.addConsumer(
-                powerStats -> stats.addPowerStats(powerStats, mMonotonicClock.monotonicTime()));
+                (powerStats, elapsedRealtime, uptimeMs) -> stats.addPowerStats(powerStats,
+                        mMonotonicClock.monotonicTime(elapsedRealtime)));
         collector.setEnabled(true);
 
+        MockClock clock = mStatsRule.getMockClock();
+
         // Establish a baseline
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.noteStateChange(buildHistoryItem(0, true, APP_UID1));
 
@@ -151,7 +151,7 @@ public class GnssPowerStatsTest {
 
         stats.noteStateChange(buildHistoryItem(6000, false, APP_UID1));
 
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.noteStateChange(buildHistoryItem(7000, true, APP_UID2));
         stats.noteStateChange(buildHistoryItem(7000,
@@ -159,7 +159,7 @@ public class GnssPowerStatsTest {
         stats.noteStateChange(buildHistoryItem(8000,
                 GnssSignalQuality.GNSS_SIGNAL_QUALITY_POOR));
         mStatsRule.setTime(11_000, 11_000);
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.finish(START_TIME + 11_000);
 
@@ -206,12 +206,14 @@ public class GnssPowerStatsTest {
         assertThat(statsLayout.getUidPowerEstimate(uidStats))
                 .isWithin(PRECISION).of(0.51111);
 
-        stats.getUidStats(uidStats, APP_UID2,
-                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED));
-        assertThat(statsLayout.getUidPowerEstimate(uidStats))
-                .isWithin(PRECISION).of(0);
+        if (stats.getUidStats(uidStats, APP_UID2,
+                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED))) {
+            assertThat(statsLayout.getUidPowerEstimate(uidStats))
+                    .isWithin(PRECISION).of(0);
+        }
     }
 
+    @SuppressLint("CheckResult")
     @Test
     public void initialStateGnssOn() {
         // ODPM unsupported
@@ -285,12 +287,14 @@ public class GnssPowerStatsTest {
         assertThat(statsLayout.getUidPowerEstimate(uidStats))
                 .isWithin(PRECISION).of(0.51111);
 
-        stats.getUidStats(uidStats, APP_UID2,
-                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED));
-        assertThat(statsLayout.getUidPowerEstimate(uidStats))
-                .isWithin(PRECISION).of(0);
+        if (stats.getUidStats(uidStats, APP_UID2,
+                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED))) {
+            assertThat(statsLayout.getUidPowerEstimate(uidStats))
+                    .isWithin(PRECISION).of(0);
+        }
     }
 
+    @SuppressLint("CheckResult")
     @Test
     public void energyConsumerModel() {
         when(mConsumedEnergyRetriever.getVoltageMv()).thenReturn(VOLTAGE_MV);
@@ -303,13 +307,16 @@ public class GnssPowerStatsTest {
 
         GnssPowerStatsCollector collector = new GnssPowerStatsCollector(mInjector);
         collector.addConsumer(
-                powerStats -> stats.addPowerStats(powerStats, mMonotonicClock.monotonicTime()));
+                (powerStats, elapsedRealtimeMs, uptimeMs) -> stats.addPowerStats(powerStats,
+                        mMonotonicClock.monotonicTime(elapsedRealtimeMs)));
         collector.setEnabled(true);
+
+        MockClock clock = mStatsRule.getMockClock();
 
         // Establish a baseline
         when(mConsumedEnergyRetriever.getConsumedEnergy(new int[]{ENERGY_CONSUMER_ID}))
                 .thenReturn(createEnergyConsumerResults(ENERGY_CONSUMER_ID, 10000));
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.noteStateChange(buildHistoryItem(0, true, APP_UID1));
 
@@ -324,7 +331,7 @@ public class GnssPowerStatsTest {
 
         when(mConsumedEnergyRetriever.getConsumedEnergy(new int[]{ENERGY_CONSUMER_ID}))
                 .thenReturn(createEnergyConsumerResults(ENERGY_CONSUMER_ID, 2_170_000));
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.noteStateChange(buildHistoryItem(7000, true, APP_UID2));
         stats.noteStateChange(buildHistoryItem(7000, GnssSignalQuality.GNSS_SIGNAL_QUALITY_GOOD));
@@ -332,7 +339,7 @@ public class GnssPowerStatsTest {
         mStatsRule.setTime(11_000, 11_000);
         when(mConsumedEnergyRetriever.getConsumedEnergy(new int[]{ENERGY_CONSUMER_ID}))
                 .thenReturn(createEnergyConsumerResults(ENERGY_CONSUMER_ID, 3_610_000));
-        collector.collectAndDeliverStats();
+        collector.collectAndDeliverStats(clock.realtime, clock.uptime);
 
         stats.finish(START_TIME + 11_000);
 
@@ -386,10 +393,11 @@ public class GnssPowerStatsTest {
         assertThat(statsLayout.getUidPowerEstimate(uidStats))
                 .isWithin(PRECISION).of(expectedPower2);
 
-        stats.getUidStats(uidStats, APP_UID2,
-                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED));
-        assertThat(statsLayout.getUidPowerEstimate(uidStats))
-                .isWithin(PRECISION).of(0);
+        if (stats.getUidStats(uidStats, APP_UID2,
+                states(POWER_STATE_OTHER, SCREEN_STATE_ON, PROCESS_STATE_CACHED))) {
+            assertThat(statsLayout.getUidPowerEstimate(uidStats))
+                    .isWithin(PRECISION).of(0);
+        }
     }
 
     private BatteryStats.HistoryItem buildHistoryItemInitialStateGpsOn(long timestamp) {

@@ -16,6 +16,8 @@
 
 package com.android.systemui.media.controls.ui.controller
 
+import android.os.UserHandle
+import android.platform.test.annotations.EnableFlags
 import android.provider.Settings
 import android.testing.TestableLooper
 import android.view.View.GONE
@@ -23,10 +25,21 @@ import android.view.View.VISIBLE
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.flags.DisableSceneContainer
+import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
+import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.kosmos.applicationCoroutineScope
+import com.android.systemui.kosmos.testScope
+import com.android.systemui.media.controls.domain.pipeline.interactor.mediaCarouselInteractor
 import com.android.systemui.media.controls.ui.view.MediaHost
 import com.android.systemui.media.controls.ui.view.MediaHostState
+import com.android.systemui.media.remedia.data.repository.setHasMedia
+import com.android.systemui.media.remedia.shared.flag.MediaControlsInComposeFlag
+import com.android.systemui.media.remedia.ui.viewmodel.factory.mediaViewModelFactory
+import com.android.systemui.media.remedia.ui.viewmodel.mediaFalsingSystem
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.SysuiStatusBarStateController
@@ -34,11 +47,14 @@ import com.android.systemui.statusbar.notification.stack.MediaContainerView
 import com.android.systemui.statusbar.phone.KeyguardBypassController
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController
+import com.android.systemui.testKosmos
 import com.android.systemui.util.animation.UniqueObjectHostView
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
+import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth.assertThat
 import junit.framework.Assert.assertTrue
+import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -51,7 +67,8 @@ import org.mockito.junit.MockitoJUnit
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@TestableLooper.RunWithLooper
+@TestableLooper.RunWithLooper(setAsMainLooper = true)
+@DisableSceneContainer
 class KeyguardMediaControllerTest : SysuiTestCase() {
 
     @Mock private lateinit var mediaHost: MediaHost
@@ -61,6 +78,11 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
 
     @JvmField @Rule val mockito = MockitoJUnit.rule()
 
+    private val kosmos = testKosmos()
+    private val testScope = kosmos.testScope
+    private val mediaFalsingSystem = kosmos.mediaFalsingSystem
+    private val mediaViewModelFactory = kosmos.mediaViewModelFactory
+    private val transitionRepository = kosmos.fakeKeyguardTransitionRepository
     private val mediaContainerView: MediaContainerView = MediaContainerView(context, null)
     private val hostView = UniqueObjectHostView(context)
     private lateinit var keyguardMediaController: KeyguardMediaController
@@ -79,29 +101,83 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
         whenever(statusBarStateController.state).thenReturn(StatusBarState.KEYGUARD)
         whenever(mediaHost.hostView).thenReturn(hostView)
         hostView.layoutParams = FrameLayout.LayoutParams(100, 100)
+        kosmos.fakeSettings.putBoolForUser(
+            Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+            true,
+            UserHandle.USER_CURRENT,
+        )
         keyguardMediaController =
             KeyguardMediaController(
                 mediaHost,
+                kosmos.applicationCoroutineScope,
                 bypassController,
                 statusBarStateController,
                 context,
                 configurationController,
                 ResourcesSplitShadeStateController(),
                 mock<KeyguardMediaControllerLogger>(),
-                mock<DumpManager>()
+                mock<DumpManager>(),
+                mediaViewModelFactory,
+                kosmos.mediaCarouselInteractor,
+                mediaFalsingSystem,
             )
         keyguardMediaController.attachSinglePaneContainer(mediaContainerView)
         keyguardMediaController.useSplitShade = false
+
+        if (MediaControlsInComposeFlag.isEnabled) {
+            kosmos.setHasMedia(visible = true, active = true)
+        } else {
+            verify(mediaHost).expansion = MediaHostState.EXPANDED
+            verify(mediaHost)
+                .addVisibilityChangeListener(keyguardMediaController::onMediaHostVisibilityChanged)
+        }
     }
 
     @Test
     fun testHiddenWhenHostIsHidden() {
-        whenever(mediaHost.visible).thenReturn(false)
+        if (MediaControlsInComposeFlag.isEnabled) {
+            kosmos.setHasMedia(visible = false)
+        } else {
+            whenever(mediaHost.visible).thenReturn(false)
+        }
 
         keyguardMediaController.refreshMediaPosition(TEST_REASON)
 
         assertThat(mediaContainerView.visibility).isEqualTo(GONE)
     }
+
+    @EnableFlags(Flags.FLAG_MEDIA_CONTROLS_IN_COMPOSE)
+    @Test
+    fun mediaLockedAndHidden_mediaIsHidden() =
+        testScope.runTest {
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
+            )
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.LOCKSCREEN,
+                this,
+            )
+            kosmos.setHasMedia(visible = true, active = true)
+
+            assertThat(mediaContainerView.visibility).isEqualTo(GONE)
+        }
+
+    @EnableFlags(Flags.FLAG_MEDIA_CONTROLS_IN_COMPOSE)
+    @Test
+    fun mediaOnLockscreen_mediaIsVisible() =
+        testScope.runTest {
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.LOCKSCREEN,
+                this,
+            )
+            kosmos.setHasMedia(visible = true, active = true)
+
+            assertThat(mediaContainerView.visibility).isEqualTo(VISIBLE)
+        }
 
     @Test
     fun testVisibleOnKeyguardOrFullScreenUserSwitcher() {
@@ -142,7 +218,7 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
 
         assertTrue(
             "HostView wasn't attached to the split pane container",
-            splitShadeContainer.childCount == 1
+            splitShadeContainer.childCount == 1,
         )
     }
 
@@ -153,13 +229,8 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
 
         assertTrue(
             "HostView wasn't attached to the single pane container",
-            mediaContainerView.childCount == 1
+            mediaContainerView.childCount == 1,
         )
-    }
-
-    @Test
-    fun testMediaHost_expandedPlayer() {
-        verify(mediaHost).expansion = MediaHostState.EXPANDED
     }
 
     @Test
@@ -174,34 +245,12 @@ class KeyguardMediaControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun dozeWakeUpAnimationWaiting_inSplitShade_mediaIsHidden() {
-        val splitShadeContainer = FrameLayout(context)
-        keyguardMediaController.attachSplitShadeContainer(splitShadeContainer)
-        keyguardMediaController.useSplitShade = true
-
-        keyguardMediaController.isDozeWakeUpAnimationWaiting = true
-
-        assertThat(splitShadeContainer.visibility).isEqualTo(GONE)
-    }
-
-    @Test
     fun dozing_inSingleShade_mediaIsVisible() {
         val splitShadeContainer = FrameLayout(context)
         keyguardMediaController.attachSplitShadeContainer(splitShadeContainer)
         keyguardMediaController.useSplitShade = false
 
         setDozing()
-
-        assertThat(mediaContainerView.visibility).isEqualTo(VISIBLE)
-    }
-
-    @Test
-    fun dozeWakeUpAnimationWaiting_inSingleShade_mediaIsVisible() {
-        val splitShadeContainer = FrameLayout(context)
-        keyguardMediaController.attachSplitShadeContainer(splitShadeContainer)
-        keyguardMediaController.useSplitShade = false
-
-        keyguardMediaController.isDozeWakeUpAnimationWaiting = true
 
         assertThat(mediaContainerView.visibility).isEqualTo(VISIBLE)
     }

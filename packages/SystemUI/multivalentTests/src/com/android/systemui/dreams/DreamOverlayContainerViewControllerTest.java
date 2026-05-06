@@ -16,6 +16,8 @@
 
 package com.android.systemui.dreams;
 
+import static com.android.systemui.Flags.FLAG_BOUNCER_UI_REVAMP;
+
 import static kotlinx.coroutines.flow.FlowKt.emptyFlow;
 import static kotlinx.coroutines.flow.StateFlowKt.MutableStateFlow;
 
@@ -32,6 +34,7 @@ import android.app.DreamManager;
 import android.content.res.Resources;
 import android.graphics.Region;
 import android.os.Handler;
+import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.testing.TestableLooper.RunWithLooper;
 import android.view.AttachedSurfaceControl;
@@ -227,11 +230,35 @@ public class DreamOverlayContainerViewControllerTest extends SysuiTestCase {
                 bouncerExpansionCaptor.capture());
 
         bouncerExpansionCaptor.getValue().onExpansionChanged(0.5f);
-        verify(mBlurUtils, never()).applyBlur(eq(mViewRoot), anyInt(), eq(false));
+        verify(mBlurUtils, never()).applyBlur(eq(mViewRoot), anyInt(), eq(false), anyFloat());
     }
 
     @Test
+    @DisableFlags(FLAG_BOUNCER_UI_REVAMP)
     public void testBouncerAnimation_updateBlur() {
+        final ArgumentCaptor<PrimaryBouncerExpansionCallback> bouncerExpansionCaptor =
+                ArgumentCaptor.forClass(PrimaryBouncerExpansionCallback.class);
+        mController.onViewAttached();
+        verify(mPrimaryBouncerCallbackInteractor).addBouncerExpansionCallback(
+                bouncerExpansionCaptor.capture());
+
+        final int blurRadius = 1337;
+        when(mBlurUtils.blurRadiusOfRatio(anyFloat())).thenReturn((float) blurRadius);
+
+        bouncerExpansionCaptor.getValue().onStartingToShow();
+
+        final float bouncerHideAmount = 0.05f;
+        final float scaledFraction =
+                BouncerPanelExpansionCalculator.aboutToShowBouncerProgress(bouncerHideAmount);
+
+        bouncerExpansionCaptor.getValue().onExpansionChanged(bouncerHideAmount);
+        verify(mBlurUtils).blurRadiusOfRatio(1 - scaledFraction);
+        verify(mBlurUtils).applyBlur(eq(mViewRoot), eq(blurRadius), eq(false), anyFloat());
+    }
+
+    @Test
+    @EnableFlags(FLAG_BOUNCER_UI_REVAMP)
+    public void testBouncerAnimation_doesNotBlur_whenBouncerRevampEnabled() {
         final ArgumentCaptor<PrimaryBouncerExpansionCallback> bouncerExpansionCaptor =
                 ArgumentCaptor.forClass(PrimaryBouncerExpansionCallback.class);
         mController.onViewAttached();
@@ -242,14 +269,11 @@ public class DreamOverlayContainerViewControllerTest extends SysuiTestCase {
         when(mBlurUtils.blurRadiusOfRatio(anyFloat())).thenReturn(blurRadius);
 
         bouncerExpansionCaptor.getValue().onStartingToShow();
-
         final float bouncerHideAmount = 0.05f;
-        final float scaledFraction =
-                BouncerPanelExpansionCalculator.aboutToShowBouncerProgress(bouncerHideAmount);
 
         bouncerExpansionCaptor.getValue().onExpansionChanged(bouncerHideAmount);
-        verify(mBlurUtils).blurRadiusOfRatio(1 - scaledFraction);
-        verify(mBlurUtils).applyBlur(mViewRoot, (int) blurRadius, false);
+        verify(mBlurUtils, never()).blurRadiusOfRatio(anyFloat());
+        verify(mBlurUtils, never()).applyBlur(eq(mViewRoot), anyInt(), anyBoolean(), anyFloat());
     }
 
     @Test

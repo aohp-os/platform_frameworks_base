@@ -26,7 +26,6 @@ import android.content.pm.VersionedPackage;
 import android.content.pm.dex.DexMetadataHelper;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
-import android.os.incremental.IncrementalManager;
 
 import com.android.internal.content.NativeLibraryHelper;
 import com.android.internal.pm.parsing.PackageParserException;
@@ -155,26 +154,15 @@ public class AndroidPackageUtils {
 
     public static NativeLibraryHelper.Handle createNativeLibraryHandle(AndroidPackage pkg)
             throws IOException {
+        boolean pageSizeCompatDisabled = pkg.getPageSizeAppCompatFlags()
+                == ApplicationInfo.PAGE_SIZE_APP_COMPAT_FLAG_MANIFEST_OVERRIDE_DISABLED;
         return NativeLibraryHelper.Handle.create(
                 AndroidPackageUtils.getAllCodePaths(pkg),
                 pkg.isMultiArch(),
                 pkg.isExtractNativeLibrariesRequested(),
-                pkg.isDebuggable()
+                pkg.isDebuggable(),
+                pageSizeCompatDisabled
         );
-    }
-
-    public static boolean canHaveOatDir(@NonNull PackageState packageState,
-            @NonNull AndroidPackage pkg) {
-        // The following app types CANNOT have oat directory
-        // - non-updated system apps,
-        // - incrementally installed apps.
-        if (packageState.isSystem() && !packageState.isUpdatedSystemApp()) {
-            return false;
-        }
-        if (IncrementalManager.isIncrementalPath(pkg.getPath())) {
-            return false;
-        }
-        return true;
     }
 
     public static boolean hasComponentClassName(AndroidPackage pkg, String className) {

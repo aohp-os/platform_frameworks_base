@@ -27,7 +27,7 @@ import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import android.content.ComponentName;
 import android.content.ContentCaptureOptions;
@@ -36,11 +36,15 @@ import android.content.pm.ParceledListSlice;
 import android.graphics.Insets;
 import android.os.Handler;
 import android.os.RemoteException;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.util.SparseArray;
 import android.view.View;
 import android.view.autofill.AutofillId;
+import android.view.contentcapture.flags.Flags;
 import android.view.contentprotection.ContentProtectionEventProcessor;
 
 import androidx.test.core.app.ApplicationProvider;
@@ -90,6 +94,8 @@ public class MainContentCaptureSessionTest {
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
+    @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
     @Mock private IContentCaptureManager mMockSystemServerInterface;
 
     @Mock private ContentProtectionEventProcessor mMockContentProtectionEventProcessor;
@@ -124,7 +130,7 @@ public class MainContentCaptureSessionTest {
         mTestableLooper.processAllMessages();
 
         assertThat(session.mContentProtectionEventProcessor).isNull();
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
     }
 
     @Test
@@ -145,7 +151,7 @@ public class MainContentCaptureSessionTest {
         mTestableLooper.processAllMessages();
 
         assertThat(session.mContentProtectionEventProcessor).isNull();
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
     }
 
     @Test
@@ -166,7 +172,7 @@ public class MainContentCaptureSessionTest {
         mTestableLooper.processAllMessages();
 
         assertThat(session.mContentProtectionEventProcessor).isNull();
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
     }
 
     @Test
@@ -191,7 +197,7 @@ public class MainContentCaptureSessionTest {
         session.sendEvent(EVENT);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNull();
     }
 
@@ -221,7 +227,7 @@ public class MainContentCaptureSessionTest {
         session.sendEvent(EVENT);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNotNull();
         assertThat(session.mEvents).containsExactly(EVENT);
     }
@@ -249,7 +255,7 @@ public class MainContentCaptureSessionTest {
         session.sendEvent(EVENT);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNull();
     }
 
@@ -266,8 +272,8 @@ public class MainContentCaptureSessionTest {
         session.flush(REASON);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
-        verifyZeroInteractions(mMockContentCaptureDirectManager);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
         assertThat(session.mEvents).containsExactly(EVENT);
     }
 
@@ -283,8 +289,8 @@ public class MainContentCaptureSessionTest {
         session.flush(REASON);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
-        verifyZeroInteractions(mMockContentCaptureDirectManager);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
         assertThat(session.mEvents).containsExactly(EVENT);
     }
 
@@ -301,7 +307,7 @@ public class MainContentCaptureSessionTest {
         session.flush(REASON);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isEmpty();
         assertEventFlushedContentCapture(options);
     }
@@ -319,7 +325,7 @@ public class MainContentCaptureSessionTest {
         session.flush(REASON);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isEmpty();
         assertEventFlushedContentCapture(options);
     }
@@ -333,7 +339,7 @@ public class MainContentCaptureSessionTest {
         mTestableLooper.processAllMessages();
 
         verify(mMockSystemServerInterface).finishSession(anyInt());
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mDirectServiceInterface).isNull();
         assertThat(session.mContentProtectionEventProcessor).isNull();
     }
@@ -346,8 +352,8 @@ public class MainContentCaptureSessionTest {
         session.resetSession(/* newState= */ 0);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockSystemServerInterface);
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockSystemServerInterface);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mDirectServiceInterface).isNull();
         assertThat(session.mContentProtectionEventProcessor).isNull();
     }
@@ -364,8 +370,8 @@ public class MainContentCaptureSessionTest {
         notifyContentCaptureEvents(session);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentCaptureDirectManager);
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNull();
     }
 
@@ -382,8 +388,8 @@ public class MainContentCaptureSessionTest {
         notifyContentCaptureEvents(session);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentCaptureDirectManager);
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNull();
     }
 
@@ -401,14 +407,15 @@ public class MainContentCaptureSessionTest {
         notifyContentCaptureEvents(session);
         mTestableLooper.processAllMessages();
 
-        verifyZeroInteractions(mMockContentCaptureDirectManager);
-        verifyZeroInteractions(mMockContentProtectionEventProcessor);
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
+        verifyNoMoreInteractions(mMockContentProtectionEventProcessor);
         assertThat(session.mEvents).isNull();
     }
 
     @Test
+    @DisableFlags(Flags.FLAG_REDUCE_BINDER_TRANSACTION_ENABLED)
     @SuppressWarnings("GuardedBy")
-    public void notifyContentCaptureEvents_started_ContentCaptureEnabled_ProtectionEnabled()
+    public void notifyContentCaptureEvents_started_ContentCaptureEnabled_ProtectionEnabled_Flush()
             throws RemoteException {
         ContentCaptureOptions options =
                 createOptions(
@@ -428,8 +435,35 @@ public class MainContentCaptureSessionTest {
                 .sendEvents(any(), eq(FLUSH_REASON_VIEW_TREE_APPEARING), any());
         verify(mMockContentCaptureDirectManager, times(1))
                 .sendEvents(any(), eq(FLUSH_REASON_VIEW_TREE_APPEARED), any());
-        // Other than the five view events, there will be two additional tree appearing events.
-        verify(mMockContentProtectionEventProcessor, times(7)).processEvent(any());
+        // 5 view events + 2 view tree events + 1 flush event
+        verify(mMockContentProtectionEventProcessor, times(8)).processEvent(any());
+        assertThat(session.mEvents).isEmpty();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_REDUCE_BINDER_TRANSACTION_ENABLED)
+    @SuppressWarnings("GuardedBy")
+    public void notifyContentCaptureEvents_flush_reducedBinderTransactionEnabled()
+            throws RemoteException {
+        ContentCaptureOptions options =
+                createOptions(
+                        /* enableContentCaptureReceiver= */ true,
+                        /* enableContentProtectionReceiver= */ true);
+        MainContentCaptureSession session = createSession(options);
+        session.mDirectServiceInterface = mMockContentCaptureDirectManager;
+
+        session.onSessionStarted(0x2, null);
+        // Override the processor for interaction verification.
+        session.mContentProtectionEventProcessor = mMockContentProtectionEventProcessor;
+        notifyContentCaptureEvents(session);
+        mTestableLooper.processAllMessages();
+
+        // Force flush will happen only once when flag enabled.
+        verify(mMockContentCaptureDirectManager, times(1))
+                .sendEvents(any(), anyInt(), any());
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
+        // 5 view events + 2 view tree events + 1 flush event
+        verify(mMockContentProtectionEventProcessor, times(8)).processEvent(any());
         assertThat(session.mEvents).isEmpty();
     }
 
@@ -497,6 +531,43 @@ public class MainContentCaptureSessionTest {
                 .sendEvents(any(), anyInt(), any());
         assertThat(session.mEvents).isEmpty();
         assertThat(session.mEventProcessQueue).hasSize(1);
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_REDUCE_BINDER_TRANSACTION_ENABLED)
+    public void notifyViewsAppeared_reducedBinderTransactionDisabled() throws RemoteException {
+        ContentCaptureOptions options =
+                createOptions(
+                        /* enableContentCaptureReceiver= */ true,
+                        /* enableContentProtectionReceiver= */ false);
+        MainContentCaptureSession session = createSession(options);
+        session.mDirectServiceInterface = mMockContentCaptureDirectManager;
+        session.onSessionStarted(0x2, null);
+        View view = prepareView(session);
+
+        session.notifyViewsAppeared(List.of(session.newViewStructure(view)));
+        mTestableLooper.processAllMessages();
+
+        verify(mMockContentCaptureDirectManager, times(2)).sendEvents(any(), anyInt(), any());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_REDUCE_BINDER_TRANSACTION_ENABLED)
+    public void notifyViewsAppeared_reducedBinderTransactionEnabled() throws RemoteException {
+        ContentCaptureOptions options =
+                createOptions(
+                        /* enableContentCaptureReceiver= */ true,
+                        /* enableContentProtectionReceiver= */ false);
+        MainContentCaptureSession session = createSession(options);
+        session.mDirectServiceInterface = mMockContentCaptureDirectManager;
+        session.onSessionStarted(0x2, null);
+        View view = prepareView(session);
+
+        session.notifyViewsAppeared(List.of(session.newViewStructure(view)));
+        mTestableLooper.processAllMessages();
+
+        // No events should be sent to the service.
+        verifyNoMoreInteractions(mMockContentCaptureDirectManager);
     }
 
     /** Simulates the regular content capture events sequence. */

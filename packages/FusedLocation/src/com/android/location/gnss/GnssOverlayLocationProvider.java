@@ -41,6 +41,7 @@ import java.util.List;
 public class GnssOverlayLocationProvider extends LocationProviderBase {
 
     private static final String TAG = "GnssOverlay";
+    private static final String ATTRIBUTION_TAG = "GnssOverlayService";
 
     private static final ProviderProperties PROPERTIES = new ProviderProperties.Builder()
                 .setHasAltitudeSupport(true)
@@ -87,7 +88,9 @@ public class GnssOverlayLocationProvider extends LocationProviderBase {
 
     public GnssOverlayLocationProvider(Context context) {
         super(context, TAG, PROPERTIES);
-        mLocationManager = context.getSystemService(LocationManager.class);
+
+        Context contextWithAttribution = context.createAttributionContext(ATTRIBUTION_TAG);
+        mLocationManager = contextWithAttribution.getSystemService(LocationManager.class);
     }
 
     void start() {

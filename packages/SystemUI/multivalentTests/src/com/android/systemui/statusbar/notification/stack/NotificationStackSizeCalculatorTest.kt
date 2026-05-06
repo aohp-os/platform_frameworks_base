@@ -17,21 +17,26 @@
 package com.android.systemui.statusbar.notification.stack
 
 import android.annotation.DimenRes
+import android.platform.test.annotations.EnableFlags
 import android.service.notification.StatusBarNotification
 import android.view.View.VISIBLE
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.media.controls.domain.pipeline.MediaDataManager
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.SysuiStatusBarStateController
+import com.android.systemui.statusbar.notification.collection.EntryAdapter
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.domain.interactor.SeenNotificationsInteractor
+import com.android.systemui.statusbar.notification.promoted.PromotedNotificationUi
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
@@ -152,6 +157,29 @@ class NotificationStackSizeCalculatorTest : SysuiTestCase() {
     }
 
     @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    fun maxKeyguardNotificationsForPromotedOngoing_onLockscreenSpaceForMinHeightButNotIntrinsicHeight_returnsOne() {
+        setGapHeight(0f)
+        // No divider height since we're testing one element where index = 0
+
+        whenever(sysuiStatusBarStateController.state).thenReturn(StatusBarState.KEYGUARD)
+        whenever(lockscreenShadeTransitionController.fractionToShade).thenReturn(0f)
+
+        val row = createMockRow(10f, isPromotedOngoing = true)
+        whenever(row.getMinHeight(any())).thenReturn(5)
+
+        val maxNotifications =
+            computeMaxKeyguardNotifications(
+                listOf(row),
+                /* spaceForNotifications= */ 5f,
+                /* spaceForShelf= */ 0f,
+                /* shelfHeight= */ 0f,
+            )
+
+        assertThat(maxNotifications).isEqualTo(1)
+    }
+
+    @Test
     fun computeMaxKeyguardNotifications_spaceForTwo_returnsTwo() {
         setGapHeight(gapHeight)
         val shelfHeight = shelfHeight + dividerHeight
@@ -257,6 +285,26 @@ class NotificationStackSizeCalculatorTest : SysuiTestCase() {
     }
 
     @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    fun getSpaceNeeded_onLockscreenEnoughSpacePromotedOngoing_intrinsicHeight() {
+        setGapHeight(0f)
+        // No divider height since we're testing one element where index = 0
+
+        val row = createMockRow(10f, isPromotedOngoing = true)
+        whenever(row.getMinHeight(any())).thenReturn(5)
+
+        val space =
+            sizeCalculator.getSpaceNeeded(
+                row,
+                visibleIndex = 0,
+                previousView = null,
+                stack = stackLayout,
+                onLockscreen = true,
+            )
+        assertThat(space.whenEnoughSpace).isEqualTo(10f)
+    }
+
+    @Test
     fun getSpaceNeeded_onLockscreenEnoughSpaceNotStickyHun_minHeight() {
         setGapHeight(0f)
         // No divider height since we're testing one element where index = 0
@@ -296,6 +344,26 @@ class NotificationStackSizeCalculatorTest : SysuiTestCase() {
     }
 
     @Test
+    @EnableFlags(PromotedNotificationUi.FLAG_NAME)
+    fun getSpaceNeeded_onLockscreenSavingSpacePromotedOngoing_minHeight() {
+        setGapHeight(0f)
+        // No divider height since we're testing one element where index = 0
+
+        val expandableView = createMockRow(10f, isPromotedOngoing = true)
+        whenever(expandableView.getMinHeight(any())).thenReturn(5)
+
+        val space =
+            sizeCalculator.getSpaceNeeded(
+                expandableView,
+                visibleIndex = 0,
+                previousView = null,
+                stack = stackLayout,
+                onLockscreen = true,
+            )
+        assertThat(space.whenSavingSpace).isEqualTo(5)
+    }
+
+    @Test
     fun getSpaceNeeded_onLockscreenSavingSpaceNotStickyHun_minHeight() {
         setGapHeight(0f)
         // No divider height since we're testing one element where index = 0
@@ -313,6 +381,35 @@ class NotificationStackSizeCalculatorTest : SysuiTestCase() {
                 onLockscreen = true,
             )
         assertThat(space.whenSavingSpace).isEqualTo(5)
+    }
+
+    @Test
+    @EnableSceneContainer
+    fun getSpaceNeeded_onLockscreenAndUserLocked_intrinsicHeight() {
+        // GIVEN: No divider height since we're testing one element where index = 0
+        setGapHeight(0f)
+
+        // AND: the row has its max height
+        val expandableView = createMockRow(rowHeight)
+
+        // AND: the user is dragging down on the Notification
+        whenever(expandableView.isUserLocked).thenReturn(true)
+
+        // AND: the row has a smaller min height, that we won't use here
+        whenever(expandableView.getMinHeight(any())).thenReturn(1)
+
+        // WHEN: we calculate the space for the Lockscreen
+        val space =
+            sizeCalculator.getSpaceNeeded(
+                expandableView,
+                visibleIndex = 0,
+                previousView = null,
+                stack = stackLayout,
+                onLockscreen = true,
+            )
+
+        // THEN: the row gets its unrestricted height (if there's enough space)
+        assertThat(space.whenEnoughSpace).isEqualTo(rowHeight)
     }
 
     @Test
@@ -366,18 +463,27 @@ class NotificationStackSizeCalculatorTest : SysuiTestCase() {
         isSticky: Boolean = false,
         isRemoved: Boolean = false,
         visibility: Int = VISIBLE,
+        isPromotedOngoing: Boolean = false,
     ): ExpandableNotificationRow {
         val row = mock(ExpandableNotificationRow::class.java)
-        val entry = mock(NotificationEntry::class.java)
-        whenever(entry.isStickyAndNotDemoted).thenReturn(isSticky)
         val sbn = mock(StatusBarNotification::class.java)
-        whenever(entry.sbn).thenReturn(sbn)
-        whenever(row.entry).thenReturn(entry)
+        if (NotificationBundleUi.isEnabled) {
+            val entryAdapter = mock(EntryAdapter::class.java)
+            whenever(entryAdapter.canPeek()).thenReturn(isSticky)
+            whenever(row.entryAdapter).thenReturn(entryAdapter)
+            whenever(entryAdapter.sbn).thenReturn(sbn)
+        } else {
+            val entry = mock(NotificationEntry::class.java)
+            whenever(entry.isStickyAndNotDemoted).thenReturn(isSticky)
+            whenever(row.entryLegacy).thenReturn(entry)
+            whenever(entry.sbn).thenReturn(sbn)
+        }
         whenever(row.isRemoved).thenReturn(isRemoved)
         whenever(row.visibility).thenReturn(visibility)
         whenever(row.getMinHeight(any())).thenReturn(height.toInt())
         whenever(row.intrinsicHeight).thenReturn(height.toInt())
         whenever(row.heightWithoutLockscreenConstraints).thenReturn(height.toInt())
+        whenever(row.isPromotedOngoing).thenReturn(isPromotedOngoing)
         return row
     }
 

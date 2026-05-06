@@ -31,6 +31,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.media.AppId;
 import android.media.AudioPlaybackConfiguration;
 import android.media.AudioRoutesInfo;
 import android.media.AudioSystem;
@@ -48,7 +49,10 @@ import android.media.RemoteDisplayState;
 import android.media.RemoteDisplayState.RemoteDisplayInfo;
 import android.media.RouteDiscoveryPreference;
 import android.media.RouteListingPreference;
+import android.media.RoutingChangeInfo;
 import android.media.RoutingSessionInfo;
+import android.media.SuggestedDeviceInfo;
+import android.media.session.MediaSession;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
@@ -80,6 +84,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -197,6 +202,7 @@ public final class MediaRouterService extends IMediaRouterService.Stub
                         },
                         TAG);
         updateRunningUserAndProfiles(ActivityManager.getCurrentUser());
+        mService2.systemRunning();
     }
 
     @Override
@@ -302,7 +308,9 @@ public final class MediaRouterService extends IMediaRouterService.Stub
 
         final long token = Binder.clearCallingIdentity();
         try {
-            mAudioService.setBluetoothA2dpOn(on);
+            if (!Flags.disableSetBluetoothAd2pOnCalls()) {
+                mAudioService.setBluetoothA2dpOn(on);
+            }
         } catch (RemoteException ex) {
             Slog.w(TAG, "RemoteException while calling setBluetoothA2dpOn. on=" + on);
         } finally {
@@ -417,12 +425,22 @@ public final class MediaRouterService extends IMediaRouterService.Stub
     // Binder call
     @RequiresPermission(Manifest.permission.PACKAGE_USAGE_STATS)
     @Override
-    public boolean showMediaOutputSwitcherWithRouter2(@NonNull String packageName) {
+    public boolean showMediaOutputSwitcherWithRouter2(@NonNull String packageName,
+            @Nullable MediaSession.Token sessionToken) {
         int uid = Binder.getCallingUid();
         if (!validatePackageName(uid, packageName)) {
             throw new SecurityException("packageName must match the calling identity");
         }
-        return mService2.showMediaOutputSwitcherWithRouter2(packageName);
+        if (sessionToken != null) {
+            if (Flags.enableRouteVisibilityControlApi()) {
+                if (uid != sessionToken.getUid()) {
+                    throw new SecurityException("sessionToken uid must match the calling uid");
+                }
+            } else {
+                sessionToken = null;
+            }
+        }
+        return mService2.showMediaOutputSwitcherWithRouter2(packageName, sessionToken);
     }
 
     // Binder call
@@ -484,30 +502,46 @@ public final class MediaRouterService extends IMediaRouterService.Stub
             long managerRequestId,
             RoutingSessionInfo oldSession,
             MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo,
             Bundle sessionHints) {
         mService2.requestCreateSessionWithRouter2(
-                router, requestId, managerRequestId, oldSession, route, sessionHints);
+                router,
+                requestId,
+                managerRequestId,
+                oldSession,
+                route,
+                routingChangeInfo,
+                sessionHints);
     }
 
     // Binder call
     @Override
-    public void selectRouteWithRouter2(IMediaRouter2 router, String sessionId,
-            MediaRoute2Info route) {
-        mService2.selectRouteWithRouter2(router, sessionId, route);
+    public void selectRouteWithRouter2(
+            IMediaRouter2 router,
+            String sessionId,
+            MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo) {
+        mService2.selectRouteWithRouter2(router, sessionId, route, routingChangeInfo);
     }
 
     // Binder call
     @Override
-    public void deselectRouteWithRouter2(IMediaRouter2 router, String sessionId,
-            MediaRoute2Info route) {
-        mService2.deselectRouteWithRouter2(router, sessionId, route);
+    public void deselectRouteWithRouter2(
+            IMediaRouter2 router,
+            String sessionId,
+            MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo) {
+        mService2.deselectRouteWithRouter2(router, sessionId, route, routingChangeInfo);
     }
 
     // Binder call
     @Override
-    public void transferToRouteWithRouter2(IMediaRouter2 router, String sessionId,
-            MediaRoute2Info route) {
-        mService2.transferToRouteWithRouter2(router, sessionId, route);
+    public void transferToRouteWithRouter2(
+            IMediaRouter2 router,
+            String sessionId,
+            MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo) {
+        mService2.transferToRouteWithRouter2(router, sessionId, route, routingChangeInfo);
     }
 
     // Binder call
@@ -520,6 +554,21 @@ public final class MediaRouterService extends IMediaRouterService.Stub
     @Override
     public void releaseSessionWithRouter2(IMediaRouter2 router, String sessionId) {
         mService2.releaseSessionWithRouter2(router, sessionId);
+    }
+
+    // Binder call
+    @Override
+    public void setDeviceSuggestionsWithRouter2(
+            IMediaRouter2 router, @Nullable List<SuggestedDeviceInfo> suggestedDeviceInfo) {
+        mService2.setDeviceSuggestionsWithRouter2(router, suggestedDeviceInfo);
+    }
+
+    // Binder call
+    @Override
+    @NonNull
+    public Map<String, List<SuggestedDeviceInfo>> getDeviceSuggestionsWithRouter2(
+            IMediaRouter2 router) {
+        return mService2.getDeviceSuggestionsWithRouter2(router);
     }
 
     // Binder call
@@ -555,6 +604,12 @@ public final class MediaRouterService extends IMediaRouterService.Stub
         }
         return mService2.getSystemSessionInfo(
                 callerPackageName, targetPackageName, setDeviceRouteSelected);
+    }
+
+    // Binder call
+    @Override
+    public List<AppId> getSystemSessionOverridesAppIds(IMediaRouter2Manager manager) {
+        return mService2.getSystemSessionOverridesAppIds(manager);
     }
 
     // Binder call
@@ -607,22 +662,32 @@ public final class MediaRouterService extends IMediaRouterService.Stub
             IMediaRouter2Manager manager,
             int requestId,
             RoutingSessionInfo oldSession,
+            RoutingChangeInfo routingChangeInfo,
             MediaRoute2Info route) {
-        mService2.requestCreateSessionWithManager(manager, requestId, oldSession, route);
+        mService2.requestCreateSessionWithManager(
+                manager, requestId, oldSession, route, routingChangeInfo);
     }
 
     // Binder call
     @Override
-    public void selectRouteWithManager(IMediaRouter2Manager manager, int requestId,
-            String sessionId, MediaRoute2Info route) {
-        mService2.selectRouteWithManager(manager, requestId, sessionId, route);
+    public void selectRouteWithManager(
+            IMediaRouter2Manager manager,
+            int requestId,
+            String sessionId,
+            MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo) {
+        mService2.selectRouteWithManager(manager, requestId, sessionId, route, routingChangeInfo);
     }
 
     // Binder call
     @Override
-    public void deselectRouteWithManager(IMediaRouter2Manager manager, int requestId,
-            String sessionId, MediaRoute2Info route) {
-        mService2.deselectRouteWithManager(manager, requestId, sessionId, route);
+    public void deselectRouteWithManager(
+            IMediaRouter2Manager manager,
+            int requestId,
+            String sessionId,
+            MediaRoute2Info route,
+            RoutingChangeInfo routingChangeInfo) {
+        mService2.deselectRouteWithManager(manager, requestId, sessionId, route, routingChangeInfo);
     }
 
     // Binder call
@@ -633,14 +698,16 @@ public final class MediaRouterService extends IMediaRouterService.Stub
             String sessionId,
             MediaRoute2Info route,
             UserHandle transferInitiatorUserHandle,
-            String transferInitiatorPackageName) {
+            String transferInitiatorPackageName,
+            RoutingChangeInfo routingChangeInfo) {
         mService2.transferToRouteWithManager(
                 manager,
                 requestId,
                 sessionId,
                 route,
                 transferInitiatorUserHandle,
-                transferInitiatorPackageName);
+                transferInitiatorPackageName,
+                routingChangeInfo);
     }
 
     // Binder call
@@ -660,8 +727,33 @@ public final class MediaRouterService extends IMediaRouterService.Stub
     @RequiresPermission(Manifest.permission.PACKAGE_USAGE_STATS)
     @Override
     public boolean showMediaOutputSwitcherWithProxyRouter(
-            @NonNull IMediaRouter2Manager proxyRouter) {
-        return mService2.showMediaOutputSwitcherWithProxyRouter(proxyRouter);
+            @NonNull IMediaRouter2Manager proxyRouter, @Nullable MediaSession.Token sessionToken) {
+        if (!Flags.enableRouteVisibilityControlApi()) {
+            sessionToken = null;
+        }
+        return mService2.showMediaOutputSwitcherWithProxyRouter(proxyRouter, sessionToken);
+    }
+
+    // Binder call
+    @Override
+    public void setDeviceSuggestionsWithManager(
+            @NonNull IMediaRouter2Manager manager,
+            @Nullable List<SuggestedDeviceInfo> suggestedDeviceInfo) {
+        mService2.setDeviceSuggestionsWithManager(manager, suggestedDeviceInfo);
+    }
+
+    // Binder call
+    @Override
+    @NonNull
+    public Map<String, List<SuggestedDeviceInfo>> getDeviceSuggestionsWithManager(
+            IMediaRouter2Manager manager) {
+        return mService2.getDeviceSuggestionsWithManager(manager);
+    }
+
+    // Binder call
+    @Override
+    public void onDeviceSuggestionRequestedWithManager(IMediaRouter2Manager manager) {
+        mService2.onDeviceSuggestionRequestedWithManager(manager);
     }
 
     void restoreBluetoothA2dp() {
@@ -677,7 +769,9 @@ public final class MediaRouterService extends IMediaRouterService.Stub
                 if (DEBUG) {
                     Slog.d(TAG, "restoreBluetoothA2dp(" + a2dpOn + ")");
                 }
-                mAudioService.setBluetoothA2dpOn(a2dpOn);
+                if (!Flags.disableSetBluetoothAd2pOnCalls()) {
+                    mAudioService.setBluetoothA2dpOn(a2dpOn);
+                }
             }
         } catch (RemoteException e) {
             Slog.w(TAG, "RemoteException while calling setBluetoothA2dpOn.");

@@ -23,6 +23,7 @@ import android.content.Intent
 import android.content.IntentSender
 import android.os.Binder
 import android.os.UserHandle
+import android.platform.test.annotations.EnableFlags
 import android.testing.TestableLooper
 import android.widget.RemoteViews
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -39,7 +40,6 @@ import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.testKosmos
 import com.android.systemui.utils.coroutines.flow.conflatedCallbackFlow
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -54,7 +54,6 @@ import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
 @RunWith(AndroidJUnit4::class)
@@ -138,6 +137,7 @@ class GlanceableHubWidgetManagerServiceTest : SysuiTestCase() {
         }
 
     @Test
+    @EnableFlags(android.appwidget.flags.Flags.FLAG_ENGAGEMENT_METRICS)
     fun setAppWidgetHostListener_getUpdates() =
         testScope.runTest {
             // Bind service
@@ -166,6 +166,9 @@ class GlanceableHubWidgetManagerServiceTest : SysuiTestCase() {
 
             appWidgetHostListener.onViewDataChanged(1)
             verify(listener).onViewDataChanged(1)
+
+            appWidgetHostListener.collectWidgetEvent()
+            verify(listener).collectWidgetEvent()
         }
 
     @Test

@@ -19,11 +19,16 @@ package com.android.systemui.qs
 import com.android.internal.logging.InstanceId
 import com.android.systemui.animation.Expandable
 import com.android.systemui.plugins.qs.QSTile
-import com.android.systemui.plugins.qs.TileDetailsViewModel
 
-class FakeQSTile(var user: Int, var available: Boolean = true) : QSTile {
+class FakeQSTile(
+    var user: Int,
+    var available: Boolean = true,
+    val onClick: () -> Unit = {},
+    val onLongClick: () -> Unit = {},
+    val onSecondaryClick: () -> Unit = {},
+) : QSTile {
     private var tileSpec: String? = null
-    var destroyed = false
+    private var destroyed = false
     var hasDetailsViewModel: Boolean = true
     private var state = QSTile.State()
     val callbacks = mutableListOf<QSTile.Callback>()
@@ -55,14 +60,24 @@ class FakeQSTile(var user: Int, var available: Boolean = true) : QSTile {
         callbacks.clear()
     }
 
-    override fun click(expandable: Expandable?) {}
+    override fun click(expandable: Expandable?) {
+        onClick()
+    }
 
-    override fun secondaryClick(expandable: Expandable?) {}
+    override fun secondaryClick(expandable: Expandable?) {
+        onSecondaryClick()
+    }
 
-    override fun longClick(expandable: Expandable?) {}
+    override fun longClick(expandable: Expandable?) {
+        onLongClick()
+    }
 
     override fun userSwitch(currentUser: Int) {
         user = currentUser
+    }
+
+    override fun getCurrentTileUser(): Int {
+        return user
     }
 
     override fun getMetricsCategory(): Int {
@@ -75,6 +90,10 @@ class FakeQSTile(var user: Int, var available: Boolean = true) : QSTile {
 
     override fun destroy() {
         destroyed = true
+    }
+
+    override fun isDestroyed(): Boolean {
+        return destroyed
     }
 
     override fun getTileLabel(): CharSequence {

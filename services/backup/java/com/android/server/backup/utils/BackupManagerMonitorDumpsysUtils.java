@@ -30,7 +30,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
@@ -158,7 +157,8 @@ public class BackupManagerMonitorDumpsysUtils {
         if (eventBundle.containsKey(BackupManagerMonitor.EXTRA_LOG_AGENT_LOGGING_RESULTS)) {
             ArrayList<BackupRestoreEventLogger.DataTypeResult> agentLogs =
                     eventBundle.getParcelableArrayList(
-                            BackupManagerMonitor.EXTRA_LOG_AGENT_LOGGING_RESULTS);
+                            BackupManagerMonitor.EXTRA_LOG_AGENT_LOGGING_RESULTS,
+                            BackupRestoreEventLogger.DataTypeResult.class);
 
             return !agentLogs.isEmpty();
         }
@@ -178,7 +178,8 @@ public class BackupManagerMonitorDumpsysUtils {
             pw.println("\tAgent Logs:");
             ArrayList<BackupRestoreEventLogger.DataTypeResult> agentLogs =
                     eventBundle.getParcelableArrayList(
-                            BackupManagerMonitor.EXTRA_LOG_AGENT_LOGGING_RESULTS);
+                            BackupManagerMonitor.EXTRA_LOG_AGENT_LOGGING_RESULTS,
+                            BackupRestoreEventLogger.DataTypeResult.class);
             for (BackupRestoreEventLogger.DataTypeResult result : agentLogs) {
                 int totalItems = result.getFailCount() + result.getSuccessCount();
                 pw.println("\t\tData Type: " + result.getDataType());
@@ -389,6 +390,8 @@ public class BackupManagerMonitorDumpsysUtils {
                     "Agent failure during restore";
             case BackupManagerMonitor.LOG_EVENT_ID_FAILED_TO_READ_DATA_FROM_TRANSPORT ->
                     "Failed to read data from Transport";
+            case BackupManagerMonitor.LOG_EVENT_ID_FULL_BACKUP_AGENT_PIPE_BROKEN ->
+                "LOG_EVENT_ID_FULL_BACKUP_AGENT_PIPE_BROKEN";
             default -> "Unknown log event ID: " + code;
         };
         return id;

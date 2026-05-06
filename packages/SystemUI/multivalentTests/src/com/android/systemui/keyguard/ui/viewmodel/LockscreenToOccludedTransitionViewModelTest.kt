@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.keyguard.ui.viewmodel
 
 import android.platform.test.flag.junit.FlagsParameterization
@@ -25,6 +23,7 @@ import com.android.systemui.common.ui.data.repository.FakeConfigurationRepositor
 import com.android.systemui.common.ui.data.repository.fakeConfigurationRepository
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.coroutines.collectValues
+import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.flags.Flags
 import com.android.systemui.flags.andSceneContainer
 import com.android.systemui.flags.fakeFeatureFlagsClassic
@@ -38,13 +37,15 @@ import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.res.R
+import com.android.systemui.scene.data.repository.Transition
+import com.android.systemui.scene.data.repository.setSceneTransition
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ShadeTestUtil
 import com.android.systemui.shade.shadeTestUtil
 import com.android.systemui.testKosmos
 import com.google.common.collect.Range
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -55,6 +56,7 @@ import platform.test.runner.parameterized.Parameters
 
 @SmallTest
 @RunWith(ParameterizedAndroidJunit4::class)
+@DisableSceneContainer
 class LockscreenToOccludedTransitionViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
     private val kosmos =
         testKosmos().apply {
@@ -205,6 +207,7 @@ class LockscreenToOccludedTransitionViewModelTest(flags: FlagsParameterization) 
                     ),
                 testScope = testScope,
             )
+            kosmos.setSceneTransition(Transition(Scenes.Lockscreen, Scenes.Occluded))
 
             values.forEach { assertThat(it).isEqualTo(0f) }
         }
@@ -214,7 +217,6 @@ class LockscreenToOccludedTransitionViewModelTest(flags: FlagsParameterization) 
         testScope.runTest {
             val actual by collectLastValue(underTest.deviceEntryParentViewAlpha)
             shadeExpanded(false)
-            runCurrent()
 
             // fade out
             repository.sendTransitionStep(step(0f, TransitionState.STARTED))

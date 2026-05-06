@@ -59,7 +59,7 @@ interface NativeInputManagerService {
 
     InputChannel createInputChannel(String name);
 
-    InputChannel createInputMonitor(int displayId, String name, int pid);
+    InputChannel createFocusInputMonitor(int displayId, String name, int pid);
 
     void removeInputChannel(IBinder connectionToken);
 
@@ -116,7 +116,7 @@ interface NativeInputManagerService {
     void setMinTimeBetweenUserActivityPokes(long millis);
 
     boolean transferTouchGesture(IBinder fromChannelToken, IBinder toChannelToken,
-            boolean isDragDrop);
+            boolean isDragDrop, boolean transferEntireGesture);
 
     /**
      * Transfer the current touch gesture to the window identified by 'destChannelToken' positioned
@@ -130,11 +130,17 @@ interface NativeInputManagerService {
 
     void setPointerSpeed(int speed);
 
-    void setMousePointerAccelerationEnabled(int displayId, boolean enabled);
+    void setMouseScalingEnabled(int displayId, boolean enabled);
 
     void setMouseReverseVerticalScrollingEnabled(boolean enabled);
 
+    void setMouseScrollingAccelerationEnabled(boolean enabled);
+
+    void setMouseScrollingSpeed(int speed);
+
     void setMouseSwapPrimaryButtonEnabled(boolean enabled);
+
+    void setMouseAccelerationEnabled(boolean enabled);
 
     void setTouchpadPointerSpeed(int speed);
 
@@ -151,6 +157,10 @@ interface NativeInputManagerService {
     void setTouchpadThreeFingerTapShortcutEnabled(boolean enabled);
 
     void setTouchpadSystemGesturesEnabled(boolean enabled);
+
+    void setTouchpadAccelerationEnabled(boolean enabled);
+
+    void setTouchpadsEnabled(boolean enabled);
 
     void setShowTouches(boolean enabled);
 
@@ -209,7 +219,7 @@ interface NativeInputManagerService {
 
     void setPointerIconVisibility(int displayId, boolean visible);
 
-    void requestPointerCapture(IBinder windowToken, boolean enabled);
+    void requestPointerCapture(IBinder windowToken, int mode);
 
     boolean canDispatchToDisplay(int deviceId, int displayId);
 
@@ -220,6 +230,8 @@ interface NativeInputManagerService {
     void changeTypeAssociation();
 
     void changeKeyboardLayoutAssociation();
+
+    void changeVirtualDevices();
 
     void setDisplayEligibilityForPointerCapture(int displayId, boolean enabled);
 
@@ -251,18 +263,34 @@ interface NativeInputManagerService {
     void setStylusButtonMotionEventsEnabled(boolean enabled);
 
     /**
-     * Get the current position of the mouse cursor on the given display.
+     * Get the current position of the mouse cursor on the given display in the physical display
+     * coordinates.
      *
-     * If the mouse cursor is not currently shown, the coordinate values will be NaN-s. Use
+     * <p>If the mouse cursor is not currently shown, the coordinate values will be NaN-s. Use
      * {@link android.view.Display#INVALID_DISPLAY} to get the position of the default mouse cursor.
      *
-     * NOTE: This will grab the PointerController's lock, so we must be careful about calling this
-     * from the InputReader or Display threads, which may result in a deadlock.
+     * <p>NOTE: This will grab the PointerController's lock, so we must be careful about calling
+     * this from the InputReader or Display threads, which may result in a deadlock.
      */
-    float[] getMouseCursorPosition(int displayId);
+    float[] getMouseCursorPositionInPhysicalDisplay(int displayId);
+
+    /**
+     * Get the current position of the mouse cursor on the given display in the logical display
+     * coordinates.
+     *
+     * <p>If the mouse cursor is not currently shown, the coordinate values will be NaN-s. Use
+     * {@link android.view.Display#INVALID_DISPLAY} to get the position of the default mouse cursor.
+     *
+     * <p>NOTE: This will grab the PointerController's lock, so we must be careful about calling
+     * this from the InputReader or Display threads, which may result in a deadlock.
+     */
+    float[] getMouseCursorPositionInLogicalDisplay(int displayId);
 
     /** Set whether showing a pointer icon for styluses is enabled. */
     void setStylusPointerIconEnabled(boolean enabled);
+
+    /** Get the sysfs root path of an input device if known, otherwise return null. */
+    @Nullable String getSysfsRootPath(int deviceId);
 
     /**
      * Report sysfs node changes. This may result in recreation of the corresponding InputDevice.
@@ -306,6 +334,23 @@ interface NativeInputManagerService {
      * Returns true if setting power wakeup was successful.
      */
     boolean setKernelWakeEnabled(int deviceId, boolean enabled);
+
+    /**
+     * Set whether the accessibility pointer motion filter is enabled.
+     * <p>
+     * Once enabled, {@link InputManagerService#filterPointerMotion} is called for evety motion
+     * event from pointer devices.
+     *
+     * @param enabled {@code true} if the filter is enabled, {@code false} otherwise.
+     */
+    void setAccessibilityPointerMotionFilterEnabled(boolean enabled);
+
+    /**
+     * Get the physical location path of the input device, if known. This is also known as the
+     * "phys" identifier.
+     */
+    @Nullable
+    String getPhysicalLocationPath(int deviceId);
 
     /** The native implementation of InputManagerService methods. */
     class NativeImpl implements NativeInputManagerService {
@@ -351,7 +396,7 @@ interface NativeInputManagerService {
         public native InputChannel createInputChannel(String name);
 
         @Override
-        public native InputChannel createInputMonitor(int displayId, String name, int pid);
+        public native InputChannel createFocusInputMonitor(int displayId, String name, int pid);
 
         @Override
         public native void removeInputChannel(IBinder connectionToken);
@@ -402,7 +447,7 @@ interface NativeInputManagerService {
 
         @Override
         public native boolean transferTouchGesture(IBinder fromChannelToken, IBinder toChannelToken,
-                boolean isDragDrop);
+                boolean isDragDrop, boolean transferEntireGesture);
 
         @Override
         @Deprecated
@@ -415,13 +460,22 @@ interface NativeInputManagerService {
         public native void setPointerSpeed(int speed);
 
         @Override
-        public native void setMousePointerAccelerationEnabled(int displayId, boolean enabled);
+        public native void setMouseScalingEnabled(int displayId, boolean enabled);
 
         @Override
         public native void setMouseReverseVerticalScrollingEnabled(boolean enabled);
 
         @Override
+        public native void setMouseScrollingAccelerationEnabled(boolean enabled);
+
+        @Override
+        public native void setMouseScrollingSpeed(int speed);
+
+        @Override
         public native void setMouseSwapPrimaryButtonEnabled(boolean enabled);
+
+        @Override
+        public native void setMouseAccelerationEnabled(boolean enabled);
 
         @Override
         public native void setTouchpadPointerSpeed(int speed);
@@ -446,6 +500,12 @@ interface NativeInputManagerService {
 
         @Override
         public native void setTouchpadSystemGesturesEnabled(boolean enabled);
+
+        @Override
+        public native void setTouchpadAccelerationEnabled(boolean enabled);
+
+        @Override
+        public native void setTouchpadsEnabled(boolean enabled);
 
         @Override
         public native void setShowTouches(boolean enabled);
@@ -527,7 +587,7 @@ interface NativeInputManagerService {
         public native void setPointerIconVisibility(int displayId, boolean visible);
 
         @Override
-        public native void requestPointerCapture(IBinder windowToken, boolean enabled);
+        public native void requestPointerCapture(IBinder windowToken, int mode);
 
         @Override
         public native boolean canDispatchToDisplay(int deviceId, int displayId);
@@ -543,6 +603,9 @@ interface NativeInputManagerService {
 
         @Override
         public native void changeKeyboardLayoutAssociation();
+
+        @Override
+        public native void changeVirtualDevices();
 
         @Override
         public native void setDisplayEligibilityForPointerCapture(int displayId, boolean enabled);
@@ -583,10 +646,16 @@ interface NativeInputManagerService {
         public native void setStylusButtonMotionEventsEnabled(boolean enabled);
 
         @Override
-        public native float[] getMouseCursorPosition(int displayId);
+        public native float[] getMouseCursorPositionInPhysicalDisplay(int displayId);
+
+        @Override
+        public native float[] getMouseCursorPositionInLogicalDisplay(int displayId);
 
         @Override
         public native void setStylusPointerIconEnabled(boolean enabled);
+
+        @Override
+        public native String getSysfsRootPath(int deviceId);
 
         @Override
         public native void sysfsNodeChanged(String sysfsNodePath);
@@ -608,5 +677,11 @@ interface NativeInputManagerService {
 
         @Override
         public native boolean setKernelWakeEnabled(int deviceId, boolean enabled);
+
+        @Override
+        public native void setAccessibilityPointerMotionFilterEnabled(boolean enabled);
+
+        @Override
+        public native String getPhysicalLocationPath(int deviceId);
     }
 }

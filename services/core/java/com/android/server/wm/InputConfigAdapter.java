@@ -57,7 +57,10 @@ class InputConfigAdapter {
                     InputConfig.SPY, false /* inverted */),
             new FlagMapping(
                     LayoutParams.INPUT_FEATURE_SENSITIVE_FOR_PRIVACY,
-                    InputConfig.SENSITIVE_FOR_PRIVACY, false /* inverted */)
+                    InputConfig.SENSITIVE_FOR_PRIVACY, false /* inverted */),
+            new FlagMapping(
+                    LayoutParams.INPUT_FEATURE_DISPLAY_TOPOLOGY_AWARE,
+                    InputConfig.DISPLAY_TOPOLOGY_AWARE, false /* inverted */)
     };
 
     @InputConfigFlags
@@ -75,9 +78,6 @@ class InputConfigAdapter {
             new FlagMapping(
                     LayoutParams.FLAG_NOT_TOUCHABLE,
                     InputConfig.NOT_TOUCHABLE, false /* inverted */),
-            new FlagMapping(
-                    LayoutParams.FLAG_SPLIT_TOUCH,
-                    InputConfig.PREVENT_SPLITTING, true /* inverted */),
             new FlagMapping(
                     LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
                     InputConfig.WATCH_OUTSIDE_TOUCH, false /* inverted */),

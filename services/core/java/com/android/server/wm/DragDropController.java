@@ -28,9 +28,11 @@ import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 import android.annotation.NonNull;
 import android.content.ClipData;
 import android.content.Context;
+import android.hardware.display.DisplayTopology;
 import android.hardware.input.InputManagerGlobal;
 import android.os.Binder;
 import android.os.Handler;
+import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
@@ -45,6 +47,7 @@ import android.view.PointerIcon;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.view.accessibility.AccessibilityManager;
+import android.window.DesktopExperienceFlags;
 import android.window.IGlobalDragListener;
 import android.window.IUnhandledDragCallback;
 
@@ -56,6 +59,7 @@ import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * Managing drag and drop operations initiated by View#startDragAndDrop.
@@ -83,6 +87,8 @@ class DragDropController {
 
     private WindowManagerService mService;
     private final Handler mHandler;
+    private final Consumer<DisplayTopology> mDisplayTopologyListener =
+            this::handleDisplayTopologyChange;
 
     // The global drag listener for handling cross-window drags
     private IGlobalDragListener mGlobalDragListener;
@@ -108,6 +114,10 @@ class DragDropController {
     DragDropController(WindowManagerService service, Looper looper) {
         mService = service;
         mHandler = new DragHandler(service, looper);
+        if (DesktopExperienceFlags.ENABLE_CONNECTED_DISPLAYS_DND.isTrue()) {
+            mService.mDisplayManager.registerTopologyListener(
+                    new HandlerExecutor(mService.mH), mDisplayTopologyListener);
+        }
     }
 
     @VisibleForTesting
@@ -179,8 +189,8 @@ class DragDropController {
                         return null;
                     }
 
-                    final WindowState callingWin = mService.windowForClientLocked(
-                            null, window, false);
+                    final WindowState callingWin = mService.windowForClient(
+                            null /* session */, window);
                     if (callingWin == null || !callingWin.canReceiveTouchInput()) {
                         Slog.w(TAG_WM, "Bad requesting window " + window);
                         return null;  // !!! TODO: throw here?
@@ -212,10 +222,11 @@ class DragDropController {
                     surface = null;
                     mDragState.mPid = callerPid;
                     mDragState.mUid = callerUid;
-                    mDragState.mOriginalAlpha = alpha;
+                    mDragState.mStartDragAlpha = alpha;
                     mDragState.mAnimatedScale = callingWin.mGlobalScale;
                     mDragState.mToken = dragToken;
-                    mDragState.mDisplayContent = displayContent;
+                    mDragState.mStartDragDisplayContent = displayContent;
+                    mDragState.mCurrentDisplayContent = displayContent;
                     mDragState.mData = data;
                     mDragState.mCallingTaskIdToHide = shouldMoveCallingTaskToBack(callingWin,
                             flags);
@@ -273,7 +284,7 @@ class DragDropController {
                     InputManagerGlobal.getInstance().setPointerIcon(
                             PointerIcon.getSystemIcon(
                                     mService.mContext, PointerIcon.TYPE_GRABBING),
-                            mDragState.mDisplayContent.getDisplayId(), touchDeviceId,
+                            mDragState.mCurrentDisplayContent.getDisplayId(), touchDeviceId,
                             touchPointerId, mDragState.getInputToken());
                 }
                 // remember the thumb offsets for later
@@ -286,10 +297,11 @@ class DragDropController {
                 }
 
                 final SurfaceControl.Transaction transaction = mDragState.mTransaction;
-                transaction.setAlpha(surfaceControl, mDragState.mOriginalAlpha);
+                transaction.setAlpha(surfaceControl, mDragState.mStartDragAlpha);
                 transaction.show(surfaceControl);
                 displayContent.reparentToOverlay(transaction, surfaceControl);
-                mDragState.updateDragSurfaceLocked(true, touchX, touchY);
+                mDragState.updateDragSurfaceLocked(true /* keepHandling */,
+                        displayContent.getDisplayId(), touchX, touchY);
                 if (SHOW_LIGHT_TRANSACTIONS) {
                     Slog.i(TAG_WM, "<<< CLOSE TRANSACTION performDrag");
                 }
@@ -331,7 +343,8 @@ class DragDropController {
                 // lookup fails.
                 mHandler.removeMessages(MSG_DRAG_END_TIMEOUT, window.asBinder());
 
-                WindowState callingWin = mService.windowForClientLocked(null, window, false);
+                final WindowState callingWin = mService.windowForClient(
+                        null /* session */, window);
                 if (callingWin == null) {
                     Slog.w(TAG_WM, "Bad result-reporting window " + window);
                     return;  // !!! TODO: throw here?
@@ -352,8 +365,7 @@ class DragDropController {
                 mDragState.endDragLocked(consumed, relinquishDragSurfaceToDropTarget);
 
                 final Task droppedWindowTask = callingWin.getTask();
-                if (com.android.window.flags.Flags.delegateUnhandledDrags()
-                        && mGlobalDragListener != null && droppedWindowTask != null && consumed
+                if (mGlobalDragListener != null && droppedWindowTask != null && consumed
                         && isCrossWindowDrag) {
                     try {
                         mGlobalDragListener.onCrossWindowDrop(droppedWindowTask.getTaskInfo());
@@ -395,8 +407,7 @@ class DragDropController {
                 (mDragState.mFlags & (DRAG_FLAG_GLOBAL_SAME_APPLICATION | DRAG_FLAG_GLOBAL)) == 0;
         final boolean shouldDelegateUnhandledDrag =
                 (mDragState.mFlags & DRAG_FLAG_START_INTENT_SENDER_ON_UNHANDLED_DRAG) != 0;
-        if (!com.android.window.flags.Flags.delegateUnhandledDrags()
-                || mGlobalDragListener == null
+        if (mGlobalDragListener == null
                 || !shouldDelegateUnhandledDrag
                 || isLocalDrag) {
             // Skip if the flag is disabled, there is no unhandled-drag listener, or if this is a
@@ -479,14 +490,28 @@ class DragDropController {
         }
     }
 
+    @VisibleForTesting
+    void handleDisplayTopologyChange(DisplayTopology unused) {
+        synchronized (mService.mGlobalLock) {
+            if (mDragState == null) {
+                return;
+            }
+            if (DEBUG_DRAG) {
+                Slog.d(TAG_WM, "DisplayTopology changed, cancelling DragAndDrop");
+            }
+            cancelDragAndDrop(mDragState.mToken, true /* skipAnimation */);
+        }
+    }
+
     /**
      * Handles motion events.
      * @param keepHandling Whether if the drag operation is continuing or this is the last motion
      *          event.
+     * @param displayId id of the display the X,Y coordinate is n.
      * @param newX X coordinate value in dp in the screen coordinate
      * @param newY Y coordinate value in dp in the screen coordinate
      */
-    void handleMotionEvent(boolean keepHandling, float newX, float newY) {
+    void handleMotionEvent(boolean keepHandling, int displayId, float newX, float newY) {
         synchronized (mService.mGlobalLock) {
             if (!dragDropActiveLocked()) {
                 // The drag has ended but the clean-up message has not been processed by
@@ -495,7 +520,7 @@ class DragDropController {
                 return;
             }
 
-            mDragState.updateDragSurfaceLocked(keepHandling, newX, newY);
+            mDragState.updateDragSurfaceLocked(keepHandling, displayId, newX, newY);
         }
     }
 
@@ -558,8 +583,8 @@ class DragDropController {
                 return false;
             }
             if (mDragState.isAccessibilityDragDrop() && isA11yEnabled) {
-                final WindowState winState = mService.windowForClientLocked(
-                        null, window, false);
+                final WindowState winState = mService.windowForClient(
+                        null /* session */, window);
                 if (!mDragState.isWindowNotified(winState)) {
                     return false;
                 }

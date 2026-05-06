@@ -20,6 +20,7 @@ import static android.app.StatusBarManager.DISABLE_NONE;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.content.pm.ActivityInfo.CONFIG_ASSETS_PATHS;
 import static android.content.pm.ActivityInfo.CONFIG_UI_MODE;
+import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 import static android.view.ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_REGION;
 
@@ -28,6 +29,7 @@ import static com.android.wm.shell.draganddrop.SplitDragPolicy.Target.TYPE_SPLIT
 import static com.android.wm.shell.draganddrop.SplitDragPolicy.Target.TYPE_SPLIT_LEFT;
 import static com.android.wm.shell.draganddrop.SplitDragPolicy.Target.TYPE_SPLIT_RIGHT;
 import static com.android.wm.shell.draganddrop.SplitDragPolicy.Target.TYPE_SPLIT_TOP;
+import static com.android.wm.shell.shared.draganddrop.DragAndDropConstants.IS_FROM_NOTIFICATION;
 import static com.android.wm.shell.shared.split.SplitScreenConstants.SPLIT_POSITION_BOTTOM_OR_RIGHT;
 import static com.android.wm.shell.shared.split.SplitScreenConstants.SPLIT_POSITION_TOP_OR_LEFT;
 
@@ -36,18 +38,21 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.ActivityManager;
+import android.app.PendingIntent;
 import android.app.StatusBarManager;
+import android.content.ClipDescription;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ShortcutInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.graphics.RectF;
 import android.graphics.Region;
 import android.graphics.drawable.Drawable;
-import android.util.Log;
+import android.os.UserHandle;
 import android.view.DragEvent;
 import android.view.SurfaceControl;
 import android.view.View;
@@ -66,9 +71,12 @@ import com.android.internal.logging.InstanceId;
 import com.android.internal.protolog.ProtoLog;
 import com.android.launcher3.icons.IconProvider;
 import com.android.wm.shell.R;
+import com.android.wm.shell.bubbles.bar.DragToBubbleController;
 import com.android.wm.shell.common.split.SplitScreenUtils;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
 import com.android.wm.shell.shared.animation.Interpolators;
+import com.android.wm.shell.shared.bubbles.BubbleAnythingFlagHelper;
+import com.android.wm.shell.shared.draganddrop.DragAndDropConstants;
 import com.android.wm.shell.splitscreen.SplitScreenController;
 
 import java.io.PrintWriter;
@@ -106,9 +114,10 @@ public class DragLayout extends LinearLayout
     private boolean mIsLeftRightSplit;
 
     private SplitDragPolicy.Target mCurrentTarget = null;
+    private final @Nullable DragToBubbleController mDragToBubbleController;
+    private boolean mIsOverBubblesDropZone = false;
     private DropZoneView mDropZoneView1;
     private DropZoneView mDropZoneView2;
-
     private int mDisplayMargin;
     private int mDividerSize;
     private int mLaunchIntentEdgeMargin;
@@ -117,6 +126,7 @@ public class DragLayout extends LinearLayout
 
     private boolean mIsShowing;
     private boolean mHasDropped;
+    private boolean mAllowBubbleTarget;
     private DragSession mSession;
     // The last position that was handled by the drag layout
     private final Point mLastPosition = new Point();
@@ -128,11 +138,14 @@ public class DragLayout extends LinearLayout
     // Used with enableFlexibleSplit() flag
 
     @SuppressLint("WrongConstant")
-    public DragLayout(Context context, SplitScreenController splitScreenController,
+    public DragLayout(Context context,
+            SplitScreenController splitScreenController,
+            @Nullable DragToBubbleController dragToBubbleController,
             IconProvider iconProvider) {
         super(context);
         mSplitScreenController = splitScreenController;
         mIconProvider = iconProvider;
+        mDragToBubbleController = dragToBubbleController;
         mPolicy = new SplitDragPolicy(context, splitScreenController, this);
         mStatusBarManager = context.getSystemService(StatusBarManager.class);
         mLastConfiguration.setTo(context.getResources().getConfiguration());
@@ -156,8 +169,12 @@ public class DragLayout extends LinearLayout
         // near-square devices may report the same orietation with insets taken into account
         mAllowLeftRightSplitInPortrait = SplitScreenUtils.allowLeftRightSplitInPortrait(
                 context.getResources());
+        int displayId = (mSession != null && mSession.runningTaskInfo != null)
+                ? mSession.runningTaskInfo.displayId
+                : DEFAULT_DISPLAY;
+
         mIsLeftRightSplit = SplitScreenUtils.isLeftRightSplit(mAllowLeftRightSplitInPortrait,
-                getResources().getConfiguration());
+                getResources().getConfiguration(), displayId);
         setOrientation(mIsLeftRightSplit ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         updateContainerMargins(mIsLeftRightSplit);
     }
@@ -255,8 +272,11 @@ public class DragLayout extends LinearLayout
     }
 
     public void onConfigChanged(Configuration newConfig) {
+        int displayId = (mSession != null && mSession.runningTaskInfo != null)
+                ? mSession.runningTaskInfo.displayId
+                : DEFAULT_DISPLAY;
         boolean isLeftRightSplit = SplitScreenUtils.isLeftRightSplit(mAllowLeftRightSplitInPortrait,
-                newConfig);
+                newConfig, displayId);
         if (isLeftRightSplit != mIsLeftRightSplit) {
             mIsLeftRightSplit = isLeftRightSplit;
             setOrientation(mIsLeftRightSplit ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -330,7 +350,8 @@ public class DragLayout extends LinearLayout
         mSession = session;
         mHasDropped = false;
         mCurrentTarget = null;
-
+        mAllowBubbleTarget = mSession.appData == null
+                || !mSession.appData.getBooleanExtra(IS_FROM_NOTIFICATION, false);
         boolean alreadyInSplit = mSplitScreenController != null
                 && mSplitScreenController.isSplitScreenVisible();
         if (!alreadyInSplit) {
@@ -400,6 +421,8 @@ public class DragLayout extends LinearLayout
     }
 
     private void updateDropZoneSizesForSingleTask() {
+        resetDropZoneTranslations();
+
         final LinearLayout.LayoutParams dropZoneView1 =
                 (LayoutParams) mDropZoneView1.getLayoutParams();
         final LinearLayout.LayoutParams dropZoneView2 =
@@ -414,6 +437,19 @@ public class DragLayout extends LinearLayout
         mDropZoneView2.setLayoutParams(dropZoneView2);
     }
 
+    /** Zeroes out translationX and translationY on all drop zone views. */
+    void resetDropZoneTranslations() {
+        setDropZoneTranslations(0, 0);
+    }
+
+    /** Sets translationX and translationY on all drop zone views. */
+    void setDropZoneTranslations(int x, int y) {
+        mDropZoneView1.setTranslationX(x);
+        mDropZoneView1.setTranslationY(y);
+        mDropZoneView2.setTranslationX(x);
+        mDropZoneView2.setTranslationY(y);
+    }
+
     /**
      * Sets the size of the two drop zones based on the provided bounds. The divider sits between
      * the views and its size is included in the calculations.
@@ -422,6 +458,15 @@ public class DragLayout extends LinearLayout
      * @param bounds2 bounds to apply to the second dropzone view, null if split in half.
      */
     private void updateDropZoneSizes(Rect bounds1, Rect bounds2) {
+        if (bounds1 == null || bounds2 == null) {
+            // We're entering 50:50 split screen from a single app, no need for any translations.
+            resetDropZoneTranslations();
+        } else {
+            // We're already in split, so align our drop zones to match the left/top app edge. This
+            // is necessary because the left/top app can be offscreen.
+            setDropZoneTranslations(bounds1.left, bounds1.top);
+        }
+
         final int halfDivider = mDividerSize / 2;
         final LinearLayout.LayoutParams dropZoneView1 =
                 (LayoutParams) mDropZoneView1.getLayoutParams();
@@ -514,17 +559,18 @@ public class DragLayout extends LinearLayout
         if (mHasDropped) {
             return;
         }
+        // if event is over the bubble don't let split handle it
+        if (mAllowBubbleTarget && interceptBubbleBarEvent(x, y)) {
+            mLastPosition.set(x, y);
+            return;
+        }
         // Find containing region, if the same as mCurrentRegion, then skip, otherwise, animate the
         // visibility of the current region
         SplitDragPolicy.Target target = mPolicy.getTargetAtLocation(x, y);
         if (mCurrentTarget != target) {
             ProtoLog.v(ShellProtoLogGroup.WM_SHELL_DRAG_AND_DROP, "Current target: %s", target);
             if (target == null) {
-                // Animating to no target
-                animateSplitContainers(false, null /* animCompleteCallback */);
-                if (enableFlexibleSplit()) {
-                    animateHighlight(target);
-                }
+                animateToNoTarget();
             } else if (mCurrentTarget == null) {
                 if (mPolicy.getNumTargets() == 1) {
                     animateFullscreenContainer(true);
@@ -565,6 +611,26 @@ public class DragLayout extends LinearLayout
         mLastPosition.set(x, y);
     }
 
+    private boolean interceptBubbleBarEvent(int x, int y) {
+        boolean interceptBubbleBarEvent = mDragToBubbleController != null
+                && mDragToBubbleController.onDragUpdate(x, y);
+        if (interceptBubbleBarEvent && !mIsOverBubblesDropZone && mCurrentTarget != null) {
+            // only animate for no target if we first enter bubble bar drop zone and have a target
+            animateToNoTarget();
+            mCurrentTarget = null;
+        }
+        mIsOverBubblesDropZone = interceptBubbleBarEvent;
+        return interceptBubbleBarEvent;
+    }
+
+    private void animateToNoTarget() {
+        // Animating to no target
+        animateSplitContainers(false, null /* animCompleteCallback */);
+        if (enableFlexibleSplit()) {
+            animateHighlight(null);
+        }
+    }
+
     /**
      * Hides the drag layout and animates out the visible drop targets.
      */
@@ -581,6 +647,11 @@ public class DragLayout extends LinearLayout
                     mSession = null;
             }
         });
+        if (mIsOverBubblesDropZone) {
+            // bubble bar is still showing drop target, notify bubbles to hide drop targets
+            mIsOverBubblesDropZone = false;
+            Objects.requireNonNull(mDragToBubbleController).hideDropTargets();
+        }
         // Reset the state if we previously force-ignore the bottom margin
         mDropZoneView1.setForceIgnoreBottomMargin(false);
         mDropZoneView2.setForceIgnoreBottomMargin(false);
@@ -596,11 +667,20 @@ public class DragLayout extends LinearLayout
      */
     public boolean drop(DragEvent event, @NonNull SurfaceControl dragSurface,
             @Nullable WindowContainerToken hideTaskToken, Runnable dropCompleteCallback) {
-        final boolean handledDrop = mCurrentTarget != null;
+        final boolean handledDrop = mCurrentTarget != null || mIsOverBubblesDropZone;
         mHasDropped = true;
+        Intent appData = mSession.appData;
 
-        // Process the drop
-        mPolicy.onDropped(mCurrentTarget, hideTaskToken);
+        // Process the drop exclusive by DropTarget OR by the BubbleBar
+        if (mCurrentTarget != null) {
+            mPolicy.onDropped(mCurrentTarget, hideTaskToken);
+        } else if (mAllowBubbleTarget
+                && appData != null
+                && mIsOverBubblesDropZone
+                && BubbleAnythingFlagHelper.enableCreateAnyBubble()) {
+            handleDropOnBubbleBar(appData, Objects.requireNonNull(mDragToBubbleController));
+        }
+        mIsOverBubblesDropZone = false;
 
         // Start animating the drop UI out with the drag surface
         hide(event, dropCompleteCallback);
@@ -608,6 +688,26 @@ public class DragLayout extends LinearLayout
             hideDragSurface(dragSurface);
         }
         return handledDrop;
+    }
+
+    private void handleDropOnBubbleBar(Intent appData,
+            DragToBubbleController dragToBubbleController) {
+        ShortcutInfo shortcutInfo = appData.getParcelableExtra(
+                DragAndDropConstants.EXTRA_SHORTCUT_INFO,
+                ShortcutInfo.class
+        );
+        if (shortcutInfo != null) {
+            dragToBubbleController.onItemDropped(shortcutInfo);
+            return;
+        }
+        UserHandle user = appData.getParcelableExtra(Intent.EXTRA_USER, UserHandle.class);
+        PendingIntent pendingIntent = appData.getParcelableExtra(
+                ClipDescription.EXTRA_PENDING_INTENT,
+                PendingIntent.class
+        );
+        if (pendingIntent != null && user != null) {
+            dragToBubbleController.onItemDropped(pendingIntent, user);
+        }
     }
 
     private void hideDragSurface(@NonNull SurfaceControl dragSurface) {

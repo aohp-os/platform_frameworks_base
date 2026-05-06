@@ -17,33 +17,40 @@
 package com.android.systemui.statusbar.dagger
 
 import android.content.Context
-import com.android.systemui.CameraProtectionLoader
+import android.view.Display
+import android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR
+import com.android.app.displaylib.PerDisplayRepository
 import com.android.systemui.CoreStartable
-import com.android.systemui.SysUICutoutProvider
-import com.android.systemui.SysUICutoutProviderImpl
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Main
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
+import com.android.systemui.display.data.repository.DisplayWindowPropertiesRepositoryImpl
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.LogBufferFactory
+import com.android.systemui.statusbar.chips.sharetoapp.ui.viewmodel.ShareToAppChipViewModel
 import com.android.systemui.statusbar.core.StatusBarConnectedDisplays
 import com.android.systemui.statusbar.data.StatusBarDataLayerModule
 import com.android.systemui.statusbar.data.repository.LightBarControllerStore
+import com.android.systemui.statusbar.layout.StatusBarContentInsetsProvider
+import com.android.systemui.statusbar.layout.StatusBarContentInsetsProviderImpl
+import com.android.systemui.statusbar.layout.ui.viewmodel.StatusBarContentInsetsViewModel
 import com.android.systemui.statusbar.phone.AutoHideController
 import com.android.systemui.statusbar.phone.AutoHideControllerImpl
 import com.android.systemui.statusbar.phone.LightBarController
-import com.android.systemui.statusbar.phone.LightBarControllerImpl
-import com.android.systemui.statusbar.phone.StatusBarContentInsetsProvider
-import com.android.systemui.statusbar.phone.StatusBarContentInsetsProviderImpl
 import com.android.systemui.statusbar.phone.StatusBarSignalPolicy
 import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallController
 import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallLog
 import com.android.systemui.statusbar.phone.ongoingcall.StatusBarChipsModernization
+import com.android.systemui.statusbar.phone.ongoingcall.domain.interactor.OngoingCallInteractor
 import com.android.systemui.statusbar.policy.ConfigurationController
+import com.android.systemui.statusbar.ui.StatusBarUiLayerModule
 import com.android.systemui.statusbar.ui.SystemBarUtilsProxyImpl
 import com.android.systemui.statusbar.window.MultiDisplayStatusBarWindowControllerStore
 import com.android.systemui.statusbar.window.SingleDisplayStatusBarWindowControllerStore
 import com.android.systemui.statusbar.window.StatusBarWindowController
 import com.android.systemui.statusbar.window.StatusBarWindowControllerImpl
 import com.android.systemui.statusbar.window.StatusBarWindowControllerStore
+import com.android.systemui.statusbar.window.StatusBarWindowLog
 import dagger.Binds
 import dagger.Lazy
 import dagger.Module
@@ -59,7 +66,14 @@ import dagger.multibindings.IntoMap
  *   ([com.android.systemui.statusbar.pipeline.dagger.StatusBarPipelineModule],
  *   [com.android.systemui.statusbar.policy.dagger.StatusBarPolicyModule], etc.).
  */
-@Module(includes = [StatusBarDataLayerModule::class, SystemBarUtilsProxyImpl.Module::class])
+@Module(
+    includes =
+        [
+            StatusBarDataLayerModule::class,
+            StatusBarUiLayerModule::class,
+            SystemBarUtilsProxyImpl.Module::class,
+        ]
+)
 interface StatusBarModule {
 
     @Binds
@@ -80,23 +94,27 @@ interface StatusBarModule {
 
     @Binds @SysUISingleton fun autoHideController(impl: AutoHideControllerImpl): AutoHideController
 
-    @Binds
-    fun lightBarControllerFactory(
-        legacyFactory: LightBarControllerImpl.LegacyFactory
-    ): LightBarController.Factory
-
     companion object {
         @Provides
         @SysUISingleton
         @IntoMap
         @ClassKey(OngoingCallController::class)
-        fun ongoingCallController(
-            controller: OngoingCallController
-        ): CoreStartable =
+        fun ongoingCallController(controller: OngoingCallController): CoreStartable =
             if (StatusBarChipsModernization.isEnabled) {
                 CoreStartable.NOP
             } else {
                 controller
+            }
+
+        @Provides
+        @SysUISingleton
+        @IntoMap
+        @ClassKey(OngoingCallInteractor::class)
+        fun ongoingCallInteractor(interactor: OngoingCallInteractor): CoreStartable =
+            if (StatusBarChipsModernization.isEnabled) {
+                interactor
+            } else {
+                CoreStartable.NOP
             }
 
         @Provides
@@ -115,6 +133,20 @@ interface StatusBarModule {
                 multiDisplayImplLazy.get()
             } else {
                 singleDisplayImplLazy.get()
+            }
+        }
+
+        @Provides
+        @SysUISingleton
+        @IntoMap
+        @ClassKey(ShareToAppChipViewModel::class)
+        fun providesShareToAppChipViewModel(
+            shareToAppChipViewModelLazy: Lazy<ShareToAppChipViewModel>
+        ): CoreStartable {
+            return if (com.android.media.projection.flags.Flags.showStopDialogPostCallEnd()) {
+                shareToAppChipViewModelLazy.get()
+            } else {
+                CoreStartable.NOP
             }
         }
 
@@ -141,12 +173,9 @@ interface StatusBarModule {
 
         @Provides
         @SysUISingleton
-        fun sysUiCutoutProvider(
-            factory: SysUICutoutProviderImpl.Factory,
-            context: Context,
-            cameraProtectionLoader: CameraProtectionLoader,
-        ): SysUICutoutProvider {
-            return factory.create(context, cameraProtectionLoader)
+        @StatusBarWindowLog
+        fun provideWindowLogBuffer(factory: LogBufferFactory): LogBuffer {
+            return factory.create("StatusBarWindow", 120)
         }
 
         @Provides
@@ -155,9 +184,36 @@ interface StatusBarModule {
             factory: StatusBarContentInsetsProviderImpl.Factory,
             context: Context,
             configurationController: ConfigurationController,
-            sysUICutoutProvider: SysUICutoutProvider,
+            displaySubcomponentRepo: PerDisplayRepository<SystemUIDisplaySubcomponent>,
         ): StatusBarContentInsetsProvider {
-            return factory.create(context, configurationController, sysUICutoutProvider)
+            val displaySubcomponent = displaySubcomponentRepo[Display.DEFAULT_DISPLAY]!!
+            return factory.create(
+                context,
+                configurationController,
+                displaySubcomponent.sysUICutoutProvider,
+            )
+        }
+
+        @Provides
+        @SysUISingleton
+        fun contentInsetsViewModel(
+            insetsProvider: StatusBarContentInsetsProvider
+        ): StatusBarContentInsetsViewModel {
+            return StatusBarContentInsetsViewModel(insetsProvider)
+        }
+
+        @Provides
+        @StatusBarMain
+        fun provideDefaultStatusBarContext(
+            repoLazy: Lazy<DisplayWindowPropertiesRepositoryImpl>,
+            @Main appContext: Context,
+        ): Context {
+            return if (StatusBarConnectedDisplays.isEnabled) {
+                return repoLazy.get().get(Display.DEFAULT_DISPLAY, TYPE_STATUS_BAR)?.context
+                    ?: appContext
+            } else {
+                appContext
+            }
         }
     }
 }

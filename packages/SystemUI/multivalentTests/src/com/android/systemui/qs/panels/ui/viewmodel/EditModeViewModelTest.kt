@@ -30,9 +30,10 @@ import com.android.systemui.common.shared.model.Text
 import com.android.systemui.common.ui.compose.toAnnotatedString
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.kosmos.Kosmos
-import com.android.systemui.kosmos.runCurrent
 import com.android.systemui.kosmos.runTest
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
+import com.android.systemui.plugins.qs.QSTile
 import com.android.systemui.qs.FakeQSFactory
 import com.android.systemui.qs.FakeQSTile
 import com.android.systemui.qs.QSEditEvent
@@ -49,6 +50,9 @@ import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.qs.pipeline.shared.metricSpec
 import com.android.systemui.qs.qsTileFactory
 import com.android.systemui.qs.shared.model.TileCategory
+import com.android.systemui.qs.tiles.base.shared.model.QSTileConfig
+import com.android.systemui.qs.tiles.base.shared.model.fakeQSTileConfigProvider
+import com.android.systemui.qs.tiles.base.shared.model.qSTileConfigProvider
 import com.android.systemui.qs.tiles.impl.airplane.qsAirplaneModeTileConfig
 import com.android.systemui.qs.tiles.impl.alarm.qsAlarmTileConfig
 import com.android.systemui.qs.tiles.impl.battery.qsBatterySaverTileConfig
@@ -56,16 +60,11 @@ import com.android.systemui.qs.tiles.impl.flashlight.qsFlashlightTileConfig
 import com.android.systemui.qs.tiles.impl.internet.qsInternetTileConfig
 import com.android.systemui.qs.tiles.impl.sensorprivacy.qsCameraSensorPrivacyToggleTileConfig
 import com.android.systemui.qs.tiles.impl.sensorprivacy.qsMicrophoneSensorPrivacyToggleTileConfig
-import com.android.systemui.qs.tiles.viewmodel.QSTileConfig
-import com.android.systemui.qs.tiles.viewmodel.fakeQSTileConfigProvider
-import com.android.systemui.qs.tiles.viewmodel.qSTileConfigProvider
 import com.android.systemui.settings.userTracker
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -81,7 +80,7 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
         mSetFlagsRule.setFlagsParameterization(flags)
     }
 
-    private val kosmos = testKosmos()
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
 
     // Only have some configurations so we can test the effect of missing configurations.
     // As the configurations are injected by dagger, we'll have all the existing configurations
@@ -501,7 +500,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             }
         }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun currentTiles_moveTileDown() =
         with(kosmos) {
@@ -516,7 +514,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
                     )
                 currentTilesInteractor.setTiles(currentTiles)
                 underTest.startEditing()
-                runCurrent()
 
                 // Move flashlight tile to index 3
                 underTest.addTile(TileSpec.create("flashlight"), 3)
@@ -527,7 +524,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             }
         }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun currentTiles_moveTileUp() =
         with(kosmos) {
@@ -542,7 +538,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
                     )
                 currentTilesInteractor.setTiles(currentTiles)
                 underTest.startEditing()
-                runCurrent()
 
                 // Move alarm tile to index 0
                 underTest.addTile(TileSpec.create("alarm"), 0)
@@ -591,7 +586,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             val internetTile = TileSpec.create("internet")
             val customTile = TileSpec.create(component2)
             currentTilesInteractor.setTiles(listOf(flashlightTile))
-            runCurrent()
 
             underTest.addTile(airplaneTile)
             underTest.addTile(internetTile, position = 0)
@@ -623,7 +617,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             val airplaneTile = TileSpec.create("airplane")
             val internetTile = TileSpec.create("internet")
             currentTilesInteractor.setTiles(listOf(flashlightTile, airplaneTile, internetTile))
-            runCurrent()
 
             underTest.addTile(flashlightTile) // adding at the end, should use correct position
             underTest.addTile(internetTile, 0)
@@ -650,7 +643,6 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             val airplaneTile = TileSpec.create("airplane")
             val internetTile = TileSpec.create("internet")
             currentTilesInteractor.setTiles(listOf(flashlightTile, airplaneTile, internetTile))
-            runCurrent()
 
             underTest.removeTile(airplaneTile)
 
@@ -671,19 +663,15 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             val alarmTile = TileSpec.create("alarm")
 
             currentTilesInteractor.setTiles(listOf(flashlightTile, airplaneTile, internetTile))
-            runCurrent()
 
             // 0. Move flashlightTile to position 2
             underTest.setTiles(listOf(airplaneTile, internetTile, flashlightTile))
-            runCurrent()
 
             // 1. Add alarm tile at position 1
             underTest.setTiles(listOf(airplaneTile, alarmTile, internetTile, flashlightTile))
-            runCurrent()
 
             // 2. Remove internetTile
             underTest.setTiles(listOf(airplaneTile, alarmTile, flashlightTile))
-            runCurrent()
 
             assertThat(uiEventLoggerFake.numLogs()).isEqualTo(3)
 
@@ -700,6 +688,65 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
             with(uiEventLoggerFake[2]) {
                 assertThat(eventId).isEqualTo(QSEditEvent.QS_EDIT_REMOVE.id)
                 assertThat(packageName).isEqualTo(internetTile.metricSpec)
+            }
+        }
+
+    @Test
+    fun currentTiles_checksForDualTarget() =
+        with(kosmos) {
+            testScope.runTest {
+                val tiles by collectLastValue(underTest.tiles)
+                val currentTiles =
+                    mutableListOf(
+                        TileSpec.create("flashlight"),
+                        TileSpec.create("airplane"),
+                        TileSpec.create("internet"),
+                        TileSpec.create("alarm"),
+                    )
+                currentTilesInteractor.setTiles(currentTiles)
+
+                val tile =
+                    currentTilesInteractor.currentTiles.value.find { it.spec.spec == "flashlight" }
+
+                (tile!!.tile as FakeQSTile).changeState(
+                    QSTile.State().apply { handlesSecondaryClick = true }
+                )
+
+                underTest.startEditing()
+
+                assertThat(tiles!!.filter { it.isDualTarget }.map { it.tileSpec.spec })
+                    .containsExactly("flashlight")
+            }
+        }
+
+    @Test
+    fun removeTile_noLongerDualTarget() =
+        with(kosmos) {
+            testScope.runTest {
+                val tiles by collectLastValue(underTest.tiles)
+                val currentTiles =
+                    mutableListOf(
+                        TileSpec.create("flashlight"),
+                        TileSpec.create("airplane"),
+                        TileSpec.create("internet"),
+                        TileSpec.create("alarm"),
+                    )
+                currentTilesInteractor.setTiles(currentTiles)
+
+                val tile =
+                    currentTilesInteractor.currentTiles.value.find { it.spec.spec == "flashlight" }
+                (tile!!.tile as FakeQSTile).changeState(
+                    QSTile.State().apply { handlesSecondaryClick = true }
+                )
+
+                underTest.startEditing()
+
+                assertThat(tiles!!.filter { it.isDualTarget }.map { it.tileSpec.spec })
+                    .containsExactly("flashlight")
+
+                underTest.removeTile(TileSpec.create("flashlight"))
+
+                assertThat(tiles!!.filter { it.isDualTarget }.map { it.tileSpec.spec }).isEmpty()
             }
         }
 
@@ -720,6 +767,7 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
                 icon = Icon.Resource(R.drawable.star_on, ContentDescription.Loaded(spec)),
                 label = Text.Loaded(spec),
                 appName = null,
+                appIcon = null,
                 category = TileCategory.UNKNOWN,
             )
         }
@@ -731,6 +779,7 @@ class EditModeViewModelTest(flags: FlagsParameterization) : SysuiTestCase() {
                     Icon.Resource(uiConfig.iconRes, ContentDescription.Resource(uiConfig.labelRes)),
                 label = Text.Resource(uiConfig.labelRes),
                 appName = null,
+                appIcon = null,
                 category = category,
             )
         }

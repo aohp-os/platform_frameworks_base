@@ -16,10 +16,12 @@
 
 package com.android.systemui.qs;
 
-import static com.android.systemui.Flags.FLAG_QUICK_SETTINGS_VISUAL_HAPTICS_LONGPRESS;
 import static com.android.systemui.flags.SceneContainerFlagParameterizationKt.parameterizeSceneContainerFlag;
 
 import static com.google.common.truth.Truth.assertThat;
+
+import static kotlinx.coroutines.flow.FlowKt.asStateFlow;
+import static kotlinx.coroutines.flow.StateFlowKt.MutableStateFlow;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,12 +38,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import static kotlinx.coroutines.flow.FlowKt.asStateFlow;
-import static kotlinx.coroutines.flow.StateFlowKt.MutableStateFlow;
-
 import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.FlagsParameterization;
 import android.testing.TestableLooper.RunWithLooper;
@@ -54,6 +52,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.internal.logging.testing.UiEventLoggerFake;
+import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.DisableSceneContainer;
@@ -67,8 +66,12 @@ import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
+import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
 import com.android.systemui.util.animation.DisappearParameters;
+
+import kotlinx.coroutines.flow.MutableStateFlow;
+import kotlinx.coroutines.flow.StateFlow;
 
 import org.junit.After;
 import org.junit.Before;
@@ -85,8 +88,6 @@ import java.util.List;
 
 import javax.inject.Provider;
 
-import kotlinx.coroutines.flow.MutableStateFlow;
-import kotlinx.coroutines.flow.StateFlow;
 import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
 import platform.test.runner.parameterized.Parameters;
 
@@ -104,6 +105,7 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
     }
 
     private final KosmosJavaAdapter mKosmos = new KosmosJavaAdapter(this);
+
     @Mock
     private QSPanel mQSPanel;
     @Mock
@@ -136,6 +138,8 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
     Runnable mHorizontalLayoutListener;
     @Mock
     private ViewTreeObserver mViewTreeObserver;
+    @Mock
+    ConfigurationController mConfigurationController;
 
     private boolean mPagedTileLayoutListening = false;
 
@@ -153,7 +157,7 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
             super(view, host, qsCustomizerController, usingMediaPlayer(),
                     mediaHost, metricsLogger, uiEventLogger,
                     qsLogger, dumpManager, new ResourcesSplitShadeStateController(),
-                    mLongPressEffectProvider);
+                    mLongPressEffectProvider, mConfigurationController);
         }
 
         private MutableStateFlow<Boolean> mMediaVisible = MutableStateFlow(false);
@@ -231,6 +235,7 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
 
     @After
     public void tearDown() {
+        mController.onViewDetached();
         mController.destroy();
         disallowTestableLooperAsMainThread();
     }
@@ -311,6 +316,7 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
                 + "    " + mockTileString + "\n"
                 + "    " + mockTileViewString + "\n"
                 + "  media bounds: null\n"
+                + "  media visibility: false\n"
                 + "  horizontal layout: false\n"
                 + "  last orientation: 0\n"
                 + "  mShouldUseSplitNotificationShade: false\n";
@@ -505,7 +511,6 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
     }
 
     @Test
-    @EnableFlags(FLAG_QUICK_SETTINGS_VISUAL_HAPTICS_LONGPRESS)
     public void setTiles_longPressEffectEnabled_nonNullLongPressEffectsAreProvided() {
         mLongPressEffectProvider.mEffectsProvided = 0;
         when(mQSHost.getTiles()).thenReturn(List.of(mQSTile, mOtherTile));
@@ -513,16 +518,6 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
 
         // There is one non-null effect provided for each tile in the host
         assertThat(mLongPressEffectProvider.mEffectsProvided).isEqualTo(2);
-    }
-
-    @Test
-    @DisableFlags(FLAG_QUICK_SETTINGS_VISUAL_HAPTICS_LONGPRESS)
-    public void setTiles_longPressEffectDisabled_noLongPressEffectsAreProvided() {
-        mLongPressEffectProvider.mEffectsProvided = 0;
-        when(mQSHost.getTiles()).thenReturn(List.of(mQSTile, mOtherTile));
-        mController.setTiles();
-
-        assertThat(mLongPressEffectProvider.mEffectsProvided).isEqualTo(0);
     }
 
     @Test
@@ -644,6 +639,19 @@ public class QSPanelControllerBaseTest extends SysuiTestCase {
                 anyInt(),
                 anyString()
         );
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SHADE_WINDOW_GOES_AROUND)
+    public void onViewAttached_registersConfigListener() {
+        reset(mConfigurationController);
+        mController.onViewAttached();
+
+        verify(mConfigurationController).addCallback(any());
+
+        mController.onViewDetached();
+
+        verify(mConfigurationController).removeCallback(any());
     }
 
 

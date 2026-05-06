@@ -22,6 +22,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.service.dreams.Flags.dismissDreamOnKeyguardDismiss;
 import static android.view.WindowManager.KEYGUARD_VISIBILITY_TRANSIT_FLAGS;
+import static android.view.WindowManager.TRANSIT_FLAG_AOD_APPEARING;
 import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_APPEARING;
 import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_GOING_AWAY;
 import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_LOCKED;
@@ -76,7 +77,7 @@ public class KeyguardTransitionHandler
         implements Transitions.TransitionHandler, KeyguardChangeListener,
         TaskStackListenerCallback {
     private static final boolean ENABLE_NEW_KEYGUARD_SHELL_TRANSITIONS =
-            Flags.ensureKeyguardDoesTransitionStarting();
+            Flags.ensureKeyguardDoesTransitionStartingBugFix();
 
     private static final String TAG = "KeyguardTransition";
 
@@ -200,7 +201,8 @@ public class KeyguardTransitionHandler
                     transition, info, startTransaction, finishTransaction, finishCallback);
         }
 
-        if ((info.getFlags() & TRANSIT_FLAG_KEYGUARD_APPEARING) != 0) {
+        if ((info.getFlags() & TRANSIT_FLAG_KEYGUARD_APPEARING) != 0
+                || (info.getFlags() & TRANSIT_FLAG_AOD_APPEARING) != 0) {
             return startAnimation(mAppearTransition, "appearing",
                     transition, info, startTransaction, finishTransaction, finishCallback);
         }
@@ -277,7 +279,8 @@ public class KeyguardTransitionHandler
 
     @Override
     public void mergeAnimation(@NonNull IBinder nextTransition, @NonNull TransitionInfo nextInfo,
-            @NonNull SurfaceControl.Transaction nextT, @NonNull IBinder currentTransition,
+            @NonNull SurfaceControl.Transaction nextT, @NonNull SurfaceControl.Transaction finishT,
+            @NonNull IBinder currentTransition,
             @NonNull TransitionFinishCallback nextFinishCallback) {
         final StartedTransition playing = mStartedTransitions.get(currentTransition);
         if (playing == null) {
@@ -445,6 +448,14 @@ public class KeyguardTransitionHandler
             final WindowContainerTransaction wct = new WindowContainerTransaction();
             wct.addKeyguardState(new KeyguardState.Builder().setKeyguardShowing(keyguardShowing)
                     .setAodShowing(aodShowing).build());
+
+            if (ENABLE_NEW_KEYGUARD_SHELL_TRANSITIONS && dismissDreamOnKeyguardDismiss()
+                    && !keyguardShowing && mDreamToken != null) {
+                // Dismiss the dream in the same transaction, so that it isn't visible once the
+                // device is unlocked.
+                wct.removeTask(mDreamToken);
+            }
+
             mMainExecutor.execute(() -> {
                 mTransitions.startTransition(keyguardShowing ? TRANSIT_TO_FRONT : TRANSIT_TO_BACK,
                         wct, KeyguardTransitionHandler.this);

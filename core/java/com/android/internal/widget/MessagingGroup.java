@@ -16,6 +16,8 @@
 
 package com.android.internal.widget;
 
+import static android.app.Flags.notificationsRedesignTemplates;
+
 import android.annotation.AttrRes;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
@@ -81,7 +83,6 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
     private MessagingLinearLayout mMessageContainer;
     ImageFloatingTextView mSenderView;
     private ImageView mAvatarView;
-    private View mAvatarContainer;
     private String mAvatarSymbol = "";
     private int mLayoutColor;
     private CharSequence mAvatarName = "";
@@ -104,6 +105,7 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
     private boolean mShowingAvatar = true;
     private CharSequence mSenderName;
     private boolean mSingleLine = false;
+    private boolean mIsCollapsed = false;
     private LinearLayout mContentContainer;
     private int mRequestedMaxDisplayedLines = Integer.MAX_VALUE;
     private int mSenderTextPaddingSingleLine;
@@ -270,7 +272,7 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
     }
 
     private static int getMessagingGroupLayoutResource() {
-        if (Flags.notificationsRedesignTemplates()) {
+        if (notificationsRedesignTemplates()) {
             return R.layout.notification_2025_messaging_group;
         } else {
             return R.layout.notification_template_messaging_group;
@@ -433,6 +435,11 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
         }
     }
 
+    /** Whether the sender name is hidden to avoid duplication with the header. */
+    public boolean hasSenderNameHidden() {
+        return mSenderView.getVisibility() == GONE;
+    }
+
     /**
      * @param canHide true if the sender can be hidden if it is first
      */
@@ -447,6 +454,13 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
         boolean hidden = (mIsFirstGroupInLayout || mSingleLine) && mCanHideSenderIfFirst
                 || TextUtils.isEmpty(mSenderName);
         mSenderView.setVisibility(hidden ? GONE : VISIBLE);
+    }
+
+    private void updateIconVisibility() {
+        if (notificationsRedesignTemplates()) {
+            // We don't show any icon (other than the app or person icon) in the collapsed form.
+            mMessagingIconContainer.setVisibility(mIsCollapsed ? GONE : VISIBLE);
+        }
     }
 
     @Override
@@ -514,12 +528,13 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
         }
     }
 
-    public void setMessages(List<MessagingMessage> group) {
+    public void setMessages(List<MessagingMessage> group, boolean showingSummarization) {
         // Let's now make sure all children are added and in the correct order
         int textMessageIndex = 0;
         MessagingImageMessage isolatedMessage = null;
         for (int messageIndex = 0; messageIndex < group.size(); messageIndex++) {
             MessagingMessage message = group.get(messageIndex);
+            message.updateViewForSummarization(showingSummarization);
             if (message.getGroup() != this) {
                 message.setMessagingGroup(this);
                 mAddedMessages.add(message);
@@ -563,6 +578,8 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
         mIsolatedMessage = isolatedMessage;
         updateImageContainerVisibility();
         mMessages = group;
+        // remove messages from mAddedMessages when they are no longer in mMessages.
+        mAddedMessages.removeIf(message -> !mMessages.contains(message));
         updateMessageColor();
     }
 
@@ -707,6 +724,15 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
         }
     }
 
+    /**
+     * Sets whether this is in a collapsed layout or not. Certain elements like icons are not shown
+     * when the notification is collapsed.
+     */
+    public void setIsCollapsed(boolean isCollapsed) {
+        mIsCollapsed = isCollapsed;
+        updateIconVisibility();
+    }
+
     public boolean isSingleLine() {
         return mSingleLine;
     }
@@ -719,6 +745,14 @@ public class MessagingGroup extends NotificationOptimizedLinearLayout implements
     public void setIsInConversation(boolean isInConversation) {
         if (mIsInConversation != isInConversation) {
             mIsInConversation = isInConversation;
+
+            if (notificationsRedesignTemplates()) {
+                updateIconVisibility();
+                // No other alignment adjustments are necessary in the redesign, as the size of the
+                // icons in both conversations and old messaging notifications are the same.
+                return;
+            }
+
             MarginLayoutParams layoutParams =
                     (MarginLayoutParams) mMessagingIconContainer.getLayoutParams();
             layoutParams.width = mIsInConversation

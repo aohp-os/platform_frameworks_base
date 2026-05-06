@@ -22,7 +22,6 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.applicationCoroutineScope
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.power.domain.interactor.powerInteractor
-import com.android.systemui.statusbar.domain.interactor.keyguardOcclusionInteractor
 
 val Kosmos.fromGoneTransitionInteractor by
     Kosmos.Fixture {
@@ -37,6 +36,6 @@ val Kosmos.fromGoneTransitionInteractor by
             powerInteractor = powerInteractor,
             communalSceneInteractor = communalSceneInteractor,
             keyguardOcclusionInteractor = keyguardOcclusionInteractor,
-            keyguardLockWhileAwakeInteractor = keyguardLockWhileAwakeInteractor,
+            keyguardShowWhileAwakeInteractor = keyguardShowWhileAwakeInteractor,
         )
     }

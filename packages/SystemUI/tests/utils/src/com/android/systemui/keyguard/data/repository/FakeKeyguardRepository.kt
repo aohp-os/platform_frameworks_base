@@ -46,9 +46,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
         MutableSharedFlow(extraBufferCapacity = 1)
     override val keyguardDoneAnimationsFinished: Flow<Unit> = _keyguardDoneAnimationsFinished
 
-    private val _clockShouldBeCentered = MutableStateFlow<Boolean>(true)
-    override val clockShouldBeCentered: Flow<Boolean> = _clockShouldBeCentered
-
     private val _dismissAction = MutableStateFlow<DismissAction>(DismissAction.None)
     override val dismissAction: StateFlow<DismissAction> = _dismissAction
 
@@ -56,14 +53,14 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
     override val animateBottomAreaDozingTransitions: StateFlow<Boolean> =
         _animateBottomAreaDozingTransitions
 
-    private val _bottomAreaAlpha = MutableStateFlow(1f)
-    override val bottomAreaAlpha: StateFlow<Float> = _bottomAreaAlpha
-
     private val _isKeyguardShowing = MutableStateFlow(false)
     override val isKeyguardShowing: StateFlow<Boolean> = _isKeyguardShowing
 
     private val _isKeyguardUnlocked = MutableStateFlow(false)
     override val isKeyguardDismissible: StateFlow<Boolean> = _isKeyguardUnlocked.asStateFlow()
+
+    private val _hasTrust = MutableStateFlow(false)
+    override val hasTrust: StateFlow<Boolean> = _hasTrust.asStateFlow()
 
     private val _isKeyguardOccluded = MutableStateFlow(false)
     override val isKeyguardOccluded: StateFlow<Boolean> = _isKeyguardOccluded
@@ -87,9 +84,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     private val _isDreamingWithOverlay = MutableStateFlow(false)
     override val isDreamingWithOverlay: Flow<Boolean> = _isDreamingWithOverlay
-
-    private val _dozeAmount = MutableStateFlow(0f)
-    override val linearDozeAmount: Flow<Float> = _dozeAmount
 
     private val _statusBarState = MutableStateFlow(StatusBarState.SHADE)
     override val statusBarState: StateFlow<StatusBarState> = _statusBarState
@@ -119,6 +113,7 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
     override val keyguardAlpha: StateFlow<Float> = _keyguardAlpha
 
     override val panelAlpha: MutableStateFlow<Float> = MutableStateFlow(1f)
+    override val zoomOut: MutableStateFlow<Float> = MutableStateFlow(0f)
 
     override val lastRootViewTapPosition: MutableStateFlow<Point?> = MutableStateFlow(null)
 
@@ -126,14 +121,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     private val _isEncryptedOrLockdown = MutableStateFlow(true)
     override val isEncryptedOrLockdown: Flow<Boolean> = _isEncryptedOrLockdown
-
-    private val _shortcutAbsoluteTop = MutableStateFlow(0F)
-    override val shortcutAbsoluteTop: StateFlow<Float>
-        get() = _shortcutAbsoluteTop.asStateFlow()
-
-    private val _notificationStackAbsoluteBottom = MutableStateFlow(0F)
-    override val notificationStackAbsoluteBottom: StateFlow<Float>
-        get() = _notificationStackAbsoluteBottom.asStateFlow()
 
     private val _isKeyguardEnabled = MutableStateFlow(true)
     override val isKeyguardEnabled: StateFlow<Boolean> = _isKeyguardEnabled.asStateFlow()
@@ -147,6 +134,14 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     override val onCameraLaunchDetected = MutableStateFlow(CameraLaunchSourceModel())
 
+    private var _isSignOutButtonOnStatusBarEnabledInConfig: Boolean = false
+    override val isSignOutButtonOnStatusBarEnabledInConfig: Boolean
+        get() = _isSignOutButtonOnStatusBarEnabledInConfig
+
+    fun setIsSignOutButtonOnStatusBarEnabledInConfig(value: Boolean) {
+        _isSignOutButtonOnStatusBarEnabledInConfig = value
+    }
+
     override fun setQuickSettingsVisible(isVisible: Boolean) {
         _isQuickSettingsVisible.value = isVisible
     }
@@ -157,11 +152,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     override fun setAnimateDozingTransitions(animate: Boolean) {
         _animateBottomAreaDozingTransitions.tryEmit(animate)
-    }
-
-    @Deprecated("Deprecated as part of b/278057014")
-    override fun setBottomAreaAlpha(alpha: Float) {
-        _bottomAreaAlpha.value = alpha
     }
 
     fun setKeyguardShowing(isShowing: Boolean) {
@@ -178,6 +168,10 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     fun setKeyguardDismissible(isUnlocked: Boolean) {
         _isKeyguardUnlocked.value = isUnlocked
+    }
+
+    fun setHasTrust(hasTrust: Boolean) {
+        _hasTrust.value = hasTrust
     }
 
     override fun setIsDozing(isDozing: Boolean) {
@@ -198,10 +192,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     override fun keyguardDoneAnimationsFinished() {
         _keyguardDoneAnimationsFinished.tryEmit(Unit)
-    }
-
-    override fun setClockShouldBeCentered(shouldBeCentered: Boolean) {
-        _clockShouldBeCentered.value = shouldBeCentered
     }
 
     override fun setKeyguardEnabled(enabled: Boolean) {
@@ -233,10 +223,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     fun setDreamingWithOverlay(isDreaming: Boolean) {
         _isDreamingWithOverlay.value = isDreaming
-    }
-
-    fun setDozeAmount(dozeAmount: Float) {
-        _dozeAmount.value = dozeAmount
     }
 
     override fun setBiometricUnlockState(
@@ -282,6 +268,10 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
         panelAlpha.value = alpha
     }
 
+    override fun setZoomOut(zoomOutFromShadeRadius: Float) {
+        zoomOut.value = zoomOutFromShadeRadius
+    }
+
     fun setIsEncryptedOrLockdown(value: Boolean) {
         _isEncryptedOrLockdown.value = value
     }
@@ -292,14 +282,6 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     override fun isShowKeyguardWhenReenabled(): Boolean {
         return isShowKeyguardWhenReenabled
-    }
-
-    override fun setShortcutAbsoluteTop(top: Float) {
-        _shortcutAbsoluteTop.value = top
-    }
-
-    override fun setNotificationStackAbsoluteBottom(bottom: Float) {
-        _notificationStackAbsoluteBottom.value = bottom
     }
 
     override fun setCanIgnoreAuthAndReturnToGone(canWake: Boolean) {

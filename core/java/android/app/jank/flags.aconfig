@@ -15,3 +15,28 @@ flag {
   description: "Controls whether the system will log frame metrics related to app jank"
   bug: "366265225"
 }
+
+flag {
+  name: "viewroot_choreographer"
+  namespace: "system_performance"
+  description: "when enabled janktracker will get the instance of choreographer from viewrootimpl"
+  bug: "377960907"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
+ }
+
+flag {
+    name: "instrument_listview_scroll_states"
+    namespace: "system_performance"
+    description: "when enabled listview types will report scroll state changes to janktracker"
+    bug: "439161162"
+  }
+
+flag {
+    name: "instrument_scrollview_scroll_states"
+    namespace: "system_performance"
+    description: "when enabled scrollview types will report scroll state changes to janktracker"
+    bug: "440646411"
+  }
+

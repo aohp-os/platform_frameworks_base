@@ -156,6 +156,7 @@ final class WearableSensingSecureChannel {
                     new AssociationRequest.Builder()
                             .setDisplayName(CDM_ASSOCIATION_DISPLAY_NAME)
                             .setSelfManaged(true)
+                            .setDeviceProfile(AssociationRequest.DEVICE_PROFILE_WEARABLE_SENSING)
                             .build(),
                     mLightWeightExecutor,
                     new CompanionDeviceManager.Callback() {

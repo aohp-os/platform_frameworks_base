@@ -24,6 +24,8 @@ import android.accounts.AccountManagerInternal;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SpecialUsers.CanBeALL;
+import android.annotation.SpecialUsers.CanBeCURRENT;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityManager.RestrictionLevel;
@@ -95,7 +97,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * {@hide}
+ * @hide
  */
 public final class ContentService extends IContentService.Stub {
     static final String TAG = "ContentService";
@@ -361,7 +363,8 @@ public final class ContentService extends IContentService.Stub {
      */
     @Override
     public void registerContentObserver(Uri uri, boolean notifyForDescendants,
-            IContentObserver observer, int userHandle, int targetSdkVersion) {
+            IContentObserver observer, @CanBeALL @CanBeCURRENT @UserIdInt int userHandle,
+            int targetSdkVersion) {
         if (observer == null || uri == null) {
             throw new IllegalArgumentException("You must pass a valid uri and observer");
         }
@@ -423,7 +426,8 @@ public final class ContentService extends IContentService.Stub {
      */
     @Override
     public void notifyChange(Uri[] uris, IContentObserver observer,
-            boolean observerWantsSelfNotifications, int flags, int userId,
+            boolean observerWantsSelfNotifications, int flags,
+            @CanBeALL @CanBeCURRENT @UserIdInt int userId,
             int targetSdkVersion, String callingPackage) {
         if (DEBUG) {
             Slog.d(TAG, "Notifying update of " + Arrays.toString(uris) + " for user " + userId
@@ -1398,8 +1402,8 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    private int handleIncomingUser(Uri uri, int pid, int uid, int modeFlags, boolean allowNonFull,
-            int userId) {
+    private @CanBeALL @UserIdInt int handleIncomingUser(Uri uri, int pid, int uid, int modeFlags,
+            boolean allowNonFull, @CanBeALL @CanBeCURRENT @UserIdInt int userId) {
         if (userId == UserHandle.USER_CURRENT) {
             userId = ActivityManager.getCurrentUser();
         }
@@ -1658,7 +1662,7 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     @VisibleForTesting
     public static final class ObserverNode {
         private class ObserverEntry implements IBinder.DeathRecipient {

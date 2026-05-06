@@ -28,6 +28,7 @@ import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.List;
 
@@ -47,7 +48,7 @@ public class DrawText extends PaintOperation implements VariableSupport {
     boolean mRtl = false;
 
     public DrawText(
-            int textID,
+            int textId,
             int start,
             int end,
             int contextStart,
@@ -55,7 +56,7 @@ public class DrawText extends PaintOperation implements VariableSupport {
             float x,
             float y,
             boolean rtl) {
-        mTextID = textID;
+        mTextID = textId;
         mStart = start;
         mEnd = end;
         mContextStart = contextStart;
@@ -144,7 +145,7 @@ public class DrawText extends PaintOperation implements VariableSupport {
      * Writes out the operation to the buffer
      *
      * @param buffer write the command to the buffer
-     * @param textID id of the text
+     * @param textId id of the text
      * @param start Start position
      * @param end end position
      * @param contextStart start of the context
@@ -155,7 +156,7 @@ public class DrawText extends PaintOperation implements VariableSupport {
      */
     public static void apply(
             @NonNull WireBuffer buffer,
-            int textID,
+            int textId,
             int start,
             int end,
             int contextStart,
@@ -164,7 +165,7 @@ public class DrawText extends PaintOperation implements VariableSupport {
             float y,
             boolean rtl) {
         buffer.start(Operations.DRAW_TEXT_RUN);
-        buffer.writeInt(textID);
+        buffer.writeInt(textId);
         buffer.writeInt(start);
         buffer.writeInt(end);
         buffer.writeInt(contextStart);
@@ -204,5 +205,19 @@ public class DrawText extends PaintOperation implements VariableSupport {
     @Override
     public void paint(@NonNull PaintContext context) {
         context.drawTextRun(mTextID, mStart, mEnd, mContextStart, mContextEnd, mOutX, mOutY, mRtl);
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addType(CLASS_NAME)
+                .add("textId", mTextID)
+                .add("start", mStart)
+                .add("end", mEnd)
+                .add("contextStart", mContextStart)
+                .add("contextEnd", mContextEnd)
+                .add("x", mX, mOutX)
+                .add("y", mY, mOutY)
+                .add("rtl", mRtl);
     }
 }

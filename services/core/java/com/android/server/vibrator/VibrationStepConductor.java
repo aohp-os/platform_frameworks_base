@@ -30,6 +30,7 @@ import android.os.vibrator.VibrationEffectSegment;
 import android.util.IntArray;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.server.vibrator.VibrationSession.Status;
@@ -93,6 +94,8 @@ final class VibrationStepConductor {
     private final Object mLock = new Object();
     @GuardedBy("mLock")
     private final IntArray mSignalVibratorsComplete;
+    @GuardedBy("mLock")
+    private final SparseIntArray mSignalVibratorStepIds;
     @Nullable
     @GuardedBy("mLock")
     private Vibration.EndInfo mSignalCancel = null;
@@ -103,8 +106,10 @@ final class VibrationStepConductor {
     private Vibration.EndInfo mCancelledVibrationEndInfo = null;
     private boolean mCancelledImmediately = false;  // hard stop
     private int mPendingVibrateSteps;
+    // TODO(b/421857859): remove this once flag remove_sequential_combination is removed
     private int mRemainingStartSequentialEffectSteps;
     private int mSuccessfulVibratorOnSteps;
+    private int mFailedVibratorOnSteps;
 
     VibrationStepConductor(HalVibration vib, boolean isInSession,
             VibrationSettings vibrationSettings, DeviceAdapter deviceAdapter,
@@ -121,20 +126,22 @@ final class VibrationStepConductor {
         this.vibratorManagerHooks = vibratorManagerHooks;
         this.mSignalVibratorsComplete =
                 new IntArray(mDeviceAdapter.getAvailableVibratorIds().length);
+        this.mSignalVibratorStepIds =
+                new SparseIntArray(mDeviceAdapter.getAvailableVibratorIds().length);
     }
 
     @Nullable
-    AbstractVibratorStep nextVibrateStep(long startTime, VibratorController controller,
+    AbstractVibratorStep nextVibrateStep(long startTime, HalVibrator vibrator,
             VibrationEffect effect) {
         if (Build.IS_DEBUGGABLE) {
             expectIsVibrationThread(true);
         }
         if (effect instanceof VibrationEffect.VendorEffect vendorEffect) {
-            return new PerformVendorEffectVibratorStep(this, startTime, controller, vendorEffect,
+            return new PerformVendorEffectVibratorStep(this, startTime, vibrator, vendorEffect,
                     /* pendingVibratorOffDeadline= */ 0);
         }
         if (effect instanceof VibrationEffect.Composed composed) {
-            return nextVibrateStep(startTime, controller, composed, /* segmentIndex= */ 0,
+            return nextVibrateStep(startTime, vibrator, composed, /* segmentIndex= */ 0,
                     /* pendingVibratorOffDeadline= */ 0);
         }
         Slog.wtf(TAG, "Unable to create next step for unexpected effect: " + effect);
@@ -142,7 +149,7 @@ final class VibrationStepConductor {
     }
 
     @NonNull
-    AbstractVibratorStep nextVibrateStep(long startTime, VibratorController controller,
+    AbstractVibratorStep nextVibrateStep(long startTime, HalVibrator vibrator,
             VibrationEffect.Composed effect, int segmentIndex, long pendingVibratorOffDeadline) {
         if (Build.IS_DEBUGGABLE) {
             expectIsVibrationThread(true);
@@ -153,27 +160,27 @@ final class VibrationStepConductor {
         if (segmentIndex < 0) {
             // No more segments to play, last step is to complete the vibration on this vibrator.
             return new CompleteEffectVibratorStep(this, startTime, /* cancelled= */ false,
-                    controller, pendingVibratorOffDeadline);
+                    vibrator, pendingVibratorOffDeadline);
         }
 
         VibrationEffectSegment segment = effect.getSegments().get(segmentIndex);
         if (segment instanceof PrebakedSegment) {
-            return new PerformPrebakedVibratorStep(this, startTime, controller, effect,
+            return new PerformPrebakedVibratorStep(this, startTime, vibrator, effect,
                     segmentIndex, pendingVibratorOffDeadline);
         }
         if (segment instanceof PrimitiveSegment) {
-            return new ComposePrimitivesVibratorStep(this, startTime, controller, effect,
+            return new ComposePrimitivesVibratorStep(this, startTime, vibrator, effect,
                     segmentIndex, pendingVibratorOffDeadline);
         }
         if (segment instanceof RampSegment) {
-            return new ComposePwleVibratorStep(this, startTime, controller, effect, segmentIndex,
+            return new ComposePwleVibratorStep(this, startTime, vibrator, effect, segmentIndex,
                     pendingVibratorOffDeadline);
         }
         if (segment instanceof PwleSegment) {
-            return new ComposePwleV2VibratorStep(this, startTime, controller, effect,
+            return new ComposePwleV2VibratorStep(this, startTime, vibrator, effect,
                     segmentIndex, pendingVibratorOffDeadline);
         }
-        return new SetAmplitudeVibratorStep(this, startTime, controller, effect, segmentIndex,
+        return new SetAmplitudeVibratorStep(this, startTime, vibrator, effect, segmentIndex,
                 pendingVibratorOffDeadline);
     }
 
@@ -187,9 +194,8 @@ final class VibrationStepConductor {
             expectIsVibrationThread(true);
         }
 
-        if (Flags.adaptiveHapticsEnabled()) {
-            waitForVibrationParamsIfRequired();
-        }
+        waitForVibrationParamsIfRequired();
+
         // Scale resolves the default amplitudes from the effect before scaling them.
         mVibration.scaleEffects(mVibrationScaler);
 
@@ -198,11 +204,18 @@ final class VibrationStepConductor {
             // of unsupported segments. The original effect will be ignored.
             return false;
         }
-        CombinedVibration.Sequential sequentialEffect = toSequential(mVibration.getEffectToPlay());
-        mPendingVibrateSteps++;
-        // This count is decremented at the completion of the step, so we don't subtract one.
-        mRemainingStartSequentialEffectSteps = sequentialEffect.getEffects().size();
-        mNextSteps.offer(new StartSequentialEffectStep(this, sequentialEffect));
+        if (Flags.removeSequentialCombination()) {
+            mNextSteps.offer(new StartCombinedVibrationStep(this, mVibration.getEffectToPlay()));
+            mPendingVibrateSteps++;
+            mRemainingStartSequentialEffectSteps = 0;
+        } else {
+            CombinedVibration.Sequential sequentialEffect =
+                    toSequential(mVibration.getEffectToPlay());
+            mPendingVibrateSteps++;
+            // This count is decremented at the completion of the step, so we don't subtract one.
+            mRemainingStartSequentialEffectSteps = sequentialEffect.getEffects().size();
+            mNextSteps.offer(new StartSequentialEffectStep(this, sequentialEffect));
+        }
         // Vibration will start playing in the Vibrator, following the effect timings and delays.
         // Report current time as the vibration start time, for debugging.
         mVibration.stats.reportStarted();
@@ -215,7 +228,7 @@ final class VibrationStepConductor {
         return mVibration;
     }
 
-    SparseArray<VibratorController> getVibrators() {
+    SparseArray<HalVibrator> getVibrators() {
         // No thread assertion: immutable
         return mDeviceAdapter.getAvailableVibrators();
     }
@@ -235,7 +248,7 @@ final class VibrationStepConductor {
 
     /**
      * Calculate the {@link Vibration.EndInfo} based on the current queue state and the expected
-     * number of {@link StartSequentialEffectStep} to be played.
+     * number of steps to be played.
      */
     @Nullable
     public Vibration.EndInfo calculateVibrationEndInfo() {
@@ -250,11 +263,15 @@ final class VibrationStepConductor {
             // Vibration still running.
             return null;
         }
-        // No pending steps, and something happened.
+        if (mFailedVibratorOnSteps > 0) {
+            // Some steps failed to dispatch vibration to the vibrator HAL.
+            return new Vibration.EndInfo(Status.IGNORED_ERROR_DISPATCHING);
+        }
         if (mSuccessfulVibratorOnSteps > 0) {
+            // Some steps played successfully, and there was no failure.
             return new Vibration.EndInfo(Status.FINISHED);
         }
-        // If no step was able to turn the vibrator ON successfully.
+        // No step was successful or failed, nothing played.
         return new Vibration.EndInfo(Status.IGNORED_UNSUPPORTED);
     }
 
@@ -348,6 +365,8 @@ final class VibrationStepConductor {
             List<Step> nextSteps = nextStep.play();
             if (nextStep.getVibratorOnDuration() > 0) {
                 mSuccessfulVibratorOnSteps++;
+            } else if (nextStep.getVibratorOnDuration() < 0) {
+                mFailedVibratorOnSteps++;
             }
             if (nextStep instanceof StartSequentialEffectStep) {
                 mRemainingStartSequentialEffectSteps--;
@@ -418,7 +437,7 @@ final class VibrationStepConductor {
      * <p>This is a lightweight method intended to be called directly via native callbacks.
      * The state update is recorded for processing on the main execution thread (VibrationThread).
      */
-    public void notifyVibratorComplete(int vibratorId) {
+    public void notifyVibratorComplete(int vibratorId, long stepId) {
         // HAL callbacks may be triggered directly within HAL calls, so these notifications
         // could be on the VibrationThread as it calls the HAL, or some other executor later.
         // Therefore no thread assertion is made here.
@@ -428,6 +447,13 @@ final class VibrationStepConductor {
         }
 
         synchronized (mLock) {
+            if (mSignalVibratorStepIds.get(vibratorId) != stepId) {
+                if (DEBUG) {
+                    Slog.d(TAG, "Vibrator " + vibratorId + " callback for step=" + stepId
+                            + " ignored, current step=" + mSignalVibratorStepIds.get(vibratorId));
+                }
+                return;
+            }
             mSignalVibratorsComplete.add(vibratorId);
             mLock.notify();
         }
@@ -510,8 +536,8 @@ final class VibrationStepConductor {
             mStatsLogger.logVibrationParamRequestTimeout(mVibration.callerInfo.uid);
         } catch (CancellationException e) {
             if (DEBUG) {
-                Slog.d(TAG, "Request for vibration params cancelled, maybe superseded or"
-                        + " vibrator controller unregistered. Skipping params...", e);
+                Slog.d(TAG, "Request for vibration params cancelled, maybe superseded or the"
+                        + " vibrator controller service unregistered. Skipping params...", e);
             }
         } catch (Throwable e) {
             Slog.w(TAG, "Failed to retrieve vibration params.", e);
@@ -645,6 +671,24 @@ final class VibrationStepConductor {
         }
     }
 
+    /**
+     * Updates and returns the next step id value to be used in vibrator commands.
+     *
+     * <p>This new step id will be kept by this conductor to filter out old callbacks that might be
+     * triggered too late by the HAL, preventing them from affecting the ongoing vibration playback.
+     */
+    public int nextVibratorCallbackStepId(int vibratorId) {
+        if (Build.IS_DEBUGGABLE) {
+            expectIsVibrationThread(true);
+        }
+        synchronized (mLock) {
+            int stepId = mSignalVibratorStepIds.get(vibratorId) + 1;
+            mSignalVibratorStepIds.put(vibratorId, stepId);
+            return stepId;
+        }
+    }
+
+    // TODO(b/421857859): remove this once flag remove_sequential_combination is removed
     private static CombinedVibration.Sequential toSequential(CombinedVibration effect) {
         if (effect instanceof CombinedVibration.Sequential) {
             return (CombinedVibration.Sequential) effect;

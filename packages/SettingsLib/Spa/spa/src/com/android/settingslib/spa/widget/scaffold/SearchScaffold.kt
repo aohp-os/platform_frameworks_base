@@ -51,12 +51,14 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.android.settingslib.spa.framework.compose.contentDescription
 import com.android.settingslib.spa.framework.compose.hideKeyboardAction
 import com.android.settingslib.spa.framework.compose.horizontalValues
 import com.android.settingslib.spa.framework.theme.SettingsOpacity
@@ -72,6 +74,7 @@ import com.android.settingslib.spa.widget.preference.PreferenceModel
 @Composable
 fun SearchScaffold(
     title: String,
+    isFirstLayerPageWhenEmbedded: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (bottomPadding: Dp, searchQuery: () -> String) -> Unit,
 ) {
@@ -85,6 +88,7 @@ fun SearchScaffold(
         topBar = {
             SearchableTopAppBar(
                 title = title,
+                isFirstLayerPageWhenEmbedded = isFirstLayerPageWhenEmbedded,
                 actions = actions,
                 scrollBehavior = scrollBehavior,
                 isSearchMode = isSearchMode,
@@ -119,6 +123,7 @@ internal class SearchScaffoldViewModel : ViewModel() {
 @Composable
 private fun SearchableTopAppBar(
     title: String,
+    isFirstLayerPageWhenEmbedded: Boolean,
     actions: @Composable RowScope.() -> Unit,
     scrollBehavior: TopAppBarScrollBehavior,
     isSearchMode: Boolean,
@@ -134,7 +139,7 @@ private fun SearchableTopAppBar(
             actions = actions,
         )
     } else {
-        SettingsTopAppBar(title, scrollBehavior) {
+        SettingsTopAppBar(title, scrollBehavior, isFirstLayerPageWhenEmbedded) {
             SearchAction {
                 scrollBehavior.collapse()
                 onSearchQueryChange(TextFieldValue())
@@ -175,12 +180,15 @@ private fun SearchBox(query: TextFieldValue, onQueryChange: (TextFieldValue) -> 
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
-            .focusRequester(focusRequester),
+            .focusRequester(focusRequester)
+            .contentDescription(stringResource(R.string.abc_search_hint)),
         textStyle = textStyle,
         placeholder = {
             Text(
                 text = stringResource(R.string.abc_search_hint),
-                modifier = Modifier.alpha(SettingsOpacity.Hint),
+                modifier = Modifier
+                    .alpha(SettingsOpacity.Hint)
+                    .clearAndSetSemantics {},
                 style = textStyle,
             )
         },

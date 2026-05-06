@@ -23,6 +23,7 @@ import com.android.internal.widget.remotecompose.core.PaintContext;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.List;
 
@@ -38,7 +39,7 @@ public class DrawSector extends DrawBase6 {
      */
     public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         Maker m = DrawSector::new;
-        read(m, buffer, operations);
+        read(buffer, operations, m);
     }
 
     /**
@@ -122,5 +123,11 @@ public class DrawSector extends DrawBase6 {
     @Override
     public void paint(@NonNull PaintContext context) {
         context.drawSector(mV1, mV2, mV3, mV4, mV5, mV6);
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serialize(serializer, "left", "top", "right", "bottom", "startAngle", "sweepAngle")
+                .addType(CLASS_NAME);
     }
 }

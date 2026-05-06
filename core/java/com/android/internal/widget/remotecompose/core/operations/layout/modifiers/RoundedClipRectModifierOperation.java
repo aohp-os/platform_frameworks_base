@@ -29,6 +29,8 @@ import com.android.internal.widget.remotecompose.core.operations.DrawBase4;
 import com.android.internal.widget.remotecompose.core.operations.layout.Component;
 import com.android.internal.widget.remotecompose.core.operations.layout.DecoratorComponent;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -46,7 +48,7 @@ public class RoundedClipRectModifierOperation extends DrawBase4
      */
     public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         Maker m = RoundedClipRectModifierOperation::new;
-        read(m, buffer, operations);
+        read(buffer, operations, m);
     }
 
     /**
@@ -119,7 +121,10 @@ public class RoundedClipRectModifierOperation extends DrawBase4
 
     @Override
     public void layout(
-            @NonNull RemoteContext context, Component component, float width, float height) {
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         this.mWidth = width;
         this.mHeight = height;
     }
@@ -159,5 +164,14 @@ public class RoundedClipRectModifierOperation extends DrawBase4
             float bottomStart,
             float bottomEnd) {
         write(buffer, OP_CODE, topStart, topEnd, bottomStart, bottomEnd);
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serialize(serializer, "topStart", "topEnd", "bottomStart", "bottomEnd")
+                .addTags(SerializeTags.MODIFIER)
+                .addType(CLASS_NAME)
+                .add("width", mWidth)
+                .add("height", mHeight);
     }
 }

@@ -20,15 +20,15 @@ import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_DEFAUL
 import static android.content.Context.DEVICE_ID_DEFAULT;
 
 import android.content.AttributionSourceState;
+import android.content.res.CameraCompatibilityInfo;
 import android.hardware.CameraInfo;
 import android.hardware.ICamera;
 import android.hardware.ICameraClient;
 import android.hardware.ICameraService;
 import android.hardware.ICameraServiceListener;
+import android.hardware.camera2.CameraMetadataInfo;
 import android.hardware.camera2.ICameraDeviceCallbacks;
 import android.hardware.camera2.ICameraDeviceUser;
-import android.hardware.camera2.CameraMetadataInfo;
-import android.hardware.camera2.impl.CameraMetadataNative;
 import android.hardware.camera2.impl.CaptureResultExtras;
 import android.hardware.camera2.impl.PhysicalCaptureResultInfo;
 import android.os.Binder;
@@ -97,7 +97,7 @@ public class CameraBinderTest extends AndroidTestCase {
         clientAttribution.deviceId = DEVICE_ID_DEFAULT;
         for (int cameraId = 0; cameraId < mUtils.getGuessedNumCameras(); ++cameraId) {
             CameraInfo info = mUtils.getCameraService().getCameraInfo(cameraId,
-                    ICameraService.ROTATION_OVERRIDE_NONE, clientAttribution,
+                    new CameraCompatibilityInfo.Builder().build(), clientAttribution,
                     DEVICE_POLICY_DEFAULT);
             assertTrue("Facing was not set for camera " + cameraId, info.info.facing != -1);
             assertTrue("Orientation was not set for camera " + cameraId,
@@ -126,30 +126,6 @@ public class CameraBinderTest extends AndroidTestCase {
         }
     }
 
-    /** The camera2 api is only supported on HAL3.2+ devices */
-    @SmallTest
-    public void testSupportsCamera2Api() throws Exception {
-        for (int cameraId = 0; cameraId < mUtils.getGuessedNumCameras(); ++cameraId) {
-            boolean supports = mUtils.getCameraService().supportsCameraApi(
-                String.valueOf(cameraId), API_VERSION_2);
-
-            Log.v(TAG, "Camera " + cameraId + " supports api2: " + supports);
-        }
-    }
-
-    /** The camera1 api is supported on *all* devices regardless of HAL version */
-    @SmallTest
-    public void testSupportsCamera1Api() throws Exception {
-        for (int cameraId = 0; cameraId < mUtils.getGuessedNumCameras(); ++cameraId) {
-
-            boolean supports = mUtils.getCameraService().supportsCameraApi(
-                String.valueOf(cameraId), API_VERSION_1);
-            assertTrue(
-                    "Camera service returned false when queried if it supports camera1 api " +
-                    " for camera ID " + cameraId, supports);
-        }
-    }
-
     static abstract class DummyBase extends Binder implements android.os.IInterface {
         @Override
         public IBinder asBinder() {
@@ -173,7 +149,7 @@ public class CameraBinderTest extends AndroidTestCase {
             ICamera cameraUser = mUtils.getCameraService()
                     .connect(dummyCallbacks, cameraId,
                             getContext().getApplicationInfo().targetSdkVersion,
-                            ICameraService.ROTATION_OVERRIDE_NONE,
+                            new CameraCompatibilityInfo.Builder().build(),
                             /*forceSlowJpegMode*/false,
                             clientAttribution, DEVICE_POLICY_DEFAULT);
             assertNotNull(String.format("Camera %s was null", cameraId), cameraUser);
@@ -286,7 +262,7 @@ public class CameraBinderTest extends AndroidTestCase {
                         dummyCallbacks, String.valueOf(cameraId),
                         0 /*oomScoreOffset*/,
                         getContext().getApplicationInfo().targetSdkVersion,
-                        ICameraService.ROTATION_OVERRIDE_NONE, clientAttribution,
+                        new CameraCompatibilityInfo.Builder().build(), clientAttribution,
                         DEVICE_POLICY_DEFAULT, false/*sharedMode*/);
             assertNotNull(String.format("Camera %s was null", cameraId), cameraUser);
 

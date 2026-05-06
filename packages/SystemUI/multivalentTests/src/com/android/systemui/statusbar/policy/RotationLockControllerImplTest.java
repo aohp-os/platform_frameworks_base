@@ -28,7 +28,10 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.view.RotationPolicy;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.util.wrapper.RotationPolicyWrapper;
+import com.android.systemui.util.concurrency.FakeExecutor;
+import com.android.systemui.util.time.FakeSystemClock;
+import com.android.systemui.rotation.RotationPolicyWrapper;
+import com.android.systemui.util.wrapper.CameraRotationSettingProvider;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -37,17 +40,25 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.util.Optional;
+
 @RunWith(AndroidJUnit4.class)
 @TestableLooper.RunWithLooper
 @SmallTest
 public class RotationLockControllerImplTest extends SysuiTestCase {
 
-    private static final String[] DEFAULT_SETTINGS = new String[] {"0:0", "1:2"};
+    private static final String[] DEFAULT_SETTINGS = new String[]{"0:0", "1:2"};
 
-    @Mock RotationPolicyWrapper mRotationPolicyWrapper;
-    @Mock DeviceStateRotationLockSettingController mDeviceStateRotationLockSettingController;
+    @Mock
+    RotationPolicyWrapper mRotationPolicyWrapper;
+    @Mock
+    CameraRotationSettingProvider mCameraRotationSettingProvider;
+    @Mock
+    DeviceStateRotationLockSettingController mDeviceStateRotationLockSettingController;
 
     private ArgumentCaptor<RotationPolicy.RotationPolicyListener> mRotationPolicyListenerCaptor;
+
+    private FakeExecutor mFakeExecutor = new FakeExecutor(new FakeSystemClock());
 
     @Before
     public void setUp() {
@@ -75,6 +86,7 @@ public class RotationLockControllerImplTest extends SysuiTestCase {
     public void whenFlagOn_deviceStateRotationControllerAddedToCallbacks() {
         createRotationLockController();
         captureRotationPolicyListener().onChange();
+        mFakeExecutor.runAllReady();
 
         verify(mDeviceStateRotationLockSettingController)
                 .onRotationLockStateChanged(anyBoolean(), anyBoolean());
@@ -93,7 +105,12 @@ public class RotationLockControllerImplTest extends SysuiTestCase {
     private void createRotationLockController(String[] deviceStateRotationLockDefaults) {
         new RotationLockControllerImpl(
                 mRotationPolicyWrapper,
-                mDeviceStateRotationLockSettingController,
-                deviceStateRotationLockDefaults);
+                mCameraRotationSettingProvider,
+                Optional.of(mDeviceStateRotationLockSettingController),
+                deviceStateRotationLockDefaults,
+                mFakeExecutor,
+                mFakeExecutor
+        );
+        mFakeExecutor.runAllReady();
     }
 }

@@ -44,13 +44,15 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.R;
 import com.android.internal.view.RotationPolicy;
+import com.android.settingslib.devicestate.AndroidSecureSettings;
 import com.android.settingslib.devicestate.DeviceStateRotationLockSettingsManager;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.time.FakeSystemClock;
-import com.android.systemui.util.wrapper.RotationPolicyWrapper;
+import com.android.systemui.rotation.RotationPolicyWrapper;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -117,7 +119,8 @@ public class DeviceStateRotationLockSettingControllerTest extends SysuiTestCase 
                 ArgumentCaptor.forClass(DeviceStateManager.DeviceStateCallback.class);
 
         mContentResolver = mContext.getContentResolver();
-        mSettingsManager = DeviceStateRotationLockSettingsManager.getInstance(mContext);
+        mSettingsManager = new DeviceStateRotationLockSettingsManager(mContext,
+                new AndroidSecureSettings(mContentResolver));
         mDeviceStateRotationLockSettingController =
                 new DeviceStateRotationLockSettingController(
                         mFakeRotationPolicy,
@@ -132,6 +135,11 @@ public class DeviceStateRotationLockSettingControllerTest extends SysuiTestCase 
         verify(mDeviceStateManager)
                 .registerCallback(any(), deviceStateCallbackArgumentCaptor.capture());
         mDeviceStateCallback = deviceStateCallbackArgumentCaptor.getValue();
+    }
+
+    @After
+    public void tearDown() {
+        mDeviceStateRotationLockSettingController.setListening(false);
     }
 
     @Test
@@ -385,6 +393,11 @@ public class DeviceStateRotationLockSettingControllerTest extends SysuiTestCase 
         }
 
         @Override
+        public void setRotationAtAngleIfAllowed(int rotation, String caller) {
+            throw new AssertionError("Not implemented");
+        }
+
+        @Override
         public int getRotationLockOrientation() {
             throw new AssertionError("Not implemented");
         }
@@ -397,11 +410,6 @@ public class DeviceStateRotationLockSettingControllerTest extends SysuiTestCase 
         @Override
         public boolean isRotationLocked() {
             return mRotationLock;
-        }
-
-        @Override
-        public boolean isCameraRotationEnabled() {
-            throw new AssertionError("Not implemented");
         }
 
         @Override

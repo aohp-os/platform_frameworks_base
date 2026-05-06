@@ -43,7 +43,6 @@ import org.mockito.MockitoAnnotations
 
 @SmallTest
 @RunWithLooper(setAsMainLooper = true)
-@kotlinx.coroutines.ExperimentalCoroutinesApi
 @RunWith(AndroidJUnit4::class)
 class KeyguardSurfaceBehindParamsApplierTest : SysuiTestCase() {
     @get:Rule val animatorTestRule = AnimatorTestRule(this)
@@ -68,6 +67,7 @@ class KeyguardSurfaceBehindParamsApplierTest : SysuiTestCase() {
                 executor = executor,
                 keyguardViewController = keyguardViewController,
                 interactor = interactor,
+                context = context,
             )
 
         doAnswer {
@@ -84,11 +84,7 @@ class KeyguardSurfaceBehindParamsApplierTest : SysuiTestCase() {
 
     @Test
     fun testNotAnimating_setParamsWithNoAnimation() {
-        underTest.viewParams =
-            KeyguardSurfaceBehindModel(
-                alpha = 0.3f,
-                translationY = 300f,
-            )
+        underTest.viewParams = KeyguardSurfaceBehindModel(alpha = 0.3f, translationY = 300f)
 
         // A surface has not yet been provided, so we shouldn't have set animating to false OR true
         // just yet.

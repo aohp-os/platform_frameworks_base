@@ -93,6 +93,7 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
         // The options view is sliding under the static header but appears
         // after it in the layout, so we will draw in opposite order.
         setChildrenDrawingOrderEnabled(true);
+        setFitsSystemWindows(true);
     }
 
     public void setOptionsStateChangeListener(OptionsStateChangeListener listener) {
@@ -148,6 +149,7 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
         mExpandCollapseHandle = findViewById(R.id.expand_collapse_handle);
         mExpandCollapseIcon = findViewById(R.id.expand_collapse_icon);
 
+        mOptionsContainer.setFitsSystemWindows(true);
         mExpandCollapseHandle.setOnClickListener(this);
         mSummaryContent.setOnClickListener(this);
 
@@ -262,7 +264,7 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
         }
 
         // The content host can grow vertically as much as needed - we will be covering it.
-        final int hostHeightMeasureSpec = MeasureSpec.makeMeasureSpec(MeasureSpec.UNSPECIFIED, 0);
+        final int hostHeightMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
         measureChild(mEmbeddedContentContainer, widthMeasureSpec, hostHeightMeasureSpec);
 
         setMeasuredDimension(resolveSize(MeasureSpec.getSize(widthMeasureSpec), widthMeasureSpec),
@@ -271,25 +273,30 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
 
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        mStaticContent.layout(left, top, right, mStaticContent.getMeasuredHeight());
+        final int childLeft = left + mPaddingLeft;
+        final int childRight = right - mPaddingRight;
+        final int childTop = top + mPaddingTop;
+        mStaticContent.layout(childLeft, childTop, childRight,
+                mStaticContent.getMeasuredHeight() + mPaddingTop);
 
         if (mSummaryContent.getVisibility() != View.GONE) {
-            mSummaryContent.layout(left, mStaticContent.getMeasuredHeight(), right,
-                    mStaticContent.getMeasuredHeight() + mSummaryContent.getMeasuredHeight());
+            mSummaryContent.layout(childLeft, mStaticContent.getBottom(), childRight,
+                    mStaticContent.getBottom() + mSummaryContent.getMeasuredHeight());
         }
 
-        final int dynContentTop = mStaticContent.getMeasuredHeight() + mCurrentOptionsOffsetY;
+        final int dynContentTop = mStaticContent.getBottom() + mCurrentOptionsOffsetY;
         final int dynContentBottom = dynContentTop + mDynamicContent.getMeasuredHeight();
 
-        mDynamicContent.layout(left, dynContentTop, right, dynContentBottom);
+        mDynamicContent.layout(childLeft, dynContentTop, childRight, dynContentBottom);
 
         MarginLayoutParams params = (MarginLayoutParams) mPrintButton.getLayoutParams();
 
         final int printButtonLeft;
         if (getLayoutDirection() == View.LAYOUT_DIRECTION_LTR) {
-            printButtonLeft = right - mPrintButton.getMeasuredWidth() - params.getMarginStart();
+            printButtonLeft = childRight - mPrintButton.getMeasuredWidth()
+                    - params.getMarginStart();
         } else {
-            printButtonLeft = left + params.getMarginStart();
+            printButtonLeft = childLeft + params.getMarginStart();
         }
         final int printButtonTop = dynContentBottom - mPrintButton.getMeasuredHeight() / 2;
         final int printButtonRight = printButtonLeft + mPrintButton.getMeasuredWidth();
@@ -297,11 +304,13 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
 
         mPrintButton.layout(printButtonLeft, printButtonTop, printButtonRight, printButtonBottom);
 
-        final int embContentTop = mStaticContent.getMeasuredHeight() + mClosedOptionsOffsetY
-                + mDynamicContent.getMeasuredHeight();
-        final int embContentBottom = embContentTop + mEmbeddedContentContainer.getMeasuredHeight();
+        final int embContentTop = mPaddingTop
+                + mStaticContent.getMeasuredHeight()
+                + mClosedOptionsOffsetY + mDynamicContent.getMeasuredHeight();
+        final int embContentBottom = embContentTop + mEmbeddedContentContainer.getMeasuredHeight()
+                -  mPaddingBottom;
 
-        mEmbeddedContentContainer.layout(left, embContentTop, right, embContentBottom);
+        mEmbeddedContentContainer.layout(childLeft, embContentTop, childRight, embContentBottom);
     }
 
     @Override

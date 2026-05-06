@@ -44,16 +44,14 @@ class FakeSceneDataSource(initialSceneKey: SceneKey, val testScope: TestScope) :
     var pendingOverlays: Set<OverlayKey>? = null
         private set
 
+    var freezeAndAnimateToCurrentStateCallCount = 0
+
     override fun changeScene(toScene: SceneKey, transitionKey: TransitionKey?) {
         if (_isPaused) {
             _pendingScene = toScene
         } else {
             _currentScene.value = toScene
         }
-    }
-
-    override fun snapToScene(toScene: SceneKey) {
-        changeScene(toScene)
     }
 
     override fun showOverlay(overlay: OverlayKey, transitionKey: TransitionKey?) {
@@ -75,6 +73,24 @@ class FakeSceneDataSource(initialSceneKey: SceneKey, val testScope: TestScope) :
     override fun replaceOverlay(from: OverlayKey, to: OverlayKey, transitionKey: TransitionKey?) {
         hideOverlay(from, transitionKey)
         showOverlay(to, transitionKey)
+    }
+
+    override fun freezeAndAnimateToCurrentState() {
+        freezeAndAnimateToCurrentStateCallCount++
+    }
+
+    override fun instantlyTransitionTo(scene: SceneKey?, overlays: Set<OverlayKey>?) {
+        if (_isPaused) {
+            _pendingScene = scene
+            pendingOverlays = overlays
+        } else {
+            if (scene != null) {
+                _currentScene.value = scene
+            }
+            if (overlays != null) {
+                _currentOverlays.value = overlays
+            }
+        }
     }
 
     /**
@@ -101,8 +117,14 @@ class FakeSceneDataSource(initialSceneKey: SceneKey, val testScope: TestScope) :
      * If [force] is `true`, there will be no check that [isPaused] is true.
      *
      * If [expectedScene] is provided, will assert that it's indeed the latest called.
+     *
+     * If [expectedOverlays] is provided, will assert they are indeed present.
      */
-    fun unpause(force: Boolean = false, expectedScene: SceneKey? = null) {
+    fun unpause(
+        force: Boolean = false,
+        expectedScene: SceneKey? = null,
+        expectedOverlays: Set<OverlayKey>? = null,
+    ) {
         check(force || _isPaused) { "Can't unpause what's already not paused!" }
 
         _isPaused = false
@@ -114,9 +136,12 @@ class FakeSceneDataSource(initialSceneKey: SceneKey, val testScope: TestScope) :
         check(expectedScene == null || currentScene.value == expectedScene) {
             """
                 Unexpected scene while unpausing.
-                Expected $expectedScene but was $currentScene.
+                Expected $expectedScene but was ${currentScene.value}.
             """
                 .trimIndent()
+        }
+        check(expectedOverlays == null || expectedOverlays == currentOverlays.value) {
+            "Expected $expectedOverlays, but instead found overlays ${currentOverlays.value}."
         }
     }
 }

@@ -26,6 +26,20 @@ message PreferenceScreenProto {
   optional PreferenceGroupProto root = 2;
   // If the preference screen provides complete hierarchy by source code.
   optional bool complete_hierarchy = 3;
+  // Parameterized screens (not recursive, provided on the top level only)
+  repeated ParameterizedPreferenceScreenProto parameterized_screens = 4;
+  // If the preference screen is parameterized.
+  optional bool parameterized = 5;
+  // Available parameters of the parameterized screen.
+  repeated BundleProto parameters = 6;
+}
+
+// Proto of parameterized preference screen
+message ParameterizedPreferenceScreenProto {
+  // Arguments to materialize the parameterized screen.
+  optional BundleProto args = 1;
+  // Materialized screen.
+  optional PreferenceScreenProto screen = 2;
 }
 
 // Proto of PreferenceGroup.
@@ -81,6 +95,14 @@ message PreferenceProto {
   optional PreferenceValueDescriptorProto value_descriptor = 15;
   // Indicate how sensitive of the preference.
   optional int32 sensitivity_level = 16;
+  // The required permissions to read preference value.
+  optional PermissionsProto read_permissions = 17;
+  // The required permissions to write preference value.
+  optional PermissionsProto write_permissions = 18;
+  // Tag constants associated with the preference.
+  repeated string tags = 19;
+  // Permit to read and write preference value (the lower 15 bits is reserved for read permit).
+  optional int32 read_write_permit = 20;
 
   // Target of an Intent
   message ActionTarget {
@@ -92,6 +114,22 @@ message PreferenceProto {
       // app or activity belongs to other app.
       IntentProto intent = 2;
     }
+    // Arguments to materialize the parameterized screen.
+    optional BundleProto args = 3;
+  }
+}
+
+// Proto of permissions
+message PermissionsProto {
+  repeated PermissionProto all_of = 1;
+  repeated PermissionProto any_of = 2;
+}
+
+// Proto of permission
+message PermissionProto {
+  oneof kind {
+    string permission = 1;
+    PermissionsProto permissions = 2;
   }
 }
 
@@ -108,6 +146,8 @@ message PreferenceValueProto {
   oneof value {
     bool boolean_value = 1;
     int32 int_value = 2;
+    float float_value = 3;
+    int64 long_value = 4;
   }
 }
 
@@ -116,6 +156,8 @@ message PreferenceValueDescriptorProto {
   oneof type {
     bool boolean_type = 1;
     RangeValueProto range_value = 2;
+    bool float_type = 3;
+    bool long_type = 4;
   }
 }
 
@@ -163,8 +205,11 @@ message IntentProto {
 
 // Proto of android.os.Bundle
 message BundleProto {
-  // Bundle data.
+  // Bundle data. Absent when `parcel_bytes` is provided.
   map<string, BundleValue> values = 1;
+  // The byte array that this `Bundle` object is marshalled by `Parcel`. It is flexible to support
+  // unknown value types (e.g. `Parcelable`) but the data size is way larger than `values`.
+  bytes parcel_bytes = 2;
 
   message BundleValue {
     // Bundle data value for the associated key name.

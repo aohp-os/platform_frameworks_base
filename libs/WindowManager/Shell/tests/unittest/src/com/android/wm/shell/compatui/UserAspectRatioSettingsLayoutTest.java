@@ -27,17 +27,18 @@ import android.app.ActivityManager;
 import android.app.TaskInfo;
 import android.content.ComponentName;
 import android.platform.test.annotations.RequiresFlagsDisabled;
-import android.platform.test.flag.junit.CheckFlagsRule;
-import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.testing.AndroidTestingRunner;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.SurfaceControlViewHost;
+import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.util.function.TriConsumer;
 import com.android.wm.shell.R;
 import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.ShellTestCase;
@@ -48,15 +49,12 @@ import com.android.wm.shell.common.SyncTransactionQueue;
 import junit.framework.Assert;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-
-import java.util.function.BiConsumer;
 
 /**
  * Tests for {@link UserAspectRatioSettingsLayout}.
@@ -73,7 +71,7 @@ public class UserAspectRatioSettingsLayoutTest extends ShellTestCase {
     @Mock
     private SyncTransactionQueue mSyncTransactionQueue;
     @Mock
-    private BiConsumer<TaskInfo, ShellTaskOrganizer.TaskListener>
+    private TriConsumer<TaskInfo, ShellTaskOrganizer.TaskListener, View>
             mOnUserAspectRatioSettingsButtonClicked;
     @Mock
     private ShellTaskOrganizer.TaskListener mTaskListener;
@@ -83,14 +81,13 @@ public class UserAspectRatioSettingsLayoutTest extends ShellTestCase {
     private ArgumentCaptor<ShellTaskOrganizer.TaskListener> mUserAspectRatioTaskListenerCaptor;
     @Captor
     private ArgumentCaptor<TaskInfo> mUserAspectRationTaskInfoCaptor;
+    @Captor
+    private ArgumentCaptor<View> mUserAspectRatioViewCaptor;
 
     private UserAspectRatioSettingsWindowManager mWindowManager;
     private UserAspectRatioSettingsLayout mLayout;
+    private FrameLayout mLayoutParent;
     private TaskInfo mTaskInfo;
-
-    @Rule
-    public final CheckFlagsRule mCheckFlagsRule =
-            DeviceFlagsValueProvider.createCheckFlagsRule();
 
     @Before
     public void setUp() {
@@ -102,14 +99,15 @@ public class UserAspectRatioSettingsLayoutTest extends ShellTestCase {
                 mOnUserAspectRatioSettingsButtonClicked, new TestShellExecutor(), flags -> 0,
                 () -> false, s -> {});
 
-        mLayout = (UserAspectRatioSettingsLayout) LayoutInflater.from(mContext).inflate(
+        mLayoutParent = (FrameLayout) LayoutInflater.from(mContext).inflate(
                 R.layout.user_aspect_ratio_settings_layout, null);
+        mLayout = mLayoutParent.findViewById(R.id.user_aspect_ratio_layout);
         mLayout.inject(mWindowManager);
 
         spyOn(mWindowManager);
         spyOn(mLayout);
         doReturn(mViewHost).when(mWindowManager).createSurfaceViewHost();
-        doReturn(mLayout).when(mWindowManager).inflateLayout();
+        doReturn(mLayoutParent).when(mWindowManager).inflateLayout();
     }
 
     @Test
@@ -121,7 +119,8 @@ public class UserAspectRatioSettingsLayoutTest extends ShellTestCase {
         verify(mWindowManager).onUserAspectRatioSettingsButtonClicked();
         verify(mOnUserAspectRatioSettingsButtonClicked).accept(
                 mUserAspectRationTaskInfoCaptor.capture(),
-                mUserAspectRatioTaskListenerCaptor.capture());
+                mUserAspectRatioTaskListenerCaptor.capture(),
+                mUserAspectRatioViewCaptor.capture());
         final Pair<TaskInfo, ShellTaskOrganizer.TaskListener> result =
                 new Pair<>(mUserAspectRationTaskInfoCaptor.getValue(),
                         mUserAspectRatioTaskListenerCaptor.getValue());

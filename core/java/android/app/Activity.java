@@ -26,7 +26,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.inMultiWindowMode;
 import static android.os.Process.myUid;
 
-import static com.android.sdksandbox.flags.Flags.sandboxActivitySdkBasedContext;
+import static com.android.window.flags.Flags.predictiveBackStopKeycodeBackForwarding;
 
 import static java.lang.Character.MIN_VALUE;
 
@@ -44,6 +44,7 @@ import android.annotation.MainThread;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SpecialUsers.CanBeCURRENT;
 import android.annotation.StyleRes;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
@@ -119,7 +120,6 @@ import android.util.AttributeSet;
 import android.util.Dumpable;
 import android.util.EventLog;
 import android.util.Log;
-import android.util.Pair;
 import android.util.PrintWriterPrinter;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -150,12 +150,15 @@ import android.view.ViewRootImpl;
 import android.view.ViewRootImpl.ActivityConfigCallback;
 import android.view.Window;
 import android.view.Window.WindowControllerCallback;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.autofill.AutofillClientController;
 import android.view.autofill.AutofillId;
 import android.view.autofill.AutofillManager.AutofillClient;
+import android.view.autofill.AutofillValue;
 import android.view.contentcapture.ContentCaptureContext;
 import android.view.contentcapture.ContentCaptureManager;
 import android.view.contentcapture.ContentCaptureManager.ContentCaptureClient;
@@ -165,6 +168,8 @@ import android.view.translation.UiTranslationSpec;
 import android.widget.AdapterView;
 import android.widget.Toast;
 import android.widget.Toolbar;
+import android.window.BackEvent;
+import android.window.ObserverOnBackAnimationCallback;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 import android.window.SplashScreen;
@@ -294,13 +299,15 @@ import java.util.function.Consumer;
  *         to the user, it must be completely restarted and restored to its previous state.</li>
  * </ul>
  *
- * <p>The following diagram shows the important state paths of an Activity.
+ * <p>The following diagram shows the important state paths of an activity.
  * The square rectangles represent callback methods you can implement to
- * perform operations when the Activity moves between states.  The colored
- * ovals are major states the Activity can be in.</p>
+ * perform operations when the activity moves between states.  The colored
+ * ovals are major states the activity can be in.</p>
  *
- * <p><img src="../../../images/activity_lifecycle.png"
- *      alt="State diagram for an Android Activity Lifecycle." border="0" /></p>
+ * <p><img class="invert"
+ *         style="display: block; margin: auto;"
+ *         src="../../../images/activity_lifecycle.png"
+ *         alt="State diagram for the Android activity lifecycle." /></p>
  *
  * <p>There are three key loops you may be interested in monitoring within your
  * activity:
@@ -507,7 +514,7 @@ import java.util.function.Consumer;
  * changes.</p>
  *
  * <p>Unless you specify otherwise, a configuration change (such as a change
- * in screen orientation, language, input devices, etc) will cause your
+ * in screen orientation, language, input devices, etc.) will cause your
  * current activity to be <em>destroyed</em>, going through the normal activity
  * lifecycle process of {@link #onPause},
  * {@link #onStop}, and {@link #onDestroy} as appropriate.  If the activity
@@ -772,6 +779,7 @@ public class Activity extends ContextThemeWrapper
         ContentCaptureManager.ContentCaptureClient {
     private static final String TAG = "Activity";
     private static final boolean DEBUG_LIFECYCLE = false;
+    private static final long SLOW_OP_DURATION_MS = 500;
 
     /** Standard activity result: operation canceled. */
     public static final int RESULT_CANCELED    = 0;
@@ -818,6 +826,7 @@ public class Activity extends ContextThemeWrapper
     private static final int LOG_AM_ON_TOP_RESUMED_GAINED_CALLED = 30064;
     private static final int LOG_AM_ON_TOP_RESUMED_LOST_CALLED = 30065;
     private OnBackInvokedCallback mDefaultBackCallback;
+    private ObserverOnBackAnimationCallback mObserverBackCallback;
 
     /**
      * After {@link Build.VERSION_CODES#TIRAMISU},
@@ -1026,9 +1035,6 @@ public class Activity extends ContextThemeWrapper
 
     /** The autofill client controller. Always access via {@link #getAutofillClientController()}. */
     private AutofillClientController mAutofillClientController;
-
-    /** @hide */
-    boolean mEnterAnimationComplete;
 
     private boolean mIsInMultiWindowMode;
     /** @hide */
@@ -1273,8 +1279,8 @@ public class Activity extends ContextThemeWrapper
      * Requests to show the “Open in browser” education. “Open in browser” is a feature
      * within the app header that allows users to switch from an app to the web. The feature
      * is made available when an application is opened by a user clicking a link or when a
-     * link is provided by an application. Links can be provided by utilizing
-     * {@link AssistContent#EXTRA_AUTHENTICATING_USER_WEB_URI} or
+     * link is provided by an application. Links can be provided by calling
+     * {@link AssistContent#setSessionTransferUri} or
      * {@link AssistContent#setWebUri}.
      *
      * <p>This method should be utilized when an activity wants to nudge the user to switch
@@ -1287,7 +1293,7 @@ public class Activity extends ContextThemeWrapper
      * disruptive to the user to show the education and when it is optimal to switch the user to a
      * browser session. Before requesting to show the education, developers should assert that they
      * have set a link that can be used by the "Open in browser" feature through either
-     * {@link AssistContent#EXTRA_AUTHENTICATING_USER_WEB_URI} or
+     * {@link AssistContent#setSessionTransferUri} or
      * {@link AssistContent#setWebUri} so that users are navigated to a relevant page if they choose
      * to switch to the browser. If a URI is not set using either method, "Open in browser" will
      * utilize a generic link if available which will direct users to the homepage of the site
@@ -1296,7 +1302,7 @@ public class Activity extends ContextThemeWrapper
      * the user will not be provided with the option to switch to the browser and the education will
      * not be shown if requested.
      *
-     * @see android.app.assist.AssistContent#EXTRA_SESSION_TRANSFER_WEB_URI
+     * @see android.app.assist.AssistContent#setSessionTransferUri
      */
     @FlaggedApi(com.android.window.flags.Flags.FLAG_ENABLE_DESKTOP_WINDOWING_APP_TO_WEB_EDUCATION)
     public final void requestOpenInBrowserEducation() {
@@ -1659,10 +1665,22 @@ public class Activity extends ContextThemeWrapper
         Object[] callbacks = collectActivityLifecycleCallbacks();
         if (callbacks != null) {
             for (int i = 0; i < callbacks.length; i++) {
+                final long startTime = SystemClock.uptimeMillis();
                 ((Application.ActivityLifecycleCallbacks) callbacks[i]).onActivityPostResumed(this);
+                final long duration = SystemClock.uptimeMillis() - startTime;
+                if (duration > SLOW_OP_DURATION_MS) {
+                    Log.w(TAG, "Slow operation dispatchActivityPostResumed"
+                            + ", duration=" + duration + ", callback=" + callbacks[i]);
+                }
             }
         }
+        final long startTime = SystemClock.uptimeMillis();
         getApplication().dispatchActivityPostResumed(this);
+        final long duration = SystemClock.uptimeMillis() - startTime;
+        if (duration > SLOW_OP_DURATION_MS) {
+            Log.w(TAG, "Slow operation Application#dispatchActivityPostResumed"
+                    + ", duration=" + duration);
+        }
     }
 
     private void dispatchActivityPrePaused() {
@@ -1805,6 +1823,19 @@ public class Activity extends ContextThemeWrapper
         }
     }
 
+    private void dispatchActivityRestarted() {
+        if (android.app.Flags.onRestartActivityLifecycleCallback()) {
+            getApplication().dispatchActivityRestarted(this);
+            Object[] callbacks = collectActivityLifecycleCallbacks();
+            if (callbacks != null) {
+                for (int i = callbacks.length - 1; i >= 0; i--) {
+                    ((Application.ActivityLifecycleCallbacks) callbacks[i])
+                            .onActivityRestarted(this);
+                }
+            }
+        }
+    }
+
     private Object[] collectActivityLifecycleCallbacks() {
         Object[] callbacks = null;
         synchronized (mActivityLifecycleCallbacks) {
@@ -1843,7 +1874,7 @@ public class Activity extends ContextThemeWrapper
      *
      * <p>You can call {@link #finish} from within this function, in
      * which case onDestroy() will be immediately called after {@link #onCreate} without any of the
-     * rest of the activity lifecycle ({@link #onStart}, {@link #onResume}, {@link #onPause}, etc)
+     * rest of the activity lifecycle ({@link #onStart}, {@link #onResume}, {@link #onPause}, etc.)
      * executing.
      *
      * <p><em>Derived classes must call through to the super class's
@@ -1896,6 +1927,27 @@ public class Activity extends ContextThemeWrapper
             // Add onBackPressed as default back behavior.
             mDefaultBackCallback = this::onBackInvoked;
             getOnBackInvokedDispatcher().registerSystemOnBackInvokedCallback(mDefaultBackCallback);
+        }
+        if (predictiveBackStopKeycodeBackForwarding()) {
+            mObserverBackCallback = new ObserverOnBackAnimationCallback() {
+                    @Override
+                    public void onBackStarted(@NonNull BackEvent backEvent) {
+                        onUserInteraction();
+                    }
+
+                    @Override
+                    public void onBackInvoked() {
+                        onUserInteraction();
+                    }
+
+                    @Override
+                    public void onBackCancelled() {}
+                };
+            // Register a ObserverOnBackAnimationCallback with PRIORITY_SYSTEM_NAVIGATION_OBSERVER
+            // to get notified on every back navigation so that onUserInteraction can be called.
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_SYSTEM_NAVIGATION_OBSERVER,
+                    mObserverBackCallback);
         }
     }
 
@@ -2137,7 +2189,7 @@ public class Activity extends ContextThemeWrapper
      *
      * <p>You can call {@link #finish} from within this function, in
      * which case {@link #onStop} will be immediately called after {@link #onStart} without the
-     * lifecycle transitions in-between ({@link #onResume}, {@link #onPause}, etc) executing.
+     * lifecycle transitions in-between ({@link #onResume}, {@link #onPause}, etc.) executing.
      *
      * <p><em>Derived classes must call through to the super class's
      * implementation of this method.  If they do not, an exception will be
@@ -2182,6 +2234,8 @@ public class Activity extends ContextThemeWrapper
     @CallSuper
     protected void onRestart() {
         mCalled = true;
+
+        dispatchActivityRestarted();
     }
 
     /**
@@ -2329,7 +2383,7 @@ public class Activity extends ContextThemeWrapper
      * <p>All IDs will be bigger than {@link View#LAST_APP_AUTOFILL_ID}. All IDs returned
      * will be unique.
      *
-     * {@hide}
+     * @hide
      */
     @Override
     public int getNextAutofillId() {
@@ -2898,7 +2952,6 @@ public class Activity extends ContextThemeWrapper
         mCalled = true;
 
         getAutofillClientController().onActivityStopped(mIntent, mChangingConfigurations);
-        mEnterAnimationComplete = false;
 
         notifyVoiceInteractionManagerServiceActivityEvent(
                 VoiceInteractionSession.VOICE_INTERACTION_ACTIVITY_EVENT_STOP);
@@ -2982,6 +3035,10 @@ public class Activity extends ContextThemeWrapper
         if (mDefaultBackCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(mDefaultBackCallback);
             mDefaultBackCallback = null;
+        }
+        if (mObserverBackCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(mObserverBackCallback);
+            mObserverBackCallback = null;
         }
 
         if (mCallbacksController != null) {
@@ -3178,6 +3235,15 @@ public class Activity extends ContextThemeWrapper
             throw new IllegalArgumentException("Expected non-null picture-in-picture params");
         }
         if (!mCanEnterPictureInPicture) {
+            if (isTvImplicitEnterPipProhibited()) {
+                // Don't throw exception on TV so that apps don't crash when not adapted to new
+                // restrictions.
+                Log.e(TAG,
+                        "Activity must be resumed to enter picture-in-picture and not about to be"
+                                + " paused. Implicit app entry is only permitted on TV if android"
+                                + ".permission.TV_IMPLICIT_ENTER_PIP is held by the app.");
+                return false;
+            }
             throw new IllegalStateException("Activity must be resumed to enter"
                     + " picture-in-picture");
         }
@@ -3216,7 +3282,7 @@ public class Activity extends ContextThemeWrapper
         return ActivityTaskManager.getMaxNumPictureInPictureActions(this);
     }
 
-    private boolean isImplicitEnterPipProhibited() {
+    private boolean isTvImplicitEnterPipProhibited() {
         PackageManager pm = getPackageManager();
         if (android.app.Flags.enableTvImplicitEnterPipRestriction()) {
             return pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
@@ -5770,6 +5836,11 @@ public class Activity extends ContextThemeWrapper
     @FlaggedApi(Flags.FLAG_DEVICE_AWARE_PERMISSION_APIS_ENABLED)
     public final void requestPermissions(@NonNull String[] permissions, int requestCode,
             int deviceId) {
+        // Pre M apps shouldn't request permissions, as permissions are granted at install time.
+        if (getApplicationInfo().targetSdkVersion < Build.VERSION_CODES.M) {
+            onRequestPermissionsResult(requestCode, new String[0], new int[0], deviceId);
+        }
+
         if (requestCode < 0) {
             throw new IllegalArgumentException("requestCode should be >= 0");
         }
@@ -5782,8 +5853,7 @@ public class Activity extends ContextThemeWrapper
         }
 
         if (!getAttributionSource().getRenouncedPermissions().isEmpty()) {
-            final int permissionCount = permissions.length;
-            for (int i = 0; i < permissionCount; i++) {
+            for (int i = 0; i < permissions.length; i++) {
                 if (getAttributionSource().getRenouncedPermissions().contains(permissions[i])) {
                     throw new IllegalArgumentException("Cannot request renounced permission: "
                             + permissions[i]);
@@ -5791,11 +5861,57 @@ public class Activity extends ContextThemeWrapper
             }
         }
 
-        PackageManager packageManager = getDeviceId() == deviceId ? getPackageManager()
-                : createDeviceContext(deviceId).getPackageManager();
+        final Context context = getDeviceId() == deviceId ? this : createDeviceContext(deviceId);
+        if (Flags.permissionRequestShortCircuitEnabled()) {
+            int[] permissionsState = getPermissionRequestStates(context, permissions);
+            boolean hasRequestablePermission = false;
+            for (int i = 0; i < permissionsState.length; i++) {
+                if (permissionsState[i] == Context.PERMISSION_REQUEST_STATE_REQUESTABLE) {
+                    hasRequestablePermission = true;
+                    break;
+                }
+            }
+            // If none of the permissions is requestable, finish the request here.
+            if (!hasRequestablePermission) {
+                mHasCurrentPermissionsRequest = true;
+                Log.v(TAG, "No requestable permission in the request.");
+                int[] results = new int[permissionsState.length];
+                for (int i = 0; i < permissionsState.length; i++) {
+                    if (permissionsState[i] == Context.PERMISSION_REQUEST_STATE_GRANTED) {
+                        results[i] = PackageManager.PERMISSION_GRANTED;
+                    } else {
+                        results[i] = PackageManager.PERMISSION_DENIED;
+                    }
+                }
+                // Currently permission request result is passed to the client app asynchronously
+                // in onRequestPermissionsResult, lets keep async behavior here as well.
+                mHandler.post(() -> {
+                    mHasCurrentPermissionsRequest = false;
+                    onRequestPermissionsResult(requestCode, permissions, results, deviceId);
+                });
+                return;
+            }
+        }
+
+        final PackageManager packageManager = context.getPackageManager();
         final Intent intent = packageManager.buildRequestPermissionsIntent(permissions);
         startActivityForResult(REQUEST_PERMISSIONS_WHO_PREFIX, intent, requestCode, null);
         mHasCurrentPermissionsRequest = true;
+    }
+
+    @NonNull
+    private int[] getPermissionRequestStates(@NonNull Context deviceContext,
+            @NonNull String[] permissions) {
+        final int size = permissions.length;
+        int[] results = new int[size];
+        for (int i = 0; i < size; i++) {
+            if (permissions[i] == null) {
+                results[i] = Context.PERMISSION_REQUEST_STATE_UNREQUESTABLE;
+            } else {
+                results[i] = deviceContext.getPermissionRequestState(permissions[i]);
+            }
+        }
+        return results;
     }
 
     /**
@@ -6041,7 +6157,7 @@ public class Activity extends ContextThemeWrapper
     @SystemApi
     @RequiresPermission(anyOf = {INTERACT_ACROSS_USERS, INTERACT_ACROSS_USERS_FULL})
     public void startActivityForResultAsUser(@NonNull Intent intent, int requestCode,
-            @NonNull UserHandle user) {
+            @NonNull @CanBeCURRENT UserHandle user) {
         startActivityForResultAsUser(intent, requestCode, null, user);
     }
 
@@ -6080,7 +6196,7 @@ public class Activity extends ContextThemeWrapper
     @SystemApi
     @RequiresPermission(anyOf = {INTERACT_ACROSS_USERS, INTERACT_ACROSS_USERS_FULL})
     public void startActivityForResultAsUser(@NonNull Intent intent, int requestCode,
-            @Nullable Bundle options, @NonNull UserHandle user) {
+            @Nullable Bundle options, @NonNull @CanBeCURRENT UserHandle user) {
         startActivityForResultAsUser(intent, mEmbeddedID, requestCode, options, user);
     }
 
@@ -6120,7 +6236,7 @@ public class Activity extends ContextThemeWrapper
     @RequiresPermission(anyOf = {INTERACT_ACROSS_USERS, INTERACT_ACROSS_USERS_FULL})
     public void startActivityForResultAsUser(@NonNull Intent intent, @NonNull String resultWho,
             int requestCode,
-            @Nullable Bundle options, @NonNull UserHandle user) {
+            @Nullable Bundle options, @NonNull @CanBeCURRENT UserHandle user) {
         if (mParent != null) {
             throw new RuntimeException("Can't be called from a child");
         }
@@ -6150,7 +6266,7 @@ public class Activity extends ContextThemeWrapper
      * @hide Implement to provide correct calling token.
      */
     @Override
-    public void startActivityAsUser(Intent intent, UserHandle user) {
+    public void startActivityAsUser(Intent intent, @CanBeCURRENT UserHandle user) {
         startActivityAsUser(intent, null, user);
     }
 
@@ -6170,7 +6286,7 @@ public class Activity extends ContextThemeWrapper
      */
     @RequiresPermission(anyOf = {INTERACT_ACROSS_USERS, INTERACT_ACROSS_USERS_FULL})
     public void startActivityAsUser(@NonNull Intent intent,
-            @Nullable Bundle options, @NonNull UserHandle user) {
+            @Nullable Bundle options, @NonNull @CanBeCURRENT UserHandle user) {
         if (mParent != null) {
             throw new RuntimeException("Can't be called from a child");
         }
@@ -6763,7 +6879,7 @@ public class Activity extends ContextThemeWrapper
 
     private void startActivityAsUserFromFragment(@NonNull Fragment fragment,
             @RequiresPermission Intent intent, int requestCode, @Nullable Bundle options,
-            UserHandle user) {
+            @CanBeCURRENT UserHandle user) {
         startActivityForResultAsUser(intent, fragment.mWho, requestCode, options, user);
     }
 
@@ -6846,46 +6962,56 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
-     * Customizes the animation for the activity transition with this activity. This can be called
-     * at any time while the activity still alive.
+     * Customizes the animation for activity transitions.
      *
-     * <p> This is a more robust method of overriding the transition animation at runtime without
-     * relying on {@link #overridePendingTransition(int, int)} which doesn't work for predictive
-     * back. However, the animation set from {@link #overridePendingTransition(int, int)} still
-     * has higher priority when the system is looking for the next transition animation.</p>
-     * <p> The animations resources set by this method will be chosen if and only if the activity is
-     * on top of the task while activity transitions are being played.
-     * For example, if we want to customize the opening transition when launching Activity B which
-     * gets started from Activity A, we should call this method inside B's onCreate with
-     * {@code overrideType = OVERRIDE_TRANSITION_OPEN} because the Activity B will on top of the
-     * task. And if we want to customize the closing transition when finishing Activity B and back
-     * to Activity A, since B is still is above A, we should call this method in Activity B with
-     * {@code overrideType = OVERRIDE_TRANSITION_CLOSE}. </p>
+     * <p>This method provides a robust way to override transition animations at runtime and can be
+     * called at any point in the activity's lifecycle. It is particularly useful for handling
+     * predictive back animations, for which {@link #overridePendingTransition(int, int)} is not
+     * suitable.</p>
      *
-     * <p> If an Activity has called this method, and it also set another activity animation
-     * by {@link Window#setWindowAnimations(int)}, the system will choose the animation set from
-     * this method.</p>
+     * <p>The specified animations will be applied only when this activity is at the top of the
+     * task stack during the transition. For example, to customize the opening animation for an
+     * Activity B started from Activity A, call this method in B's {@code onCreate} with
+     * {@code overrideType = OVERRIDE_TRANSITION_OPEN}. To customize the closing animation when
+     * returning from B to A, call this method in B with
+     * {@code overrideType = OVERRIDE_TRANSITION_CLOSE}.</p>
      *
-     * <p> Note that {@link Window#setWindowAnimations},
-     * {@link #overridePendingTransition(int, int)} and this method will be ignored if the Activity
-     * is started with {@link ActivityOptions#makeSceneTransitionAnimation(Activity, Pair[])}. Also
-     * note that this method can only be used to customize cross-activity transitions but not
-     * cross-task transitions which are fully non-customizable as of Android 11.</p>
+     * <p><b>Animation Precedence:</b></p>
+     * <ul>
+     * <li>Animations set by {@link #overridePendingTransition(int, int)} have the highest
+     * priority.</li>
+     * <li>Animations set by this method have higher priority than those defined by
+     * {@link Window#setWindowAnimations(int)}.</li>
+     * </ul>
      *
-     * @param overrideType {@code OVERRIDE_TRANSITION_OPEN} This animation will be used when
-     *                     starting/entering an activity. {@code OVERRIDE_TRANSITION_CLOSE} This
-     *                     animation will be used when finishing/closing an activity.
-     * @param enterAnim A resource ID of the animation resource to use for the incoming activity.
-     *                  Use 0 for no animation.
-     * @param exitAnim A resource ID of the animation resource to use for the outgoing activity.
-     *                 Use 0 for no animation.
+     * <p><b>Predictive Back Animation:</b></p>
+     * <p>When predictive back is enabled (see {@code enableOnBackInvokedCallback} in the manifest),
+     * the system may control the preview phase of the back animation. The custom transition defined
+     * by {@code enterAnim} and {@code exitAnim} is then applied only after the back gesture is
+     * committed.</p>
+     *
+     * <p><b>Limitations:</b></p>
+     * <ul>
+     * <li>This method, along with {@link #overridePendingTransition(int, int)} and
+     * {@link Window#setWindowAnimations(int)}, is ignored if the activity is started with
+     * {@link ActivityOptions#makeSceneTransitionAnimation(Activity, android.util.Pair[])}.</li>
+     * <li>As of Android 11, this method cannot be used to customize cross-task transitions.</li>
+     * </ul>
+     *
+     * @param overrideType The type of transition to override. Must be either
+     * {@code OVERRIDE_TRANSITION_OPEN} for entering transitions or
+     * {@code OVERRIDE_TRANSITION_CLOSE} for exiting transitions.
+     * @param enterAnim    The resource ID of the animation for the incoming activity. Use 0 for no
+     * animation.
+     * @param exitAnim     The resource ID of the animation for the outgoing activity. Use 0 for no
+     * animation.
      *
      * @see #overrideActivityTransition(int, int, int, int)
      * @see #clearOverrideActivityTransition(int)
-     * @see OnBackInvokedCallback
+     * @see android.window.OnBackInvokedCallback
      * @see #overridePendingTransition(int, int)
      * @see Window#setWindowAnimations(int)
-     * @see ActivityOptions#makeSceneTransitionAnimation(Activity, Pair[])
+     * @see ActivityOptions#makeSceneTransitionAnimation(Activity, android.util.Pair[])
      */
     public void overrideActivityTransition(@OverrideTransition int overrideType,
             @AnimRes int enterAnim, @AnimRes int exitAnim) {
@@ -6893,48 +7019,58 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
-     * Customizes the animation for the activity transition with this activity. This can be called
-     * at any time while the activity still alive.
+     * Customizes the animation and background color for activity transitions.
      *
-     * <p> This is a more robust method of overriding the transition animation at runtime without
-     * relying on {@link #overridePendingTransition(int, int)} which doesn't work for predictive
-     * back. However, the animation set from {@link #overridePendingTransition(int, int)} still
-     * has higher priority when the system is looking for the next transition animation.</p>
-     * <p> The animations resources set by this method will be chosen if and only if the activity is
-     * on top of the task while activity transitions are being played.
-     * For example, if we want to customize the opening transition when launching Activity B which
-     * gets started from Activity A, we should call this method inside B's onCreate with
-     * {@code overrideType = OVERRIDE_TRANSITION_OPEN} because the Activity B will on top of the
-     * task. And if we want to customize the closing transition when finishing Activity B and back
-     * to Activity A, since B is still is above A, we should call this method in Activity B with
-     * {@code overrideType = OVERRIDE_TRANSITION_CLOSE}. </p>
+     * <p>This method provides a robust way to override transition animations at runtime and can be
+     * called at any point in the activity's lifecycle. It is particularly useful for handling
+     * predictive back animations, for which {@link #overridePendingTransition(int, int)} is not
+     * suitable.</p>
      *
-     * <p> If an Activity has called this method, and it also set another activity animation
-     * by {@link Window#setWindowAnimations(int)}, the system will choose the animation set from
-     * this method.</p>
+     * <p>The specified animations will be applied only when this activity is at the top of the
+     * task stack during the transition. For example, to customize the opening animation for an
+     * Activity B started from Activity A, call this method in B's {@code onCreate} with
+     * {@code overrideType = OVERRIDE_TRANSITION_OPEN}. To customize the closing animation when
+     * returning from B to A, call this method in B with
+     * {@code overrideType = OVERRIDE_TRANSITION_CLOSE}.</p>
      *
-     * <p> Note that {@link Window#setWindowAnimations},
-     * {@link #overridePendingTransition(int, int)} and this method will be ignored if the Activity
-     * is started with {@link ActivityOptions#makeSceneTransitionAnimation(Activity, Pair[])}. Also
-     * note that this method can only be used to customize cross-activity transitions but not
-     * cross-task transitions which are fully non-customizable as of Android 11.</p>
+     * <p><b>Animation Precedence:</b></p>
+     * <ul>
+     * <li>Animations set by {@link #overridePendingTransition(int, int)} have the highest
+     * priority.</li>
+     * <li>Animations set by this method have higher priority than those defined by
+     * {@link Window#setWindowAnimations(int)}.</li>
+     * </ul>
      *
-     * @param overrideType {@code OVERRIDE_TRANSITION_OPEN} This animation will be used when
-     *                     starting/entering an activity. {@code OVERRIDE_TRANSITION_CLOSE} This
-     *                     animation will be used when finishing/closing an activity.
-     * @param enterAnim A resource ID of the animation resource to use for the incoming activity.
-     *                  Use 0 for no animation.
-     * @param exitAnim A resource ID of the animation resource to use for the outgoing activity.
-     *                 Use 0 for no animation.
-     * @param backgroundColor The background color to use for the background during the animation
-     *                        if the animation requires a background. Set to
-     *                        {@link Color#TRANSPARENT} to not override the default color.
+     * <p><b>Predictive Back Animation:</b></p>
+     * <p>When predictive back is enabled (see {@code enableOnBackInvokedCallback} in the manifest),
+     * the system may control the preview phase of the back animation. The custom transition defined
+     * by {@code enterAnim} and {@code exitAnim} is then applied only after the back gesture is
+     * committed.</p>
+     *
+     * <p><b>Limitations:</b></p>
+     * <ul>
+     * <li>This method, along with {@link #overridePendingTransition(int, int)} and
+     * {@link Window#setWindowAnimations(int)}, is ignored if the activity is started with
+     * {@link ActivityOptions#makeSceneTransitionAnimation(Activity, android.util.Pair[])}.</li>
+     * <li>As of Android 11, this method cannot be used to customize cross-task transitions.</li>
+     * </ul>
+     *
+     * @param overrideType    The type of transition to override. Must be either
+     * {@code OVERRIDE_TRANSITION_OPEN} for entering transitions or
+     * {@code OVERRIDE_TRANSITION_CLOSE} for exiting transitions.
+     * @param enterAnim     The resource ID of the animation for the incoming activity. Use 0 for no
+     * animation.
+     * @param exitAnim      The resource ID of the animation for the outgoing activity. Use 0 for no
+     * animation.
+     * @param backgroundColor The background color to display during the animation. Set to
+     * {@link Color#TRANSPARENT} to use the default background color.
+     *
      * @see #overrideActivityTransition(int, int, int)
      * @see #clearOverrideActivityTransition(int)
-     * @see OnBackInvokedCallback
+     * @see android.window.OnBackInvokedCallback
      * @see #overridePendingTransition(int, int)
      * @see Window#setWindowAnimations(int)
-     * @see ActivityOptions#makeSceneTransitionAnimation(Activity, Pair[])
+     * @see ActivityOptions#makeSceneTransitionAnimation(Activity, android.util.Pair[])
      */
     public void overrideActivityTransition(@OverrideTransition int overrideType,
             @AnimRes int enterAnim, @AnimRes int exitAnim, @ColorInt int backgroundColor) {
@@ -7316,11 +7452,16 @@ public class Activity extends ContextThemeWrapper
     /**
      * Check to see whether this activity is in the process of finishing,
      * either because you called {@link #finish} on it or someone else
-     * has requested that it finished.  This is often used in
-     * {@link #onPause} to determine whether the activity is simply pausing or
-     * completely finishing.
+     * has requested that it finished.
      *
-     * @return If the activity is finishing, returns true; else returns false.
+     * <p>This is often used in {@link #onPause} to determine whether the activity is simply pausing
+     * or completely finishing. However, if the finish request is made after the activity has
+     * already been paused/stopped, there won't be another {@link #onPause} or {@link #onStop} with
+     * this API returning {@code true}.</p>
+     *
+     * <p>For example, if an activity is first minimized, and then gets killed in background,
+     * it should first receive {@link #onPause} and {@link #onStop} with this API returning
+     * {@code false}, and then receive {@link #onDestroy} with this API returning {@code true}.</p>
      *
      * @see #finish
      */
@@ -7338,9 +7479,18 @@ public class Activity extends ContextThemeWrapper
 
     /**
      * Check to see whether this activity is in the process of being destroyed in order to be
-     * recreated with a new configuration. This is often used in
-     * {@link #onStop} to determine whether the state needs to be cleaned up or will be passed
-     * on to the next instance of the activity via {@link #onRetainNonConfigurationInstance()}.
+     * recreated with a new configuration.
+     *
+     * <p>This is often used in {@link #onStop} to determine whether the state needs to be cleaned
+     * up or will be passed on to the next instance of the activity via
+     * {@link #onRetainNonConfigurationInstance()}. However, if the activity has already been in the
+     * background as stopped, and then gets recreated with different configuration, there won't be
+     * another {@link #onPause} or {@link #onStop} with this API returning {@code true}.</p>
+     *
+     * <p>For example, if an activity that is not handling size configuration change is first
+     * minimized, and then get rotated with the display, it should first receive {@link #onPause}
+     * and {@link #onStop} with this API returning {@code false}, and then receive
+     * {@link #onDestroy} with this API returning {@code true}.</p>
      *
      * @return If the activity is being torn down in order to be recreated with a new configuration,
      * returns true; else returns false.
@@ -7572,6 +7722,62 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
+     * Returns if Handoff has been enabled for this Activity. See
+     * {@link #setHandoffEnabled} to change if Handoff is enabled on this
+     * Activity.
+     *
+     * When Handoff is enabled, the user may request this Activity to be sent to
+     * other devices that they owe. The system will request data from this
+     * Activity to recreate it on the other device.
+     * TODO (b/412338142): Add link to onHandoffActivityDataRequested once
+     * method is added.
+     *
+     * @return Whether Handoff is enabled for the Activity
+     */
+    @FlaggedApi(android.companion.Flags.FLAG_ENABLE_TASK_CONTINUITY)
+    public final boolean isHandoffEnabled() {
+        return ActivityClient.getInstance().isHandoffEnabled(mToken);
+    }
+
+    /**
+     * Returns {@code true} if handing off this activity should also hand off
+     * all activities in the task of this activity. If this is {@code false} for
+     * any activity in the task, only the topmost activity in the task will be
+     * handed off.
+     *
+     * This method will return {@code false} if {@link #isHandoffEnabled}
+     * is {@code false}.
+     *
+     * @return if full task recreation is allowed
+     */
+    @FlaggedApi(android.companion.Flags.FLAG_ENABLE_TASK_CONTINUITY)
+    public final boolean isHandoffFullTaskRecreationAllowed() {
+        return ActivityClient
+            .getInstance()
+            .isHandoffFullTaskRecreationAllowed(mToken);
+    }
+
+    /**
+     * Sets if Handoff is enabled for this Activity. See
+     * {@link #isHandoffEnabled} to get if Handoff is currently enabled on this
+     * Activity.
+     *
+     * Note: if Handoff is disabled for the topmost Activity in a task, it will
+     * be disabled for all Activities in the task.
+     *
+     * @param handoffEnabled Whether Handoff should be enabled for this Activity.
+     * @param allowFullTaskRecreation Whether activities below this one in the
+     *                                task should be handed off as well.
+     */
+    @FlaggedApi(android.companion.Flags.FLAG_ENABLE_TASK_CONTINUITY)
+    public final void setHandoffEnabled(
+            boolean handoffEnabled,
+            boolean allowFullTaskRecreation) {
+        ActivityClient.getInstance().setHandoffEnabled(
+                mToken, handoffEnabled, allowFullTaskRecreation);
+    }
+
+    /**
      * Called when an activity you launched with an activity transition exposes this
      * Activity through a returning activity transition, giving you the resultCode
      * and any additional data from it. This method will only be called if the activity
@@ -7636,16 +7842,26 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
-     * Change the desired orientation of this activity.  If the activity
-     * is currently in the foreground or otherwise impacting the screen
-     * orientation, the screen will immediately be changed (possibly causing
-     * the activity to be restarted). Otherwise, this will be used the next
-     * time the activity is visible.
+     * Change the desired orientation of this activity. If the activity is currently in the
+     * foreground or otherwise impacting the screen orientation, the screen is immediately changed
+     * (possibly causing the activity to be restarted). Otherwise, the new orientation is used the
+     * next time the activity is visible.
      *
-     * <aside class="note"><b>Note:</b> Device manufacturers can configure devices to override
-     *    (ignore) calls to this method to improve the layout of orientation-restricted apps. See
-     *    <a href="{@docRoot}guide/practices/device-compatibility-mode">
-     *      Device compatibility mode</a>.
+     * <aside class="note"><b>Note:</b>
+     *     <ul>
+     *         <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+     *             system ignores calls to this method for apps that target Android 16 (API level
+     *             36) or higher.</li>
+     *         <li>Device manufacturers can configure devices to ignore calls to this method to
+     *             improve the layout of orientation-restricted apps.</li>
+     *         <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+     *             owners (select trusted and privileged apps) can optimize app layout on displays
+     *             they manage by ignoring calls to this method. See also
+     *             <a href="https://source.android.com/docs/core/permissions/app-streaming">
+     *               Companion app streaming</a>.</li>
+     *     </ul>
+     *     <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode">Device
+     *     compatibility mode</a>.</p>
      * </aside>
      *
      * @param requestedOrientation An orientation constant as used in
@@ -7664,10 +7880,26 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
-     * Return the current requested orientation of the activity.  This will
-     * either be the orientation requested in its component's manifest, or
-     * the last requested orientation given to
+     * Returns the current requested orientation of the activity, which is either the orientation
+     * requested in the app manifest or the last orientation given to
      * {@link #setRequestedOrientation(int)}.
+     *
+     * <aside class="note"><b>Note:</b>
+     *     <ul>
+     *         <li>To improve the layout of apps on form factors with smallest width >= 600dp, the
+     *             system ignores calls to this method for apps that target Android 16 (API level
+     *             36) or higher.</li>
+     *         <li>Device manufacturers can configure devices to ignore calls to this method to
+     *             improve the layout of orientation-restricted apps.</li>
+     *         <li>On devices with Android 16 (API level 36) or higher installed, virtual device
+     *             owners (select trusted and privileged apps) can optimize app layout on displays
+     *             they manage by ignoring calls to this method. See also
+     *             <a href="https://source.android.com/docs/core/permissions/app-streaming">
+     *               Companion app streaming</a>.</li>
+     *     </ul>
+     *     <p>See <a href="{@docRoot}guide/practices/device-compatibility-mode">Device
+     *     compatibility mode</a>.</p>
+     * </aside>
      *
      * @return Returns an orientation constant as used in
      * {@link ActivityInfo#screenOrientation ActivityInfo.screenOrientation}.
@@ -8544,8 +8776,6 @@ public class Activity extends ContextThemeWrapper
      * @hide
      */
     public void dispatchEnterAnimationComplete() {
-        mEnterAnimationComplete = true;
-        mInstrumentation.onEnterAnimationComplete();
         onEnterAnimationComplete();
         if (getWindow() != null && getWindow().getDecorView() != null) {
             View decorView = getWindow().getDecorView();
@@ -8955,12 +9185,11 @@ public class Activity extends ContextThemeWrapper
             Configuration config, String referrer, IVoiceInteractor voiceInteractor,
             Window window, ActivityConfigCallback activityConfigCallback, IBinder assistToken,
             IBinder shareableActivityToken, IBinder initialCallerInfoAccessToken) {
-        if (sandboxActivitySdkBasedContext()) {
-            // Sandbox activities extract a token from the intent's extra to identify the related
-            // SDK as part of overriding attachBaseContext, then it wraps the passed context in an
-            // SDK ContextWrapper, so mIntent has to be set before calling attachBaseContext.
-            mIntent = intent;
-        }
+
+        // mIntent field hast to be set before calling attachBaseContext, as SDK Runtime activities
+        // extract a token from the intent's extra to identify the related SDK as part of overriding
+        // attachBaseContext.
+        mIntent = intent;
         attachBaseContext(context);
 
         mFragments.attachHost(null /*parent*/);
@@ -8986,8 +9215,6 @@ public class Activity extends ContextThemeWrapper
         mShareableActivityToken = shareableActivityToken;
         mIdent = ident;
         mApplication = application;
-        //TODO(b/300059435): do not set the mIntent again as part of the flag clean up.
-        mIntent = intent;
         mReferrer = referrer;
         mComponent = intent.getComponent();
         mTitle = title;
@@ -9237,7 +9464,7 @@ public class Activity extends ContextThemeWrapper
         final long startTime = SystemClock.uptimeMillis();
         // mResumed is set by the instrumentation
         mInstrumentation.callActivityOnResume(this);
-        final long duration = SystemClock.uptimeMillis() - startTime;
+        long duration = SystemClock.uptimeMillis() - startTime;
         EventLogTags.writeWmOnResumeCalled(mIdent, getComponentName().getClassName(), reason,
                 duration);
         if (!mCalled) {
@@ -9263,13 +9490,30 @@ public class Activity extends ContextThemeWrapper
         mFragments.dispatchResume();
         mFragments.execPendingActions();
 
+        duration = SystemClock.uptimeMillis() - startTime;
+        if (duration > SLOW_OP_DURATION_MS) {
+            Log.w(TAG, "Slow operation Fragment dispatchResume since onResume"
+                    + ", duration=" + duration);
+        }
+
         onPostResume();
         if (!mCalled) {
             throw new SuperNotCalledException(
                 "Activity " + mComponent.toShortString() +
                 " did not call through to super.onPostResume()");
         }
+        duration = SystemClock.uptimeMillis() - startTime;
+        if (duration > SLOW_OP_DURATION_MS) {
+            Log.w(TAG, "Slow operation onPostResume since onResume, duration=" + duration);
+        }
+
         dispatchActivityPostResumed();
+
+        duration = SystemClock.uptimeMillis() - startTime;
+        if (duration > SLOW_OP_DURATION_MS) {
+            Log.w(TAG, "Slow operation dispatchActivityPostResumed since onResume"
+                    + ", duration=" + duration);
+        }
         Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
@@ -9279,7 +9523,7 @@ public class Activity extends ContextThemeWrapper
                     + mComponent.getClassName());
         }
 
-        if (isImplicitEnterPipProhibited()) {
+        if (isTvImplicitEnterPipProhibited()) {
             mCanEnterPictureInPicture = false;
         }
 
@@ -9309,7 +9553,7 @@ public class Activity extends ContextThemeWrapper
     final void performUserLeaving() {
         onUserInteraction();
 
-        if (isImplicitEnterPipProhibited()) {
+        if (isTvImplicitEnterPipProhibited()) {
             mCanEnterPictureInPicture = false;
         }
         onUserLeaveHint();
@@ -9744,7 +9988,6 @@ public class Activity extends ContextThemeWrapper
      * @param allowed {@code true} to disable the UID restrictions; {@code false} to revert back to
      *                            the default behaviour
      */
-    @FlaggedApi(android.security.Flags.FLAG_ASM_RESTRICTIONS_ENABLED)
     @SuppressLint("OnNameExpected")
     public void setAllowCrossUidActivitySwitchFromBelow(boolean allowed) {
         ActivityClient.getInstance().setAllowCrossUidActivitySwitchFromBelow(mToken, allowed);
@@ -9934,6 +10177,38 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
+     * Retrieves {@link HandoffActivityData} representing this activity, allowing it to be recreated
+     * on another device owned by the user.
+     *
+     * The system automatically handles calling #onHandoffActivityDataRequested. This will only be
+     * called if {@link #isHandoffEnabled} is {@code true} for this activity.
+     *
+     * If {@link #isHandoffEnabled} is {@code true}, the activity is expected to return a non-null
+     * value. Returning {@code null} will present an error to the user indicating Handoff
+     * unexpectedly failed.
+     *
+     * If the current activity is in the foreground on the current device, the app's icon
+     * representing this activity will be shown on other nearby devices owned
+     * by the user. If the user selects this icon, the system will call this method
+     * to retrieve the data needed to recreate this activity on another device.
+     *
+     * When this activity is stopped, the system will call this method
+     * to retrieve {@link HandoffActivityData} for caching. This allows the user
+     * to hand this activity off to another device even if it is not currently
+     * running. In these situations, {@link HandoffActivityDataRequestInfo#isActiveRequest}
+     * will be {@code false}.
+     *
+     * @param requestInfo the request info for the activity data.
+     * @return the activity data for handoff.
+     */
+    @FlaggedApi(android.companion.Flags.FLAG_ENABLE_TASK_CONTINUITY)
+    @Nullable
+    public HandoffActivityData onHandoffActivityDataRequested(
+        @NonNull HandoffActivityDataRequestInfo requestInfo) {
+      return null;
+    }
+
+    /**
      * Interface for observing screen captures of an {@link Activity}.
      */
     public interface ScreenCaptureCallback {
@@ -9993,9 +10268,11 @@ public class Activity extends ContextThemeWrapper
                     }
                 });
                 if (mJankTracker == null) {
-                    // TODO b/377960907 use the Choreographer attached to the ViewRootImpl instead.
-                    mJankTracker = new JankTracker(Choreographer.getInstance(),
-                            decorView);
+                    if (android.app.jank.Flags.viewrootChoreographer()) {
+                        mJankTracker = new JankTracker(decorView);
+                    } else {
+                        mJankTracker = new JankTracker(Choreographer.getInstance(), decorView);
+                    }
                 }
                 // TODO b/377674765 confirm this is the string we want logged.
                 mJankTracker.setActivityName(getComponentName().getClassName());
@@ -10015,5 +10292,26 @@ public class Activity extends ContextThemeWrapper
         if (mJankTracker != null) {
             mJankTracker.disableAppJankTracking();
         }
+    }
+
+    final void autofillViewIfAvailable(
+            @NonNull AutofillId targetAutofillId, @NonNull AutofillValue autofillValue) {
+        if (false) Log.v(TAG, "autofill view in client app Activity, id: " + targetAutofillId);
+        runOnUiThread(
+                () -> {
+                    View view =
+                            getAutofillClientController()
+                                    .autofillClientFindViewByAutofillIdTraversal(targetAutofillId);
+                    if (view != null) {
+                        // TODO: b/410146465 support virtual views
+                        view.autofill(autofillValue);
+                        view.requestFocus();
+                        WindowInsetsController windowInsetsController =
+                                view.getWindowInsetsController();
+                        if (windowInsetsController != null) {
+                            windowInsetsController.show(WindowInsets.Type.ime());
+                        }
+                    }
+                });
     }
 }

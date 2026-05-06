@@ -16,25 +16,37 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
-import com.android.systemui.biometrics.authController
-import com.android.systemui.deviceentry.domain.interactor.deviceEntryInteractor
+import com.android.systemui.deviceentry.domain.interactor.deviceEntryBypassInteractor
+import com.android.systemui.deviceentry.domain.interactor.deviceEntryUdfpsInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardBlueprintInteractor
-import com.android.systemui.keyguard.domain.interactor.keyguardClockInteractor
+import com.android.systemui.keyguard.shared.transition.KeyguardTransitionAnimationCallback
+import com.android.systemui.keyguard.shared.transition.keyguardTransitionAnimationCallbackDelegator
 import com.android.systemui.kosmos.Kosmos
-import com.android.systemui.scene.domain.interactor.sceneContainerOcclusionInteractor
-import com.android.systemui.shade.domain.interactor.shadeInteractor
-import com.android.systemui.unfold.domain.interactor.unfoldTransitionInteractor
+import com.android.systemui.kosmos.Kosmos.Fixture
+import com.android.systemui.shade.domain.interactor.shadeModeInteractor
+import com.android.systemui.statusbar.notification.stack.domain.interactor.notificationStackAppearanceInteractor
+import com.android.systemui.wallpapers.domain.interactor.wallpaperFocalAreaInteractor
 
-val Kosmos.lockscreenContentViewModel by
-    Kosmos.Fixture {
-        LockscreenContentViewModel(
-            clockInteractor = keyguardClockInteractor,
-            interactor = keyguardBlueprintInteractor,
-            authController = authController,
-            touchHandling = keyguardTouchHandlingViewModel,
-            shadeInteractor = shadeInteractor,
-            unfoldTransitionInteractor = unfoldTransitionInteractor,
-            occlusionInteractor = sceneContainerOcclusionInteractor,
-            deviceEntryInteractor = deviceEntryInteractor,
-        )
+val Kosmos.lockscreenContentViewModelFactory by Fixture {
+    object : LockscreenContentViewModel.Factory {
+        override fun create(
+            keyguardTransitionAnimationCallback: KeyguardTransitionAnimationCallback,
+            viewState: ViewStateAccessor,
+        ): LockscreenContentViewModel {
+            return LockscreenContentViewModel(
+                interactor = keyguardBlueprintInteractor,
+                touchHandlingFactory = keyguardTouchHandlingViewModelFactory,
+                shadeModeInteractor = shadeModeInteractor,
+                deviceEntryBypassInteractor = deviceEntryBypassInteractor,
+                deviceEntryUdfpsInteractor = deviceEntryUdfpsInteractor,
+                keyguardTransitionAnimationCallbackDelegator =
+                    keyguardTransitionAnimationCallbackDelegator,
+                keyguardTransitionAnimationCallback = keyguardTransitionAnimationCallback,
+                wallpaperFocalAreaInteractor = wallpaperFocalAreaInteractor,
+                notificationStackAppearanceInteractor = notificationStackAppearanceInteractor,
+                lockscreenAlphaViewModelFactory = lockscreenAlphaViewModelFactory,
+                viewStateAccessor = viewState,
+            )
+        }
     }
+}

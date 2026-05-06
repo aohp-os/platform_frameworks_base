@@ -18,8 +18,11 @@ package com.android.internal.widget.remotecompose.core.operations.utilities.easi
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
+
 /** Support Animation of the FloatExpression */
-public class FloatAnimation extends Easing {
+public class FloatAnimation extends Easing implements Serializable {
     float[] mSpec;
     // mSpec[0] = duration
     // int(mSpec[1]) = num_of_param << 16 | type
@@ -31,8 +34,10 @@ public class FloatAnimation extends Easing {
     private float mWrap = Float.NaN;
     private float mInitialValue = Float.NaN;
     private float mTargetValue = Float.NaN;
+    private int mDirectionalSnap = 0;
     //    private float mScale = 1;
     float mOffset = 0;
+    private boolean mPropagate = false;
 
     @NonNull
     @Override
@@ -52,20 +57,29 @@ public class FloatAnimation extends Easing {
         return str;
     }
 
-    public FloatAnimation() {
-        mType = CUBIC_STANDARD;
-        mEasingCurve = new CubicEasing(mType);
-    }
-
-    public FloatAnimation(@NonNull float... description) {
+    /**
+     * Create an animation based on a float encoding of the animation
+     *
+     * @param description the float encoding of the animation
+     */
+    public FloatAnimation(@NonNull float ... description) {
         mType = CUBIC_STANDARD;
         setAnimationDescription(description);
     }
 
+    /**
+     * Create an animation based on the parameters
+     *
+     * @param type The type of animation
+     * @param duration The duration of the animation
+     * @param description The float parameters describing the animation
+     * @param initialValue The initial value of the float (NaN if none)
+     * @param wrap The wrap value of the animation NaN if it does not wrap
+     */
     public FloatAnimation(
             int type,
             float duration,
-            @Nullable float[] description,
+            @Nullable float [] description,
             float initialValue,
             float wrap) {
         mType = CUBIC_STANDARD;
@@ -79,10 +93,11 @@ public class FloatAnimation extends Easing {
      * @param type
      * @param spec
      * @param initialValue
+     * @param wrap
      * @return
      */
-    public static @NonNull float[] packToFloatArray(
-            float duration, int type, @Nullable float[] spec, float initialValue, float wrap) {
+    public static @NonNull float [] packToFloatArray(
+            float duration, int type, @Nullable float [] spec, float initialValue, float wrap) {
         int count = 0;
 
         if (!Float.isNaN(initialValue)) {
@@ -139,28 +154,32 @@ public class FloatAnimation extends Easing {
     /**
      * Useful to debug the packed form of an animation string
      *
-     * @param description
-     * @return
+     * @param description the float encoding of the animation
+     * @return a string describing the animation
      */
-    public static String unpackAnimationToString(float[] description) {
-        float[] mSpec = description;
-        float mDuration = (mSpec.length == 0) ? 1 : mSpec[0];
+    public static @NonNull String unpackAnimationToString(@NonNull float [] description) {
+        float[] spec = description;
+        float mDuration = (spec.length == 0) ? 1 : spec[0];
         int len = 0;
         int type = 0;
         float wrapValue = Float.NaN;
         float initialValue = Float.NaN;
-        if (mSpec.length > 1) {
-            int num_type = Float.floatToRawIntBits(mSpec[1]);
+        int directionalSnap = 0;
+        boolean propagate = false;
+        if (spec.length > 1) {
+            int num_type = Float.floatToRawIntBits(spec[1]);
             type = num_type & 0xFF;
             boolean wrap = ((num_type >> 8) & 0x1) > 0;
             boolean init = ((num_type >> 8) & 0x2) > 0;
+            directionalSnap = (num_type >> 10) & 0x3;
+            propagate = ((num_type >> 12) & 0x1) > 0;
             len = (num_type >> 16) & 0xFFFF;
             int off = 2 + len;
             if (init) {
-                initialValue = mSpec[off++];
+                initialValue = spec[off++];
             }
             if (wrap) {
-                wrapValue = mSpec[off];
+                wrapValue = spec[off];
             }
         }
         float[] params = description;
@@ -217,15 +236,21 @@ public class FloatAnimation extends Easing {
         if (!Float.isNaN(wrapValue)) {
             str += " wrap =" + wrapValue;
         }
+        if (directionalSnap != 0) {
+            str += " directionalSnap=" + directionalSnap;
+        }
+        if (propagate) {
+            str += " propagate";
+        }
         return str;
     }
 
     /**
      * Create an animation based on a float encoding of the animation
      *
-     * @param description
+     * @param description the float encoding of the animation
      */
-    public void setAnimationDescription(@NonNull float[] description) {
+    public void setAnimationDescription(@NonNull float [] description) {
         mSpec = description;
         mDuration = (mSpec.length == 0) ? 1 : mSpec[0];
         int len = 0;
@@ -234,6 +259,8 @@ public class FloatAnimation extends Easing {
             mType = num_type & 0xFF;
             boolean wrap = ((num_type >> 8) & 0x1) > 0;
             boolean init = ((num_type >> 8) & 0x2) > 0;
+            int directional = (num_type >> 10) & 0x3;
+            boolean propagate = ((num_type >> 12) & 0x1) > 0;
             len = (num_type >> 16) & 0xFFFF;
             int off = 2 + len;
             if (init) {
@@ -242,11 +269,13 @@ public class FloatAnimation extends Easing {
             if (wrap) {
                 mWrap = mSpec[off];
             }
+            mDirectionalSnap = directional;
+            mPropagate = propagate;
         }
         create(mType, description, 2, len);
     }
 
-    private void create(int type, @Nullable float[] params, int offset, int len) {
+    private void create(int type, @Nullable float [] params, int offset, int len) {
         switch (type) {
             case CUBIC_STANDARD:
             case CUBIC_ACCELERATE:
@@ -288,7 +317,7 @@ public class FloatAnimation extends Easing {
     /**
      * Set the initial Value
      *
-     * @param value
+     * @param value the value to set
      */
     public void setInitialValue(float value) {
 
@@ -321,7 +350,7 @@ public class FloatAnimation extends Easing {
     /**
      * Set the target value to interpolate to
      *
-     * @param value
+     * @param value the value to set
      */
     public void setTargetValue(float value) {
         mTargetValue = value;
@@ -335,13 +364,24 @@ public class FloatAnimation extends Easing {
             float dist = wrapDistance(mWrap, mInitialValue, mTargetValue);
             if ((dist > 0) && (mTargetValue < mInitialValue)) {
                 mTargetValue += mWrap;
-            } else if ((dist < 0) && (mTargetValue > mInitialValue)) {
+            } else if ((dist < 0) && mDirectionalSnap != 0) {
+                if (mDirectionalSnap == 1 && mTargetValue > mInitialValue) {
+                    mInitialValue = mTargetValue;
+                }
+                if (mDirectionalSnap == 2 && mTargetValue < mInitialValue) {
+                    mInitialValue = mTargetValue;
+                }
                 mTargetValue -= mWrap;
             }
         }
         setScaleOffset();
     }
 
+    /**
+     * Get the target value
+     *
+     * @return the target value
+     */
     public float getTargetValue() {
         return mTargetValue;
     }
@@ -360,6 +400,14 @@ public class FloatAnimation extends Easing {
     /** get the value at time t in seconds since start */
     @Override
     public float get(float t) {
+        if (mDirectionalSnap == 1 && mTargetValue < mInitialValue) {
+            mInitialValue = mTargetValue;
+            return mTargetValue;
+        }
+        if (mDirectionalSnap == 2 && mTargetValue > mInitialValue) {
+            mInitialValue = mTargetValue;
+            return mTargetValue;
+        }
         return mEasingCurve.get(t / mDuration) * (mTargetValue - mInitialValue) + mInitialValue;
     }
 
@@ -369,7 +417,29 @@ public class FloatAnimation extends Easing {
         return mEasingCurve.getDiff(t / mDuration) * (mTargetValue - mInitialValue);
     }
 
+    /**
+     * @return if you should propagate the animation
+     */
+    public boolean isPropagate() {
+        return mPropagate;
+    }
+
+    /**
+     * Get the initial value
+     *
+     * @return the initial value
+     */
     public float getInitialValue() {
         return mInitialValue;
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addType("FloatAnimation")
+                .add("initialValue", mInitialValue)
+                .add("targetValue", mTargetValue)
+                .add("duration", mDuration)
+                .add("easing", Easing.getString(mEasingCurve.getType()));
     }
 }

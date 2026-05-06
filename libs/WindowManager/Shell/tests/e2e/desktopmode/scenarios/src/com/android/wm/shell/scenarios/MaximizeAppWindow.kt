@@ -17,53 +17,47 @@
 package com.android.wm.shell.scenarios
 
 import android.app.Instrumentation
-import android.tools.NavBar
 import android.tools.Rotation
-import android.tools.flicker.rules.ChangeDisplayOrientationRule
 import android.tools.traces.parsers.WindowManagerStateHelper
+import android.window.DesktopModeFlags
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
-import com.android.launcher3.tapl.LauncherInstrumentation
 import com.android.server.wm.flicker.helpers.DesktopModeAppHelper
+import com.android.server.wm.flicker.helpers.DesktopModeAppHelper.MaximizeDesktopAppTrigger
 import com.android.server.wm.flicker.helpers.NonResizeableAppHelper
 import com.android.server.wm.flicker.helpers.SimpleAppHelper
-import com.android.window.flags.Flags
-import com.android.wm.shell.Utils
 import org.junit.After
 import org.junit.Assume
 import org.junit.Before
 import org.junit.Ignore
-import org.junit.Rule
 import org.junit.Test
 
 @Ignore("Test Base Class")
-abstract class MaximizeAppWindow
-constructor(private val rotation: Rotation = Rotation.ROTATION_0, isResizable: Boolean = true) {
-
+abstract class MaximizeAppWindow(
+    private val rotation: Rotation = Rotation.ROTATION_0,
+    isResizable: Boolean = true,
+    private val trigger: MaximizeDesktopAppTrigger = MaximizeDesktopAppTrigger.MAXIMIZE_MENU,
+) : TestScenarioBase(rotation) {
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val tapl = LauncherInstrumentation()
     private val wmHelper = WindowManagerStateHelper(instrumentation)
     private val device = UiDevice.getInstance(instrumentation)
-    private val testApp = if (isResizable) {
+    val testApp = if (isResizable) {
         DesktopModeAppHelper(SimpleAppHelper(instrumentation))
     } else {
         DesktopModeAppHelper(NonResizeableAppHelper(instrumentation))
     }
 
-    @Rule @JvmField val testSetupRule = Utils.testSetupRule(NavBar.MODE_GESTURAL, rotation)
-
     @Before
     fun setup() {
-        Assume.assumeTrue(Flags.enableDesktopWindowingMode() && tapl.isTablet)
-        tapl.setEnableRotation(true)
-        tapl.setExpectedRotation(rotation.value)
-        ChangeDisplayOrientationRule.setRotation(rotation)
+        if (trigger == MaximizeDesktopAppTrigger.KEYBOARD_SHORTCUT) {
+            Assume.assumeTrue(DesktopModeFlags.ENABLE_TASK_RESIZING_KEYBOARD_SHORTCUTS.isTrue)
+        }
         testApp.enterDesktopMode(wmHelper, device)
     }
 
     @Test
     open fun maximizeAppWindow() {
-        testApp.maximiseDesktopApp(wmHelper, device)
+        testApp.maximiseDesktopApp(wmHelper, device, trigger)
     }
 
     @After

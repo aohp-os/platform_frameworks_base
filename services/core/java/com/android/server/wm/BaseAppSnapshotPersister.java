@@ -16,10 +16,20 @@
 
 package com.android.server.wm;
 
+import static com.android.server.wm.AbsAppSnapshotController.TAG;
+
 import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.util.Slog;
+import android.util.SparseArray;
+import android.util.SparseBooleanArray;
 import android.window.TaskSnapshot;
 
+import com.android.internal.annotations.VisibleForTesting;
+
 import java.io.File;
+import java.util.UUID;
+import java.util.function.Consumer;
 
 class BaseAppSnapshotPersister {
     static final String LOW_RES_FILE_POSTFIX = "_reduced";
@@ -29,6 +39,7 @@ class BaseAppSnapshotPersister {
     // Shared with SnapshotPersistQueue
     protected final Object mLock;
     protected final SnapshotPersistQueue mSnapshotPersistQueue;
+    @VisibleForTesting
     protected final PersistInfoProvider mPersistInfoProvider;
 
     BaseAppSnapshotPersister(SnapshotPersistQueue persistQueue,
@@ -48,8 +59,31 @@ class BaseAppSnapshotPersister {
     void persistSnapshot(int id, int userId, TaskSnapshot snapshot) {
         synchronized (mLock) {
             mSnapshotPersistQueue.sendToQueueLocked(mSnapshotPersistQueue
-                    .createStoreWriteQueueItem(id, userId, snapshot, mPersistInfoProvider));
+                    .createStoreWriteQueueItem(id, userId, snapshot, mPersistInfoProvider,
+                            null /* lowResSnapshotConsumer */));
         }
+    }
+
+    /**
+     * Persists a snapshot of a task to disk, and convert to low-res snapshot.
+     *
+     * @param id The id of the object that needs to be persisted.
+     * @param userId The id of the user this tasks belongs to.
+     * @param snapshot The snapshot to persist.
+     */
+    void persistSnapshotAndConvert(int id, int userId, TaskSnapshot snapshot,
+            Consumer<LowResSnapshotSupplier> lowResSnapshotConsumer) {
+        synchronized (mLock) {
+            mSnapshotPersistQueue.sendToQueueLocked(mSnapshotPersistQueue
+                    .createStoreWriteQueueItem(id, userId, snapshot, mPersistInfoProvider,
+                            lowResSnapshotConsumer));
+        }
+    }
+
+    interface LowResSnapshotSupplier {
+        TaskSnapshot getLowResSnapshot();
+
+        void abort();
     }
 
     /**
@@ -79,6 +113,8 @@ class BaseAppSnapshotPersister {
         private final boolean mEnableLowResSnapshots;
         private final float mLowResScaleFactor;
         private final boolean mUse16BitFormat;
+        private final SparseBooleanArray mInitializedUsers = new SparseBooleanArray();
+        private final SparseArray<File> mScrambleDirectories = new SparseArray<>();
 
         PersistInfoProvider(DirectoryResolver directoryResolver, String dirName,
                 boolean enableLowResSnapshots, float lowResScaleFactor, boolean use16BitFormat) {
@@ -91,7 +127,76 @@ class BaseAppSnapshotPersister {
 
         @NonNull
         File getDirectory(int userId) {
+            final File directory = getOrInitScrambleDirectory(userId);
+            if (directory != null) {
+                return directory;
+            }
+            return getBaseDirectory(userId);
+        }
+
+        @NonNull
+        private File getBaseDirectory(int userId) {
             return new File(mDirectoryResolver.getSystemDirectoryForUser(userId), mDirName);
+        }
+
+        @Nullable
+        private File getOrInitScrambleDirectory(int userId) {
+            synchronized (mScrambleDirectories) {
+                if (mInitializedUsers.get(userId)) {
+                    return mScrambleDirectories.get(userId);
+                }
+                mInitializedUsers.put(userId, true);
+                final File scrambledDirectory = getScrambleDirectory(userId);
+                final File baseDir = getBaseDirectory(userId);
+                String newName = null;
+                // If directory exists, rename
+                if (scrambledDirectory.exists()) {
+                    newName = UUID.randomUUID().toString();
+                    final File scrambleTo = new File(baseDir, newName);
+                    if (!scrambledDirectory.renameTo(scrambleTo)) {
+                        Slog.w(TAG, "SnapshotPersister rename scramble folder fail.");
+                        return null;
+                    }
+                } else {
+                    // If directory not exists, mkDir.
+                    if (!baseDir.exists() && !baseDir.mkdir()) {
+                        Slog.w(TAG, "SnapshotPersister make base folder fail.");
+                        return null;
+                    }
+                    if (!scrambledDirectory.mkdir()) {
+                        Slog.e(TAG, "SnapshotPersister make scramble folder fail");
+                        return null;
+                    }
+                    // Move any existing files to this folder.
+                    final String[] files = baseDir.list();
+                    if (files != null) {
+                        for (String file : files) {
+                            final File original = new File(baseDir, file);
+                            if (original.isDirectory()) {
+                                newName = file;
+                            } else {
+                                File to = new File(scrambledDirectory, file);
+                                original.renameTo(to);
+                            }
+                        }
+                    }
+                }
+                final File newFolder = new File(baseDir, newName);
+                mScrambleDirectories.put(userId, newFolder);
+                return newFolder;
+            }
+        }
+
+        @NonNull
+        private File getScrambleDirectory(int userId) {
+            final File dir = getBaseDirectory(userId);
+            final String[] directories = dir.list(
+                    (current, name) -> new File(current, name).isDirectory());
+            if (directories != null && directories.length > 0) {
+                return new File(dir, directories[0]);
+            } else {
+                return new File(dir, UUID.randomUUID().toString());
+            }
         }
 
         /**

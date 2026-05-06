@@ -16,11 +16,13 @@
 
 package com.android.settingslib.datastore
 
+import android.Manifest
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.provider.Settings.SettingNotFoundException
 import android.provider.Settings.System
+import androidx.annotation.VisibleForTesting
 
 /**
  * [KeyValueStore] for [System] settings.
@@ -50,9 +52,9 @@ class SettingsSystemStore private constructor(contentResolver: ContentResolver) 
                 else -> throw UnsupportedOperationException("Get $key $valueType")
             }
                 as T?
-        } catch (e: SettingNotFoundException) {
+        } catch (_: SettingNotFoundException) {
             null
-        }
+        } ?: getDefaultValue(key, valueType)
 
     override fun <T : Any> setValue(key: String, valueType: Class<T>, value: T?) {
         if (value == null) {
@@ -82,5 +84,16 @@ class SettingsSystemStore private constructor(contentResolver: ContentResolver) 
                             instance = it
                         }
                 }
+
+        @VisibleForTesting
+        fun resetInstance() {
+            instance = null
+        }
+
+        /** Returns the required permissions to read [System] settings. */
+        fun getReadPermissions() = Permissions.EMPTY
+
+        /** Returns the required permissions to write [System] settings. */
+        fun getWritePermissions() = Permissions.allOf(Manifest.permission.WRITE_SETTINGS)
     }
 }

@@ -19,6 +19,7 @@ import static com.android.internal.widget.remotecompose.core.documentation.Docum
 import static com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation.INT;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 
 import com.android.internal.widget.remotecompose.core.Operation;
 import com.android.internal.widget.remotecompose.core.Operations;
@@ -28,18 +29,20 @@ import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
 import com.android.internal.widget.remotecompose.core.operations.utilities.ArrayAccess;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.Arrays;
 import java.util.List;
 
-public class DataListFloat extends Operation implements VariableSupport, ArrayAccess {
+public class DataListFloat extends Operation implements VariableSupport, ArrayAccess, Serializable {
     private static final int OP_CODE = Operations.FLOAT_LIST;
     private static final String CLASS_NAME = "IdListData";
-    private final int mId;
-    @NonNull private final float[] mValues;
+    public final int mId;
+    private @NonNull float [] mValues;
     private static final int MAX_FLOAT_ARRAY = 2000;
 
-    public DataListFloat(int id, @NonNull float[] values) {
+    public DataListFloat(int id, @NonNull float [] values) {
         mId = id;
         mValues = values;
     }
@@ -70,7 +73,14 @@ public class DataListFloat extends Operation implements VariableSupport, ArrayAc
         return "DataListFloat[" + Utils.idString(mId) + "] " + Arrays.toString(mValues);
     }
 
-    public static void apply(@NonNull WireBuffer buffer, int id, @NonNull float[] values) {
+    /**
+     * Write this operation to the buffer
+     *
+     * @param buffer the buffer to apply the operation to
+     * @param id the id of the array
+     * @param values the values of the array
+     */
+    public static void apply(@NonNull WireBuffer buffer, int id, @NonNull float [] values) {
         buffer.start(OP_CODE);
         buffer.writeInt(id);
         buffer.writeInt(values.length);
@@ -128,14 +138,28 @@ public class DataListFloat extends Operation implements VariableSupport, ArrayAc
         return mValues[index];
     }
 
-    @NonNull
     @Override
-    public float[] getFloats() {
+    public @Nullable float [] getFloats() {
         return mValues;
     }
 
     @Override
     public int getLength() {
         return mValues.length;
+    }
+
+    @SuppressWarnings("JdkImmutableCollections")
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer.addType(CLASS_NAME).add("id", mId).add("values", List.of(mValues));
+    }
+
+    /**
+     * Update the DataListFloat with values from a new one
+     *
+     * @param lc
+     */
+    public void update(@NonNull DataListFloat lc) {
+        mValues = lc.mValues;
     }
 }

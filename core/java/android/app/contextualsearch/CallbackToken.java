@@ -44,10 +44,9 @@ import java.util.concurrent.Executor;
  *
  * @hide
  */
-@FlaggedApi(Flags.FLAG_ENABLE_SERVICE)
 @SystemApi
 public final class CallbackToken implements Parcelable {
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
     private static final String TAG = CallbackToken.class.getSimpleName();
     private final IBinder mToken;
 

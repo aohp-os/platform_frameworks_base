@@ -27,6 +27,7 @@ import android.widget.TextView;
 /**
  * Base classes for movement methods.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class BaseMovementMethod implements MovementMethod {
     @Override
     public boolean canSelectArbitrarily() {
@@ -368,12 +369,12 @@ public class BaseMovementMethod implements MovementMethod {
         return false;
     }
 
-    /** {@hide} */
+    /** @hide */
     protected boolean leftWord(TextView widget, Spannable buffer) {
         return false;
     }
 
-    /** {@hide} */
+    /** @hide */
     protected boolean rightWord(TextView widget, Spannable buffer) {
         return false;
     }

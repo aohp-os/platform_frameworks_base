@@ -23,6 +23,7 @@ import static com.android.settingslib.RestrictedLockUtils.EnforcedAdmin;
 
 import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
+import android.app.admin.EnforcingAdmin;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.os.Build;
@@ -36,10 +37,13 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.PreferenceManager;
 import androidx.preference.PreferenceViewHolder;
 import androidx.preference.SwitchPreferenceCompat;
+
+import com.android.settingslib.widget.SettingsThemeHelper;
 
 /**
  * Version of SwitchPreferenceCompat that can be disabled by a device admin
@@ -82,7 +86,10 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
             }
         }
         if (mUseAdditionalSummary) {
-            setLayoutResource(R.layout.restricted_switch_preference);
+            int resId = SettingsThemeHelper.isExpressiveTheme(context)
+                    ? R.layout.restricted_switch_preference_expressive
+                    : R.layout.restricted_switch_preference;
+            setLayoutResource(resId);
             useAdminDisabledSummary(false);
         }
     }
@@ -141,7 +148,7 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
             final TextView additionalSummaryView = (TextView) holder.findViewById(
                     R.id.additional_summary);
             if (additionalSummaryView != null) {
-                if (isDisabledByAdmin()) {
+                if (isDisabledByAdmin() && switchSummary != null) {
                     additionalSummaryView.setText(switchSummary);
                     additionalSummaryView.setVisibility(View.VISIBLE);
                 } else {
@@ -151,7 +158,7 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
         } else {
             final TextView summaryView = (TextView) holder.findViewById(android.R.id.summary);
             if (summaryView != null) {
-                if (isDisabledByAdmin()) {
+                if (isDisabledByAdmin() && switchSummary != null) {
                     summaryView.setText(switchSummary);
                     summaryView.setVisibility(View.VISIBLE);
                 }
@@ -171,14 +178,10 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
                 () -> context.getString(resId));
     }
 
-    private String getRestrictedSwitchSummary() {
+    private @Nullable String getRestrictedSwitchSummary() {
         if (mHelper.isRestrictionEnforcedByAdvancedProtection()) {
-            final int apmResId = isChecked()
-                    ? com.android.settingslib.widget.restricted.R.string
-                            .enabled_by_advanced_protection
-                    : com.android.settingslib.widget.restricted.R.string
-                            .disabled_by_advanced_protection;
-            return getContext().getString(apmResId);
+            // Advanced Protection doesn't set the summary string, it keeps the current summary.
+            return null;
         }
 
         return isChecked()
@@ -195,6 +198,15 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
         if (!mHelper.performClick()) {
             super.performClick();
         }
+    }
+
+    @Override
+    protected void syncSummaryView(@NonNull View view) {
+        if (isDisabledByAdmin() || isDisabledByEcm()) {
+            // Summary should already be set, so no need to sync.
+            return;
+        }
+        super.syncSummaryView(view);
     }
 
     public void useAdminDisabledSummary(boolean useSummary) {
@@ -220,17 +232,30 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
      * package. Marks the preference as disabled if so.
      * @param settingIdentifier The key identifying the setting
      * @param packageName the package to check the settingIdentifier for
+     * @param settingEnabled Whether the setting in question is enabled
      */
     public void checkEcmRestrictionAndSetDisabled(@NonNull String settingIdentifier,
-            @NonNull  String packageName) {
-        mHelper.checkEcmRestrictionAndSetDisabled(settingIdentifier, packageName);
+            @NonNull String packageName, boolean settingEnabled) {
+        mHelper.checkEcmRestrictionAndSetDisabled(settingIdentifier, packageName, settingEnabled);
+    }
+
+    /**
+     * Checks if the given setting is subject to Enhanced Confirmation Mode restrictions for this
+     * package. Marks the preference as disabled if so.
+     * TODO b/390196024: remove this and update all callers to use the "settingEnabled" version
+     * @param settingIdentifier The key identifying the setting
+     * @param packageName the package to check the settingIdentifier for
+     */
+    public void checkEcmRestrictionAndSetDisabled(@NonNull String settingIdentifier,
+            @NonNull String packageName) {
+        mHelper.checkEcmRestrictionAndSetDisabled(settingIdentifier, packageName, false);
     }
 
     @Override
     public void setEnabled(boolean enabled) {
         boolean changed = false;
         if (enabled && isDisabledByAdmin()) {
-            mHelper.setDisabledByAdmin(null);
+            mHelper.setDisabledByEnforcingAdmin(null);
             changed = true;
         }
         if (enabled && isDisabledByEcm()) {
@@ -244,6 +269,16 @@ public class RestrictedSwitchPreference extends SwitchPreferenceCompat implement
 
     public void setDisabledByAdmin(EnforcedAdmin admin) {
         if (mHelper.setDisabledByAdmin(admin)) {
+            notifyChanged();
+        }
+    }
+
+    /**
+     * Sets the preference to be disabled by the given admin. If {@code admin} is null, it'll set
+     * the preference enabled.
+     */
+    public void setDisabledByAdmin(@Nullable EnforcingAdmin admin) {
+        if (mHelper.setDisabledByEnforcingAdmin(admin)) {
             notifyChanged();
         }
     }

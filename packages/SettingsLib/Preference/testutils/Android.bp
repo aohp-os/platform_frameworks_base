@@ -26,7 +26,7 @@ android_library {
         "androidx.fragment_fragment-testing",
         "androidx.test.core",
         "androidx.test.ext.junit",
-        "flag-junit",
         "truth",
     ],
+    test_only: true,
 }

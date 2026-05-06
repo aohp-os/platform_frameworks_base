@@ -20,21 +20,23 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.app.animation.Interpolators.EMPHASIZED_ACCELERATE
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.coroutines.collectValues
+import com.android.systemui.flags.DisableSceneContainer
+import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.Edge
 import com.android.systemui.keyguard.shared.model.KeyguardState.DREAMING
-import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
+import com.android.systemui.keyguard.shared.model.KeyguardState.LOCKSCREEN
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
-import com.android.systemui.kosmos.testScope
-import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.collectValues
+import com.android.systemui.kosmos.runCurrent
+import com.android.systemui.kosmos.runTest
+import com.android.systemui.shade.shadeTestUtil
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertThrows
 import kotlin.time.Duration.Companion.milliseconds
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,46 +44,49 @@ import org.junit.runner.RunWith
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
-    val kosmos = testKosmos()
-    val testScope = kosmos.testScope
-    val animationFlow = kosmos.keyguardTransitionAnimationFlow
-    val repository = kosmos.fakeKeyguardTransitionRepository
+    private val kosmos = testKosmos()
+    private lateinit var animationFlow: KeyguardTransitionAnimationFlow
+    private lateinit var repository: FakeKeyguardTransitionRepository
 
     private lateinit var underTest: KeyguardTransitionAnimationFlow.FlowBuilder
 
     @Before
     fun setUp() {
+        animationFlow = kosmos.keyguardTransitionAnimationFlow
+        repository = kosmos.fakeKeyguardTransitionRepository
         underTest =
             animationFlow
                 .setup(
                     duration = 1000.milliseconds,
-                    edge = Edge.create(from = Scenes.Gone, to = DREAMING),
+                    edge = Edge.create(from = LOCKSCREEN, to = DREAMING),
                 )
-                .setupWithoutSceneContainer(
-                    edge = Edge.create(from = GONE, to = DREAMING),
-                )
+                .setupWithoutSceneContainer(edge = Edge.create(from = LOCKSCREEN, to = DREAMING))
     }
 
-    @Test(expected = IllegalArgumentException::class)
+    @Test
     fun zeroDurationThrowsException() =
-        testScope.runTest {
-            val flow = underTest.sharedFlow(duration = 0.milliseconds, onStep = { it })
+        kosmos.runTest {
+            assertThrows(IllegalArgumentException::class.java) {
+                val flow = underTest.sharedFlow(duration = 0.milliseconds, onStep = { it })
+            }
         }
 
-    @Test(expected = IllegalArgumentException::class)
+    @Test
     fun startTimePlusDurationGreaterThanTransitionDurationThrowsException() =
-        testScope.runTest {
-            val flow =
-                underTest.sharedFlow(
-                    startTime = 300.milliseconds,
-                    duration = 800.milliseconds,
-                    onStep = { it }
-                )
+        kosmos.runTest {
+            assertThrows(IllegalArgumentException::class.java) {
+                val flow =
+                    underTest.sharedFlow(
+                        startTime = 300.milliseconds,
+                        duration = 800.milliseconds,
+                        onStep = { it },
+                    )
+            }
         }
 
     @Test
     fun onFinishRunsWhenSpecified() =
-        testScope.runTest {
+        kosmos.runTest {
             val flow =
                 underTest.sharedFlow(
                     duration = 100.milliseconds,
@@ -96,8 +101,9 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
         }
 
     @Test
+    @DisableSceneContainer // CANCELED steps are filtered out when the scene framework is enabled.
     fun onCancelRunsWhenSpecified() =
-        testScope.runTest {
+        kosmos.runTest {
             val flow =
                 underTest.sharedFlow(
                     duration = 100.milliseconds,
@@ -112,8 +118,19 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
         }
 
     @Test
+    fun onStepReturnsNullEmitsNothing() =
+        kosmos.runTest {
+            val flow = underTest.sharedFlow(duration = 100.milliseconds, onStep = { null })
+            var animationValues = collectLastValue(flow)
+            runCurrent()
+
+            repository.sendTransitionStep(step(0.5f, TransitionState.RUNNING))
+            assertThat(animationValues()).isNull()
+        }
+
+    @Test
     fun usesStartTime() =
-        testScope.runTest {
+        kosmos.runTest {
             val flow =
                 underTest.sharedFlow(
                     startTime = 500.milliseconds,
@@ -141,7 +158,7 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
 
     @Test
     fun usesInterpolator() =
-        testScope.runTest {
+        kosmos.runTest {
             val flow =
                 underTest.sharedFlow(
                     duration = 1000.milliseconds,
@@ -165,12 +182,8 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
 
     @Test
     fun usesOnStepToDoubleValue() =
-        testScope.runTest {
-            val flow =
-                underTest.sharedFlow(
-                    duration = 1000.milliseconds,
-                    onStep = { it * 2 },
-                )
+        kosmos.runTest {
+            val flow = underTest.sharedFlow(duration = 1000.milliseconds, onStep = { it * 2 })
             val animationValues by collectLastValue(flow)
             runCurrent()
 
@@ -188,12 +201,9 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
 
     @Test
     fun usesOnStepToDoubleValueWithState() =
-        testScope.runTest {
+        kosmos.runTest {
             val flow =
-                underTest.sharedFlowWithState(
-                    duration = 1000.milliseconds,
-                    onStep = { it * 2 },
-                )
+                underTest.sharedFlowWithState(duration = 1000.milliseconds, onStep = { it * 2 })
             val animationValues by collectLastValue(flow)
             runCurrent()
 
@@ -201,72 +211,68 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.STARTED,
-                        value = 0f
+                        value = 0f,
                     )
                 )
             repository.sendTransitionStep(step(0.3f, TransitionState.RUNNING))
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.RUNNING,
-                        value = 0.6f
+                        value = 0.6f,
                     )
                 )
             repository.sendTransitionStep(step(0.6f, TransitionState.RUNNING))
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.RUNNING,
-                        value = 1.2f
+                        value = 1.2f,
                     )
                 )
             repository.sendTransitionStep(step(0.8f, TransitionState.RUNNING))
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.RUNNING,
-                        value = 1.6f
+                        value = 1.6f,
                     )
                 )
             repository.sendTransitionStep(step(1f, TransitionState.RUNNING))
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.RUNNING,
-                        value = 2f
+                        value = 2f,
                     )
                 )
             repository.sendTransitionStep(step(1f, TransitionState.FINISHED))
             assertThat(animationValues)
                 .isEqualTo(
                     StateToValue(
-                        from = GONE,
+                        from = LOCKSCREEN,
                         to = DREAMING,
                         transitionState = TransitionState.FINISHED,
-                        value = null
+                        value = null,
                     )
                 )
         }
 
     @Test
     fun sameFloatValueWithTheSameTransitionStateDoesNotEmitTwice() =
-        testScope.runTest {
-            val flow =
-                underTest.sharedFlow(
-                    duration = 1000.milliseconds,
-                    onStep = { it },
-                )
+        kosmos.runTest {
+            val flow = underTest.sharedFlow(duration = 1000.milliseconds, onStep = { it })
             val values by collectValues(flow)
             runCurrent()
 
@@ -279,12 +285,8 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
 
     @Test
     fun sameFloatValueWithADifferentTransitionStateDoesEmitTwice() =
-        testScope.runTest {
-            val flow =
-                underTest.sharedFlow(
-                    duration = 1000.milliseconds,
-                    onStep = { it },
-                )
+        kosmos.runTest {
+            val flow = underTest.sharedFlow(duration = 1000.milliseconds, onStep = { it })
             val values by collectValues(flow)
             runCurrent()
 
@@ -296,20 +298,94 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
             assertThat(values[0]).isEqualTo(0.3f)
         }
 
+    @Test
+    fun sharedFlowWithShadeExpanded() =
+        kosmos.runTest {
+            val flow =
+                underTest.sharedFlowWithShade(
+                    duration = 1000.milliseconds,
+                    onStep = { step, isShadeExpanded -> if (isShadeExpanded) 0f else 1f },
+                )
+            val values by collectValues(flow)
+            shadeTestUtil.setQsExpansion(1f)
+
+            repository.sendTransitionStep(step(0.0f, TransitionState.STARTED))
+            repository.sendTransitionStep(step(0.3f, TransitionState.RUNNING))
+
+            assertThat(values.size).isEqualTo(2)
+            assertThat(values[0]).isEqualTo(0f)
+            assertThat(values[0]).isEqualTo(0f)
+        }
+
+    @Test
+    fun sharedFlowWithShadeNotExpanded() =
+        kosmos.runTest {
+            val flow =
+                underTest.sharedFlowWithShade(
+                    duration = 1000.milliseconds,
+                    onStep = { step, isShadeExpanded -> if (isShadeExpanded) 0f else 1f },
+                )
+            val values by collectValues(flow)
+            shadeTestUtil.setQsExpansion(0f)
+
+            repository.sendTransitionStep(step(0.0f, TransitionState.STARTED))
+            repository.sendTransitionStep(step(0.3f, TransitionState.RUNNING))
+
+            assertThat(values.size).isEqualTo(2)
+            assertThat(values[0]).isEqualTo(1f)
+            assertThat(values[0]).isEqualTo(1f)
+        }
+
+    @Test
+    @DisableSceneContainer // CANCELED steps are filtered out when the scene framework is enabled.
+    fun sharedFlowWithShadeExpanded_onCancelRunsWhenSpecified() =
+        kosmos.runTest {
+            val flow =
+                underTest.sharedFlowWithShade(
+                    duration = 100.milliseconds,
+                    onStep = { step, _ -> step },
+                    onCancel = { isShadeExpanded -> if (isShadeExpanded) 100f else 200f },
+                )
+            val animationValues by collectLastValue(flow)
+            shadeTestUtil.setQsExpansion(1f)
+
+            repository.sendTransitionStep(step(0.0f, TransitionState.STARTED))
+            repository.sendTransitionStep(step(0.5f, TransitionState.CANCELED))
+            assertThat(animationValues).isEqualTo(100f)
+        }
+
+    @Test
+    @DisableSceneContainer // CANCELED steps are filtered out when the scene framework is enabled.
+    fun sharedFlowWithShadeNotExpanded_onCancelRunsWhenSpecified() =
+        kosmos.runTest {
+            val flow =
+                underTest.sharedFlowWithShade(
+                    duration = 100.milliseconds,
+                    onStep = { step, _ -> step },
+                    onCancel = { isShadeExpanded -> if (isShadeExpanded) 100f else 200f },
+                )
+            val animationValues by collectLastValue(flow)
+            shadeTestUtil.setQsExpansion(0f)
+
+            repository.sendTransitionStep(step(0.0f, TransitionState.STARTED))
+            repository.sendTransitionStep(step(0.5f, TransitionState.CANCELED))
+            assertThat(animationValues).isEqualTo(200f)
+        }
+
     private fun assertFloat(actual: Float?, expected: Float) {
         assertThat(actual!!).isWithin(0.01f).of(expected)
     }
 
     private fun step(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return TransitionStep(
-            from = GONE,
+            from = LOCKSCREEN,
             to = DREAMING,
             value = value,
             transitionState = state,
-            ownerName = "GoneToDreamingTransitionViewModelTest"
+            ownerName = "GoneToDreamingTransitionViewModelTest",
         )
     }
 }

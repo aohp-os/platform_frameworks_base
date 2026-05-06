@@ -29,6 +29,7 @@ import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Color;
+import android.hardware.input.InputManager;
 import android.telephony.PinResult;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -48,6 +49,7 @@ import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.res.R;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
+import com.android.systemui.util.wrapper.LockPatternCheckerWrapper;
 
 public class KeyguardSimPinViewController
         extends KeyguardPinBasedInputViewController<KeyguardSimPinView> {
@@ -66,6 +68,8 @@ public class KeyguardSimPinViewController
     private int mSubId = INVALID_SUBSCRIPTION_ID;
     private AlertDialog mRemainingAttemptsDialog;
     private ImageView mSimImageView;
+
+    protected boolean mIsInTestMode = false;
 
     KeyguardUpdateMonitorCallback mUpdateMonitorCallback = new KeyguardUpdateMonitorCallback() {
         @Override
@@ -91,17 +95,22 @@ public class KeyguardSimPinViewController
             SecurityMode securityMode, LockPatternUtils lockPatternUtils,
             KeyguardSecurityCallback keyguardSecurityCallback,
             KeyguardMessageAreaController.Factory messageAreaControllerFactory,
-            LatencyTracker latencyTracker, LiftToActivateListener liftToActivateListener,
+            LatencyTracker latencyTracker,
             TelephonyManager telephonyManager, FalsingCollector falsingCollector,
             EmergencyButtonController emergencyButtonController, FeatureFlags featureFlags,
             SelectedUserInteractor selectedUserInteractor,
             KeyguardKeyboardInteractor keyguardKeyboardInteractor,
             BouncerHapticPlayer bouncerHapticPlayer,
-            UserActivityNotifier userActivityNotifier) {
+            UserActivityNotifier userActivityNotifier,
+            InputManager inputManager,
+            LockPatternCheckerWrapper lockPatternCheckerWrapper
+    ) {
         super(view, keyguardUpdateMonitor, securityMode, lockPatternUtils, keyguardSecurityCallback,
-                messageAreaControllerFactory, latencyTracker, liftToActivateListener,
+                messageAreaControllerFactory, latencyTracker,
                 emergencyButtonController, falsingCollector, featureFlags, selectedUserInteractor,
-                keyguardKeyboardInteractor, bouncerHapticPlayer, userActivityNotifier);
+                keyguardKeyboardInteractor, bouncerHapticPlayer, userActivityNotifier, inputManager,
+                lockPatternCheckerWrapper
+        );
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mTelephonyManager = telephonyManager;
         mSimImageView = mView.findViewById(R.id.keyguard_sim);
@@ -318,8 +327,13 @@ public class KeyguardSimPinViewController
 
         @Override
         public void run() {
+            if (mIsInTestMode) return;
             Log.v(TAG, "call supplyIccLockPin(subid=" + mSubId + ")");
             TelephonyManager telephonyManager = mTelephonyManager.createForSubscriptionId(mSubId);
+            if (telephonyManager == null) {
+                Log.w(LOG_TAG, "Null telephonyManager, cannot validate SimPin");
+                return;
+            }
             final PinResult result = telephonyManager.supplyIccLockPin(mPin);
             Log.v(TAG, "supplyIccLockPin returned: " + result.toString());
             mView.post(() -> onSimCheckResponse(result));

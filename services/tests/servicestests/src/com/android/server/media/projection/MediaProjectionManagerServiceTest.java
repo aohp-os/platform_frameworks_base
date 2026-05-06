@@ -21,6 +21,7 @@ import static android.Manifest.permission.RECORD_SENSITIVE_CONTENT;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.content.pm.ApplicationInfo.PRIVATE_FLAG_PRIVILEGED;
 import static android.media.projection.MediaProjectionManager.TYPE_MIRRORING;
+import static android.media.projection.MediaProjectionManager.TYPE_SCREEN_CAPTURE;
 import static android.media.projection.ReviewGrantedConsentResult.RECORD_CANCEL;
 import static android.media.projection.ReviewGrantedConsentResult.RECORD_CONTENT_DISPLAY;
 import static android.media.projection.ReviewGrantedConsentResult.RECORD_CONTENT_TASK;
@@ -34,7 +35,6 @@ import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.Display.INVALID_DISPLAY;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -49,7 +49,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertThrows;
 
@@ -58,12 +58,10 @@ import android.annotation.SuppressLint;
 import android.app.ActivityManagerInternal;
 import android.app.ActivityOptions.LaunchCookie;
 import android.app.AppOpsManager;
-import android.app.Instrumentation;
 import android.app.KeyguardManager;
-import android.app.role.RoleManager;
-import android.companion.AssociationRequest;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.ApplicationInfoFlags;
 import android.content.pm.PackageManager.NameNotFoundException;
@@ -81,6 +79,7 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.test.TestLooper;
 import android.platform.test.annotations.EnableFlags;
+import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.provider.Settings;
@@ -94,12 +93,12 @@ import androidx.test.filters.FlakyTest;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import com.android.media.projection.flags.Flags;
 import com.android.server.LocalServices;
 import com.android.server.testutils.OffsettableClock;
 import com.android.server.wm.WindowManagerInternal;
 
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -110,7 +109,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -125,9 +123,10 @@ import java.util.concurrent.TimeUnit;
 @RunWith(AndroidJUnit4.class)
 @SuppressLint({"UseCheckPermission", "VisibleForTests", "MissingPermission"})
 public class MediaProjectionManagerServiceTest {
-    private static final int UID = 10;
+    private static final int UID = Process.myUid();
     private static final String PACKAGE_NAME = "test.package";
     private final ApplicationInfo mAppInfo = new ApplicationInfo();
+    private final PackageInfo mPackageInfo = new PackageInfo();
     private final TestLooper mTestLooper = new TestLooper();
     private static final ContentRecordingSession DISPLAY_SESSION =
             createDisplaySession(DEFAULT_DISPLAY);
@@ -218,6 +217,11 @@ public class MediaProjectionManagerServiceTest {
         mWaitingDisplaySession.setVirtualDisplayId(5);
 
         mAppInfo.targetSdkVersion = 32;
+        mAppInfo.packageName = PACKAGE_NAME;
+
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(UID).when(mPackageManager).getPackageUidAsUser(anyString(), any(int.class));
 
         mService = new MediaProjectionManagerService(mContext);
     }
@@ -292,8 +296,6 @@ public class MediaProjectionManagerServiceTest {
         assertThat(stoppedCallback2).isFalse();
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testCreateProjection_keyguardLocked() throws Exception {
         MediaProjectionManagerService.MediaProjection projection = startProjectionPreconditions();
@@ -308,8 +310,6 @@ public class MediaProjectionManagerServiceTest {
         assertThat(mIMediaProjectionCallback.mLatch.await(5, TimeUnit.SECONDS)).isTrue();
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testCreateProjection_keyguardLocked_packageAllowlisted()
             throws NameNotFoundException {
@@ -325,8 +325,6 @@ public class MediaProjectionManagerServiceTest {
         assertThat(mService.getActiveProjectionInfo()).isNotNull();
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testCreateProjection_keyguardLocked_AppOpMediaProjection()
             throws NameNotFoundException {
@@ -347,50 +345,6 @@ public class MediaProjectionManagerServiceTest {
         assertThat(mService.getActiveProjectionInfo()).isNotNull();
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
-    @Test
-    public void testCreateProjection_keyguardLocked_RoleHeld() {
-        runWithRole(
-                AssociationRequest.DEVICE_PROFILE_APP_STREAMING,
-                () -> {
-                    try {
-                        mAppInfo.privateFlags |= PRIVATE_FLAG_PRIVILEGED;
-                        doReturn(mAppInfo)
-                                .when(mPackageManager)
-                                .getApplicationInfoAsUser(
-                                        anyString(),
-                                        any(ApplicationInfoFlags.class),
-                                        any(UserHandle.class));
-                        MediaProjectionManagerService.MediaProjection projection =
-                                mService.createProjectionInternal(
-                                        Process.myUid(),
-                                        mContext.getPackageName(),
-                                        TYPE_MIRRORING,
-                                        /* isPermanentGrant= */ false,
-                                        UserHandle.CURRENT,
-                                        DEFAULT_DISPLAY);
-                        doReturn(true).when(mKeyguardManager).isKeyguardLocked();
-                        doReturn(PackageManager.PERMISSION_DENIED)
-                                .when(mPackageManager)
-                                .checkPermission(RECORD_SENSITIVE_CONTENT, projection.packageName);
-
-                        projection.start(mIMediaProjectionCallback);
-                        projection.notifyVirtualDisplayCreated(10);
-
-                        // The projection was started because it was allowed to capture the
-                        // keyguard.
-                        assertWithMessage("Failed to run projection")
-                                .that(mService.getActiveProjectionInfo())
-                                .isNotNull();
-                    } catch (NameNotFoundException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
-    }
-
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testCreateProjection_keyguardLocked_screenshareProtectionsDisabled()
             throws NameNotFoundException {
@@ -416,8 +370,6 @@ public class MediaProjectionManagerServiceTest {
         }
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testCreateProjection_keyguardLocked_noDisplayCreated()
             throws NameNotFoundException {
@@ -500,7 +452,6 @@ public class MediaProjectionManagerServiceTest {
                         PACKAGE_NAME + "foo",
                         TYPE_MIRRORING,
                         /* isPermanentGrant= */ true,
-                        UserHandle.CURRENT,
                         Display.DEFAULT_DISPLAY);
 
         assertThat(secondProjection).isNotNull();
@@ -509,8 +460,6 @@ public class MediaProjectionManagerServiceTest {
         assertThat(secondProjection).isNotEqualTo(projection);
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testReuseProjection_keyguardNotLocked_startConsentDialog()
             throws NameNotFoundException {
@@ -527,8 +476,6 @@ public class MediaProjectionManagerServiceTest {
         verify(mContext).startActivityAsUser(any(), any());
     }
 
-    @EnableFlags(android.companion.virtualdevice.flags
-            .Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     @Test
     public void testReuseProjection_keyguardLocked_noConsentDialog() throws NameNotFoundException {
         MediaProjectionManagerService.MediaProjection projection = startProjectionPreconditions();
@@ -553,7 +500,7 @@ public class MediaProjectionManagerServiceTest {
 
         projection.stop(StopReason.STOP_UNKNOWN);
 
-        verifyZeroInteractions(mMediaProjectionMetricsLogger);
+        verifyNoMoreInteractions(mMediaProjectionMetricsLogger);
     }
 
     @Test
@@ -1252,6 +1199,156 @@ public class MediaProjectionManagerServiceTest {
         assertThat(projection.getDisplayId()).isEqualTo(200);
     }
 
+    @Test
+    @EnableFlags(Flags.FLAG_RECORDING_OVERLAY)
+    public void createProjectionForOverlay_forContextualSearch() throws Exception {
+        MediaProjectionManagerService.MediaProjection projection =
+                createProjectionPreconditions(mService);
+        projection.setRecordingOverlay(true);
+
+        assertThat(projection.isRecordingOverlay()).isTrue();
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_RECORDING_OVERLAY)
+    public void createProjectionForOverlay_withoutFlag() throws Exception {
+        MediaProjectionManagerService.MediaProjection projection = createProjectionPreconditions(
+                mService);
+        projection.setRecordingOverlay(true);
+
+        assertThat(projection.isRecordingOverlay()).isFalse();
+    }
+
+    @Test
+    public void createProjection_doesNotGrantAlertWindowByDefault() throws Exception {
+        mAppInfo.privateFlags |= PRIVATE_FLAG_PRIVILEGED;
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(mPackageInfo).when(mPackageManager).getPackageInfoAsUser(anyString(), anyInt(),
+                anyInt());
+        MediaProjectionManagerService.MediaProjection projection =
+                mService.createProjectionInternal(
+                        UID,
+                        PACKAGE_NAME,
+                        TYPE_SCREEN_CAPTURE,
+                        /* isPermanentGrant= */ false,
+                        DEFAULT_DISPLAY);
+
+        doReturn(AppOpsManager.MODE_DEFAULT).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_ALERT_WINDOW, projection.uid, projection.packageName);
+        projection.start(mIMediaProjectionCallback);
+        projection.stop(StopReason.STOP_HOST_APP);
+
+        verify(mAppOpsManager, never()).setMode(eq(AppOpsManager.OP_SYSTEM_ALERT_WINDOW),
+                eq(projection.uid), eq(projection.packageName), anyInt());
+    }
+
+    @Test
+    public void createProjection_alertWindowRequested_isGranted() throws Exception {
+        mAppInfo.privateFlags |= PRIVATE_FLAG_PRIVILEGED;
+        mPackageInfo.requestedPermissions = new String[]{Manifest.permission.SYSTEM_ALERT_WINDOW};
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(mPackageInfo).when(mPackageManager).getPackageInfoAsUser(anyString(), anyInt(),
+                anyInt());
+        MediaProjectionManagerService.MediaProjection projection =
+                mService.createProjectionInternal(
+                        UID,
+                        PACKAGE_NAME,
+                        TYPE_SCREEN_CAPTURE,
+                        /* isPermanentGrant= */ false,
+                        DEFAULT_DISPLAY);
+
+        doReturn(AppOpsManager.MODE_DEFAULT).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_ALERT_WINDOW, projection.uid, projection.packageName);
+        projection.start(mIMediaProjectionCallback);
+        verify(mAppOpsManager).setMode(AppOpsManager.OP_SYSTEM_ALERT_WINDOW, projection.uid,
+                projection.packageName, AppOpsManager.MODE_ALLOWED);
+        doReturn(AppOpsManager.MODE_ALLOWED).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_ALERT_WINDOW, projection.uid, projection.packageName);
+
+        projection.stop(StopReason.STOP_HOST_APP);
+        verify(mAppOpsManager).setMode(AppOpsManager.OP_SYSTEM_ALERT_WINDOW, projection.uid,
+                projection.packageName, AppOpsManager.MODE_DEFAULT);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_RECORDING_OVERLAY)
+    public void createProjectionForOverlay_grantsApplicationOverlay() throws Exception {
+        mAppInfo.privateFlags |= PRIVATE_FLAG_PRIVILEGED;
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(mPackageInfo).when(mPackageManager).getPackageInfoAsUser(anyString(), anyInt(),
+                anyInt());
+        MediaProjectionManagerService.MediaProjection projection =
+                mService.createProjectionInternal(
+                        UID,
+                        PACKAGE_NAME,
+                        TYPE_SCREEN_CAPTURE,
+                        /* isPermanentGrant= */ false,
+                        DEFAULT_DISPLAY);
+        projection.setRecordingOverlay(true);
+
+        doReturn(AppOpsManager.MODE_DEFAULT).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY, projection.uid,
+                projection.packageName);
+        projection.start(mIMediaProjectionCallback);
+        verify(mAppOpsManager).setUidMode(AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY,
+                projection.uid, AppOpsManager.MODE_ALLOWED);
+        doReturn(AppOpsManager.MODE_ALLOWED).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY, projection.uid,
+                projection.packageName);
+
+        projection.stop(StopReason.STOP_HOST_APP);
+        verify(mAppOpsManager).setUidMode(AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY,
+                projection.uid, AppOpsManager.MODE_DEFAULT);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_RECORDING_OVERLAY)
+    public void createProjectionForDisplay_doesNotGrantApplicationOverlay() throws Exception {
+        mAppInfo.privateFlags |= PRIVATE_FLAG_PRIVILEGED;
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(mPackageInfo).when(mPackageManager).getPackageInfoAsUser(anyString(), anyInt(),
+                anyInt());
+        MediaProjectionManagerService.MediaProjection projection =
+                mService.createProjectionInternal(
+                        UID,
+                        PACKAGE_NAME,
+                        TYPE_SCREEN_CAPTURE,
+                        /* isPermanentGrant= */ false,
+                        DEFAULT_DISPLAY);
+
+        doReturn(AppOpsManager.MODE_DEFAULT).when(mAppOpsManager).unsafeCheckOpRawNoThrow(
+                AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY, projection.uid,
+                projection.packageName);
+        projection.start(mIMediaProjectionCallback);
+        projection.stop(StopReason.STOP_HOST_APP);
+        verify(mAppOpsManager, never()).setUidMode(eq(AppOpsManager.OP_SYSTEM_APPLICATION_OVERLAY),
+                eq(projection.uid), anyInt());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_START_UID_CHECK)
+    public void createProjection_cannotBeStartedFromDifferentUid() throws Exception {
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(mPackageInfo).when(mPackageManager).getPackageInfoAsUser(anyString(), anyInt(),
+                anyInt());
+        int uid = 10;
+        MediaProjectionManagerService.MediaProjection projection =
+                mService.createProjectionInternal(
+                        uid,
+                        PACKAGE_NAME,
+                        TYPE_SCREEN_CAPTURE,
+                        /* isPermanentGrant= */ false,
+                        DEFAULT_DISPLAY);
+
+        // Start MediaProjection from a different UID
+        assertThrows(SecurityException.class, () -> projection.start(mIMediaProjectionCallback));
+    }
+
     private void verifySetSessionWithContent(@RecordContent int content) {
         verify(mWindowManagerInternal, atLeastOnce()).setContentRecordingSession(
                 mSessionCaptor.capture());
@@ -1274,7 +1371,6 @@ public class MediaProjectionManagerServiceTest {
                 PACKAGE_NAME,
                 TYPE_MIRRORING,
                 /* isPermanentGrant= */ false,
-                UserHandle.CURRENT,
                 displayId);
     }
 
@@ -1300,48 +1396,6 @@ public class MediaProjectionManagerServiceTest {
         doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
                 any(ApplicationInfoFlags.class), any(UserHandle.class));
         return mService.getProjectionInternal(UID, PACKAGE_NAME);
-    }
-
-    /**
-     * Run the provided block giving the current context's package the provided role.
-     */
-    @SuppressWarnings("SameParameterValue")
-    private void runWithRole(String role, Runnable block) {
-        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        String packageName = mContext.getPackageName();
-        UserHandle user = instrumentation.getTargetContext().getUser();
-        RoleManager roleManager = Objects.requireNonNull(
-                mContext.getSystemService(RoleManager.class));
-        try {
-            CountDownLatch latch = new CountDownLatch(1);
-            instrumentation.getUiAutomation().adoptShellPermissionIdentity(
-                    Manifest.permission.MANAGE_ROLE_HOLDERS,
-                    Manifest.permission.BYPASS_ROLE_QUALIFICATION);
-
-            roleManager.setBypassingRoleQualification(true);
-            roleManager.addRoleHolderAsUser(role, packageName,
-                    /* flags= */ RoleManager.MANAGE_HOLDERS_FLAG_DONT_KILL_APP, user,
-                    mContext.getMainExecutor(), success -> {
-                        if (success) {
-                            latch.countDown();
-                        } else {
-                            Assert.fail("Couldn't set role for test (failure) " + role);
-                        }
-                    });
-            assertWithMessage("Couldn't set role for test (timeout) : " + role)
-                    .that(latch.await(1, TimeUnit.SECONDS)).isTrue();
-            block.run();
-
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
-            roleManager.removeRoleHolderAsUser(role, packageName,
-                    /* flags= */ RoleManager.MANAGE_HOLDERS_FLAG_DONT_KILL_APP, user,
-                    mContext.getMainExecutor(), (aBool) -> {});
-            roleManager.setBypassingRoleQualification(false);
-            instrumentation.getUiAutomation()
-                    .dropShellPermissionIdentity();
-        }
     }
 
     private static class FakeIMediaProjectionCallback extends IMediaProjectionCallback.Stub {

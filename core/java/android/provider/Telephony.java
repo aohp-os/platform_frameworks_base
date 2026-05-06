@@ -25,6 +25,7 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
+import android.app.admin.DevicePolicyManager;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -70,8 +71,7 @@ import java.util.regex.Pattern;
  * </a> element in your manifest that declares the {@code "android.hardware.telephony"} hardware
  * feature. Alternatively, you can check for telephony availability at runtime using either
  * {@link android.content.pm.PackageManager#hasSystemFeature
- * hasSystemFeature(PackageManager.FEATURE_TELEPHONY)} or {@link
- * android.telephony.TelephonyManager#getPhoneType}.</p>
+ * hasSystemFeature(PackageManager.FEATURE_TELEPHONY)}.</p>
  *
  * <h3>Creating an SMS app</h3>
  *
@@ -285,6 +285,41 @@ public final class Telephony {
          * <p>Type: TEXT</p>
          */
         public static final String CREATOR = "creator";
+
+        /**
+         * The body of the message contains an otp code. This should only be applied by the SMS
+         * provider itself.
+         *
+         * <P>Type: INTEGER</P>
+         * @hide
+         */
+        @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_REDACT_OTP_SMS_API)
+        @TestApi
+        public static final String CONTAINS_OTP = "contains_otp";
+
+        /**
+         * The message does not contain an OTP
+         * @hide
+         */
+        @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_REDACT_OTP_SMS_API)
+        @TestApi
+        public static final int OTP_TYPE_NONE = 0;
+
+        /**
+         * The message does contain an OTP
+         * @hide
+         */
+        @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_REDACT_OTP_SMS_API)
+        @TestApi
+        public static final int OTP_TYPE_CONTAINS_OTP = 1;
+
+        /**
+         * The message is pending classification for an OTP
+         * @hide
+         */
+        @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_REDACT_OTP_SMS_API)
+        @TestApi
+        public static final int OTP_TYPE_PENDING = 2;
     }
 
     /**
@@ -353,6 +388,21 @@ public final class Telephony {
 
     /**
      * Contains all text-based SMS messages.
+     * <p>
+     * Access to SMS Messages containing an SMS retriever hash (Base64 encoded SHA256 hash of an
+     * app's signing certificate, truncated to 11 characters) is delayed by 3 hours after reception.
+     * However, certain apps are exempt from this delay, and can access these SMS messages
+     * immediately upon receipt, if they hold the READ_SMS permission. These exempted apps are:
+     * <ol>
+     *     <li>The default SMS app</li>
+     *     <li>The default Assistant app</li>
+     *     <li>The default Dialer app</li>
+     *     <li>Carrier apps</li>
+     *     <li>Connected device companion apps</li>
+     *     <li>System apps</li>
+     *     <li>Known signer apps</li>
+     *     <li>The SYSTEM_UI_INTELLIGENCE role holding app</li>
+     * </ol>
      */
     public static final class Sms implements BaseColumns, TextBasedSmsColumns {
 
@@ -388,6 +438,31 @@ public final class Telephony {
                 return component.getPackageName();
             }
             return null;
+        }
+
+        private static final Matcher CONTAINS_NUMBER = Pattern.compile(".*\\d.*").matcher("");
+
+        /**
+         * Determine whether a given method should be checked for an OTP
+         * @hide
+         */
+        public static boolean shouldCheckForOtp(Context context, String message) {
+            if (!isOtpRedactionEnabled(context)) {
+                return false;
+            }
+            return CONTAINS_NUMBER.reset(message).find();
+        }
+
+        /**
+         * Checks if OTP redaction in SMS is enabled
+         * @hide
+         */
+        public static boolean isOtpRedactionEnabled(Context context) {
+            if (!Flags.redactOtpSms()) {
+                return false;
+            }
+            DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
+            return dpm == null || !dpm.isDeviceManaged();
         }
 
         /**
@@ -1038,6 +1113,11 @@ public final class Telephony {
              *
              * <p>If a BroadcastReceiver encounters an error while processing
              * this intent it should set the result code appropriately.</p>
+             *
+             * <p>If the SMS message contains an SMS retriever hash, the intent will only be
+             * delivered to the app corresponding to the SMS retriever hash, and the list of apps
+             * listed {@link Sms here}.
+             * </p>
              *
              * <p>Requires {@link android.Manifest.permission#RECEIVE_SMS} to receive.</p>
              */
@@ -3196,7 +3276,6 @@ public final class Telephony {
          * See 3GPP TS 23.501 section 5.6.13
          * <P>Type: INTEGER</P>
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public static final String ALWAYS_ON = "always_on";
 
         /**
@@ -3307,7 +3386,6 @@ public final class Telephony {
          * connected, in bytes.
          * <p>Type: INTEGER </p>
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public static final String MTU_V4 = "mtu_v4";
 
         /**
@@ -3315,7 +3393,6 @@ public final class Telephony {
          * connected, in bytes.
          * <p>Type: INTEGER </p>
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public static final String MTU_V6 = "mtu_v6";
 
         /**
@@ -3338,14 +3415,12 @@ public final class Telephony {
          * {@code true} if this APN visible to the user, {@code false} otherwise.
          * <p>Type: INTEGER (boolean)</p>
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public static final String USER_VISIBLE = "user_visible";
 
         /**
          * {@code true} if the user allowed to edit this APN, {@code false} otherwise.
          * <p>Type: INTEGER (boolean)</p>
          */
-        @FlaggedApi(Flags.FLAG_APN_SETTING_FIELD_SUPPORT_FLAG)
         public static final String USER_EDITABLE = "user_editable";
 
         /**
@@ -4434,7 +4509,10 @@ public final class Telephony {
          */
         public static final int NAME_SOURCE_UNKNOWN = -1;
 
-        /** The name_source is from the carrier id. {@hide} */
+        /**
+         * The name_source is from the carrier id.
+         * @hide
+         */
         public static final int NAME_SOURCE_CARRIER_ID = 0;
 
         /**
@@ -4469,7 +4547,10 @@ public final class Telephony {
          */
         public static final String COLUMN_COLOR = "color";
 
-        /** The default color of a SIM {@hide} */
+        /**
+         * The default color of a SIM
+         * @hide
+         */
         public static final int COLOR_DEFAULT = 0;
 
         /**
@@ -4502,10 +4583,16 @@ public final class Telephony {
          */
         public static final String COLUMN_DATA_ROAMING = "data_roaming";
 
-        /** Indicates that data roaming is enabled for a subscription {@hide} */
+        /**
+         * Indicates that data roaming is enabled for a subscription
+         * @hide
+         */
         public static final int DATA_ROAMING_ENABLE = 1;
 
-        /** Indicates that data roaming is disabled for a subscription {@hide} */
+        /**
+         * Indicates that data roaming is disabled for a subscription
+         * @hide
+         */
         public static final int DATA_ROAMING_DISABLE = 0;
 
         /**
@@ -4581,7 +4668,10 @@ public final class Telephony {
          */
         public static final String COLUMN_SIM_PROVISIONING_STATUS = "sim_provisioning_status";
 
-        /** The sim is provisioned {@hide} */
+        /**
+         * The sim is provisioned
+         * @hide
+         */
         public static final int SIM_PROVISIONED = 0;
 
         /**
@@ -4633,42 +4723,78 @@ public final class Telephony {
          */
         public static final String COLUMN_IS_REMOVABLE = "is_removable";
 
-        /** TelephonyProvider column name for extreme threat in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for extreme threat in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_EXTREME_THREAT_ALERT =
                 "enable_cmas_extreme_threat_alerts";
 
-        /** TelephonyProvider column name for severe threat in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for severe threat in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_SEVERE_THREAT_ALERT =
                 "enable_cmas_severe_threat_alerts";
 
-        /** TelephonyProvider column name for amber alert in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for amber alert in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_AMBER_ALERT = "enable_cmas_amber_alerts";
 
-        /** TelephonyProvider column name for emergency alert in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for emergency alert in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_EMERGENCY_ALERT = "enable_emergency_alerts";
 
-        /** TelephonyProvider column name for alert sound duration in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for alert sound duration in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_ALERT_SOUND_DURATION = "alert_sound_duration";
 
-        /** TelephonyProvider column name for alert reminder interval in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for alert reminder interval in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_ALERT_REMINDER_INTERVAL = "alert_reminder_interval";
 
-        /** TelephonyProvider column name for enabling vibrate in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for enabling vibrate in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_ALERT_VIBRATE = "enable_alert_vibrate";
 
-        /** TelephonyProvider column name for enabling alert speech in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for enabling alert speech in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_ALERT_SPEECH = "enable_alert_speech";
 
-        /** TelephonyProvider column name for ETWS test alert in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for ETWS test alert in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_ETWS_TEST_ALERT = "enable_etws_test_alerts";
 
-        /** TelephonyProvider column name for enable channel50 alert in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for enable channel50 alert in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_CHANNEL_50_ALERT = "enable_channel_50_alerts";
 
-        /** TelephonyProvider column name for CMAS test alert in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for CMAS test alert in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_CMAS_TEST_ALERT = "enable_cmas_test_alerts";
 
-        /** TelephonyProvider column name for Opt out dialog in CB settings {@hide} */
+        /**
+         * TelephonyProvider column name for Opt out dialog in CB settings
+         * @hide
+         */
         public static final String COLUMN_CB_OPT_OUT_DIALOG = "show_cmas_opt_out_dialog";
 
         /**
@@ -4681,19 +4807,34 @@ public final class Telephony {
          */
         public static final String COLUMN_ENHANCED_4G_MODE_ENABLED = "volte_vt_enabled";
 
-        /** TelephonyProvider column name for enable VT (Video Telephony over IMS) {@hide} */
+        /**
+         * TelephonyProvider column name for enable VT (Video Telephony over IMS)
+         * @hide
+         */
         public static final String COLUMN_VT_IMS_ENABLED = "vt_ims_enabled";
 
-        /** TelephonyProvider column name for enable Wifi calling {@hide} */
+        /**
+         * TelephonyProvider column name for enable Wifi calling
+         * @hide
+         */
         public static final String COLUMN_WFC_IMS_ENABLED = "wfc_ims_enabled";
 
-        /** TelephonyProvider column name for Wifi calling mode {@hide} */
+        /**
+         * TelephonyProvider column name for Wifi calling mode
+         * @hide
+         */
         public static final String COLUMN_WFC_IMS_MODE = "wfc_ims_mode";
 
-        /** TelephonyProvider column name for Wifi calling mode in roaming {@hide} */
+        /**
+         * TelephonyProvider column name for Wifi calling mode in roaming
+         * @hide
+         */
         public static final String COLUMN_WFC_IMS_ROAMING_MODE = "wfc_ims_roaming_mode";
 
-        /** TelephonyProvider column name for enable Wifi calling in roaming {@hide} */
+        /**
+         * TelephonyProvider column name for enable Wifi calling in roaming
+         * @hide
+         */
         public static final String COLUMN_WFC_IMS_ROAMING_ENABLED = "wfc_ims_roaming_enabled";
 
         /**
@@ -4995,6 +5136,66 @@ public final class Telephony {
         public static final String COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM =
                 "is_satellite_provisioned_for_non_ip_datagram";
 
+        /**
+         * TelephonyProvider column name for satellite entitlement barred plmns list separated by
+         * comma [,]. The value of this column is set based on entitlement query result for
+         * satellite configuration. Ex : 31026,302820,40445
+         * By default, it's empty.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SATELLITE_ENTITLEMENT_BARRED_PLMNS =
+                "satellite_entitlement_barred_plmns";
+
+
+        /**
+         * TelephonyProvider column name for satellite entitlement data plan for plmns which is
+         * built in Json format in Key:Value pair. The value  of this column is set based on
+         * entitlement query result for satellite configuration.
+         * Ex : {"302820":0,"31026":1, "40445":0}
+         * By default, it's empty.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SATELLITE_ENTITLEMENT_DATA_PLAN_PLMNS =
+                "satellite_entitlement_data_plan_plmns";
+
+        /**
+         * TelephonyProvider column name for satellite entitlement service type map which is
+         * built in Json format in Key:Value pair. The value of this column is set based on
+         * entitlement query result for satellite configuration.
+         * Ex : {"302820":[1,3],"31026":[2,3],"40445":[1,3]}
+         * By default, it's empty.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SATELLITE_ENTITLEMENT_SERVICE_TYPE_MAP =
+                "satellite_entitlement_service_type_map";
+
+        /**
+         * TelephonyProvider column name for satellite entitlement data service policy type map
+         * which is built in Json format in Key:Value pair. The value of this column is set based
+         * on entitlement query result for satellite configuration.
+         * Ex : {"302820":2, "31026":1}
+         * By default, it's empty.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SATELLITE_ENTITLEMENT_DATA_SERVICE_POLICY =
+                "satellite_entitlement_data_service_policy";
+
+        /**
+         * TelephonyProvider column name for satellite entitlement voice service policy  type map
+         * which is built in Json format in Key:Value pair. The value of this column is set
+         * based on entitlement query result for satellite configuration.
+         * Ex : {"302820":2, "31026":1}.
+         * By default, it's empty.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SATELLITE_ENTITLEMENT_VOICE_SERVICE_POLICY =
+                "satellite_entitlement_voice_service_policy";
+
         /** All columns in {@link SimInfo} table. */
         private static final List<String> ALL_COLUMNS = List.of(
                 COLUMN_UNIQUE_KEY_SUBSCRIPTION_ID,
@@ -5072,7 +5273,12 @@ public final class Telephony {
                 COLUMN_SATELLITE_ENTITLEMENT_STATUS,
                 COLUMN_SATELLITE_ENTITLEMENT_PLMNS,
                 COLUMN_SATELLITE_ESOS_SUPPORTED,
-                COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM
+                COLUMN_IS_SATELLITE_PROVISIONED_FOR_NON_IP_DATAGRAM,
+                COLUMN_SATELLITE_ENTITLEMENT_BARRED_PLMNS,
+                COLUMN_SATELLITE_ENTITLEMENT_DATA_PLAN_PLMNS,
+                COLUMN_SATELLITE_ENTITLEMENT_SERVICE_TYPE_MAP,
+                COLUMN_SATELLITE_ENTITLEMENT_DATA_SERVICE_POLICY,
+                COLUMN_SATELLITE_ENTITLEMENT_VOICE_SERVICE_POLICY
         );
 
         /**

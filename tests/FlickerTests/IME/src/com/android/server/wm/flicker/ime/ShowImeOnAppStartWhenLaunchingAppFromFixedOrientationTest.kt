@@ -16,13 +16,13 @@
 
 package com.android.server.wm.flicker.ime
 
-import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
+import androidx.test.filters.RequiresDevice
 import android.tools.Rotation
 import android.tools.flicker.junit.FlickerParametersRunnerFactory
-import android.tools.flicker.legacy.FlickerBuilder
-import android.tools.flicker.legacy.LegacyFlickerTest
-import android.tools.flicker.legacy.LegacyFlickerTestFactory
+import android.tools.flicker.FlickerBuilder
+import android.tools.flicker.FlickerTest
+import android.tools.flicker.FlickerTestFactory
 import android.tools.flicker.subject.layers.LayerTraceEntrySubject
 import android.tools.traces.component.ComponentNameMatcher
 import androidx.test.filters.FlakyTest
@@ -42,10 +42,11 @@ import org.junit.runners.Parameterized
  * To run this test:
  * `atest FlickerTestsIme2:ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest`
  */
+@RequiresDevice
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-class ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest(flicker: LegacyFlickerTest) :
+class ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest(flicker: FlickerTest) :
     BaseTest(flicker) {
     private val imeTestApp =
         ImeShownOnAppStartHelper(instrumentation, flicker.scenario.startRotation)
@@ -81,13 +82,12 @@ class ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest(flicker: LegacyF
     }
 
     @FlakyTest(bugId = 290767483)
-    @Postsubmit
     @Test
     fun imeLayerAlphaOneAfterSnapshotStartingWindowRemoval() {
         val layerTrace = flicker.reader.readLayersTrace() ?: error("Unable to read layers trace")
 
-        // Find the entries immediately after the IME snapshot has disappeared
-        val imeSnapshotRemovedEntries =
+        // Find the entries immediately after the snapshot starting window was removed
+        val afterSnapshotStartingWindowRemovedEntries =
             layerTrace.entries
                 .asSequence()
                 .zipWithNext { prev, next ->
@@ -103,7 +103,7 @@ class ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest(flicker: LegacyF
                 .filterNotNull()
 
         // If we find it, make sure the IME is visible and fully animated in.
-        imeSnapshotRemovedEntries.forEach { entry ->
+        afterSnapshotStartingWindowRemovedEntries.forEach { entry ->
             val entrySubject = LayerTraceEntrySubject(entry)
             val imeLayerSubjects =
                 entrySubject.subjects.filter {
@@ -128,13 +128,13 @@ class ShowImeOnAppStartWhenLaunchingAppFromFixedOrientationTest(flicker: LegacyF
         /**
          * Creates the test configurations.
          *
-         * See [LegacyFlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
          * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
         fun getParams() =
-            LegacyFlickerTestFactory.nonRotationTests(
+            FlickerTestFactory.nonRotationTests(
                 supportedRotations = listOf(Rotation.ROTATION_90)
             )
     }

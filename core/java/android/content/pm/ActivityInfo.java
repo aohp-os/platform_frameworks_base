@@ -626,7 +626,8 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      */
     public static final int FLAG_ENABLE_VR_MODE = 0x8000;
     /**
-     * Bit in {@link #flags} indicating if the activity can be displayed on a virtual display.
+     * Bit in {@link #flags} indicating if the activity can be displayed on an insecure virtual
+     * display.
      * Corresponds to {@link android.R.attr#canDisplayOnRemoteDevices}
      * @hide
      */
@@ -950,6 +951,8 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
             CONFIG_COLOR_MODE,
             CONFIG_FONT_SCALE,
             CONFIG_GRAMMATICAL_GENDER,
+            CONFIG_FONT_WEIGHT_ADJUSTMENT,
+            CONFIG_WINDOW_CONFIGURATION,
             CONFIG_ASSETS_PATHS,
             CONFIG_RESOURCES_UNUSED,
     })
@@ -1347,6 +1350,34 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
             314961188L;
 
     /**
+     * Excludes the packages the override is applied to from the camera compatibility treatment for
+     * fixed-orientation apps, which simulates running on a portrait device, in the orientation
+     * requested by the app.
+     *
+     * <p>This treatment aims to mitigate camera issues on large screens, like stretched or sideways
+     * previews. It simulates running on a portrait device by:
+     * <ul>
+     *   <li>Letterboxing the app window,
+     *   <li>Cropping the camera buffer to match the app's requested orientation,
+     *   <li>Setting the camera sensor orientation to portrait.
+     *   <li>Setting the display rotation to match the app's requested orientation, given portrait
+     *       natural orientation,
+     *   <li>Refreshes the activity to trigger new camera setup, with sandboxed values.
+     * </ul>
+     *
+     * <p>By setting this override to {@code true}, it disables the camera compatibility treatment
+     * which simulates app's requested orientation.
+     *
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    @TestApi
+    public static final long OVERRIDE_CAMERA_COMPAT_DISABLE_SIMULATE_REQUESTED_ORIENTATION =
+            398195815L;  // buganizer id
+
+    /**
      * This change id forces the packages it is applied to sandbox {@link android.view.View} API to
      * an activity bounds for:
      *
@@ -1573,11 +1604,11 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * fullscreen. While display rotation is fixed to landscape, the orientation requested by the
      * activity will be still respected by bounds resolution logic. For instance, if an activity
      * requests portrait orientation and this override is set, then activity will appear in the
-     * letterbox mode for fixed orientation with the display rotated to the lanscape natural
+     * letterbox mode for fixed orientation with the display rotated to the landscape natural
      * orientation.
      *
      * <p>This override is applicable only when natural orientation of the device is
-     * landscape and display ignores orientation requestes.
+     * landscape and display ignores orientation requests.
      *
      * <p>Main use case for this override are camera-using activities that are portrait-only and
      * assume alignment with natural device orientation. Such activities can automatically be
@@ -1594,8 +1625,9 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
 
     /**
      * Enables {@link #SCREEN_ORIENTATION_USER} which overrides any orientation requested
-     * by the activity. Fixed orientation apps can be overridden to fullscreen on large
-     * screen devices with ignoreOrientationRequest enabled with this override.
+     * by the activity. Fixed-orientation and fixed&ndash;aspect ratio apps can be overridden
+     * to full screen on large screen devices when this override is enabled. The override
+     * applies only to default displays that have {@code ignoreOrientationRequest} set to true.
      *
      * @hide
      */
@@ -1641,6 +1673,61 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
     @Disabled
     @Overridable
     public static final long OVERRIDE_ENABLE_INSETS_DECOUPLED_CONFIGURATION = 327313645L;
+
+    /**
+     * When the override is enabled, the activity receives configuration coupled with caption bar
+     * insets. Normally, caption bar insets are decoupled from configuration.
+     *
+     * <p>Override applies only if the activity targets SDK level 34 or earlier version.
+     *
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    public static final long OVERRIDE_EXCLUDE_CAPTION_INSETS_FROM_APP_BOUNDS = 388014743L;
+
+    /**
+     * This change id converts {@link android.view.MotionEvent} from a mouse device into touch
+     * events by rewriting its source and tool type when they're delivered to the application.
+     *
+     * <p>Some apps don't work well with mouse events. The override enabled by this change id allows
+     * them to work better with mouse devices by simulating touch events. This is disabled by
+     * default, and can be enabled by device manufacturers on a per-application basis, controlled
+     * via
+     * <a href="https://developer.android.com/guide/practices/device-compatibility-mode#device_manufacturer_per-app_overrides">Device manufacturer per-app overrides</a>.
+     *
+     * <p>App developers whose apps can correctly handle mouse events but are affected by this
+     * override can opt-out by declaring the {@link PackageManager.FEATURE_PC} feature in the
+     * application's manifest.
+     *
+     * <p><b>Syntax to opt-out:</b>
+     * <pre>
+     * &lt;uses-feature android:name="android.hardware.type.pc"
+     *               android:required="false" /&gt;
+     * </pre>
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    public static final long OVERRIDE_MOUSE_TO_TOUCH = 413207127L;
+
+    /**
+     * This change id automatically restarts apps when they move between displays.
+     *
+     * <p>Some apps don't work well with density change. The override enabled by this change id
+     * allows them to automatically restart their process to ensure that UI is rendered based on the
+     * correct density. This is disabled by default, and can be enabled by device manufacturers on a
+     * per-application basis, controlled via
+     * <a href="https://developer.android.com/guide/practices/device-compatibility-mode#device_manufacturer_per-app_overrides">Device manufacturer per-app overrides</a>.
+     *
+     * @hide
+     */
+    @ChangeId
+    @Overridable
+    @Disabled
+    public static final long OVERRIDE_AUTO_RESTART_ON_DISPLAY_MOVE = 427878712L;
 
     /**
      * Optional set of a certificates identifying apps that are allowed to embed this activity. From
@@ -1820,6 +1907,8 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
         supportsSizeChanges = orig.supportsSizeChanges;
         requiredDisplayCategory = orig.requiredDisplayCategory;
         requireContentUriPermissionFromCaller = orig.requireContentUriPermissionFromCaller;
+        launchToken = orig.launchToken;
+        persistableMode = orig.persistableMode;
     }
 
     /**

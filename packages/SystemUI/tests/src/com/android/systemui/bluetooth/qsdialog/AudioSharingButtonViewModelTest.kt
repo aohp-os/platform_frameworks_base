@@ -25,6 +25,8 @@ import com.android.settingslib.bluetooth.BluetoothUtils
 import com.android.settingslib.bluetooth.CachedBluetoothDevice
 import com.android.settingslib.bluetooth.LocalBluetoothManager
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.bluetooth.ui.viewModel.AudioSharingButtonState
+import com.android.systemui.bluetooth.ui.viewModel.AudioSharingButtonViewModel
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.lifecycle.activateIn
@@ -32,7 +34,6 @@ import com.android.systemui.res.R
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
@@ -43,7 +44,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
 
-@ExperimentalCoroutinesApi
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
@@ -159,6 +159,8 @@ class AudioSharingButtonViewModelTest : SysuiTestCase() {
             val actual by
                 collectLastValue(audioSharingButtonViewModel.audioSharingButtonStateUpdate)
             kosmos.bluetoothTileDialogAudioSharingRepository.setAudioSharingAvailable(true)
+            whenever(cachedBluetoothDevice.isConnectedLeAudioBroadcastAssistantDevice)
+                .thenReturn(true)
             whenever(deviceItem.cachedBluetoothDevice).thenReturn(cachedBluetoothDevice)
             whenever(
                     BluetoothUtils.hasConnectedBroadcastSource(
@@ -167,7 +169,6 @@ class AudioSharingButtonViewModelTest : SysuiTestCase() {
                     )
                 )
                 .thenReturn(false)
-            whenever(BluetoothUtils.isActiveLeAudioDevice(cachedBluetoothDevice)).thenReturn(true)
             bluetoothState.value = true
             runCurrent()
             deviceItemUpdate.emit(listOf(deviceItem))

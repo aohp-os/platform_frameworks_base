@@ -38,7 +38,6 @@ import static com.android.server.wm.DisplayContent.alwaysCreateRootTask;
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_ROOT_TASK;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
-import android.annotation.ColorInt;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityOptions;
@@ -46,11 +45,8 @@ import android.app.WindowConfiguration;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ActivityInfo.ScreenOrientation;
 import android.content.res.Configuration;
-import android.graphics.Color;
 import android.os.UserHandle;
-import android.util.IntArray;
 import android.util.Slog;
-import android.view.RemoteAnimationTarget;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 
@@ -77,24 +73,6 @@ import java.util.function.Predicate;
  */
 final class TaskDisplayArea extends DisplayArea<WindowContainer> {
 
-    DisplayContent mDisplayContent;
-
-    /**
-     * Keeps track of the last set color layer so that it can be reset during surface migrations.
-     */
-    private @ColorInt int mBackgroundColor = 0;
-
-    /**
-     * This counter is used to make sure we don't prematurely clear the background color in the
-     * case that background color animations are interleaved.
-     * NOTE: The last set color will remain until the counter is reset to 0, which means that an
-     * animation background color may sometime remain after the animation has finished through an
-     * animation with a different background color if an animation starts after and ends before
-     * another where both set different background colors. However, this is not a concern as
-     * currently all task animation backgrounds are the same color.
-     */
-    private int mColorLayerCounter = 0;
-
     // Cached reference to some special tasks we tend to get a lot so we don't need to loop
     // through the list to find them.
     private Task mRootHomeTask;
@@ -103,9 +81,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     private final ArrayList<WindowContainer> mTmpAlwaysOnTopChildren = new ArrayList<>();
     private final ArrayList<WindowContainer> mTmpNormalChildren = new ArrayList<>();
     private final ArrayList<WindowContainer> mTmpHomeChildren = new ArrayList<>();
-    private final IntArray mTmpNeedsZBoostIndexes = new IntArray();
-
-    private ArrayList<Task> mTmpTasks = new ArrayList<>();
 
     private ActivityTaskManagerService mAtmService;
 
@@ -154,6 +129,14 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     private boolean mRemoved;
 
     /**
+     * Whether the TaskDisplayArea has root tasks.
+     * If {@code true}, the TaskDisplayArea cannot have a new task.
+     *
+     * TODO(b/394466501): Prevent a Task being added to the TaskDisplayArea that shouldKeepNoTask.
+     */
+    private boolean mShouldKeepNoTask;
+
+    /**
      * The id of a leaf task that most recently being moved to front.
      */
     private int mLastLeafTaskToFrontId;
@@ -170,25 +153,15 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
      */
     private final boolean mCanHostHomeTask;
 
-    private final Configuration mTempConfiguration = new Configuration();
-
-    TaskDisplayArea(DisplayContent displayContent, WindowManagerService service, String name,
-                    int displayAreaFeature) {
-        this(displayContent, service, name, displayAreaFeature, false /* createdByOrganizer */,
-                true /* canHostHomeTask */);
-    }
-
-    TaskDisplayArea(DisplayContent displayContent, WindowManagerService service, String name,
-                    int displayAreaFeature, boolean createdByOrganizer) {
-        this(displayContent, service, name, displayAreaFeature, createdByOrganizer,
-                true /* canHostHomeTask */);
-    }
-
-    TaskDisplayArea(DisplayContent displayContent, WindowManagerService service, String name,
-                    int displayAreaFeature, boolean createdByOrganizer,
-                    boolean canHostHomeTask) {
+    /**
+     * @param createdByOrganizer    whether this TaskDisplayArea is created by a
+     *                              {@link android.window.WindowOrganizer}.
+     * @param canHostHomeTask       whether this TaskDisplayArea can have a home task child
+     *                              {@link WindowConfiguration#ACTIVITY_TYPE_HOME}
+     */
+    TaskDisplayArea(@NonNull WindowManagerService service, @NonNull String name,
+            int displayAreaFeature, boolean createdByOrganizer, boolean canHostHomeTask) {
         super(service, Type.ANY, name, displayAreaFeature);
-        mDisplayContent = displayContent;
         mRootWindowContainer = service.mRoot;
         mAtmService = service.mAtmService;
         mCreatedByOrganizer = createdByOrganizer;
@@ -284,14 +257,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         } else if (rootTask == mRootPinnedTask) {
             mRootPinnedTask = null;
         }
-    }
-
-    @Override
-    void setInitialSurfaceControlProperties(SurfaceControl.Builder b) {
-        // We want an effect layer instead of the default container layer so that we can set a
-        // background color on it for task animations.
-        b.setEffectLayer();
-        super.setInitialSurfaceControlProperties(b);
     }
 
     @Override
@@ -447,14 +412,15 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
 
         if (!toTop) {
             if (t.mTaskId == mLastLeafTaskToFrontId) {
-                mLastLeafTaskToFrontId = INVALID_TASK_ID;
-
                 // If the previous front-most task is moved to the back, then notify of the new
                 // front-most task.
-                final ActivityRecord topMost = getTopMostActivity();
+                final ActivityRecord topMost = getTopNonFinishingActivity();
                 if (topMost != null) {
                     mAtmService.getTaskChangeNotificationController().notifyTaskMovedToFront(
                             topMost.getTask().getTaskInfo());
+                    mLastLeafTaskToFrontId = topMost.getTask().mTaskId;
+                } else {
+                    mLastLeafTaskToFrontId = INVALID_TASK_ID;
                 }
             }
             return;
@@ -683,7 +649,9 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     }
 
     void assignRootTaskOrdering(SurfaceControl.Transaction t) {
-        if (getParent() == null) {
+        if (!mTransitionController.mBuildingTransitionLayers
+                && mTransitionController.isShellTransitionsEnabled()) {
+            // All root tasks can be organized, so handle them centrally by shell transitions.
             return;
         }
         mTmpAlwaysOnTopChildren.clear();
@@ -733,91 +701,17 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
      */
     private int adjustRootTaskLayer(SurfaceControl.Transaction t,
             ArrayList<WindowContainer> children, int startLayer) {
-        mTmpNeedsZBoostIndexes.clear();
         final int childCount = children.size();
-        boolean hasAdjacentTask = false;
         for (int i = 0; i < childCount; i++) {
             final WindowContainer child = children.get(i);
-            final TaskDisplayArea childTda = child.asTaskDisplayArea();
-            final boolean childNeedsZBoost = childTda != null
-                    ? childTda.childrenNeedZBoost()
-                    : child.needsZBoost();
-
-            if (childNeedsZBoost) {
-                mTmpNeedsZBoostIndexes.add(i);
-                continue;
-            }
-
-            child.assignLayer(t, startLayer++);
-        }
-
-        final int zBoostSize = mTmpNeedsZBoostIndexes.size();
-        for (int i = 0; i < zBoostSize; i++) {
-            final WindowContainer child = children.get(mTmpNeedsZBoostIndexes.get(i));
             child.assignLayer(t, startLayer++);
         }
         return startLayer;
     }
 
-    private boolean childrenNeedZBoost() {
-        final boolean[] needsZBoost = new boolean[1];
-        forAllRootTasks(task -> {
-            needsZBoost[0] |= task.needsZBoost();
-        });
-        return needsZBoost[0];
-    }
-
-    @Override
-    RemoteAnimationTarget createRemoteAnimationTarget(
-            RemoteAnimationController.RemoteAnimationRecord record) {
-        final ActivityRecord activity = getTopMostActivity();
-        return activity != null ? activity.createRemoteAnimationTarget(record) : null;
-    }
-
-    void setBackgroundColor(@ColorInt int colorInt) {
-        setBackgroundColor(colorInt, false /* restore */);
-    }
-
-    void setBackgroundColor(@ColorInt int colorInt, boolean restore) {
-        mBackgroundColor = colorInt;
-        Color color = Color.valueOf(colorInt);
-
-        // We don't want to increment the mColorLayerCounter if we are restoring the background
-        // color after a surface migration because in that case the mColorLayerCounter already
-        // accounts for setting that background color.
-        if (!restore) {
-            mColorLayerCounter++;
-        }
-
-        // Only apply the background color if the TDA is actually attached and has a valid surface
-        // to set the background color on. We still want to keep track of the background color state
-        // even if we are not showing it for when/if the TDA is reattached and gets a valid surface
-        if (mSurfaceControl != null) {
-            getPendingTransaction()
-                    .setColor(mSurfaceControl,
-                            new float[]{color.red(), color.green(), color.blue()});
-            scheduleAnimation();
-        }
-    }
-
-    void clearBackgroundColor() {
-        mColorLayerCounter--;
-
-        // Only clear the color layer if we have received the same amounts of clear as set
-        // requests and TDA has a non null surface control (i.e. is attached)
-        if (mColorLayerCounter == 0 && mSurfaceControl != null) {
-            getPendingTransaction().unsetColor(mSurfaceControl);
-            scheduleAnimation();
-        }
-    }
-
     @Override
     void migrateToNewSurfaceControl(SurfaceControl.Transaction t) {
         super.migrateToNewSurfaceControl(t);
-
-        if (mColorLayerCounter > 0) {
-            setBackgroundColor(mBackgroundColor, true /* restore */);
-        }
 
         reassignLayer(t);
         scheduleAnimation();
@@ -908,18 +802,23 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
             final int position = onTop ? POSITION_TOP : POSITION_BOTTOM;
             final Task launchParentTask = getLaunchRootTask(resolvedWindowingMode, activityType,
                     options, sourceTask, launchFlags, candidateTask);
+            final boolean reparentToTda = (options != null && options.getReparentLeafTaskToTda())
+                    || candidateTask.getRootTask().mReparentLeafTaskIfRelaunch
+                    // TODO(b/407669465): remove it once migrated to the new approach
+                    // Before using a root task to manage the bubble tasks, the launching bubble
+                    // task should be re-parented to TDA.
+                    || (sourceTask != null && sourceTask.mLaunchNextToBubble);
             if (launchParentTask != null) {
                 if (candidateTask.getParent() == null) {
                     launchParentTask.addChild(candidateTask, position);
                 } else if (candidateTask.getParent() != launchParentTask) {
                     candidateTask.reparent(launchParentTask, position);
                 }
-            } else if (candidateTask.getDisplayArea() != this
-                    || candidateTask.getRootTask().mReparentLeafTaskIfRelaunch) {
+            } else if (candidateTask.getDisplayArea() != this || reparentToTda) {
                 if (candidateTask.getParent() == null) {
                     addChild(candidateTask, position);
-                } else {
-                    if (candidateTask.getRootTask().mReparentLeafTaskIfRelaunch) {
+                } else if (candidateTask.getParent() != this) {
+                    if (reparentToTda) {
                         ProtoLog.d(WM_DEBUG_TASKS, "Reparenting to display area on relaunch: "
                                 + "rootTaskId=%d toTop=%b", candidateTask.mTaskId, onTop);
                     }
@@ -927,10 +826,18 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
                 }
             }
             // Update windowing mode if necessary, e.g. launch into a different windowing mode.
-            if (windowingMode != WINDOWING_MODE_UNDEFINED && candidateTask.isRootTask()
+            if (windowingMode != WINDOWING_MODE_UNDEFINED
                     && candidateTask.getWindowingMode() != windowingMode) {
                 candidateTask.mTransitionController.collect(candidateTask);
-                candidateTask.setRootTaskWindowingMode(windowingMode);
+                // We only explicitly change the windowing mode if it's a root task.
+                // If it's not a root task, we don't do anything. But, if the desired windowing
+                // mode is the same as its parent's, then we will set it undefined so it inherits.
+                if (candidateTask.isRootTask()) {
+                    candidateTask.setRootTaskWindowingMode(windowingMode);
+                } else if (candidateTask.getParent() != null
+                        && windowingMode == candidateTask.getParent().getWindowingMode()) {
+                    candidateTask.setWindowingMode(WINDOWING_MODE_UNDEFINED);
+                }
             }
             return candidateTask.getRootTask();
         }
@@ -1044,7 +951,7 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
                                 + adjacentFlagRootTask);
             }
 
-            if (adjacentFlagRootTask.getAdjacentTaskFragment() == null) {
+            if (!adjacentFlagRootTask.hasAdjacentTaskFragment()) {
                 throw new UnsupportedOperationException(
                         "Can't set non-adjacent root as launch adjacent flag root tr="
                                 + adjacentFlagRootTask);
@@ -1088,8 +995,14 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         // Use launch-adjacent-flag-root if launching with launch-adjacent flag.
         if ((launchFlags & FLAG_ACTIVITY_LAUNCH_ADJACENT) != 0
                 && mLaunchAdjacentFlagRootTask != null) {
-            final Task launchAdjacentRootAdjacentTask =
-                    mLaunchAdjacentFlagRootTask.getAdjacentTask();
+            final Task[] tmpTask = new Task[1];
+            mLaunchAdjacentFlagRootTask.forOtherAdjacentTasks(task -> {
+                // TODO(b/382208145): enable FLAG_ACTIVITY_LAUNCH_ADJACENT for 3+.
+                // Find the first adjacent for now.
+                tmpTask[0] = task;
+                return true;
+            });
+            final Task launchAdjacentRootAdjacentTask = tmpTask[0];
             if (sourceTask != null && (sourceTask == candidateTask
                     || sourceTask.topRunningActivity() == null)) {
                 // Do nothing when task that is getting opened is same as the source or when
@@ -1114,15 +1027,18 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         for (int i = mLaunchRootTasks.size() - 1; i >= 0; --i) {
             if (mLaunchRootTasks.get(i).contains(windowingMode, activityType)) {
                 final Task launchRootTask = mLaunchRootTasks.get(i).task;
-                final Task adjacentRootTask = launchRootTask != null
-                        ? launchRootTask.getAdjacentTask() : null;
-                if (sourceTask != null && adjacentRootTask != null
-                        && (sourceTask == adjacentRootTask
-                        || sourceTask.isDescendantOf(adjacentRootTask))) {
-                    return adjacentRootTask;
-                } else {
+                if (launchRootTask == null || sourceTask == null) {
                     return launchRootTask;
                 }
+                final Task[] adjacentRootTask = new Task[1];
+                launchRootTask.forOtherAdjacentTasks(task -> {
+                    if (sourceTask == task || sourceTask.isDescendantOf(task)) {
+                        adjacentRootTask[0] = task;
+                        return true;
+                    }
+                    return false;
+                });
+                return adjacentRootTask[0] != null ? adjacentRootTask[0] : launchRootTask;
             }
         }
 
@@ -1133,14 +1049,31 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
                 // A pinned task relaunching should be handled by its task organizer. Skip fallback
                 // launch target of a pinned task from source task.
                 || candidateTask.getWindowingMode() != WINDOWING_MODE_PINNED)) {
-            final Task adjacentTarget = sourceTask.getAdjacentTask();
-            if (adjacentTarget != null) {
-                if (candidateTask != null
-                        && (candidateTask == adjacentTarget
-                        || candidateTask.isDescendantOf(adjacentTarget))) {
-                    return adjacentTarget;
+            final Task taskWithAdjacent = sourceTask.getTaskWithAdjacent();
+            if (taskWithAdjacent != null) {
+                // Has adjacent.
+                if (candidateTask == null) {
+                    return sourceTask.getCreatedByOrganizerTask();
+                }
+                // Check if the candidate is already positioned in the adjacent Task.
+                final Task[] adjacentRootTask = new Task[1];
+                sourceTask.forOtherAdjacentTasks(task -> {
+                    if (candidateTask == task || candidateTask.isDescendantOf(task)) {
+                        adjacentRootTask[0] = task;
+                        return true;
+                    }
+                    return false;
+                });
+                if (adjacentRootTask[0] != null) {
+                    return adjacentRootTask[0];
                 }
                 return sourceTask.getCreatedByOrganizerTask();
+            }
+            if (com.android.window.flags.Flags.rootTaskForBubble()) {
+                final Task parentTask = sourceTask.getParent().asTask();
+                if (parentTask != null && parentTask.mCreatedByOrganizer) {
+                    return parentTask;
+                }
             }
         }
 
@@ -1297,6 +1230,16 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         return someActivityPaused[0] > 0;
     }
 
+    /**
+     * Returns whether the {@param windowingMode} is supported.
+     * @param windowingMode The windowing mode to check for.
+     * @return Whether this windowing mode is supported.
+     */
+    boolean isWindowingModeSupported(@WindowConfiguration.WindowingMode int windowingMode) {
+        return isWindowingModeSupported(windowingMode, mAtmService.mSupportsMultiWindow,
+                mAtmService.mSupportsFreeformWindowManagement,
+                mAtmService.mSupportsPictureInPicture);
+    }
 
     /**
      * Returns true if the {@param windowingMode} is supported based on other parameters passed in.
@@ -1307,12 +1250,14 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
      * @param supportsPip         If we should consider support for picture-in-picture mutli-window.
      * @return true if the windowing mode is supported.
      */
-    static boolean isWindowingModeSupported(int windowingMode, boolean supportsMultiWindow,
+    boolean isWindowingModeSupported(int windowingMode, boolean supportsMultiWindow,
             boolean supportsFreeform, boolean supportsPip) {
-
         if (windowingMode == WINDOWING_MODE_UNDEFINED
                 || windowingMode == WINDOWING_MODE_FULLSCREEN) {
             return true;
+        }
+        if (mDisplayContent != null && !mDisplayContent.isWindowingModeSupported(windowingMode)) {
+            return false;
         }
         if (!supportsMultiWindow) {
             return false;
@@ -1391,9 +1336,10 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
                         // it can be moved to a new created PIP Task, so WINDOWING_MODE_PINNED is
                         // always valid for Task as long as the device supports it.
                         || (windowingMode == WINDOWING_MODE_PINNED && supportsPip);
+                supportsPip &= !task.isDisablePip();
             } else if (r != null) {
                 supportsFreeform = r.supportsFreeformInDisplayArea(this);
-                supportsPip = r.supportsPictureInPicture();
+                supportsPip = r.canEnterPictureInPicture();
                 supportsMultiWindow = r.supportsMultiWindowInDisplayArea(this);
             }
         }
@@ -1631,65 +1577,9 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
     }
 
     /**
-     * Adjusts the {@param rootTask} behind the last visible rootTask in the display if necessary.
-     * Generally used in conjunction with {@link #moveRootTaskBehindRootTask}.
-     */
-    // TODO(b/151575894): Remove special root task movement methods.
-    void moveRootTaskBehindBottomMostVisibleRootTask(Task rootTask) {
-        if (rootTask.shouldBeVisible(null)) {
-            // Skip if the root task is already visible
-            return;
-        }
-
-        // Move the root task to the bottom to not affect the following visibility checks
-        rootTask.getParent().positionChildAt(POSITION_BOTTOM, rootTask,
-                false /* includingParents */);
-
-        // Find the next position where the root task should be placed
-        final boolean isRootTask = rootTask.isRootTask();
-        final int numRootTasks =
-                isRootTask ? mChildren.size() : rootTask.getParent().getChildCount();
-        for (int rootTaskNdx = 0; rootTaskNdx < numRootTasks; rootTaskNdx++) {
-            Task s;
-            if (isRootTask) {
-                final WindowContainer child = mChildren.get(rootTaskNdx);
-                if (child.asTaskDisplayArea() != null) {
-                    s = child.asTaskDisplayArea().getBottomMostVisibleRootTask(rootTask);
-                } else {
-                    s = child.asTask();
-                }
-            } else {
-                s = rootTask.getParent().getChildAt(rootTaskNdx).asTask();
-            }
-            if (s == rootTask || s == null) {
-                continue;
-            }
-            final int winMode = s.getWindowingMode();
-            final boolean isValidWindowingMode = winMode == WINDOWING_MODE_FULLSCREEN;
-            if (s.shouldBeVisible(null) && isValidWindowingMode) {
-                // Move the provided root task to behind this root task
-                final int position = Math.max(0, rootTaskNdx - 1);
-                rootTask.getParent().positionChildAt(position, rootTask,
-                        false /*includingParents */);
-                break;
-            }
-        }
-    }
-
-    @Nullable
-    private Task getBottomMostVisibleRootTask(Task excludeRootTask) {
-        return getRootTask(task -> {
-            final int winMode = task.getWindowingMode();
-            final boolean isValidWindowingMode = winMode == WINDOWING_MODE_FULLSCREEN;
-            return task.shouldBeVisible(null) && isValidWindowingMode;
-        }, false /* traverseTopToBottom */);
-    }
-
-    /**
      * Moves the {@param rootTask} behind the given {@param behindRootTask} if possible. If
      * {@param behindRootTask} is not currently in the display, then then the root task is moved
-     * to the back. Generally used in conjunction with
-     * {@link #moveRootTaskBehindBottomMostVisibleRootTask}.
+     * to the back.
      */
     void moveRootTaskBehindRootTask(Task rootTask, Task behindRootTask) {
         if (behindRootTask == null || behindRootTask == rootTask) {
@@ -1745,11 +1635,20 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         return mRemoved;
     }
 
+    boolean shouldKeepNoTask() {
+        if (mShouldKeepNoTask) {
+            return true;
+        }
+
+        // A TaskDisplayArea can have another child TaskDisplayArea, so we should check all it's
+        // parent TaskDisplayArea.
+        return getParent() != null && getParent().asTaskDisplayArea() != null
+                && getParent().asTaskDisplayArea().shouldKeepNoTask();
+    }
+
     @Override
     boolean canCreateRemoteAnimationTarget() {
-        // In the legacy transition system, promoting animation target from TaskFragment to
-        // TaskDisplayArea prevents running finish animation. See b/194649929.
-        return WindowManagerService.sEnableShellTransitions;
+        return true;
     }
 
     /**
@@ -1770,12 +1669,31 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         }
     }
 
+    @Nullable
+    Task prepareForRemoval() {
+        mShouldKeepNoTask = true;
+        final Task lastReparentedTask = removeAllTasks();
+        mRemoved = true;
+        return lastReparentedTask;
+    }
+
+    @Nullable
+    Task setShouldKeepNoTask(boolean shouldKeepNoTask) {
+        if (mShouldKeepNoTask == shouldKeepNoTask) {
+            return null;
+        }
+
+        mShouldKeepNoTask = shouldKeepNoTask;
+        return shouldKeepNoTask ? removeAllTasks() : null;
+    }
+
     /**
      * Removes the root tasks in the node applying the content removal node from the display.
      *
      * @return last reparented root task, or {@code null} if the root tasks had to be destroyed.
      */
-    Task remove() {
+    @Nullable
+    private Task removeAllTasks() {
         final TaskDisplayArea toDisplayArea = getReparentToTaskDisplayArea(getFocusedRootTask());
         mPreferredTopFocusableRootTask = null;
         // TODO(b/153090332): Allow setting content removal mode per task display area
@@ -1793,16 +1711,13 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
         for (int i = 0; i < numRootTasks; i++) {
             final WindowContainer child = mChildren.get(i);
             if (child.asTaskDisplayArea() != null) {
-                lastReparentedRootTask = child.asTaskDisplayArea().remove();
+                lastReparentedRootTask = child.asTaskDisplayArea().removeAllTasks();
                 continue;
             }
             final Task task = mChildren.get(i).asTask();
-            // Always finish non-standard type root tasks and root tasks created by a organizer.
-            // TODO: For root tasks created by organizer, consider reparenting children tasks if
-            //       the use case arises in the future.
-            if (destroyContentOnRemoval
-                    || !task.isActivityTypeStandardOrUndefined()
-                    || task.mCreatedByOrganizer) {
+            if (destroyContentOnRemoval || !task.shouldReparentOnDisplayRemoval()) {
+                // TODO: For root tasks created by organizer, consider reparenting children tasks
+                //  if the use case arises in the future.
                 task.remove(false /* withTransition */, "removeTaskDisplayArea");
             } else {
                 // Reparent task to corresponding launch root or display area.
@@ -1839,8 +1754,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
             // focus to the split root task)
             lastReparentedRootTask.getRootTask().moveToFront("display-removed");
         }
-
-        mRemoved = true;
 
         return lastReparentedRootTask;
     }
@@ -1890,14 +1803,6 @@ final class TaskDisplayArea extends DisplayArea<WindowContainer> {
 
     void clearPreferredTopFocusableRootTask() {
         mPreferredTopFocusableRootTask = null;
-    }
-
-    @Override
-    public void setWindowingMode(int windowingMode) {
-        mTempConfiguration.setTo(getRequestedOverrideConfiguration());
-        WindowConfiguration tempRequestWindowConfiguration = mTempConfiguration.windowConfiguration;
-        tempRequestWindowConfiguration.setWindowingMode(windowingMode);
-        onRequestedOverrideConfigurationChanged(mTempConfiguration);
     }
 
     @Override

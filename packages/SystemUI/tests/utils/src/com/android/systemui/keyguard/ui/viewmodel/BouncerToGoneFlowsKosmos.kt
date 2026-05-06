@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.keyguard.ui.viewmodel
 
+import android.content.applicationContext
 import com.android.systemui.bouncer.domain.interactor.mockPrimaryBouncerInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardDismissActionInteractor
 import com.android.systemui.keyguard.ui.keyguardTransitionAnimationFlow
@@ -25,14 +24,16 @@ import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.statusbar.sysuiStatusBarStateController
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.android.systemui.window.domain.interactor.windowRootViewBlurInteractor
 
 val Kosmos.bouncerToGoneFlows by Fixture {
     BouncerToGoneFlows(
+        context = applicationContext,
         statusBarStateController = sysuiStatusBarStateController,
         primaryBouncerInteractor = mockPrimaryBouncerInteractor,
         keyguardDismissActionInteractor = { keyguardDismissActionInteractor },
         shadeInteractor = shadeInteractor,
         animationFlow = keyguardTransitionAnimationFlow,
+        windowRootViewBlurInteractor = windowRootViewBlurInteractor,
     )
 }

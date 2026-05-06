@@ -17,7 +17,6 @@ package com.android.server.audio;
 
 import static android.bluetooth.BluetoothDevice.DEVICE_TYPE_DEFAULT;
 import static android.bluetooth.BluetoothDevice.DEVICE_TYPE_HEADSET;
-import static android.media.audio.Flags.automaticBtDeviceType;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -26,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doNothing;
@@ -62,6 +62,8 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.Spy;
 
+import java.util.ArrayList;
+
 @MediumTest
 @Presubmit
 @RunWith(AndroidJUnit4.class)
@@ -92,7 +94,7 @@ public class AudioDeviceBrokerTest {
                 .thenReturn(AudioSystem.STREAM_MUSIC);
 
         mSpyAudioSystem = spy(new NoOpAudioSystemAdapter());
-        mSpyDevInventory = spy(new AudioDeviceInventory(mSpyAudioSystem));
+        mSpyDevInventory = spy(new AudioDeviceInventory(mSpyAudioSystem, new ArrayList<>()));
         mSpySystemServer = spy(new NoOpSystemServerAdapter());
         mAudioDeviceBroker = new AudioDeviceBroker(context, mMockAudioService, mSpyDevInventory,
                 mSpySystemServer, mSpyAudioSystem);
@@ -124,7 +126,7 @@ public class AudioDeviceBrokerTest {
                     BluetoothProfileConnectionInfo.createA2dpInfo(true, 1), "testSource"));
         Thread.sleep(2 * MAX_MESSAGE_HANDLING_DELAY_MS);
         verify(mSpyDevInventory, times(1)).setBluetoothActiveDevice(
-                any(AudioDeviceBroker.BtDeviceInfo.class));
+                any(AudioDeviceBroker.BtDeviceInfo.class), anyString());
 
         // verify the connection was reported to AudioSystem
         checkSingleSystemConnection(mFakeBtDevice);
@@ -251,11 +253,6 @@ public class AudioDeviceBrokerTest {
     public void testIsBluetoothAudioDeviceCategoryFixed() throws Exception {
         Log.i(TAG, "starting testIsBluetoothAudioDeviceCategoryFixed");
 
-        if (!automaticBtDeviceType()) {
-            Log.i(TAG, "Enable automaticBtDeviceType flag to run the test "
-                    + "testIsBluetoothAudioDeviceCategoryFixed");
-            return;
-        }
         assertNotNull("invalid null BT device", mFakeBtDevice);
 
         final AdiDeviceState devState = new AdiDeviceState(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
@@ -292,11 +289,6 @@ public class AudioDeviceBrokerTest {
     public void testGetAndUpdateBtAdiDeviceStateCategoryForAddress() throws Exception {
         Log.i(TAG, "starting testGetAndUpdateBtAdiDeviceStateCategoryForAddress");
 
-        if (!automaticBtDeviceType()) {
-            Log.i(TAG, "Enable automaticBtDeviceType flag to run the test "
-                    + "testGetAndUpdateBtAdiDeviceStateCategoryForAddress");
-            return;
-        }
         assertNotNull("invalid null BT device", mFakeBtDevice);
 
         final AdiDeviceState devState = new AdiDeviceState(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
@@ -342,11 +334,6 @@ public class AudioDeviceBrokerTest {
     public void testAddAudioDeviceWithCategoryInInventoryIfNeeded() throws Exception {
         Log.i(TAG, "starting testAddAudioDeviceWithCategoryInInventoryIfNeeded");
 
-        if (!automaticBtDeviceType()) {
-            Log.i(TAG, "Enable automaticBtDeviceType flag to run the test "
-                    + "testAddAudioDeviceWithCategoryInInventoryIfNeeded");
-            return;
-        }
         assertNotNull("invalid null BT device", mFakeBtDevice);
 
         mAudioDeviceBroker.addAudioDeviceWithCategoryInInventoryIfNeeded(

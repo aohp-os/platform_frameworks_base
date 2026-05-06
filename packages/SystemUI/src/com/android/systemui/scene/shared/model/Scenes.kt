@@ -17,6 +17,7 @@
 package com.android.systemui.scene.shared.model
 
 import com.android.compose.animation.scene.SceneKey
+import com.android.systemui.plugins.keyguard.ui.composable.elements.LockscreenSceneKeys
 
 /**
  * Keys of all known scenes.
@@ -24,12 +25,6 @@ import com.android.compose.animation.scene.SceneKey
  * PLEASE KEEP THE KEYS SORTED ALPHABETICALLY.
  */
 object Scenes {
-    /**
-     * The bouncer is the scene that displays authentication challenges like PIN, password, or
-     * pattern.
-     */
-    @JvmField val Bouncer = SceneKey("bouncer")
-
     /** The communal scene shows the glanceable hub when device is locked and docked. */
     @JvmField val Communal = SceneKey("communal")
 
@@ -43,7 +38,17 @@ object Scenes {
     @JvmField val Gone = SceneKey("gone")
 
     /** The lockscreen is the scene that shows when the device is locked. */
-    @JvmField val Lockscreen = SceneKey("lockscreen")
+    @JvmField val Lockscreen = LockscreenSceneKeys.Lockscreen
+
+    /**
+     * Activities that render over lockscreen. Similar to [Gone], it is the absence of any SystemUI
+     * visual elements. However, it is a very important device state where activities that have
+     * declared the ability to showOverLockscreen will be visible, with the [Shade] and
+     * [QuickSettings] being available to access from this state. Activities can also request
+     * keyguard dismissal directly, so it not required to navigate back to [Lockscreen] before
+     * unlocking.
+     */
+    @JvmField val Occluded = SceneKey("occluded")
 
     /**
      * The quick settings scene shows the quick setting tiles.

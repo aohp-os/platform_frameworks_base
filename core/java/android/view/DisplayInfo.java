@@ -17,14 +17,14 @@
 package android.view;
 
 import static android.view.Display.Mode.INVALID_MODE_ID;
-import static android.view.DisplayInfoProto.APP_HEIGHT;
-import static android.view.DisplayInfoProto.APP_WIDTH;
-import static android.view.DisplayInfoProto.CUTOUT;
-import static android.view.DisplayInfoProto.FLAGS;
-import static android.view.DisplayInfoProto.LOGICAL_HEIGHT;
-import static android.view.DisplayInfoProto.LOGICAL_WIDTH;
-import static android.view.DisplayInfoProto.NAME;
-import static android.view.DisplayInfoProto.TYPE;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.APP_HEIGHT;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.APP_WIDTH;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.CUTOUT;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.FLAGS;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.LOGICAL_HEIGHT;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.LOGICAL_WIDTH;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.NAME;
+import static android.internal.perfetto.protos.Displayinfo.DisplayInfoProto.TYPE;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -44,8 +44,10 @@ import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.display.BrightnessSynchronizer;
+import com.android.server.display.feature.flags.Flags;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Objects;
 
 /**
@@ -408,6 +410,15 @@ public final class DisplayInfo implements Parcelable {
     @Nullable
     public String thermalBrightnessThrottlingDataId;
 
+    /**
+     * Indicates whether the display is eligible for hosting tasks.
+     *
+     * For example, if the display is used for mirroring, this will be {@code false}.
+     *
+     * @hide
+     */
+    public boolean canHostTasks;
+
     public static final @android.annotation.NonNull Creator<DisplayInfo> CREATOR = new Creator<DisplayInfo>() {
         @Override
         public DisplayInfo createFromParcel(Parcel source) {
@@ -438,62 +449,37 @@ public final class DisplayInfo implements Parcelable {
     }
 
     public boolean equals(DisplayInfo other) {
-        return other != null
-                && layerStack == other.layerStack
-                && flags == other.flags
-                && type == other.type
-                && displayId == other.displayId
-                && displayGroupId == other.displayGroupId
-                && Objects.equals(address, other.address)
-                && Objects.equals(deviceProductInfo, other.deviceProductInfo)
-                && Objects.equals(uniqueId, other.uniqueId)
-                && appWidth == other.appWidth
-                && appHeight == other.appHeight
-                && smallestNominalAppWidth == other.smallestNominalAppWidth
-                && smallestNominalAppHeight == other.smallestNominalAppHeight
-                && largestNominalAppWidth == other.largestNominalAppWidth
-                && largestNominalAppHeight == other.largestNominalAppHeight
-                && logicalWidth == other.logicalWidth
-                && logicalHeight == other.logicalHeight
-                && Objects.equals(displayCutout, other.displayCutout)
-                && rotation == other.rotation
-                && modeId == other.modeId
-                && hasArrSupport == other.hasArrSupport
-                && Objects.equals(frameRateCategoryRate, other.frameRateCategoryRate)
-                && Arrays.equals(supportedRefreshRates, other.supportedRefreshRates)
-                && defaultModeId == other.defaultModeId
-                && userPreferredModeId == other.userPreferredModeId
-                && Arrays.equals(supportedModes, other.supportedModes)
-                && Arrays.equals(appsSupportedModes, other.appsSupportedModes)
-                && colorMode == other.colorMode
-                && Arrays.equals(supportedColorModes, other.supportedColorModes)
-                && Objects.equals(hdrCapabilities, other.hdrCapabilities)
-                && isForceSdr == other.isForceSdr
-                && Arrays.equals(userDisabledHdrTypes, other.userDisabledHdrTypes)
-                && minimalPostProcessingSupported == other.minimalPostProcessingSupported
-                && logicalDensityDpi == other.logicalDensityDpi
-                && physicalXDpi == other.physicalXDpi
-                && physicalYDpi == other.physicalYDpi
-                && appVsyncOffsetNanos == other.appVsyncOffsetNanos
-                && presentationDeadlineNanos == other.presentationDeadlineNanos
-                && state == other.state
-                && committedState == other.committedState
-                && ownerUid == other.ownerUid
-                && Objects.equals(ownerPackageName, other.ownerPackageName)
-                && removeMode == other.removeMode
-                && getRefreshRate() == other.getRefreshRate()
-                && brightnessMinimum == other.brightnessMinimum
-                && brightnessMaximum == other.brightnessMaximum
-                && brightnessDefault == other.brightnessDefault
-                && brightnessDim == other.brightnessDim
-                && Objects.equals(roundedCorners, other.roundedCorners)
-                && installOrientation == other.installOrientation
-                && Objects.equals(displayShape, other.displayShape)
-                && Objects.equals(layoutLimitedRefreshRate, other.layoutLimitedRefreshRate)
-                && BrightnessSynchronizer.floatEquals(hdrSdrRatio, other.hdrSdrRatio)
-                && thermalRefreshRateThrottling.contentEquals(other.thermalRefreshRateThrottling)
-                && Objects.equals(
-                thermalBrightnessThrottlingDataId, other.thermalBrightnessThrottlingDataId);
+        return equals(other, /* compareOnlyBasicChanges */ false);
+    }
+
+    /**
+     * Compares if the two DisplayInfo objects are equal or not
+     * @param other The other DisplayInfo against which the comparison is to be done
+     * @param compareOnlyBasicChanges Indicates if the changes to be compared are the ones which
+     *                               could lead to an emission of
+     *                    {@link android.hardware.display.DisplayManager.EVENT_TYPE_DISPLAY_CHANGED}
+     *                                event
+     * @return {@code true} if the two DisplayInfo objects are equal, {@code false} otherwise
+     */
+    public boolean equals(DisplayInfo other, boolean compareOnlyBasicChanges) {
+        boolean isEqualWithOnlyBasicChanges =  other != null
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.BASIC_PROPERTIES, other)
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.DIMENSIONS_AND_SHAPES, other)
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.ORIENTATION_AND_ROTATION, other)
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.REFRESH_RATE_AND_MODE, other)
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.COLOR_AND_BRIGHTNESS, other)
+                && !hasDisplayInfoGroupChanged(DisplayInfoGroup.STATE, other);
+
+        if (!compareOnlyBasicChanges) {
+            return isEqualWithOnlyBasicChanges
+                    && (getRefreshRate() == other.getRefreshRate())
+                    && appVsyncOffsetNanos == other.appVsyncOffsetNanos
+                    && presentationDeadlineNanos == other.presentationDeadlineNanos
+                    && (modeId == other.modeId)
+                    && Arrays.equals(supportedRefreshRates, other.supportedRefreshRates)
+                    && (committedState == other.committedState);
+        }
+        return isEqualWithOnlyBasicChanges;
     }
 
     @Override
@@ -561,6 +547,7 @@ public final class DisplayInfo implements Parcelable {
         hdrSdrRatio = other.hdrSdrRatio;
         thermalRefreshRateThrottling = other.thermalRefreshRateThrottling;
         thermalBrightnessThrottlingDataId = other.thermalBrightnessThrottlingDataId;
+        canHostTasks = other.canHostTasks;
     }
 
     public void readFromParcel(Parcel source) {
@@ -642,6 +629,7 @@ public final class DisplayInfo implements Parcelable {
         thermalRefreshRateThrottling = source.readSparseArray(null,
                 SurfaceControl.RefreshRateRange.class);
         thermalBrightnessThrottlingDataId = source.readString8();
+        canHostTasks = source.readBoolean();
     }
 
     @Override
@@ -717,6 +705,7 @@ public final class DisplayInfo implements Parcelable {
         dest.writeFloat(hdrSdrRatio);
         dest.writeSparseArray(thermalRefreshRateThrottling);
         dest.writeString8(thermalBrightnessThrottlingDataId);
+        dest.writeBoolean(canHostTasks);
     }
 
     @Override
@@ -748,11 +737,19 @@ public final class DisplayInfo implements Parcelable {
         return findMode(defaultModeId);
     }
 
-    private Display.Mode findMode(int id) {
+    private Display.Mode findModeOrNull(int id) {
         for (int i = 0; i < supportedModes.length; i++) {
             if (supportedModes[i].getModeId() == id) {
                 return supportedModes[i];
             }
+        }
+        return null;
+    }
+
+    private Display.Mode findMode(int id) {
+        var mode = findModeOrNull(id);
+        if (mode != null) {
+            return mode;
         }
         throw new IllegalStateException(
                 "Unable to locate mode id=" + id + ",supportedModes=" + Arrays.toString(
@@ -878,6 +875,37 @@ public final class DisplayInfo implements Parcelable {
         return Display.hasAccess(uid, flags, ownerUid, displayId);
     }
 
+    /**
+     * Checks whether the physical mode display size changed.
+     * This is important for sending notifications to the rest of the system
+     * whenever physical display size changes. E.g. WindowManager and Settings
+     * rely on this information.
+     * ModeId change may also not involve display size changes, but rather only
+     * refresh rate may change. Refresh rate changes are tracked via other means,
+     * and physical display size change needs to be checked independently.
+     * These are the reasons for existence of this method.
+     */
+    private boolean isDisplayModeSizeEqual(DisplayInfo other) {
+        if (modeId == other.modeId) {
+            // If the mode ids are the same, the sizes are equal.
+            return true;
+        }
+        var currentMode = findModeOrNull(modeId);
+        var otherMode = other.findModeOrNull(other.modeId);
+        if (otherMode == currentMode) {
+            // If the modes are the same, the sizes are equal.
+            return true;
+        } else if (currentMode == null || otherMode == null) {
+            // Only one of the displays has a mode, we can't compare the sizes.
+            // Mark infos as different.
+            return false;
+        } else {
+            // Both displays have a mode, compare the sizes.
+            return otherMode.getPhysicalWidth() == currentMode.getPhysicalWidth()
+                    && otherMode.getPhysicalHeight() == currentMode.getPhysicalHeight();
+        }
+    }
+
     private void getMetricsWithSize(DisplayMetrics outMetrics, CompatibilityInfo compatInfo,
             Configuration configuration, int width, int height) {
         outMetrics.densityDpi = outMetrics.noncompatDensityDpi = logicalDensityDpi;
@@ -898,6 +926,187 @@ public final class DisplayInfo implements Parcelable {
         // Apply to size if the configuration is EMPTY because the size is from real display info.
         final boolean applyToSize = configuration != null && appBounds == null;
         compatInfo.applyDisplayMetricsIfNeeded(outMetrics, applyToSize);
+    }
+
+    /**
+     * The source of a change in the display info object.
+     */
+    public enum DisplayInfoChangeSource {
+        DISPLAY_SWAP,
+        DISPLAY_MANAGER,
+        WINDOW_MANAGER,
+        OTHER
+    }
+
+    /**
+     * Groups of related fields within a {@link DisplayInfo} object.
+     * Used to categorize changes between two instances.
+     * Any changes to which fields belong to which groups need to update:
+     * {@link com.android.server.wm.utils.DisplayInfoOverrides#WM_OVERRIDE_GROUPS}.
+     */
+    public enum DisplayInfoGroup {
+        /** Basic properties like IDs, flags, type, and ownership. */
+        BASIC_PROPERTIES(1),
+        /** Properties related to size, shape, and density. */
+        DIMENSIONS_AND_SHAPES(1 << 1),
+        /** Properties related to screen orientation. */
+        ORIENTATION_AND_ROTATION(1 << 2),
+        /** Properties related to refresh rate and display modes. */
+        REFRESH_RATE_AND_MODE(1 << 3),
+        /** Properties related to color and brightness. */
+        COLOR_AND_BRIGHTNESS(1 << 4),
+        /** Properties related to the display's power state. */
+        STATE(1 << 5);
+
+        /** Use mMask instead of 1 << #ordinal(),
+         * see <a href="https://errorprone.info/bugpattern/EnumOrdinal">...</a>.
+         */
+        private final int mMask;
+
+        DisplayInfoGroup(int mask) {
+            mMask = mask;
+        }
+
+        public int getMask() {
+            return mMask;
+        }
+
+        /** Convert bitmask to a string of group names. */
+        public static String displayInfoGroupsToString(int changedGroups) {
+            StringBuilder sb = new StringBuilder();
+            for (DisplayInfo.DisplayInfoGroup group : DisplayInfo.DisplayInfoGroup.values()) {
+                if ((changedGroups & group.getMask()) != 0) {
+                    if (sb.length() > 0) {
+                        sb.append(", ");
+                    }
+                    sb.append(group);
+                }
+            }
+            return sb.length() == 0 ? "NONE" : sb.toString();
+        }
+    }
+
+    /**
+     * Same as {@link #getBasicChangedGroups(DisplayInfo)} except here we only compare
+     * the specified groups i.e. if changes happen to other groups they will not be identified.
+     */
+    public int getBasicChangedGroups(@Nullable DisplayInfo other,
+            EnumSet<DisplayInfoGroup> groupsToCompare) {
+        int changedGroups = 0;
+
+        for (DisplayInfoGroup group : groupsToCompare) {
+            if (hasDisplayInfoGroupChanged(group, other)) {
+                changedGroups |= group.getMask();
+            }
+        }
+
+        return changedGroups;
+    }
+
+    /**
+     * Compares this {@link DisplayInfo} with another for "basic" changes
+     * (i.e. when a {@link android.hardware.display.DisplayManager.EVENT_TYPE_DISPLAY_CHANGED}
+     * has been emitted) and returns a set of {@link DisplayInfoGroup}s that have changed.
+     *
+     * This method's logic is aligned with {@link #equals(DisplayInfo, boolean)} when called with
+     * {@code compareOnlyBasicChanges = true}, providing a breakdown of the changes that
+     * would trigger a display update event.
+     * @return An integer bitmask where each bit corresponds to a {@link DisplayInfoGroup} that has
+     * changed. If none have changed, the bitmask will be 0.
+     */
+    public int getBasicChangedGroups(@Nullable DisplayInfo other) {
+        return getBasicChangedGroups(other, EnumSet.allOf(DisplayInfoGroup.class));
+    }
+
+    /**
+     * Checks whether the specified {@link DisplayInfoGroup} has changed.
+     */
+    private boolean hasDisplayInfoGroupChanged(DisplayInfoGroup group,
+            @Nullable DisplayInfo other) {
+        if (other == null) {
+            return true;
+        }
+        return switch (group) {
+            case BASIC_PROPERTIES -> haveBasicPropertiesChanged(other);
+            case DIMENSIONS_AND_SHAPES -> haveDimensionsAndShapesChanged(other);
+            case ORIENTATION_AND_ROTATION -> haveOrientationAndRotationChanged(other);
+            case REFRESH_RATE_AND_MODE -> haveRefreshRateAndModeChanged(other);
+            case COLOR_AND_BRIGHTNESS -> haveColorAndBrightnessChanged(other);
+            case STATE -> hasStateChanged(other);
+        };
+    }
+
+    private boolean haveBasicPropertiesChanged(@NonNull DisplayInfo other) {
+        return layerStack != other.layerStack
+                || flags != other.flags
+                || type != other.type
+                || displayId != other.displayId
+                || displayGroupId != other.displayGroupId
+                || defaultModeId != other.defaultModeId
+                || !Objects.equals(address, other.address)
+                || !Objects.equals(deviceProductInfo, other.deviceProductInfo)
+                || !Objects.equals(uniqueId, other.uniqueId)
+                || removeMode != other.removeMode
+                || canHostTasks != other.canHostTasks
+                || ownerUid != other.ownerUid
+                || !Objects.equals(ownerPackageName, other.ownerPackageName);
+    }
+
+    private boolean haveDimensionsAndShapesChanged(@NonNull DisplayInfo other) {
+        return appWidth != other.appWidth
+                || appHeight != other.appHeight
+                || smallestNominalAppWidth != other.smallestNominalAppWidth
+                || smallestNominalAppHeight != other.smallestNominalAppHeight
+                || largestNominalAppWidth != other.largestNominalAppWidth
+                || largestNominalAppHeight != other.largestNominalAppHeight
+                || logicalWidth != other.logicalWidth
+                || logicalHeight != other.logicalHeight
+                || !Objects.equals(displayCutout, other.displayCutout)
+                || !Objects.equals(roundedCorners, other.roundedCorners)
+                || !Objects.equals(displayShape, other.displayShape)
+                || logicalDensityDpi != other.logicalDensityDpi
+                || physicalXDpi != other.physicalXDpi
+                || physicalYDpi != other.physicalYDpi;
+    }
+
+    private boolean haveOrientationAndRotationChanged(@NonNull DisplayInfo other) {
+        return rotation != other.rotation
+                || installOrientation != other.installOrientation;
+    }
+
+    private boolean haveRefreshRateAndModeChanged(@NonNull DisplayInfo other) {
+        return !isDisplayModeSizeEqual(other)
+                || hasArrSupport != other.hasArrSupport
+                || !Objects.equals(frameRateCategoryRate, other.frameRateCategoryRate)
+                || !Objects.equals(layoutLimitedRefreshRate, other.layoutLimitedRefreshRate)
+                || !thermalRefreshRateThrottling.contentEquals(other.thermalRefreshRateThrottling)
+                || userPreferredModeId != other.userPreferredModeId
+                || !Arrays.equals(supportedModes, other.supportedModes)
+                || !Arrays.equals(appsSupportedModes, other.appsSupportedModes)
+                || minimalPostProcessingSupported != other.minimalPostProcessingSupported;
+    }
+
+    private boolean haveColorAndBrightnessChanged(@NonNull DisplayInfo other) {
+        return colorMode != other.colorMode
+                || !Arrays.equals(supportedColorModes, other.supportedColorModes)
+                || !Objects.equals(hdrCapabilities, other.hdrCapabilities)
+                || !Arrays.equals(userDisabledHdrTypes, other.userDisabledHdrTypes)
+                || isForceSdr != other.isForceSdr
+                || brightnessMinimum != other.brightnessMinimum
+                || brightnessMaximum != other.brightnessMaximum
+                || brightnessDefault != other.brightnessDefault
+                || brightnessDim != other.brightnessDim
+                || !BrightnessSynchronizer.floatEquals(hdrSdrRatio, other.hdrSdrRatio)
+                || !Objects.equals(thermalBrightnessThrottlingDataId,
+                other.thermalBrightnessThrottlingDataId);
+    }
+
+    private boolean hasStateChanged(@NonNull DisplayInfo other) {
+        boolean stateChanged = state != other.state;
+        if (!Flags.committedStateSeparateEvent()) {
+            stateChanged |= (committedState != other.committedState);
+        }
+        return stateChanged;
     }
 
     // For debugging purposes
@@ -1020,13 +1229,16 @@ public final class DisplayInfo implements Parcelable {
         sb.append(thermalRefreshRateThrottling);
         sb.append(", thermalBrightnessThrottlingDataId ");
         sb.append(thermalBrightnessThrottlingDataId);
+        sb.append(", canHostTasks ");
+        sb.append(canHostTasks);
         sb.append("}");
         return sb.toString();
     }
 
     /**
      * Write to a protocol buffer output stream.
-     * Protocol buffer message definition at {@link android.view.DisplayInfoProto}
+     * Protocol buffer message definition at
+     * {@link android.internal.perfetto.protos.Displayinfo.DisplayInfoProto}
      *
      * @param protoOutputStream Stream to write the Rect object to.
      * @param fieldId           Field Id of the DisplayInfoProto as defined in the parent message
@@ -1086,6 +1298,9 @@ public final class DisplayInfo implements Parcelable {
         }
         if ((flags & Display.FLAG_REAR) != 0) {
             result.append(", FLAG_REAR_DISPLAY");
+        }
+        if ((flags & Display.FLAG_ALLOWS_CONTENT_MODE_SWITCH) != 0) {
+            result.append(", FLAG_ALLOWS_CONTENT_MODE_SWITCH");
         }
         return result.toString();
     }

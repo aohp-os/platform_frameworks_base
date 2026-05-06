@@ -70,15 +70,19 @@ bool WARN_UNUSED ReadString(std::istream& stream, std::string* out) {
     return false;
   }
   if (size == 0) {
-    *out = "";
+    out->clear();
     return true;
   }
-  std::string buf(size, '\0');
-  if (!stream.read(buf.data(), size)) {
-    return false;
-  }
   uint32_t padding_size = CalculatePadding(size);
-  if (padding_size != 0 && !stream.seekg(padding_size, std::ios_base::cur)) {
+  std::string buf;
+  // Read both the string and the padding in one operation.
+  buf.resize_and_overwrite(size + padding_size, [&](char* out, size_t total) -> size_t {
+    if (!stream.read(out, total)) {
+      return 0;
+    }
+    return size;
+  });
+  if (buf.size() != size) {
     return false;
   }
   *out = std::move(buf);
@@ -180,6 +184,26 @@ Result<Unit> IdmapHeader::IsUpToDate(const std::string& target_path,
   }
 
   return Unit{};
+}
+
+std::unique_ptr<const IdmapConstraints> IdmapConstraints::FromBinaryStream(std::istream& stream) {
+    auto idmap_constraints = std::make_unique<IdmapConstraints>();
+    uint32_t count = 0;
+    if (!Read32(stream, &count)) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < count; i++) {
+        IdmapConstraint constraint{};
+        if (!Read32(stream, &constraint.constraint_type)) {
+            return nullptr;
+        }
+        if (!Read32(stream, &constraint.constraint_value)) {
+            return nullptr;
+        }
+        idmap_constraints->constraints.insert(constraint);
+    }
+
+    return idmap_constraints;
 }
 
 std::unique_ptr<const IdmapData::Header> IdmapData::Header::FromBinaryStream(std::istream& stream) {
@@ -315,6 +339,10 @@ Result<std::unique_ptr<const Idmap>> Idmap::FromBinaryStream(std::istream& strea
   if (!idmap->header_) {
     return Error("failed to parse idmap header");
   }
+  idmap->constraints_ = IdmapConstraints::FromBinaryStream(stream);
+  if (!idmap->constraints_) {
+    return Error("failed to parse idmap constraints");
+  }
 
   // idmap version 0x01 does not specify the number of data blocks that follow
   // the idmap header; assume exactly one data block
@@ -374,10 +402,9 @@ Result<std::unique_ptr<const IdmapData>> IdmapData::FromResourceMapping(
 }
 
 Result<std::unique_ptr<const Idmap>> Idmap::FromContainers(const TargetResourceContainer& target,
-                                                           const OverlayResourceContainer& overlay,
-                                                           const std::string& overlay_name,
-                                                           const PolicyBitmask& fulfilled_policies,
-                                                           bool enforce_overlayable) {
+    const OverlayResourceContainer& overlay, const std::string& overlay_name,
+    const PolicyBitmask& fulfilled_policies, bool enforce_overlayable,
+    std::unique_ptr<const IdmapConstraints>&& constraints) {
   SYSTRACE << "Idmap::FromApkAssets";
   std::unique_ptr<IdmapHeader> header(new IdmapHeader());
   header->magic_ = kIdmapMagic;
@@ -424,11 +451,21 @@ Result<std::unique_ptr<const Idmap>> Idmap::FromContainers(const TargetResourceC
   header->debug_info_ = log_info.GetString();
   idmap->header_ = std::move(header);
   idmap->data_.push_back(std::move(*idmap_data));
+  if (constraints == nullptr) {
+    idmap->constraints_ = std::make_unique<IdmapConstraints>();
+  } else {
+    idmap->constraints_ = std::move(constraints);
+  }
 
   return {std::move(idmap)};
 }
 
 void IdmapHeader::accept(Visitor* v) const {
+  assert(v != nullptr);
+  v->visit(*this);
+}
+
+void IdmapConstraints::accept(Visitor* v) const {
   assert(v != nullptr);
   v->visit(*this);
 }
@@ -447,6 +484,7 @@ void IdmapData::accept(Visitor* v) const {
 void Idmap::accept(Visitor* v) const {
   assert(v != nullptr);
   header_->accept(v);
+  constraints_->accept(v);
   v->visit(*this);
   auto end = data_.cend();
   for (auto iter = data_.cbegin(); iter != end; ++iter) {

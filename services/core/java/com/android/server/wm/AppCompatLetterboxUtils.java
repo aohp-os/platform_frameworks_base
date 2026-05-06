@@ -32,16 +32,11 @@ class AppCompatLetterboxUtils {
      */
     static void calculateLetterboxPosition(@NonNull ActivityRecord activity,
             @NonNull Point outLetterboxPosition) {
-        if (!activity.mAppCompatController.getAppCompatLetterboxPolicy().isRunning()) {
+        if (!activity.mAppCompatController.getLetterboxPolicy().isRunning()) {
             outLetterboxPosition.set(0, 0);
             return;
         }
-        if (activity.isInLetterboxAnimation()) {
-            // In this case we attach the letterbox to the task instead of the activity.
-            activity.getTask().getPosition(outLetterboxPosition);
-        } else {
-            activity.getPosition(outLetterboxPosition);
-        }
+        activity.getPosition(outLetterboxPosition);
     }
 
     /**
@@ -54,7 +49,7 @@ class AppCompatLetterboxUtils {
      */
     static void calculateLetterboxOuterBounds(@NonNull ActivityRecord activity,
             @NonNull Rect outOuterBounds) {
-        if (!activity.mAppCompatController.getAppCompatLetterboxPolicy().isRunning()) {
+        if (!activity.mAppCompatController.getLetterboxPolicy().isRunning()) {
             outOuterBounds.setEmpty();
             return;
         }
@@ -82,7 +77,7 @@ class AppCompatLetterboxUtils {
      */
     static void calculateLetterboxInnerBounds(@NonNull ActivityRecord activity,
             @NonNull WindowState window, @NonNull Rect outInnerBounds) {
-        if (!activity.mAppCompatController.getAppCompatLetterboxPolicy().isRunning()) {
+        if (!activity.mAppCompatController.getLetterboxPolicy().isRunning()) {
             outInnerBounds.setEmpty();
             return;
         }
@@ -103,5 +98,32 @@ class AppCompatLetterboxUtils {
                 activity.mAppCompatController.getTransparentPolicy();
         outInnerBounds.set(
                 transparentPolicy.isRunning() ? activity.getBounds() : window.getFrame());
+    }
+
+
+    /**
+     * Returns {@code true} if the letterbox does not overlap with the bar, or the letterbox can
+     * fully cover the window frame.
+     *
+     * @param rect             The area of the window frame.
+     * @param boundsToCheck A Collection of bounds to check.
+     */
+    static boolean fullyContainsOrNotIntersects(@NonNull Rect rect, @NonNull Rect[] boundsToCheck) {
+        // TODO(b/409293223): Make this algorithm simpler and more efficient.
+        int emptyCount = 0;
+        int noOverlappingCount = 0;
+        for (Rect bounds : boundsToCheck) {
+            if (bounds.isEmpty()) {
+                // empty letterbox
+                emptyCount++;
+            } else if (!Rect.intersects(bounds, rect)) {
+                // no overlapping
+                noOverlappingCount++;
+            } else if (bounds.contains(rect)) {
+                // overlapping and covered
+                return true;
+            }
+        }
+        return (emptyCount + noOverlappingCount) == boundsToCheck.length;
     }
 }

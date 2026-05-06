@@ -16,15 +16,16 @@
 
 package com.android.wm.shell.pip2.phone;
 
-import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 
-import static com.android.wm.shell.transition.Transitions.TRANSIT_EXIT_PIP;
-import static com.android.wm.shell.transition.Transitions.TRANSIT_REMOVE_PIP;
-
+import android.app.PictureInPictureParams;
+import android.app.TaskInfo;
 import android.content.Context;
-import android.graphics.Matrix;
+import android.content.res.Configuration;
 import android.graphics.Rect;
+import android.os.Bundle;
+import android.os.SystemProperties;
+import android.os.Trace;
 import android.view.SurfaceControl;
 import android.window.DisplayAreaInfo;
 import android.window.WindowContainerToken;
@@ -35,55 +36,87 @@ import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.protolog.ProtoLog;
-import com.android.window.flags.Flags;
-import com.android.wm.shell.RootTaskDisplayAreaOrganizer;
+import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.ScreenshotUtils;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.pip.PipBoundsState;
-import com.android.wm.shell.desktopmode.DesktopUserRepositories;
+import com.android.wm.shell.common.pip.PipDesktopState;
+import com.android.wm.shell.common.pip.PipDisplayLayoutState;
+import com.android.wm.shell.common.pip.PipUtils;
+import com.android.wm.shell.desktopmode.DesktopPipTransitionController;
 import com.android.wm.shell.pip.PipTransitionController;
 import com.android.wm.shell.pip2.PipSurfaceTransactionHelper;
 import com.android.wm.shell.pip2.animation.PipAlphaAnimator;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
+import com.android.wm.shell.shared.split.SplitScreenConstants;
+import com.android.wm.shell.splitscreen.SplitScreenController;
 
-import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Scheduler for Shell initiated PiP transitions and animations.
  */
-public class PipScheduler {
+public class PipScheduler implements PipTransitionState.PipTransitionStateChangedListener {
     private static final String TAG = PipScheduler.class.getSimpleName();
+
+    /**
+     * The fixed start delay in ms when fading out the content overlay from bounds animation.
+     * The fadeout animation is guaranteed to start after the client has drawn under the new config.
+     */
+    public static final int EXTRA_CONTENT_OVERLAY_FADE_OUT_DELAY_MS =
+            SystemProperties.getInt(
+                    "persist.wm.debug.extra_content_overlay_fade_out_delay_ms", 400);
+    private static final int CONTENT_OVERLAY_FADE_OUT_DURATION_MS = 500;
+    private static final int DISPLAY_TRANSFER_DURATION_MS = 250;
 
     private final Context mContext;
     private final PipBoundsState mPipBoundsState;
+    private final PipDisplayLayoutState mPipDisplayLayoutState;
     private final ShellExecutor mMainExecutor;
     private final PipTransitionState mPipTransitionState;
-    private final Optional<DesktopUserRepositories> mDesktopUserRepositoriesOptional;
-    private final RootTaskDisplayAreaOrganizer mRootTaskDisplayAreaOrganizer;
+    private final DisplayController mDisplayController;
+    private final PipDesktopState mPipDesktopState;
+    private final Optional<DesktopPipTransitionController> mDesktopPipTransitionController;
+    private final Optional<SplitScreenController> mSplitScreenControllerOptional;
     private PipTransitionController mPipTransitionController;
     private PipSurfaceTransactionHelper.SurfaceControlTransactionFactory
             mSurfaceControlTransactionFactory;
 
+    @NonNull private final PipSurfaceTransactionHelper mPipSurfaceTransactionHelper;
+
     @Nullable private Runnable mUpdateMovementBoundsRunnable;
+    @Nullable private PipAlphaAnimator mOverlayFadeoutAnimator;
 
     private PipAlphaAnimatorSupplier mPipAlphaAnimatorSupplier;
+    private Supplier<PictureInPictureParams> mPipParamsSupplier;
+    private int mLastFocusedDisplayId;
 
     public PipScheduler(Context context,
+            @NonNull PipSurfaceTransactionHelper pipSurfaceTransactionHelper,
             PipBoundsState pipBoundsState,
             ShellExecutor mainExecutor,
             PipTransitionState pipTransitionState,
-            Optional<DesktopUserRepositories> desktopUserRepositoriesOptional,
-            RootTaskDisplayAreaOrganizer rootTaskDisplayAreaOrganizer) {
+            Optional<SplitScreenController> splitScreenControllerOptional,
+            Optional<DesktopPipTransitionController> desktopPipTransitionController,
+            PipDesktopState pipDesktopState,
+            DisplayController displayController,
+            PipDisplayLayoutState pipDisplayLayoutState) {
         mContext = context;
         mPipBoundsState = pipBoundsState;
         mMainExecutor = mainExecutor;
         mPipTransitionState = pipTransitionState;
-        mDesktopUserRepositoriesOptional = desktopUserRepositoriesOptional;
-        mRootTaskDisplayAreaOrganizer = rootTaskDisplayAreaOrganizer;
-
+        mPipTransitionState.addPipTransitionStateChangedListener(this);
+        mPipDesktopState = pipDesktopState;
+        mDesktopPipTransitionController = desktopPipTransitionController;
+        mSplitScreenControllerOptional = splitScreenControllerOptional;
+        mDisplayController = displayController;
+        mPipDisplayLayoutState = pipDisplayLayoutState;
         mSurfaceControlTransactionFactory =
                 new PipSurfaceTransactionHelper.VsyncSurfaceControlTransactionFactory();
+        mPipSurfaceTransactionHelper = pipSurfaceTransactionHelper;
         mPipAlphaAnimatorSupplier = PipAlphaAnimator::new;
+        mLastFocusedDisplayId = mPipDisplayLayoutState.getDisplayId();
     }
 
     void setPipTransitionController(PipTransitionController pipTransitionController) {
@@ -99,9 +132,39 @@ public class PipScheduler {
         WindowContainerTransaction wct = new WindowContainerTransaction();
         // final expanded bounds to be inherited from the parent
         wct.setBounds(pipTaskToken, null);
-        // if we are hitting a multi-activity case
-        // windowing mode change will reparent to original host task
-        wct.setWindowingMode(pipTaskToken, getOutPipWindowingMode());
+        wct.setWindowingMode(pipTaskToken, mPipDesktopState.getOutPipWindowingMode());
+        wct.setDensityDpi(pipTaskToken, Configuration.DENSITY_DPI_UNDEFINED);
+
+        final TaskInfo pipTaskInfo = mPipTransitionState.getPipTaskInfo();
+        mDesktopPipTransitionController.ifPresent(c -> {
+            // In multi-activity case, windowing mode change will reparent to original host task, so
+            // we have to update the parent windowing mode to what is expected.
+            c.maybeUpdateParentInWct(wct,
+                    pipTaskInfo.lastParentTaskIdBeforePip);
+            // In multi-desks case, we have to reparent the task to the root desk.
+            c.maybeReparentTaskToDesk(wct, pipTaskInfo.taskId);
+        });
+
+        return wct;
+    }
+
+    /**
+     * Returns a wct for exiting PiP and expanding on a different display.
+     */
+    @Nullable
+    public WindowContainerTransaction getExitPipViaExpandIntoDisplayTransaction(int displayId) {
+        WindowContainerToken pipToken = mPipTransitionState.getPipTaskToken();
+        WindowContainerTransaction wct = getExitPipViaExpandTransaction();
+        DisplayAreaInfo displayAreaInfo =
+                mPipDesktopState.getRootTaskDisplayAreaOrganizer().getDisplayAreaInfo(
+                        displayId);
+
+        if (pipToken == null || wct == null || displayAreaInfo == null) {
+            return null;
+        }
+
+        wct.reparent(pipToken, displayAreaInfo.token, true);
+        wct.setDensityDpi(pipToken, Configuration.DENSITY_DPI_UNDEFINED);
         return wct;
     }
 
@@ -115,41 +178,47 @@ public class PipScheduler {
         wct.setBounds(pipTaskToken, null);
         wct.setWindowingMode(pipTaskToken, WINDOWING_MODE_UNDEFINED);
         wct.reorder(pipTaskToken, false);
+
+        final TaskInfo pipTaskInfo = mPipTransitionState.getPipTaskInfo();
+        if (PipUtils.isContentPip(pipTaskInfo)) {
+            // If the current PiP session was entered through content-PiP,
+            // then relaunch the original host task too.
+            wct.startTask(pipTaskInfo.launchIntoPipHostTaskId, null /* ActivityOptions */);
+        }
         return wct;
     }
 
     /**
      * Schedules exit PiP via expand transition.
      */
-    public void scheduleExitPipViaExpand() {
-        WindowContainerTransaction wct = getExitPipViaExpandTransaction();
-        if (wct != null) {
-            mMainExecutor.execute(() -> {
-                mPipTransitionController.startExitTransition(TRANSIT_EXIT_PIP, wct,
-                        null /* destinationBounds */);
-            });
-        }
-    }
+    public void scheduleExitPipViaExpand(boolean wasVisible) {
+        mMainExecutor.execute(() -> {
+            if (!mPipTransitionState.isInPip()) return;
 
-    // TODO: Optimize this by running the animation as part of the transition
-    /** Runs remove PiP animation and schedules remove PiP transition after the animation ends. */
-    public void removePipAfterAnimation() {
-        SurfaceControl.Transaction tx = mSurfaceControlTransactionFactory.getTransaction();
-        PipAlphaAnimator animator = mPipAlphaAnimatorSupplier.get(mContext,
-                mPipTransitionState.getPinnedTaskLeash(), tx, PipAlphaAnimator.FADE_OUT);
-        animator.setAnimationEndCallback(this::scheduleRemovePipImmediately);
-        animator.start();
+            final WindowContainerTransaction expandWct = getExitPipViaExpandTransaction();
+            if (expandWct == null) return;
+
+            final WindowContainerTransaction wct = new WindowContainerTransaction();
+            mSplitScreenControllerOptional.ifPresent(splitScreenController -> {
+                int lastParentTaskId = mPipTransitionState.getPipTaskInfo()
+                        .lastParentTaskIdBeforePip;
+                if (splitScreenController.isTaskInSplitScreen(lastParentTaskId)) {
+                    splitScreenController.prepareEnterSplitScreen(wct,
+                            null /* taskInfo */, SplitScreenConstants.SPLIT_POSITION_UNDEFINED);
+                }
+            });
+            boolean toSplit = !wct.isEmpty();
+            wct.merge(expandWct, true /* transfer */);
+            mPipTransitionController.startExpandTransition(wct, toSplit, wasVisible);
+        });
     }
 
     /** Schedules remove PiP transition. */
-    private void scheduleRemovePipImmediately() {
-        WindowContainerTransaction wct = getRemovePipTransaction();
-        if (wct != null) {
-            mMainExecutor.execute(() -> {
-                mPipTransitionController.startExitTransition(TRANSIT_REMOVE_PIP, wct,
-                        null /* destinationBounds */);
-            });
-        }
+    public void scheduleRemovePip(boolean withFadeout) {
+        mMainExecutor.execute(() -> {
+            if (!mPipTransitionState.isInPip()) return;
+            mPipTransitionController.startRemoveTransition(getRemovePipTransaction(), withFadeout);
+        });
     }
 
     /**
@@ -182,59 +251,128 @@ public class PipScheduler {
             return;
         }
         WindowContainerTransaction wct = new WindowContainerTransaction();
-        wct.setBounds(pipTaskToken, toBounds);
         if (configAtEnd) {
             wct.deferConfigToTransitionEnd(pipTaskToken);
         }
-        mPipTransitionController.startResizeTransition(wct, duration);
+        wct.setBounds(pipTaskToken, toBounds);
+        mPipTransitionController.startPipBoundsChangeTransition(wct, duration);
     }
 
     /**
-     * Signals to Core to finish the PiP resize transition.
+     * Schedules moving PiP window to another display.
+     *
+     * @param targetDisplayId the target display ID where the PiP window should be parented to.
+     */
+    public void scheduleMoveToDisplay(int targetDisplayId, Rect pipBounds) {
+        Trace.instant(Trace.TRACE_TAG_WINDOW_MANAGER,
+                "PipScheduler#scheduleMoveToDisplay: " + targetDisplayId);
+        WindowContainerToken pipTaskToken = mPipTransitionState.getPipTaskToken();
+        DisplayAreaInfo displayAreaInfo =
+                mPipDesktopState.getRootTaskDisplayAreaOrganizer().getDisplayAreaInfo(
+                        targetDisplayId);
+        if (pipTaskToken == null || !mPipTransitionState.isInPip() || displayAreaInfo == null) {
+            return;
+        }
+
+        WindowContainerTransaction wct = new WindowContainerTransaction();
+        WindowContainerToken displayToken = displayAreaInfo.token;
+        wct.setBounds(pipTaskToken, pipBounds);
+        wct.reparent(pipTaskToken, displayToken, /* onTop= */ true);
+
+        mPipTransitionController.startPipBoundsChangeTransition(wct, DISPLAY_TRANSFER_DURATION_MS);
+    }
+
+    /**
+     * Signals to Core to finish the PiP bounds change transition.
      * Note that we do not allow any actual WM Core changes at this point.
      *
      * @param toBounds destination bounds used only for internal state updates - not sent to Core.
      */
-    public void scheduleFinishResizePip(Rect toBounds) {
+    public void scheduleFinishPipBoundsChange(Rect toBounds) {
         // Make updates to the internal state to reflect new bounds before updating any transitions
         // related state; transition state updates can trigger callbacks that use the cached bounds.
-        onFinishingPipResize(toBounds);
+        onFinishingPipBoundsChange(toBounds);
         mPipTransitionController.finishTransition();
     }
 
     /**
      * Directly perform a scaled matrix transformation on the leash. This will not perform any
      * {@link WindowContainerTransaction}.
+     *
+     * @param toBounds          the bounds to transform the PiP leash to.
      */
     public void scheduleUserResizePip(Rect toBounds) {
-        scheduleUserResizePip(toBounds, 0f /* degrees */);
+        scheduleUserResizePip(toBounds, 0f /* degrees */,
+                mPipDisplayLayoutState.getDisplayId() /* focusedDisplayId */);
     }
 
     /**
      * Directly perform a scaled matrix transformation on the leash. This will not perform any
      * {@link WindowContainerTransaction}.
      *
-     * @param degrees the angle to rotate the bounds to.
+     * @param toBounds          the bounds to transform the PiP leash to.
+     * @param focusedDisplayId  the display ID of where the cursor currently is.
+     */
+    public void scheduleUserResizePip(Rect toBounds, int focusedDisplayId) {
+        scheduleUserResizePip(toBounds, 0f /* degrees */, focusedDisplayId);
+    }
+
+    /**
+     * Directly perform a scaled matrix transformation on the leash. This will not perform any
+     * {@link WindowContainerTransaction}.
+     *
+     * @param toBounds          the bounds to transform the PiP leash to.
+     * @param degrees           the angle to rotate the bounds to.
      */
     public void scheduleUserResizePip(Rect toBounds, float degrees) {
-        if (toBounds.isEmpty()) {
+        scheduleUserResizePip(toBounds, degrees,
+                mPipDisplayLayoutState.getDisplayId() /* focusedDisplayId */);
+    }
+
+    /**
+     * Directly perform a scaled matrix transformation on the leash. This will not perform any
+     * {@link WindowContainerTransaction}.
+     *
+     * @param toBounds          the bounds to transform the PiP leash to.
+     * @param degrees           the angle to rotate the bounds to.
+     * @param focusedDisplayId  the display ID of where the cursor currently is.
+     */
+    public void scheduleUserResizePip(Rect toBounds, float degrees, int focusedDisplayId) {
+        if (toBounds.isEmpty() || !mPipTransitionState.isInPip()) {
             ProtoLog.w(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
-                    "%s: Attempted to user resize PIP to empty bounds, aborting.", TAG);
+                    "%s: Attempted to user resize PIP in invalid state, aborting;"
+                            + "toBounds=%s, mPipTransitionState=%s",
+                    TAG, toBounds, mPipTransitionState);
             return;
         }
         SurfaceControl leash = mPipTransitionState.getPinnedTaskLeash();
         final SurfaceControl.Transaction tx = mSurfaceControlTransactionFactory.getTransaction();
 
-        Matrix transformTensor = new Matrix();
-        final float[] mMatrixTmp = new float[9];
-        final float scale = (float) toBounds.width() / mPipBoundsState.getBounds().width();
-
-        transformTensor.setScale(scale, scale);
-        transformTensor.postTranslate(toBounds.left, toBounds.top);
-        transformTensor.postRotate(degrees, toBounds.centerX(), toBounds.centerY());
-
-        tx.setMatrix(leash, transformTensor, mMatrixTmp);
+        mPipSurfaceTransactionHelper.setPipTransformations(leash, tx, mPipBoundsState.getBounds(),
+                toBounds, degrees);
+        // Reparent PiP leash to the display where the cursor is currently on.
+        if (mPipDesktopState.isDraggingPipAcrossDisplaysEnabled()
+                && focusedDisplayId != mLastFocusedDisplayId) {
+            mPipDesktopState.getRootTaskDisplayAreaOrganizer().reparentToDisplayArea(
+                    focusedDisplayId, leash, tx);
+            mLastFocusedDisplayId = focusedDisplayId;
+        }
         tx.apply();
+    }
+
+    void startOverlayFadeoutAnimation(@NonNull SurfaceControl overlayLeash,
+            boolean withStartDelay, @NonNull Runnable onAnimationEnd) {
+        mOverlayFadeoutAnimator = mPipAlphaAnimatorSupplier.get(mContext,
+                mPipSurfaceTransactionHelper, overlayLeash,
+                null /* startTx */, null /* finishTx */, PipAlphaAnimator.FADE_OUT);
+        mOverlayFadeoutAnimator.setDuration(CONTENT_OVERLAY_FADE_OUT_DURATION_MS);
+        mOverlayFadeoutAnimator.setStartDelay(withStartDelay
+                ? EXTRA_CONTENT_OVERLAY_FADE_OUT_DELAY_MS : 0);
+        mOverlayFadeoutAnimator.setAnimationEndCallback(() -> {
+            onAnimationEnd.run();
+            mOverlayFadeoutAnimator = null;
+        });
+        mOverlayFadeoutAnimator.start();
     }
 
     void setUpdateMovementBoundsRunnable(@Nullable Runnable updateMovementBoundsRunnable) {
@@ -247,53 +385,31 @@ public class PipScheduler {
         }
     }
 
-    private void onFinishingPipResize(Rect newBounds) {
+    private void onFinishingPipBoundsChange(Rect newBounds) {
         if (mPipBoundsState.getBounds().equals(newBounds)) {
             return;
         }
+
+        // Take a screenshot of PiP and fade it out after resize is finished if seamless resize
+        // is off and if the PiP size is changing.
+        boolean animateCrossFadeResize = !getPipParams().isSeamlessResizeEnabled()
+                && !(mPipBoundsState.getBounds().width() == newBounds.width()
+                && mPipBoundsState.getBounds().height() == newBounds.height());
+        if (animateCrossFadeResize) {
+            final Rect crop = new Rect(newBounds);
+            crop.offsetTo(0, 0);
+            // Note: Put this at layer=MAX_VALUE-2 since the input consumer for PIP is placed at
+            //       MAX_VALUE-1
+            final SurfaceControl snapshotSurface = ScreenshotUtils.takeScreenshot(
+                    mSurfaceControlTransactionFactory.getTransaction(),
+                    mPipTransitionState.getPinnedTaskLeash(), crop, Integer.MAX_VALUE - 2);
+            startOverlayFadeoutAnimation(snapshotSurface, false /* withStartDelay */, () -> {
+                mSurfaceControlTransactionFactory.getTransaction().remove(snapshotSurface).apply();
+            });
+        }
+
         mPipBoundsState.setBounds(newBounds);
         maybeUpdateMovementBounds();
-    }
-
-    /** Returns whether the display is in freeform windowing mode. */
-    private boolean isDisplayInFreeform() {
-        final DisplayAreaInfo tdaInfo = mRootTaskDisplayAreaOrganizer.getDisplayAreaInfo(
-                Objects.requireNonNull(mPipTransitionState.getPipTaskInfo()).displayId);
-        if (tdaInfo != null) {
-            return tdaInfo.configuration.windowConfiguration.getWindowingMode()
-                    == WINDOWING_MODE_FREEFORM;
-        }
-        return false;
-    }
-
-    /** Returns whether PiP is exiting while we're in desktop mode. */
-    private boolean isPipExitingToDesktopMode() {
-        return Flags.enableDesktopWindowingPip() && mDesktopUserRepositoriesOptional.isPresent()
-                && (mDesktopUserRepositoriesOptional.get().getCurrent().getVisibleTaskCount(
-                Objects.requireNonNull(mPipTransitionState.getPipTaskInfo()).displayId) > 0
-                || isDisplayInFreeform());
-    }
-
-    /**
-     * The windowing mode to restore to when resizing out of PIP direction. Defaults to undefined
-     * and can be overridden to restore to an alternate windowing mode.
-     */
-    private int getOutPipWindowingMode() {
-        // If we are exiting PiP while the device is in Desktop mode (the task should expand to
-        // freeform windowing mode):
-        // 1) If the display windowing mode is freeform, set windowing mode to undefined so it will
-        //    resolve the windowing mode to the display's windowing mode.
-        // 2) If the display windowing mode is not freeform, set windowing mode to freeform.
-        if (isPipExitingToDesktopMode()) {
-            if (isDisplayInFreeform()) {
-                return WINDOWING_MODE_UNDEFINED;
-            } else {
-                return WINDOWING_MODE_FREEFORM;
-            }
-        }
-
-        // By default, or if the task is going to fullscreen, reset the windowing mode to undefined.
-        return WINDOWING_MODE_UNDEFINED;
     }
 
     @VisibleForTesting
@@ -302,16 +418,54 @@ public class PipScheduler {
         mSurfaceControlTransactionFactory = factory;
     }
 
+    @Override
+    public void onPipTransitionStateChanged(@PipTransitionState.TransitionState int oldState,
+            @PipTransitionState.TransitionState int newState,
+            @android.annotation.Nullable Bundle extra) {
+        switch (newState) {
+            case PipTransitionState.EXITING_PIP:
+            case PipTransitionState.SCHEDULED_BOUNDS_CHANGE:
+                if (mOverlayFadeoutAnimator != null && mOverlayFadeoutAnimator.isStarted()) {
+                    mOverlayFadeoutAnimator.end();
+                    mOverlayFadeoutAnimator = null;
+                }
+                break;
+        }
+    }
+
     @VisibleForTesting
     interface PipAlphaAnimatorSupplier {
         PipAlphaAnimator get(@NonNull Context context,
+                @NonNull PipSurfaceTransactionHelper pipSurfaceTransactionHelper,
                 SurfaceControl leash,
-                SurfaceControl.Transaction tx,
+                SurfaceControl.Transaction startTransaction,
+                SurfaceControl.Transaction finishTransaction,
                 @PipAlphaAnimator.Fade int direction);
     }
 
     @VisibleForTesting
     void setPipAlphaAnimatorSupplier(@NonNull PipAlphaAnimatorSupplier supplier) {
         mPipAlphaAnimatorSupplier = supplier;
+    }
+
+    @VisibleForTesting
+    void setOverlayFadeoutAnimator(@NonNull PipAlphaAnimator animator) {
+        mOverlayFadeoutAnimator = animator;
+    }
+
+    @VisibleForTesting
+    @Nullable
+    PipAlphaAnimator getOverlayFadeoutAnimator() {
+        return mOverlayFadeoutAnimator;
+    }
+
+    void setPipParamsSupplier(@NonNull Supplier<PictureInPictureParams> pipParamsSupplier) {
+        mPipParamsSupplier = pipParamsSupplier;
+    }
+
+    @NonNull
+    private PictureInPictureParams getPipParams() {
+        if (mPipParamsSupplier == null) return new PictureInPictureParams.Builder().build();
+        return mPipParamsSupplier.get();
     }
 }

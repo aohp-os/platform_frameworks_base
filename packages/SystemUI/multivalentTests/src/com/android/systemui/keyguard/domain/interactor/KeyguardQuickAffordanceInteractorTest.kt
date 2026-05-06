@@ -19,11 +19,15 @@ package com.android.systemui.keyguard.domain.interactor
 
 import android.app.admin.DevicePolicyManager
 import android.os.UserHandle
+import android.platform.test.annotations.EnableFlags
+import android.security.Flags.FLAG_SECURE_LOCK_DEVICE
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.widget.LockPatternUtils
 import com.android.keyguard.logging.KeyguardQuickAffordancesLogger
+import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.accessibility.domain.interactor.AccessibilityInteractor
 import com.android.systemui.animation.DialogTransitionAnimator
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
@@ -31,8 +35,10 @@ import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.coroutines.collectValues
 import com.android.systemui.dock.DockManager
 import com.android.systemui.dock.DockManagerFake
+import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.flags.FakeFeatureFlags
+import com.android.systemui.haptics.msdl.fakeMSDLPlayer
 import com.android.systemui.keyguard.data.quickaffordance.BuiltInKeyguardQuickAffordanceKeys
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceConfig
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceProviderClientFactory
@@ -43,6 +49,7 @@ import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanc
 import com.android.systemui.keyguard.data.repository.FakeBiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository
+import com.android.systemui.keyguard.data.repository.biometricSettingsRepository
 import com.android.systemui.keyguard.domain.model.KeyguardQuickAffordanceModel
 import com.android.systemui.keyguard.shared.model.KeyguardQuickAffordancePickerRepresentation
 import com.android.systemui.keyguard.shared.quickaffordance.ActivationState
@@ -53,6 +60,8 @@ import com.android.systemui.kosmos.testScope
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.securelockdevice.data.repository.fakeSecureLockDeviceRepository
+import com.android.systemui.securelockdevice.domain.interactor.secureLockDeviceInteractor
 import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.cameraLauncher
@@ -64,8 +73,8 @@ import com.android.systemui.util.FakeSharedPreferences
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.settings.fakeSettings
+import com.google.android.msdl.data.model.MSDLToken
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -77,7 +86,6 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
@@ -85,6 +93,7 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
     private val settings = kosmos.fakeSettings
+    private val msdlPlayer = kosmos.fakeMSDLPlayer
 
     @Mock private lateinit var lockPatternUtils: LockPatternUtils
     @Mock private lateinit var keyguardStateController: KeyguardStateController
@@ -95,6 +104,7 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
     @Mock private lateinit var shadeInteractor: ShadeInteractor
     @Mock private lateinit var logger: KeyguardQuickAffordancesLogger
     @Mock private lateinit var metricsLogger: KeyguardQuickAffordancesMetricsLogger
+    @Mock private lateinit var accessibilityInteractor: AccessibilityInteractor
 
     private lateinit var underTest: KeyguardQuickAffordanceInteractor
 
@@ -136,7 +146,7 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
             FakeKeyguardQuickAffordanceConfig(BuiltInKeyguardQuickAffordanceKeys.QR_CODE_SCANNER)
 
         dockManager = DockManagerFake()
-        biometricSettingsRepository = FakeBiometricSettingsRepository()
+        biometricSettingsRepository = kosmos.biometricSettingsRepository
 
         val localUserSelectionManager =
             KeyguardQuickAffordanceLocalUserSelectionManager(
@@ -178,6 +188,7 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
 
         val withDeps =
             KeyguardInteractorFactory.create(featureFlags = featureFlags, repository = repository)
+
         underTest =
             KeyguardQuickAffordanceInteractor(
                 keyguardInteractor = withDeps.keyguardInteractor,
@@ -191,16 +202,20 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
                 launchAnimator = launchAnimator,
                 logger = logger,
                 metricsLogger = metricsLogger,
+                secureLockDeviceInteractor = { kosmos.secureLockDeviceInteractor },
                 devicePolicyManager = devicePolicyManager,
                 dockManager = dockManager,
                 biometricSettingsRepository = biometricSettingsRepository,
                 backgroundDispatcher = kosmos.testDispatcher,
                 appContext = context,
+                accessibilityInteractor = accessibilityInteractor,
                 sceneInteractor = { kosmos.sceneInteractor },
+                msdlPlayer = msdlPlayer,
             )
         kosmos.keyguardQuickAffordanceInteractor = underTest
 
         whenever(shadeInteractor.anyExpansion).thenReturn(MutableStateFlow(0f))
+        whenever(accessibilityInteractor.isEnabledFiltered).thenReturn(MutableStateFlow(false))
     }
 
     @Test
@@ -304,6 +319,27 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
             assertThat(collectedValue).isEqualTo(KeyguardQuickAffordanceModel.Hidden)
         }
 
+    @EnableFlags(FLAG_SECURE_LOCK_DEVICE)
+    @Test
+    fun quickAffordance_hiddenWhenUserIsInSecureLockDeviceMode() =
+        testScope.runTest {
+            kosmos.fakeSecureLockDeviceRepository.onSecureLockDeviceEnabled()
+            val isSecureLockDeviceEnabled by
+                collectLastValue(kosmos.secureLockDeviceInteractor.isSecureLockDeviceEnabled)
+
+            assertThat(isSecureLockDeviceEnabled).isEqualTo(true)
+
+            quickAccessWallet.setState(
+                KeyguardQuickAffordanceConfig.LockScreenState.Visible(icon = ICON)
+            )
+
+            val collectedValue by
+                collectLastValue(
+                    underTest.quickAffordance(KeyguardQuickAffordancePosition.BOTTOM_END)
+                )
+            assertThat(collectedValue).isEqualTo(KeyguardQuickAffordanceModel.Hidden)
+        }
+
     @Test
     fun quickAffordance_bottomStartAffordanceHiddenWhileDozing() =
         testScope.runTest {
@@ -320,6 +356,7 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
         }
 
     @Test
+    @DisableSceneContainer
     fun quickAffordance_bottomStartAffordanceHiddenWhenLockscreenIsNotShowing() =
         testScope.runTest {
             repository.setKeyguardShowing(false)
@@ -669,6 +706,22 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
         }
 
     @Test
+    fun useLongPress_withA11yEnabled_isFalse() =
+        testScope.runTest {
+            whenever(accessibilityInteractor.isEnabledFiltered).thenReturn(MutableStateFlow(true))
+            val useLongPress by collectLastValue(underTest.useLongPress())
+            assertThat(useLongPress).isFalse()
+        }
+
+    @Test
+    fun useLongPress_withA11yDisabled_isFalse() =
+        testScope.runTest {
+            whenever(accessibilityInteractor.isEnabledFiltered).thenReturn(MutableStateFlow(false))
+            val useLongPress by collectLastValue(underTest.useLongPress())
+            assertThat(useLongPress).isTrue()
+        }
+
+    @Test
     fun useLongPress_whenDocked_isFalse() =
         testScope.runTest {
             dockManager.setIsDocked(true)
@@ -764,11 +817,30 @@ class KeyguardQuickAffordanceInteractorTest : SysuiTestCase() {
             assertThat(launchingAffordance).isFalse()
         }
 
+    @EnableFlags(Flags.FLAG_MSDL_FEEDBACK)
+    @Test
+    fun onQuickAffordanceTriggered_onLaunched_playsMSDLLongPress() =
+        testScope.runTest {
+            // WHEN selecting and triggering a quick affordance at a slot
+            val key = homeControls.key
+            val slot = KeyguardQuickAffordanceSlots.SLOT_ID_BOTTOM_START
+            val encodedKey = "$slot::$key"
+            val actionLaunched = true
+            homeControls.onTriggeredResult =
+                KeyguardQuickAffordanceConfig.OnTriggeredResult.Handled(actionLaunched)
+            underTest.select(slot, key)
+            runCurrent()
+            underTest.onQuickAffordanceTriggered(encodedKey, expandable = null, slot)
+
+            // THEN long-press token plays since the action launched.
+            assertThat(msdlPlayer.latestTokenPlayed).isEqualTo(MSDLToken.LONG_PRESS)
+        }
+
     companion object {
         private const val CONTENT_DESCRIPTION_RESOURCE_ID = 1337
         private val ICON: Icon =
             Icon.Resource(
-                res = CONTENT_DESCRIPTION_RESOURCE_ID,
+                resId = CONTENT_DESCRIPTION_RESOURCE_ID,
                 contentDescription =
                     ContentDescription.Resource(res = CONTENT_DESCRIPTION_RESOURCE_ID),
             )

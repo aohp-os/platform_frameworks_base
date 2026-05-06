@@ -32,7 +32,8 @@ import com.android.systemui.common.ui.ConfigurationState
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
-import com.android.systemui.statusbar.notification.collection.NotifCollection
+import com.android.systemui.statusbar.headsup.shared.StatusBarNoHunBehavior
+import com.android.systemui.statusbar.notification.collection.NotifPipeline
 import com.android.systemui.statusbar.notification.icon.IconPack
 import com.android.systemui.statusbar.notification.icon.ui.viewbinder.NotificationIconContainerViewBinder.IconViewStore
 import com.android.systemui.statusbar.notification.icon.ui.viewmodel.NotificationIconColors
@@ -81,7 +82,9 @@ object NotificationIconContainerViewBinder {
                 StatusBarIconViewBinder.bindIconColors(sbiv, iconColors, contrastColorUtil)
             }
         }
-        launch { viewModel.bindIsolatedIcon(view, viewStore) }
+        if (!StatusBarNoHunBehavior.isEnabled) {
+            launch { viewModel.bindIsolatedIcon(view, viewStore) }
+        }
         launch { viewModel.animationsEnabled.bindAnimationsEnabled(view) }
     }
 
@@ -146,6 +149,7 @@ object NotificationIconContainerViewBinder {
         view: NotificationIconContainer,
         viewStore: IconViewStore,
     ) {
+        StatusBarNoHunBehavior.assertInLegacyMode()
         coroutineScope {
             launch {
                 isolatedIconLocation.collectTracingEach("NIC#isolatedIconLocation") { location ->
@@ -362,12 +366,15 @@ object NotificationIconContainerViewBinder {
 
 /**
  * Convenience builder for [IconViewStore] that uses [block] to extract the relevant
- * [StatusBarIconView] from an [IconPack] stored inside of the [NotifCollection].
+ * [StatusBarIconView] from an [IconPack] stored inside of the [NotifPipeline].
  */
-fun NotifCollection.iconViewStoreBy(block: (IconPack) -> StatusBarIconView?) =
-    IconViewStore { key ->
+fun NotifPipeline.iconViewStoreBy(block: (IconPack) -> StatusBarIconView?) = IconViewStore { key ->
+    if (getBundleEntry(key) != null) {
+        getBundleEntry(key)?.icons?.let(block)
+    } else {
         getEntry(key)?.icons?.let(block)
     }
+}
 
 private suspend inline fun <T> Flow<T>.collectTracingEach(
     tag: String,

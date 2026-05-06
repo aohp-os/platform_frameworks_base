@@ -27,7 +27,9 @@ java_library {
     name: "wm_shell_protolog-groups",
     srcs: [
         "src/com/android/wm/shell/protolog/ShellProtoLogGroup.java",
-        ":protolog-common-src",
+    ],
+    static_libs: [
+        "protolog-common-lib",
     ],
 }
 
@@ -61,8 +63,8 @@ java_genrule {
     name: "wm_shell_protolog_src",
     srcs: [
         ":protolog-impl",
-        ":wm_shell_protolog-groups",
         ":wm_shell-sources",
+        ":wm_shell_protolog-groups",
     ],
     tools: ["protologtool"],
     cmd: "$(location protologtool) transform-protolog-calls " +
@@ -70,59 +72,25 @@ java_genrule {
         "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
         "--loggroups-jar $(location :wm_shell_protolog-groups) " +
         "--viewer-config-file-path /system_ext/etc/wmshell.protolog.pb " +
-        "--legacy-viewer-config-file-path /system_ext/etc/wmshell.protolog.json.gz " +
-        "--legacy-output-file-path /data/misc/wmtrace/shell_log.winscope " +
         "--output-srcjar $(out) " +
         "$(locations :wm_shell-sources)",
     out: ["wm_shell_protolog.srcjar"],
 }
 
 java_genrule {
-    name: "generate-wm_shell_protolog.json",
-    srcs: [
-        ":wm_shell_protolog-groups",
-        ":wm_shell-sources",
-    ],
-    tools: ["protologtool"],
-    cmd: "$(location protologtool) generate-viewer-config " +
-        "--protolog-class com.android.internal.protolog.ProtoLog " +
-        "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
-        "--loggroups-jar $(location :wm_shell_protolog-groups) " +
-        "--viewer-config-type json " +
-        "--viewer-config $(out) " +
-        "$(locations :wm_shell-sources)",
-    out: ["wm_shell_protolog.json"],
-}
-
-java_genrule {
     name: "gen-wmshell.protolog.pb",
     srcs: [
-        ":wm_shell_protolog-groups",
         ":wm_shell-sources",
+        ":wm_shell_protolog-groups",
     ],
     tools: ["protologtool"],
     cmd: "$(location protologtool) generate-viewer-config " +
         "--protolog-class com.android.internal.protolog.ProtoLog " +
         "--loggroups-class com.android.wm.shell.protolog.ShellProtoLogGroup " +
         "--loggroups-jar $(location :wm_shell_protolog-groups) " +
-        "--viewer-config-type proto " +
         "--viewer-config $(out) " +
         "$(locations :wm_shell-sources)",
     out: ["wmshell.protolog.pb"],
-}
-
-java_genrule {
-    name: "protolog.json.gz",
-    srcs: [":generate-wm_shell_protolog.json"],
-    out: ["wmshell.protolog.json.gz"],
-    cmd: "gzip -c < $(in) > $(out)",
-}
-
-prebuilt_etc {
-    name: "wmshell.protolog.json.gz",
-    system_ext_specific: true,
-    src: ":protolog.json.gz",
-    filename_from_src: true,
 }
 
 prebuilt_etc {
@@ -149,7 +117,7 @@ java_library {
 
     srcs: [
         "src/com/android/wm/shell/desktopmode/education/data/proto/**/*.proto",
-        "src/com/android/wm/shell/desktopmode/persistence/*.proto",
+        "src/com/android/wm/shell/desktopmode/data/persistence/*.proto",
     ],
     proto: {
         type: "lite",
@@ -159,38 +127,52 @@ java_library {
 android_library {
     name: "WindowManager-Shell",
     srcs: [
-        "src/com/android/wm/shell/EventLogTags.logtags",
-        ":wm_shell_protolog_src",
         // TODO(b/168581922) protologtool do not support kotlin(*.kt)
-        ":wm_shell-sources-kt",
         ":wm_shell-aidls",
         ":wm_shell-shared-aidls",
+        ":wm_shell-sources-kt",
+        ":wm_shell_protolog_src",
+        "src/com/android/wm/shell/EventLogTags.logtags",
     ],
     resource_dirs: [
         "res",
     ],
+    aidl: {
+        include_dirs: [
+            "frameworks/native/libs/gui",
+        ],
+    },
     static_libs: [
-        "androidx.appcompat_appcompat",
-        "androidx.core_core-ktx",
-        "androidx.arch.core_core-runtime",
-        "androidx.datastore_datastore",
-        "androidx.compose.material3_material3",
-        "androidx-constraintlayout_constraintlayout",
-        "androidx.dynamicanimation_dynamicanimation",
-        "androidx.recyclerview_recyclerview",
-        "kotlinx-coroutines-android",
-        "kotlinx-coroutines-core",
+        "android.gui.boxshadow-java",
+        "//frameworks/base/packages/SystemUI/aconfig:com_android_systemui_flags_lib",
         "//frameworks/libs/systemui:com_android_systemui_shared_flags_lib",
         "//frameworks/libs/systemui:iconloader_base",
+        "//frameworks/libs/systemui:msdl",
+        "//frameworks/libs/systemui:tracinglib-platform",
+        "//frameworks/libs/systemui:view_capture",
+        "PlatformAnimationLib",
+        "WindowManager-Shell-lite-proto",
+        "WindowManager-Shell-proto",
+        "WindowManager-Shell-shared",
+        "am_flags_lib",
+        "androidx-constraintlayout_constraintlayout",
+        "androidx.appcompat_appcompat",
+        "androidx.arch.core_core-runtime",
+        "androidx.compose.material3_material3",
+        "androidx.core_core-ktx",
+        "androidx.datastore_datastore",
+        "androidx.dynamicanimation_dynamicanimation",
+        "androidx.recyclerview_recyclerview",
         "com_android_launcher3_flags_lib",
         "com_android_wm_shell_flags_lib",
         "PlatformAnimationLib",
-        "WindowManager-Shell-proto",
-        "WindowManager-Shell-lite-proto",
-        "WindowManager-Shell-shared",
-        "perfetto_trace_java_protos",
         "dagger2",
         "jsr330",
+        "kotlinx-coroutines-android",
+        "kotlinx-coroutines-core",
+        "lottie",
+        "mechanics",
+        "perfetto_trace_java_protos",
     ],
     libs: [
         // Soong fails to automatically add this dependency because all the
@@ -198,6 +180,7 @@ android_library {
         "kotlin-annotations",
     ],
     flags_packages: [
+        "am_flags",
         "com_android_wm_shell_flags",
     ],
     kotlincflags: ["-Xjvm-default=all"],
@@ -209,7 +192,6 @@ android_library {
 java_defaults {
     name: "wmshell_defaults",
     required: [
-        "wmshell.protolog.json.gz",
         "wmshell.protolog.pb",
     ],
 }

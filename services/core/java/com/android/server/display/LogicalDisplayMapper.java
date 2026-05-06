@@ -17,10 +17,20 @@
 package com.android.server.display;
 
 import static android.hardware.devicestate.DeviceState.PROPERTY_EMULATED_ONLY;
+import static android.hardware.devicestate.DeviceState.PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED;
 import static android.hardware.devicestate.DeviceState.PROPERTY_POWER_CONFIGURATION_TRIGGER_SLEEP;
 import static android.hardware.devicestate.DeviceState.PROPERTY_POWER_CONFIGURATION_TRIGGER_WAKE;
 import static android.hardware.devicestate.DeviceStateManager.INVALID_DEVICE_STATE;
 import static android.view.Display.DEFAULT_DISPLAY;
+
+import static com.android.server.display.DeviceStateToLayoutMap.STATE_DEFAULT;
+import static com.android.server.display.DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY;
+import static com.android.server.display.DisplayGroupAllocator.GROUP_TYPE_PRIMARY;
+import static com.android.server.display.DisplayGroupAllocator.REASON_EXTENDED;
+import static com.android.server.display.DisplayGroupAllocator.REASON_PROJECTED;
+import static com.android.server.display.DisplayGroupAllocator.calculateGroupId;
+import static com.android.server.display.layout.Layout.DEFAULT_DISPLAY_GROUP_NAME;
+import static com.android.server.display.layout.Layout.Display.POSITION_UNKNOWN;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -47,9 +57,9 @@ import android.view.DisplayAddress;
 import android.view.DisplayInfo;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.foldables.FoldGracePeriodProvider;
 import com.android.server.LocalServices;
 import com.android.server.display.feature.DisplayManagerFlags;
+import com.android.server.display.feature.flags.Flags;
 import com.android.server.display.layout.DisplayIdProducer;
 import com.android.server.display.layout.Layout;
 import com.android.server.display.mode.SyntheticModeManager;
@@ -60,6 +70,7 @@ import com.android.server.utils.FoldSettingProvider;
 import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * Responsible for creating {@link LogicalDisplay}s and associating them to the
@@ -81,7 +92,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
     public static final int LOGICAL_DISPLAY_EVENT_BASE = 0;
     public static final int LOGICAL_DISPLAY_EVENT_ADDED = 1 << 0;
-    public static final int LOGICAL_DISPLAY_EVENT_CHANGED = 1 << 1;
+    public static final int LOGICAL_DISPLAY_EVENT_BASIC_CHANGED = 1 << 1;
     public static final int LOGICAL_DISPLAY_EVENT_REMOVED = 1 << 2;
     public static final int LOGICAL_DISPLAY_EVENT_SWAPPED = 1 << 3;
     public static final int LOGICAL_DISPLAY_EVENT_FRAME_RATE_OVERRIDES_CHANGED = 1 << 4;
@@ -91,6 +102,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     public static final int LOGICAL_DISPLAY_EVENT_DISCONNECTED = 1 << 8;
     public static final int LOGICAL_DISPLAY_EVENT_REFRESH_RATE_CHANGED = 1 << 9;
     public static final int LOGICAL_DISPLAY_EVENT_STATE_CHANGED = 1 << 10;
+    public static final int LOGICAL_DISPLAY_EVENT_COMMITTED_STATE_CHANGED = 1 << 11;
+
 
     public static final int DISPLAY_GROUP_EVENT_ADDED = 1;
     public static final int DISPLAY_GROUP_EVENT_CHANGED = 2;
@@ -167,14 +180,11 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private final DisplayManagerService.SyncRoot mSyncRoot;
     private final LogicalDisplayMapperHandler mHandler;
     private final FoldSettingProvider mFoldSettingProvider;
-    private final FoldGracePeriodProvider mFoldGracePeriodProvider;
     private final PowerManager mPowerManager;
 
     /**
      * Has an entry for every logical display that the rest of the system has been notified about.
-     * Any entry in here requires us to send a {@link  LOGICAL_DISPLAY_EVENT_REMOVED} event when it
-     * is deleted or {@link  LOGICAL_DISPLAY_EVENT_CHANGED} when it is changed. The values are any
-     * of the {@code UPDATE_STATE_*} constant types.
+     * The values are any of the {@code UPDATE_STATE_*} constant types.
      */
     private final SparseIntArray mUpdatedLogicalDisplays = new SparseIntArray();
 
@@ -216,33 +226,37 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private final DisplayManagerFlags mFlags;
     private final SyntheticModeManager mSyntheticModeManager;
     private final FeatureFlags mDeviceStateManagerFlags;
+    private final Context mContext;
+    private final DisplayGroupAllocator mDisplayGroupAllocator;
+    private final Predicate<DisplayInfo> mIsDisplayAllowedInTopology;
 
     LogicalDisplayMapper(@NonNull Context context, FoldSettingProvider foldSettingProvider,
-            FoldGracePeriodProvider foldGracePeriodProvider,
             @NonNull DisplayDeviceRepository repo,
             @NonNull Listener listener, @NonNull DisplayManagerService.SyncRoot syncRoot,
-            @NonNull Handler handler, DisplayManagerFlags flags) {
-        this(context, foldSettingProvider, foldGracePeriodProvider, repo, listener, syncRoot,
-                handler,
-                new DeviceStateToLayoutMap((isDefault) -> isDefault ? DEFAULT_DISPLAY
-                        : sNextNonDefaultDisplayId++, flags), flags,
-                new SyntheticModeManager(flags));
+            @NonNull Handler handler, DisplayManagerFlags flags,
+            Predicate<DisplayInfo> isDisplayAllowedInTopology) {
+        this(context, foldSettingProvider, repo, listener, syncRoot, handler,
+                new DeviceStateToLayoutMap(
+                        (isDefault) -> isDefault ? DEFAULT_DISPLAY : sNextNonDefaultDisplayId++,
+                        flags), flags, new SyntheticModeManager(flags), new DisplayGroupAllocator(
+                context), isDisplayAllowedInTopology);
     }
 
     LogicalDisplayMapper(@NonNull Context context, FoldSettingProvider foldSettingProvider,
-            FoldGracePeriodProvider foldGracePeriodProvider,
             @NonNull DisplayDeviceRepository repo,
             @NonNull Listener listener, @NonNull DisplayManagerService.SyncRoot syncRoot,
             @NonNull Handler handler, @NonNull DeviceStateToLayoutMap deviceStateToLayoutMap,
-            DisplayManagerFlags flags, SyntheticModeManager syntheticModeManager) {
+            DisplayManagerFlags flags, SyntheticModeManager syntheticModeManager,
+            DisplayGroupAllocator displayGroupAllocator,
+            Predicate<DisplayInfo> isDisplayAllowedInTopology) {
         mSyncRoot = syncRoot;
+        mContext = context;
         mPowerManager = context.getSystemService(PowerManager.class);
         mInteractive = mPowerManager.isInteractive();
         mHandler = new LogicalDisplayMapperHandler(handler.getLooper());
         mDisplayDeviceRepo = repo;
         mListener = listener;
         mFoldSettingProvider = foldSettingProvider;
-        mFoldGracePeriodProvider = foldGracePeriodProvider;
         mSingleDisplayDemoMode = SystemProperties.getBoolean("persist.demo.singledisplay", false);
         mSupportsConcurrentInternalDisplays = context.getResources().getBoolean(
                 com.android.internal.R.bool.config_supportsConcurrentInternalDisplays);
@@ -256,6 +270,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         mFlags = flags;
         mSyntheticModeManager = syntheticModeManager;
         mDeviceStateManagerFlags = new FeatureFlagsImpl();
+        mDisplayGroupAllocator = displayGroupAllocator;
+        mIsDisplayAllowedInTopology = isDisplayAllowedInTopology;
     }
 
     @Override
@@ -298,6 +314,18 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
     public LogicalDisplay getDisplayLocked(int displayId) {
         return getDisplayLocked(displayId, /* includeDisabled= */ true);
+    }
+
+    /**
+     * All logical display ids in the mapper. No caller-uid access checks.
+     */
+    public int[] getAllDisplayIdsLocked() {
+        final int n = mLogicalDisplays.size();
+        final int[] ids = new int[n];
+        for (int i = 0; i < n; i++) {
+            ids[i] = mLogicalDisplays.keyAt(i);
+        }
+        return ids;
     }
 
     public LogicalDisplay getDisplayLocked(int displayId, boolean includeDisabled) {
@@ -478,6 +506,21 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             ipw.decreaseIndent();
             ipw.println();
         }
+
+        final int displayGroupCount = mDisplayGroups.size();
+        ipw.println();
+        ipw.println("Display Groups: size=" + displayGroupCount);
+        for (int i = 0; i < displayGroupCount; i++) {
+            int groupId = mDisplayGroups.keyAt(i);
+            DisplayGroup displayGroup = mDisplayGroups.valueAt(i);
+            ipw.println("Group " + groupId + ":");
+            ipw.increaseIndent();
+            displayGroup.dumpLocked(ipw);
+            ipw.decreaseIndent();
+            ipw.println();
+        }
+
+
         mDeviceStateToLayoutMap.dumpLocked(ipw);
     }
 
@@ -506,9 +549,16 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             return;
         }
 
-        Slog.i(TAG, "Requesting Transition to state: " + state.getIdentifier() + ", from state="
-                + mDeviceState.getIdentifier() + ", interactive=" + mInteractive
-                + ", mBootCompleted=" + mBootCompleted);
+        if (Flags.changeDefaultDisplayLidClosed()) {
+            if (mDeviceState.hasProperty(PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED)
+                    && !state.hasProperty(PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED)) {
+                prepareForTransitionOutOfDockedStateLocked();
+            } else if (!mDeviceState.hasProperty(PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED)
+                    && state.hasProperty(PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED)) {
+                createLayoutWithDefaultSecondaryDisplayLocked(state.getIdentifier());
+            }
+        }
+
         // As part of a state transition, we may need to turn off some displays temporarily so that
         // the transition is smooth. Plus, on some devices, only one internal displays can be
         // on at a time. We use LogicalDisplay.setIsInTransition to mark a display that needs to be
@@ -521,6 +571,11 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 mInteractive, mBootCompleted);
         final boolean sleepDevice = shouldDeviceBePutToSleep(mPendingDeviceState, mDeviceState,
                 mInteractive, mBootCompleted);
+
+        Slog.i(TAG, "Requesting Transition to state: " + state.getIdentifier() + ", from state="
+                + mDeviceState.getIdentifier() + ", interactive=" + mInteractive
+                + ", mBootCompleted=" + mBootCompleted + ", wakeDevice=" + wakeDevice
+                + ", sleepDevice=" + sleepDevice);
 
         // If all displays are off already, we can just transition here, unless we are trying to
         // wake or sleep the device as part of this transition. In that case defer the final
@@ -569,6 +624,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             if (!mDeviceStateToBeAppliedAfterBoot.equals(INVALID_DEVICE_STATE)) {
                 setDeviceStateLocked(mDeviceStateToBeAppliedAfterBoot);
             }
+            mDisplayGroupAllocator.initLater(mContext);
         }
     }
 
@@ -716,7 +772,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         // This initializes a default dynamic display layout for the default
         // device, which is used as a fallback in case no static layout definitions
         // exist or cannot be loaded.
-        if ((deviceInfo.flags & DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY) != 0) {
+        if ((deviceInfo.flags & FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY) != 0) {
             initializeDefaultDisplayDeviceLocked(device);
         }
 
@@ -729,36 +785,12 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     }
 
     private void handleDisplayDeviceRemovedLocked(DisplayDevice device) {
-        final Layout layout = mDeviceStateToLayoutMap.get(DeviceStateToLayoutMap.STATE_DEFAULT);
-        Layout.Display layoutDisplay = layout.getById(DEFAULT_DISPLAY);
-        if (layoutDisplay == null) {
-            return;
-        }
-        DisplayDeviceInfo deviceInfo = device.getDisplayDeviceInfoLocked();
-
         // Remove any virtual device mapping which exists for the display.
         mVirtualDeviceDisplayMapping.remove(device.getUniqueId());
 
-        if (layoutDisplay.getAddress().equals(deviceInfo.address)) {
-            layout.removeDisplayLocked(DEFAULT_DISPLAY);
-
-            // Need to find another local display and make it default
-            for (int i = 0; i < mLogicalDisplays.size(); i++) {
-                LogicalDisplay nextDisplay = mLogicalDisplays.valueAt(i);
-                DisplayDevice nextDevice = nextDisplay.getPrimaryDisplayDeviceLocked();
-                if (nextDevice == null) {
-                    continue;
-                }
-                DisplayDeviceInfo nextDeviceInfo = nextDevice.getDisplayDeviceInfoLocked();
-
-                if ((nextDeviceInfo.flags
-                        & DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY) != 0
-                        && !nextDeviceInfo.address.equals(deviceInfo.address)) {
-                    layout.createDefaultDisplayLocked(nextDeviceInfo.address, mIdProducer);
-                    applyLayoutLocked();
-                    return;
-                }
-            }
+        if (findNewDefaultSecondaryDisplayIfNeededLocked(device)
+                || findNewDefaultDisplayIfNeededLocked(device)) {
+            applyLayoutLocked();
         }
     }
 
@@ -795,13 +827,13 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         for (int i = mLogicalDisplays.size() - 1; i >= 0; i--) {
             final int displayId = mLogicalDisplays.keyAt(i);
             LogicalDisplay display = mLogicalDisplays.valueAt(i);
-            assignDisplayGroupLocked(display);
-
             boolean wasDirty = display.isDirtyLocked();
             mTempDisplayInfo.copyFrom(display.getDisplayInfoLocked());
             display.getNonOverrideDisplayInfoLocked(mTempNonOverrideDisplayInfo);
 
             display.updateLocked(mDisplayDeviceRepo, mSyntheticModeManager);
+            assignDisplayGroupLocked(display);
+
             final DisplayInfo newDisplayInfo = display.getDisplayInfoLocked();
             final int updateState = mUpdatedLogicalDisplays.get(displayId, UPDATE_STATE_NEW);
             final boolean wasPreviouslyUpdated = updateState != UPDATE_STATE_NEW;
@@ -809,6 +841,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             final boolean isCurrentlyEnabled = display.isEnabledLocked();
             int logicalDisplayEventMask = mLogicalDisplaysToUpdate
                     .get(displayId, LOGICAL_DISPLAY_EVENT_BASE);
+            boolean hasBasicInfoChanged =
+                    !mTempDisplayInfo.equals(newDisplayInfo, /* compareOnlyBasicChanges */ true);
 
             // The display is no longer valid and needs to be removed.
             if (!display.isValidLocked()) {
@@ -822,18 +856,13 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 if (wasPreviouslyUpdated) {
                     // The display isn't actually removed from our internal data structures until
                     // after the notification is sent; see {@link #sendUpdatesForDisplaysLocked}.
-                    if (mFlags.isConnectedDisplayManagementEnabled()) {
-                        if (mDisplaysEnabledCache.get(displayId)) {
-                            // We still need to send LOGICAL_DISPLAY_EVENT_DISCONNECTED
-                            reloop = true;
-                            logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_REMOVED;
-                        } else {
-                            mUpdatedLogicalDisplays.delete(displayId);
-                            logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_DISCONNECTED;
-                        }
+                    if (mDisplaysEnabledCache.get(displayId)) {
+                        // We still need to send LOGICAL_DISPLAY_EVENT_DISCONNECTED
+                        reloop = true;
+                        logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_REMOVED;
                     } else {
                         mUpdatedLogicalDisplays.delete(displayId);
-                        logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_REMOVED;
+                        logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_DISCONNECTED;
                     }
                 } else {
                     // This display never left this class, safe to remove without notification
@@ -844,36 +873,40 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
 
             // The display is new.
             } else if (!wasPreviouslyUpdated) {
-                if (mFlags.isConnectedDisplayManagementEnabled()) {
-                    // We still need to send LOGICAL_DISPLAY_EVENT_ADDED
-                    reloop = true;
-                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_CONNECTED;
-                } else {
-                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_ADDED;
-                }
+                // We still need to send LOGICAL_DISPLAY_EVENT_ADDED
+                reloop = true;
+                logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_CONNECTED;
             // Underlying displays device has changed to a different one.
             } else if (!TextUtils.equals(mTempDisplayInfo.uniqueId, newDisplayInfo.uniqueId)) {
                 logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_SWAPPED;
 
             // Something about the display device has changed.
-            } else if (mFlags.isConnectedDisplayManagementEnabled()
-                    && wasPreviouslyEnabled != isCurrentlyEnabled) {
+            } else if (wasPreviouslyEnabled != isCurrentlyEnabled) {
                 int event = isCurrentlyEnabled ? LOGICAL_DISPLAY_EVENT_ADDED :
                         LOGICAL_DISPLAY_EVENT_REMOVED;
                 logicalDisplayEventMask |= event;
-            } else if (wasDirty || !mTempDisplayInfo.equals(newDisplayInfo)) {
+            } else if (wasDirty) {
                 // If only the hdr/sdr ratio changed, then send just the event for that case
                 if ((diff == DisplayDeviceInfo.DIFF_HDR_SDR_RATIO)) {
                     logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_HDR_SDR_RATIO_CHANGED;
                 } else {
-                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_CHANGED;
+                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_BASIC_CHANGED
+                            | LOGICAL_DISPLAY_EVENT_REFRESH_RATE_CHANGED
+                            | LOGICAL_DISPLAY_EVENT_STATE_CHANGED;
                 }
-
-                if (mFlags.isDisplayListenerPerformanceImprovementsEnabled()) {
+            } else if (hasBasicInfoChanged
+                    || hasRefreshRateChanges(newDisplayInfo)
+                    || mTempDisplayInfo.committedState != newDisplayInfo.committedState) {
+                // If only the hdr/sdr ratio changed, then send just the event for that case
+                if ((diff == DisplayDeviceInfo.DIFF_HDR_SDR_RATIO)) {
+                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_HDR_SDR_RATIO_CHANGED;
+                } else {
+                    if (hasBasicInfoChanged) {
+                        logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_BASIC_CHANGED;
+                    }
                     logicalDisplayEventMask
                             |= updateAndGetMaskForDisplayPropertyChanges(newDisplayInfo);
                 }
-
                 // The display is involved in a display layout transition
             } else if (updateState == UPDATE_STATE_TRANSITION) {
                 logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_DEVICE_STATE_TRANSITION;
@@ -888,9 +921,12 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 // still need to let WindowManager know so it can update its own internal state for
                 // things like display cutouts.
                 display.getNonOverrideDisplayInfoLocked(mTempDisplayInfo);
-                if (!mTempNonOverrideDisplayInfo.equals(mTempDisplayInfo)) {
-                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_CHANGED;
+                if (!mTempNonOverrideDisplayInfo.equals(mTempDisplayInfo,
+                        /* compareOnlyBasicChanges */ true)) {
+                    logicalDisplayEventMask |= LOGICAL_DISPLAY_EVENT_BASIC_CHANGED;
                 }
+                logicalDisplayEventMask
+                        |= updateAndGetMaskForDisplayPropertyChanges(mTempNonOverrideDisplayInfo);
             }
             mLogicalDisplaysToUpdate.put(displayId, logicalDisplayEventMask);
             mUpdatedLogicalDisplays.put(displayId, UPDATE_STATE_UPDATED);
@@ -925,17 +961,14 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_DEVICE_STATE_TRANSITION);
         sendUpdatesForGroupsLocked(DISPLAY_GROUP_EVENT_ADDED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_REMOVED);
-        if (mFlags.isConnectedDisplayManagementEnabled()) {
-            sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_DISCONNECTED);
-        }
-        sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_CHANGED);
+        sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_DISCONNECTED);
+        sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_BASIC_CHANGED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_REFRESH_RATE_CHANGED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_STATE_CHANGED);
+        sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_COMMITTED_STATE_CHANGED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_FRAME_RATE_OVERRIDES_CHANGED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_SWAPPED);
-        if (mFlags.isConnectedDisplayManagementEnabled()) {
-            sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_CONNECTED);
-        }
+        sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_CONNECTED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_ADDED);
         sendUpdatesForDisplaysLocked(LOGICAL_DISPLAY_EVENT_HDR_SDR_RATIO_CHANGED);
         sendUpdatesForGroupsLocked(DISPLAY_GROUP_EVENT_CHANGED);
@@ -953,15 +986,30 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         }
     }
 
+    private boolean hasRefreshRateChanges(DisplayInfo newDisplayInfo) {
+        return mTempDisplayInfo.getRefreshRate() != newDisplayInfo.getRefreshRate()
+                || mTempDisplayInfo.appVsyncOffsetNanos != newDisplayInfo.appVsyncOffsetNanos
+                || mTempDisplayInfo.presentationDeadlineNanos
+                != newDisplayInfo.presentationDeadlineNanos
+                || !Arrays.equals(mTempDisplayInfo.supportedRefreshRates,
+                newDisplayInfo.supportedRefreshRates);
+    }
+
     @VisibleForTesting
     int updateAndGetMaskForDisplayPropertyChanges(DisplayInfo newDisplayInfo) {
         int mask = LOGICAL_DISPLAY_EVENT_BASE;
-        if (mTempDisplayInfo.getRefreshRate() != newDisplayInfo.getRefreshRate()) {
+        if (hasRefreshRateChanges(newDisplayInfo)) {
             mask |= LOGICAL_DISPLAY_EVENT_REFRESH_RATE_CHANGED;
         }
 
-        if (mTempDisplayInfo.state != newDisplayInfo.state) {
+        if (mFlags.isDisplayListenerPerformanceImprovementsEnabled()
+                && mTempDisplayInfo.state != newDisplayInfo.state) {
             mask |= LOGICAL_DISPLAY_EVENT_STATE_CHANGED;
+        }
+
+        if (mFlags.isCommittedStateSeparateEventEnabled()
+                && mTempDisplayInfo.committedState != newDisplayInfo.committedState) {
+            mask |= LOGICAL_DISPLAY_EVENT_COMMITTED_STATE_CHANGED;
         }
         return mask;
     }
@@ -984,23 +1032,15 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                         + "display=" + id + " with device=" + uniqueId);
             }
 
-            if (mFlags.isConnectedDisplayManagementEnabled()) {
-                if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_ADDED) {
-                    mDisplaysEnabledCache.put(id, true);
-                } else if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_REMOVED) {
-                    mDisplaysEnabledCache.delete(id);
-                }
+            if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_ADDED) {
+                mDisplaysEnabledCache.put(id, true);
+            } else if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_REMOVED) {
+                mDisplaysEnabledCache.delete(id);
             }
 
             mListener.onLogicalDisplayEventLocked(display, logicalDisplayEvent);
 
-            if (mFlags.isConnectedDisplayManagementEnabled()) {
-                if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_DISCONNECTED) {
-                    mLogicalDisplays.delete(id);
-                }
-            } else if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_REMOVED) {
-                // We wait until we sent the EVENT_REMOVED event before actually removing the
-                // display.
+            if (logicalDisplayEvent == LOGICAL_DISPLAY_EVENT_DISCONNECTED) {
                 mLogicalDisplays.delete(id);
             }
         }
@@ -1056,16 +1096,27 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         final DisplayGroup oldGroup = getDisplayGroupLocked(groupId);
 
         // groupName directly from LogicalDisplay (not from DisplayInfo)
-        final String groupName = display.getDisplayGroupNameLocked();
+        String groupName = display.getLayoutGroupNameLocked();
         // DisplayDeviceInfo is safe to use, it is updated earlier
         final DisplayDeviceInfo displayDeviceInfo = displayDevice.getDisplayDeviceInfoLocked();
+
+        int decidedGroupId = Display.INVALID_DISPLAY_GROUP;
+
+        // Choose a display group based on the content mode type of the display.
+        String requiredGroupType = GROUP_TYPE_PRIMARY;
+
+        if (mFlags.isSeparateTimeoutsEnabled() && TextUtils.isEmpty(groupName)) {
+            requiredGroupType = mDisplayGroupAllocator.decideRequiredGroupTypeLocked(
+                    display, displayDeviceInfo.type);
+            decidedGroupId = calculateGroupId(requiredGroupType, mDisplayGroups);
+            groupName = requiredGroupType;
+        }
         // Get the new display group if a change is needed, if display group name is empty and
-        // {@code DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP} is not set, the display is assigned
-        // to the default display group.
+        // {@code DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP} is not set, and required group type
+        // has not been decided, the display is assigned to the default display group.
         final boolean needsOwnDisplayGroup =
                 (displayDeviceInfo.flags & DisplayDeviceInfo.FLAG_OWN_DISPLAY_GROUP) != 0
                         || !TextUtils.isEmpty(groupName);
-
         final boolean hasOwnDisplayGroup = groupId != Display.DEFAULT_DISPLAY_GROUP;
         final boolean needsDeviceDisplayGroup =
                 !needsOwnDisplayGroup && linkedDeviceUniqueId != null;
@@ -1073,18 +1124,33 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 deviceDisplayGroupId != null && groupId == deviceDisplayGroupId;
         if (groupId == Display.INVALID_DISPLAY_GROUP
                 || hasOwnDisplayGroup != needsOwnDisplayGroup
-                || hasDeviceDisplayGroup != needsDeviceDisplayGroup) {
+                || hasDeviceDisplayGroup != needsDeviceDisplayGroup
+                || decidedGroupId != Display.INVALID_DISPLAY_GROUP) {
             groupId =
-                    assignDisplayGroupIdLocked(needsOwnDisplayGroup,
-                            display.getDisplayGroupNameLocked(), needsDeviceDisplayGroup,
-                            linkedDeviceUniqueId);
+                    assignDisplayGroupIdLocked(needsDeviceDisplayGroup, needsOwnDisplayGroup,
+                            display.getLayoutGroupNameLocked(), needsDeviceDisplayGroup,
+                            linkedDeviceUniqueId, decidedGroupId);
         }
 
         // Create a new group if needed
         DisplayGroup newGroup = getDisplayGroupLocked(groupId);
         if (newGroup == null) {
             newGroup = new DisplayGroup(groupId);
+            newGroup.setGroupName(groupName);
             mDisplayGroups.append(groupId, newGroup);
+
+            int reason = mDisplayGroupAllocator.getContentModeForDisplayLocked(
+                    display, displayDeviceInfo.type);
+
+            // We set the flag only if the group being created is a non-default group, is internal
+            // or external(We don't want to set FLAG_DEFAULT_GROUP_ADJACENT for virtual displays)
+            // and is in projected,extended or non desktop mode
+            if (groupId != Display.DEFAULT_DISPLAY_GROUP
+                    && (displayDeviceInfo.type == Display.TYPE_INTERNAL
+                            || displayDeviceInfo.type == Display.TYPE_EXTERNAL)
+                    && (reason == REASON_PROJECTED || reason == REASON_EXTENDED)) {
+                newGroup.setFlags(DisplayGroup.FLAG_DEFAULT_GROUP_ADJACENT);
+            }
         }
         if (oldGroup != newGroup) {
             if (oldGroup != null) {
@@ -1094,7 +1160,9 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
             display.updateDisplayGroupIdLocked(groupId);
             Slog.i(TAG, "Setting new display group " + groupId + " for display "
                     + displayId + ", from previous group: "
-                    + (oldGroup != null ? oldGroup.getGroupId() : "null"));
+                    + (oldGroup != null ? oldGroup.getGroupId() : "null")
+                    + ", for reason: " + mDisplayGroupAllocator.getReason()
+                    + ", with flags: " + newGroup.getFlags());
         }
     }
 
@@ -1257,8 +1325,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
     private LogicalDisplay createNewLogicalDisplayLocked(DisplayDevice device, int displayId) {
         final int layerStack = assignLayerStackLocked(displayId);
         final LogicalDisplay display = new LogicalDisplay(displayId, layerStack, device,
-                mFlags.isPixelAnisotropyCorrectionInLogicalDisplayEnabled(),
-                mFlags.isAlwaysRotateDisplayDeviceEnabled());
+                mFlags.isSyncedResolutionSwitchEnabled(), mFlags.isSyntheticModesV2Enabled(),
+                mFlags.isSizeOverrideForExternalDisplaysEnabled());
         display.updateLocked(mDisplayDeviceRepo, mSyntheticModeManager);
 
         final DisplayInfo info = display.getDisplayInfoLocked();
@@ -1291,8 +1359,12 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         }
     }
 
-    private int assignDisplayGroupIdLocked(boolean isOwnDisplayGroup, String displayGroupName,
-            boolean isDeviceDisplayGroup, Integer linkedDeviceUniqueId) {
+    private int assignDisplayGroupIdLocked(boolean needsDeviceDisplayGroup,
+            boolean isOwnDisplayGroup, String displayGroupName,
+            boolean isDeviceDisplayGroup, Integer linkedDeviceUniqueId, int decidedGroupId) {
+        if (decidedGroupId != Display.INVALID_DISPLAY_GROUP && !needsDeviceDisplayGroup) {
+            return decidedGroupId;
+        }
         if (isDeviceDisplayGroup && linkedDeviceUniqueId != null) {
             int deviceDisplayGroupId = mDeviceDisplayGroupIds.get(linkedDeviceUniqueId);
             // A value of 0 indicates that no device display group was found.
@@ -1316,7 +1388,7 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         // display for the default display device that is found.
         // To that end, when we are notified of a new default display, we add it to
         // the default layout definition if it is not already there.
-        final Layout layout = mDeviceStateToLayoutMap.get(DeviceStateToLayoutMap.STATE_DEFAULT);
+        final Layout layout = mDeviceStateToLayoutMap.get(STATE_DEFAULT);
         if (layout.getById(DEFAULT_DISPLAY) != null) {
             // The layout should only have one default display
             return;
@@ -1344,9 +1416,8 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
      * the value of `Continue using app on fold` setting
      */
     private boolean shouldStayAwakeOnFold() {
-        return mFoldSettingProvider.shouldStayAwakeOnFold() || (
-                mFoldSettingProvider.shouldSelectiveStayAwakeOnFold()
-                        && mFoldGracePeriodProvider.isEnabled());
+        return mFoldSettingProvider.shouldStayAwakeOnFold()
+                || mFoldSettingProvider.shouldSelectiveStayAwakeOnFold();
     }
 
     private String displayEventToString(int msg) {
@@ -1355,8 +1426,6 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 return "added";
             case LOGICAL_DISPLAY_EVENT_DEVICE_STATE_TRANSITION:
                 return "transition";
-            case LOGICAL_DISPLAY_EVENT_CHANGED:
-                return "changed";
             case LOGICAL_DISPLAY_EVENT_FRAME_RATE_OVERRIDES_CHANGED:
                 return "framerate_override";
             case LOGICAL_DISPLAY_EVENT_SWAPPED:
@@ -1371,8 +1440,12 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
                 return "disconnected";
             case LOGICAL_DISPLAY_EVENT_STATE_CHANGED:
                 return "state_changed";
+            case LOGICAL_DISPLAY_EVENT_COMMITTED_STATE_CHANGED:
+                return "committed_state_changed";
             case LOGICAL_DISPLAY_EVENT_REFRESH_RATE_CHANGED:
                 return "refresh_rate_changed";
+            case LOGICAL_DISPLAY_EVENT_BASIC_CHANGED:
+                return "basic_changed";
         }
         return null;
     }
@@ -1386,6 +1459,142 @@ class LogicalDisplayMapper implements DisplayDeviceRepository.Listener {
         }
         setEnabledLocked(display, enabled);
         updateLogicalDisplaysLocked();
+    }
+
+    /**
+     * If transitioning out of the docked state, enable all the displays that were disabled by this
+     * state. Also, remove its layout so that a fresh one is created the next time, because the
+     * default secondary display might be disconnected in the meantime.
+     */
+    private void prepareForTransitionOutOfDockedStateLocked() {
+        for (int i = 0; i < mCurrentLayout.size(); i++) {
+            Layout.Display layoutDisplay = mCurrentLayout.getAt(i);
+            DisplayDevice device = mDisplayDeviceRepo.getByAddressLocked(
+                    layoutDisplay.getAddress());
+            if (device == null) {
+                continue;
+            }
+            getDisplayLocked(device).setEnabledLocked(true);
+        }
+        mDeviceStateToLayoutMap.remove(mDeviceState.getIdentifier());
+    }
+
+    private void createLayoutWithDefaultSecondaryDisplayLocked(int identifier) {
+        for (int i = 0; i < mLogicalDisplays.size(); i++) {
+            LogicalDisplay display = mLogicalDisplays.valueAt(i);
+            if (isDisplayAllowedToBeDefaultSecondaryLocked(display)) {
+                Layout layout = new Layout();
+
+                // Default, enabled secondary display
+                layout.createDefaultDisplayLocked(display.getPrimaryDisplayDeviceLocked()
+                        .getDisplayDeviceInfoLocked().address, mIdProducer);
+
+                // Disabled internal display
+                layout.createDisplayLocked(mDeviceStateToLayoutMap.get(STATE_DEFAULT).getById(
+                                DEFAULT_DISPLAY).getAddress(), /* isDefault= */ false,
+                        /* isEnabled= */ false, DEFAULT_DISPLAY_GROUP_NAME, mIdProducer,
+                        POSITION_UNKNOWN, /* leadDisplayAddress= */ null,
+                        /* brightnessThrottlingMapId= */ null, /* refreshRateZoneId= */ null,
+                        /* refreshRateThermalThrottlingMapId= */ null,
+                        /* powerThrottlingMapId= */ null);
+
+                mDeviceStateToLayoutMap.put(identifier, layout);
+                break;
+            }
+        }
+    }
+
+    private boolean isDisplayAllowedToBeDefaultSecondaryLocked(LogicalDisplay display) {
+        DisplayDevice device = display.getPrimaryDisplayDeviceLocked();
+        if (device == null) {
+            return false;
+        }
+        DisplayInfo displayInfo = display.getDisplayInfoLocked();
+        return displayInfo.type != Display.TYPE_INTERNAL && display.isEnabledLocked()
+                && display.canHostTasksLocked() && mIsDisplayAllowedInTopology.test(displayInfo)
+                && (device.getDisplayDeviceInfoLocked().flags & FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY)
+                != 0;
+    }
+
+    /**
+     * Find a new default secondary display if the current one is being removed. If none can be
+     * found, remove the docked state layout so that the default layout is applied instead.
+     * @param removedDisplayDevice The display device being removed
+     * @return True if the current layout has been modified and needs to be re-applied.
+     */
+    private boolean findNewDefaultSecondaryDisplayIfNeededLocked(
+            DisplayDevice removedDisplayDevice) {
+        if (!Flags.changeDefaultDisplayLidClosed() || !mDeviceState.hasProperty(
+                PROPERTY_LAPTOP_HARDWARE_CONFIGURATION_DOCKED)) {
+            return false;
+        }
+
+        final Layout layout = mDeviceStateToLayoutMap.get(mDeviceState.getIdentifier());
+        Layout.Display layoutDefaultDisplay = layout.getById(DEFAULT_DISPLAY);
+        DisplayDeviceInfo removedDeviceInfo = removedDisplayDevice.getDisplayDeviceInfoLocked();
+        if (layoutDefaultDisplay == null || !layoutDefaultDisplay.getAddress().equals(
+                removedDeviceInfo.address)) {
+            return false;
+        }
+        layout.removeDisplayLocked(DEFAULT_DISPLAY);
+
+        // Need to find another secondary display and make it default
+        boolean found = false;
+        for (int i = 0; i < mLogicalDisplays.size(); i++) {
+            LogicalDisplay nextDisplay = mLogicalDisplays.valueAt(i);
+            DisplayDevice nextDevice = nextDisplay.getPrimaryDisplayDeviceLocked();
+            if (nextDevice == null) {
+                continue;
+            }
+            DisplayDeviceInfo nextDeviceInfo = nextDevice.getDisplayDeviceInfoLocked();
+
+            if (isDisplayAllowedToBeDefaultSecondaryLocked(nextDisplay)
+                    && !nextDeviceInfo.address.equals(removedDeviceInfo.address)) {
+                layout.createDefaultDisplayLocked(nextDeviceInfo.address, mIdProducer);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            // If no secondary display can be default, go back to the default layout
+            mDeviceStateToLayoutMap.remove(mDeviceState.getIdentifier());
+        }
+        return true;
+    }
+
+    /**
+     * Find a new default display if the current one is being removed.
+     * @param removedDisplayDevice The display device being removed
+     * @return True if the current layout has been modified and needs to be re-applied.
+     */
+    private boolean findNewDefaultDisplayIfNeededLocked(DisplayDevice removedDisplayDevice) {
+        final Layout layout = mDeviceStateToLayoutMap.get(STATE_DEFAULT);
+        Layout.Display layoutDefaultDisplay = layout.getById(DEFAULT_DISPLAY);
+        DisplayDeviceInfo removedDeviceInfo = removedDisplayDevice.getDisplayDeviceInfoLocked();
+
+        if (layoutDefaultDisplay == null || !layoutDefaultDisplay.getAddress().equals(
+                removedDeviceInfo.address)) {
+            return false;
+        }
+        layout.removeDisplayLocked(DEFAULT_DISPLAY);
+
+        // Need to find another local display and make it default
+        for (int i = 0; i < mLogicalDisplays.size(); i++) {
+            LogicalDisplay nextDisplay = mLogicalDisplays.valueAt(i);
+            DisplayDevice nextDevice = nextDisplay.getPrimaryDisplayDeviceLocked();
+            if (nextDevice == null) {
+                continue;
+            }
+            DisplayDeviceInfo nextDeviceInfo = nextDevice.getDisplayDeviceInfoLocked();
+
+            if ((nextDeviceInfo.flags & DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY)
+                    != 0 && !nextDeviceInfo.address.equals(removedDeviceInfo.address)) {
+                layout.createDefaultDisplayLocked(nextDeviceInfo.address, mIdProducer);
+                return true;
+            }
+        }
+        return false;
     }
 
     public interface Listener {

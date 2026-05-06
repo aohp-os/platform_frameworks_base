@@ -17,7 +17,6 @@
 package com.android.systemui.shade
 
 import android.view.MotionEvent
-import android.view.ViewGroup
 import com.android.systemui.shade.domain.interactor.PanelExpansionInteractor
 import com.android.systemui.shade.domain.interactor.ShadeBackActionInteractor
 import com.android.systemui.shade.domain.interactor.ShadeLockscreenInteractor
@@ -26,7 +25,6 @@ import com.android.systemui.statusbar.phone.HeadsUpAppearanceController
 import java.util.function.Consumer
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 
 /** Empty implementation of ShadeViewController for variants with no shade. */
 open class ShadeViewControllerEmptyImpl @Inject constructor() :
@@ -55,18 +53,9 @@ open class ShadeViewControllerEmptyImpl @Inject constructor() :
 
     override fun startExpandLatencyTracking() {}
 
-    override fun startBouncerPreHideAnimation() {}
-
-    override fun dozeTimeTick() {}
-
     override fun resetViews(animate: Boolean) {}
 
     override val barState: Int = 0
-
-    @Deprecated("Only supported by very old devices that will not adopt scenes.")
-    override fun closeUserSwitcherIfOpen(): Boolean {
-        return false
-    }
 
     override fun onBackPressed() {}
 
@@ -81,8 +70,6 @@ open class ShadeViewControllerEmptyImpl @Inject constructor() :
 
     override fun setQsScrimEnabled(qsScrimEnabled: Boolean) {}
 
-    override fun setAmbientIndicationTop(ambientIndicationTop: Int, ambientTextVisible: Boolean) {}
-
     override fun updateSystemUiStateFlags() {}
 
     override fun updateTouchableRegion() {}
@@ -90,9 +77,6 @@ open class ShadeViewControllerEmptyImpl @Inject constructor() :
     override fun transitionToExpandedShade(delay: Long) {}
 
     @Deprecated("Not supported by scenes") override fun resetViewGroupFade() {}
-
-    @Deprecated("Not supported by scenes")
-    override fun setKeyguardTransitionProgress(keyguardAlpha: Float, keyguardTranslationY: Int) {}
 
     @Deprecated("Not supported by scenes") override fun setOverStretchAmount(amount: Float) {}
 
@@ -126,8 +110,6 @@ open class ShadeViewControllerEmptyImpl @Inject constructor() :
 
     override val shadeHeadsUpTracker = ShadeHeadsUpTrackerEmptyImpl()
     override val shadeFoldAnimator = ShadeFoldAnimatorEmptyImpl()
-    @Deprecated("Use SceneInteractor.currentScene instead.")
-    override val legacyPanelExpansion = flowOf(0f)
     override val udfpsTransitionToFullShadeProgress = MutableStateFlow(0f)
 }
 
@@ -153,6 +135,4 @@ class ShadeFoldAnimatorEmptyImpl : ShadeFoldAnimator {
     ) {}
 
     override fun cancelFoldToAodAnimation() {}
-
-    override val view: ViewGroup? = null
 }

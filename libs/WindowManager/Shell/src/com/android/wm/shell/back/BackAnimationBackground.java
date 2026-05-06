@@ -24,6 +24,7 @@ import android.annotation.Nullable;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.view.SurfaceControl;
+import android.window.DesktopExperienceFlags;
 
 import com.android.internal.graphics.ColorUtils;
 import com.android.internal.view.AppearanceRegion;
@@ -59,9 +60,9 @@ public class BackAnimationBackground {
      * @param statusbarHeight The height of the statusbar (in px).
      */
     public void ensureBackground(Rect startRect, int color,
-            @NonNull SurfaceControl.Transaction transaction, int statusbarHeight) {
+            @NonNull SurfaceControl.Transaction transaction, int statusbarHeight, int displayId) {
         ensureBackground(startRect, color, transaction, statusbarHeight,
-                null /* cropBounds */, 0 /* cornerRadius */);
+                null /* cropBounds */, 0 /* cornerRadius */, displayId);
     }
 
     /**
@@ -76,7 +77,7 @@ public class BackAnimationBackground {
      */
     public void ensureBackground(Rect startRect, int color,
             @NonNull SurfaceControl.Transaction transaction, int statusbarHeight,
-            @Nullable Rect cropBounds, float cornerRadius) {
+            @Nullable Rect cropBounds, float cornerRadius, int displayId) {
         if (mBackgroundSurface != null) {
             return;
         }
@@ -91,7 +92,11 @@ public class BackAnimationBackground {
                 .setCallsite("BackAnimationBackground")
                 .setColorLayer();
 
-        mRootTaskDisplayAreaOrganizer.attachToDisplayArea(DEFAULT_DISPLAY, colorLayerBuilder);
+        if (DesktopExperienceFlags.ENABLE_MULTIDISPLAY_TRACKPAD_BACK_GESTURE.isTrue()) {
+            mRootTaskDisplayAreaOrganizer.attachToDisplayArea(displayId, colorLayerBuilder);
+        } else {
+            mRootTaskDisplayAreaOrganizer.attachToDisplayArea(DEFAULT_DISPLAY, colorLayerBuilder);
+        }
         mBackgroundSurface = colorLayerBuilder.build();
         transaction.setColor(mBackgroundSurface, colorComponents)
                 .setLayer(mBackgroundSurface, BACKGROUND_LAYER)

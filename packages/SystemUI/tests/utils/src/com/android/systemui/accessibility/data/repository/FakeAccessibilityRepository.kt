@@ -20,14 +20,28 @@ import com.android.systemui.dagger.SysUISingleton
 import dagger.Binds
 import dagger.Module
 import javax.inject.Inject
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.flow.MutableStateFlow
 
 @SysUISingleton
 class FakeAccessibilityRepository(
     override val isTouchExplorationEnabled: MutableStateFlow<Boolean>,
     override val isEnabled: MutableStateFlow<Boolean>,
+    override val isEnabledFiltered: MutableStateFlow<Boolean>,
 ) : AccessibilityRepository {
-    @Inject constructor() : this(MutableStateFlow(false), MutableStateFlow(false))
+    @Inject
+    constructor() : this(MutableStateFlow(false), MutableStateFlow(false), MutableStateFlow(false))
+
+    private var recommendedTimeout: Duration = 0.milliseconds
+
+    fun setRecommendedTimeout(duration: Duration) {
+        recommendedTimeout = duration
+    }
+
+    override fun getRecommendedTimeout(originalTimeout: Duration, uiFlags: Int): Duration {
+        return recommendedTimeout
+    }
 }
 
 @Module

@@ -157,6 +157,7 @@ public class ApplicationsState {
     int mCurComputingSizeUserId;
     boolean mSessionsChanged;
     // Maps all installed modules on the system to whether they're hidden or not.
+    // TODO(b/382016780): to be removed after flag cleanup.
     final HashMap<String, Boolean> mSystemModules = new HashMap<>();
 
     // Temporary for dispatching session callbacks.  Only touched by main thread.
@@ -226,12 +227,14 @@ public class ApplicationsState {
         mRetrieveFlags = PackageManager.MATCH_DISABLED_COMPONENTS |
                 PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS;
 
-        final List<ModuleInfo> moduleInfos = mPm.getInstalledModules(0 /* flags */);
-        for (ModuleInfo info : moduleInfos) {
-            mSystemModules.put(info.getPackageName(), info.isHidden());
-            if (Flags.provideInfoOfApkInApex()) {
-                for (String apkInApexPackageName : info.getApkInApexPackageNames()) {
-                    mSystemModules.put(apkInApexPackageName, info.isHidden());
+        if (!Flags.removeHiddenModuleUsage()) {
+            final List<ModuleInfo> moduleInfos = mPm.getInstalledModules(0 /* flags */);
+            for (ModuleInfo info : moduleInfos) {
+                mSystemModules.put(info.getPackageName(), info.isHidden());
+                if (Flags.provideInfoOfApkInApex()) {
+                    for (String apkInApexPackageName : info.getApkInApexPackageNames()) {
+                        mSystemModules.put(apkInApexPackageName, info.isHidden());
+                    }
                 }
             }
         }
@@ -336,7 +339,7 @@ public class ApplicationsState {
                 }
                 mHaveDisabledApps = true;
             }
-            if (isHiddenModule(info.packageName)) {
+            if (!Flags.removeHiddenModuleUsage() && isHiddenModule(info.packageName)) {
                 mApplications.remove(i--);
                 continue;
             }
@@ -453,6 +456,7 @@ public class ApplicationsState {
         return mHaveInstantApps;
     }
 
+    // TODO(b/382016780): to be removed after flag cleanup.
     boolean isHiddenModule(String packageName) {
         Boolean isHidden = mSystemModules.get(packageName);
         if (isHidden == null) {
@@ -462,6 +466,7 @@ public class ApplicationsState {
         return isHidden;
     }
 
+    // TODO(b/382016780): to be removed after flag cleanup.
     boolean isSystemModule(String packageName) {
         return mSystemModules.containsKey(packageName);
     }
@@ -580,7 +585,8 @@ public class ApplicationsState {
                                             legacy, true);
                                 } catch (RemoteException ignored) {
                                 }
-                            } catch (NameNotFoundException | IOException e) {
+                            } catch (
+                              IllegalArgumentException | NameNotFoundException | IOException e) {
                                 Log.w(TAG, "Failed to query stats: " + e);
                                 try {
                                     mBackgroundHandler.mStatsObserver.onGetStatsCompleted(
@@ -755,7 +761,7 @@ public class ApplicationsState {
             Log.i(TAG, "Looking up entry of pkg " + info.packageName + ": " + entry);
         }
         if (entry == null) {
-            if (isHiddenModule(info.packageName)) {
+            if (!Flags.removeHiddenModuleUsage() && isHiddenModule(info.packageName)) {
                 if (DEBUG) {
                     Log.i(TAG, "No AppEntry for " + info.packageName + " (hidden module)");
                 }
@@ -998,8 +1004,7 @@ public class ApplicationsState {
                 Log.i(TAG, "Rebuilding...");
             }
             for (AppEntry entry : apps) {
-                if (android.multiuser.Flags.enablePrivateSpaceFeatures()
-                        && android.multiuser.Flags.handleInterleavedSettingsForPrivateSpace()) {
+                if (android.multiuser.Flags.enablePrivateSpaceFeatures()) {
                     UserHandle userHandle = UserHandle.of(UserHandle.getUserId(entry.info.uid));
                     if (!profileHideInQuietModeStatus.containsKey(userHandle)) {
                         profileHideInQuietModeStatus.put(
@@ -1825,8 +1830,7 @@ public class ApplicationsState {
          * quiet mode is enabled, false otherwise.
          */
         private boolean shouldHideInQuietMode(@NonNull UserManager userManager, int uid) {
-            if (android.multiuser.Flags.enablePrivateSpaceFeatures()
-                    && android.multiuser.Flags.handleInterleavedSettingsForPrivateSpace()) {
+            if (android.multiuser.Flags.enablePrivateSpaceFeatures()) {
                 UserHandle userHandle = UserHandle.of(UserHandle.getUserId(uid));
                 return isHideInQuietEnabledForProfile(userManager, userHandle);
             }

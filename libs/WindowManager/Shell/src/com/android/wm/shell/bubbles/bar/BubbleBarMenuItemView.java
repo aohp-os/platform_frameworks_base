@@ -17,15 +17,15 @@ package com.android.wm.shell.bubbles.bar;
 
 import android.annotation.ColorInt;
 import android.content.Context;
-import android.content.res.TypedArray;
 import android.graphics.Color;
-import android.graphics.drawable.Icon;
+import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.android.wm.shell.R;
+import com.android.wm.shell.shared.TypefaceUtils;
 
 /**
  * Bubble bar expanded view menu item view to display menu action details
@@ -56,22 +56,26 @@ public class BubbleBarMenuItemView extends LinearLayout {
         super.onFinishInflate();
         mImageView = findViewById(R.id.bubble_bar_menu_item_icon);
         mTextView = findViewById(R.id.bubble_bar_menu_item_title);
+        TypefaceUtils.setTypeface(mTextView, TypefaceUtils.FontFamily.GSF_TITLE_MEDIUM);
     }
 
     /**
      * Update menu item with the details and tint color
      */
-    void update(Icon icon, String title, @ColorInt int tint) {
+    void update(DrawableProvider icon, String title, @ColorInt int tint) {
+        Drawable drawable = icon == null ? null : icon.getDrawable(getContext());
         if (tint == Color.TRANSPARENT) {
-            final TypedArray typedArray = getContext().obtainStyledAttributes(
-                    new int[]{com.android.internal.R.attr.materialColorOnSurface});
-            mTextView.setTextColor(typedArray.getColor(0, Color.BLACK));
+            mTextView.setTextColor(
+                    getContext().getColor(com.android.internal.R.color.materialColorOnSurface));
         } else {
-            icon.setTint(tint);
+            if (drawable != null) {
+                drawable.mutate();
+                drawable.setTint(tint);
+            }
             mTextView.setTextColor(tint);
         }
 
-        mImageView.setImageIcon(icon);
+        mImageView.setImageDrawable(drawable);
         mTextView.setText(title);
     }
 }

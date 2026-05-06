@@ -15,18 +15,18 @@
  */
 package com.android.wm.shell.bubbles;
 
+import static com.android.launcher3.icons.IconNormalizer.ICON_VISIBLE_AREA_FACTOR;
+
 import android.annotation.DrawableRes;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Outline;
-import android.graphics.Path;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
-import android.util.PathParser;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewOutlineProvider;
@@ -34,8 +34,9 @@ import android.widget.ImageView;
 
 import androidx.constraintlayout.widget.ConstraintLayout;
 
+import com.android.launcher3.icons.BitmapInfo;
 import com.android.launcher3.icons.DotRenderer;
-import com.android.launcher3.icons.IconNormalizer;
+import com.android.launcher3.icons.DotRenderer.IconShapeInfo;
 import com.android.wm.shell.R;
 import com.android.wm.shell.shared.animation.Interpolators;
 
@@ -52,8 +53,6 @@ public class BadgedImageView extends ConstraintLayout {
 
     /** Same value as Launcher3 dot code */
     public static final float WHITE_SCRIM_ALPHA = 0.54f;
-    /** Same as value in Launcher3 IconShape */
-    public static final int DEFAULT_PATH_SIZE = 100;
 
     /**
      * Flags that suppress the visibility of the 'new' dot, for one reason or another. If any of
@@ -83,12 +82,11 @@ public class BadgedImageView extends ConstraintLayout {
     private BubbleViewProvider mBubble;
     private BubblePositioner mPositioner;
     private boolean mBadgeOnLeft;
-    private boolean mDotOnLeft;
     private DotRenderer mDotRenderer;
-    private DotRenderer.DrawParams mDrawParams;
+    private final DotRenderer.DrawParams mDrawParams;
     private int mDotColor;
 
-    private Rect mTempBounds = new Rect();
+    private final Rect mTempBounds = new Rect();
 
     public BadgedImageView(Context context) {
         this(context, null);
@@ -119,6 +117,7 @@ public class BadgedImageView extends ConstraintLayout {
         ta.recycle();
 
         mDrawParams = new DotRenderer.DrawParams();
+        mDrawParams.shapeInfo = IconShapeInfo.DEFAULT_NORMALIZED;
 
         setFocusable(true);
         setClickable(true);
@@ -132,18 +131,14 @@ public class BadgedImageView extends ConstraintLayout {
 
     private void getOutline(Outline outline) {
         final int bubbleSize = mPositioner.getBubbleSize();
-        final int normalizedSize = IconNormalizer.getNormalizedCircleSize(bubbleSize);
+        final int normalizedSize = Math.round(ICON_VISIBLE_AREA_FACTOR * bubbleSize);
         final int inset = (bubbleSize - normalizedSize) / 2;
         outline.setOval(inset, inset, inset + normalizedSize, inset + normalizedSize);
     }
 
     public void initialize(BubblePositioner positioner) {
         mPositioner = positioner;
-
-        Path iconPath = PathParser.createPathFromPathData(
-                getResources().getString(com.android.internal.R.string.config_icon_mask));
-        mDotRenderer = new DotRenderer(mPositioner.getBubbleSize(),
-                iconPath, DEFAULT_PATH_SIZE);
+        mDotRenderer = new DotRenderer(mPositioner.getBubbleSize());
     }
 
     public void showDotAndBadge(boolean onLeft) {
@@ -154,7 +149,7 @@ public class BadgedImageView extends ConstraintLayout {
     public void hideDotAndBadge(boolean onLeft) {
         addDotSuppressionFlag(BadgedImageView.SuppressionFlag.BEHIND_STACK);
         mBadgeOnLeft = onLeft;
-        mDotOnLeft = onLeft;
+        mDrawParams.leftAlign = onLeft;
         hideBadge();
     }
 
@@ -164,14 +159,16 @@ public class BadgedImageView extends ConstraintLayout {
     public void setRenderedBubble(BubbleViewProvider bubble) {
         mBubble = bubble;
         mBubbleIcon.setImageBitmap(bubble.getBubbleIcon());
-        mAppIcon.setImageBitmap(bubble.getAppBadge());
+        BitmapInfo appBadgeInfo = bubble.getAppBadge();
+        mAppIcon.setImageDrawable(appBadgeInfo == null ? null : appBadgeInfo.newIcon(getContext()));
         if (mDotSuppressionFlags.contains(SuppressionFlag.BEHIND_STACK)) {
             hideBadge();
         } else {
             showBadge();
         }
         mDotColor = bubble.getDotColor();
-        drawDot(bubble.getDotPath());
+        mDrawParams.setDotColor(mDotColor);
+        invalidate();
     }
 
     @Override
@@ -183,10 +180,7 @@ public class BadgedImageView extends ConstraintLayout {
         }
 
         getDrawingRect(mTempBounds);
-
-        mDrawParams.dotColor = mDotColor;
         mDrawParams.iconBounds = mTempBounds;
-        mDrawParams.leftAlign = mDotOnLeft;
         mDrawParams.scale = mDotScale;
 
         mDotRenderer.draw(canvas, mDrawParams);
@@ -236,15 +230,6 @@ public class BadgedImageView extends ConstraintLayout {
     }
 
     /**
-     * @param iconPath The new icon path to use when calculating dot position.
-     */
-    void drawDot(Path iconPath) {
-        mDotRenderer = new DotRenderer(mPositioner.getBubbleSize(),
-                iconPath, DEFAULT_PATH_SIZE);
-        invalidate();
-    }
-
-    /**
      * How big the dot should be, fraction from 0 to 1.
      */
     void setDotScale(float fraction) {
@@ -256,22 +241,17 @@ public class BadgedImageView extends ConstraintLayout {
      * Whether decorations (badges or dots) are on the left.
      */
     boolean getDotOnLeft() {
-        return mDotOnLeft;
+        return mDrawParams.leftAlign;
     }
 
     /**
      * Return dot position relative to bubble view container bounds.
      */
     float[] getDotCenter() {
-        float[] dotPosition;
-        if (mDotOnLeft) {
-            dotPosition = mDotRenderer.getLeftDotPosition();
-        } else {
-            dotPosition = mDotRenderer.getRightDotPosition();
-        }
+        PointF dotPosition = mDrawParams.getDotPosition();
         getDrawingRect(mTempBounds);
-        float dotCenterX = mTempBounds.width() * dotPosition[0];
-        float dotCenterY = mTempBounds.height() * dotPosition[1];
+        float dotCenterX = mTempBounds.width() * dotPosition.x;
+        float dotCenterY = mTempBounds.height() * dotPosition.y;
         return new float[]{dotCenterX, dotCenterY};
     }
 
@@ -292,12 +272,12 @@ public class BadgedImageView extends ConstraintLayout {
         if (onLeft != getDotOnLeft()) {
             if (shouldDrawDot()) {
                 animateDotScale(0f /* showDot */, () -> {
-                    mDotOnLeft = onLeft;
+                    mDrawParams.leftAlign = onLeft;
                     invalidate();
                     animateDotScale(1.0f, null /* after */);
                 });
             } else {
-                mDotOnLeft = onLeft;
+                mDrawParams.leftAlign = onLeft;
             }
         }
         mBadgeOnLeft = onLeft;
@@ -308,7 +288,7 @@ public class BadgedImageView extends ConstraintLayout {
     /** Sets the position of the dot and badge. */
     void setDotBadgeOnLeft(boolean onLeft) {
         mBadgeOnLeft = onLeft;
-        mDotOnLeft = onLeft;
+        mDrawParams.leftAlign = onLeft;
         invalidate();
         showBadge();
     }
@@ -356,17 +336,17 @@ public class BadgedImageView extends ConstraintLayout {
     }
 
     void showBadge() {
-        Bitmap appBadgeBitmap = mBubble.getAppBadge();
-        final boolean isAppLaunchIntent = (mBubble instanceof Bubble)
-                && ((Bubble) mBubble).isAppLaunchIntent();
-        if (appBadgeBitmap == null || isAppLaunchIntent) {
+        BitmapInfo appBadgeBitmap = mBubble.getAppBadge();
+        final boolean showAppBadge = (mBubble instanceof Bubble)
+                && ((Bubble) mBubble).showAppBadge();
+        if (appBadgeBitmap == null || !showAppBadge) {
             mAppIcon.setVisibility(GONE);
             return;
         }
 
         int translationX;
         if (mBadgeOnLeft) {
-            translationX = -(mBubble.getBubbleIcon().getWidth() - appBadgeBitmap.getWidth());
+            translationX = -(mBubble.getBubbleIcon().getWidth() - appBadgeBitmap.icon.getWidth());
         } else {
             translationX = 0;
         }

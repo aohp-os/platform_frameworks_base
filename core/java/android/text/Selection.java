@@ -27,6 +27,7 @@ import java.text.BreakIterator;
  * Utility class for manipulating cursors and selections in CharSequences.
  * A cursor is a selection where the start and end are at the same offset.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class Selection {
     private Selection() { /* cannot be instantiated */ }
 
@@ -535,7 +536,7 @@ public class Selection {
         return true;
     }
 
-    /** {@hide} */
+    /** @hide */
     public static interface PositionIterator {
         public static final int DONE = BreakIterator.DONE;
 
@@ -543,7 +544,7 @@ public class Selection {
         public int following(int position);
     }
 
-    /** {@hide} */
+    /** @hide */
     @UnsupportedAppUsage
     public static boolean moveToPreceding(
             Spannable text, PositionIterator iter, boolean extendSelection) {
@@ -558,7 +559,7 @@ public class Selection {
         return true;
     }
 
-    /** {@hide} */
+    /** @hide */
     @UnsupportedAppUsage
     public static boolean moveToFollowing(
             Spannable text, PositionIterator iter, boolean extendSelection) {

@@ -541,6 +541,22 @@ public class AccessibilityNodeInfo implements Parcelable {
             "ACTION_ARGUMENT_HTML_ELEMENT_STRING";
 
     /**
+     * Argument for specifying the extended selection.
+     *
+     * <p><strong>Type:</strong> {@link AccessibilityNodeInfo.Selection}<br>
+     * <strong>Actions:</strong>
+     *
+     * <ul>
+     *   <li>{@link AccessibilityAction#ACTION_SET_EXTENDED_SELECTION}
+     * </ul>
+     *
+     * @see AccessibilityAction#ACTION_SET_EXTENDED_SELECTION
+     */
+    @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+    public static final String ACTION_ARGUMENT_SELECTION_PARCELABLE =
+            "android.view.accessibility.action.ARGUMENT_SELECTION_PARCELABLE";
+
+    /**
      * Argument for whether when moving at granularity to extend the selection
      * or to move it otherwise.
      * <p>
@@ -1145,6 +1161,8 @@ public class AccessibilityNodeInfo implements Parcelable {
     private Bundle mExtras;
 
     private int mConnectionId = UNDEFINED_CONNECTION_ID;
+
+    private Selection mSelection;
 
     private RangeInfo mRangeInfo;
     private CollectionInfo mCollectionInfo;
@@ -2660,6 +2678,55 @@ public class AccessibilityNodeInfo implements Parcelable {
     }
 
     /**
+     * Sets the extended selection, which is a representation of selection that spans multiple nodes
+     * that exist within the subtree of the node defining selection.
+     *
+     * <p><b>Note:</b> The start and end {@link SelectionPosition} of the provided {@link Selection}
+     * should be constructed with {@code this} node or a descendant of it.
+     *
+     * <p><b>Note:</b> {@link AccessibilityNodeInfo#setFocusable} and
+     * {@link AccessibilityNodeInfo#setFocused} should both be called with {@code true}
+     * before setting the selection in order to make {@code this} node a candidate to
+     * contain a selection.
+     *
+     * <p><b>Note:</b> Cannot be called from an AccessibilityService. This class is made immutable
+     * before being delivered to an AccessibilityService.
+     *
+     * @param selection The extended selection within the node's subtree, or {@code null} if no
+     *     selection exists.
+     * @see AccessibilityNodeInfo.AccessibilityAction#ACTION_SET_EXTENDED_SELECTION
+     * @throws IllegalStateException If called from an AccessibilityService
+     */
+    @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+    public void setSelection(@Nullable Selection selection) {
+        enforceNotSealed();
+        mSelection = selection;
+    }
+
+    /**
+     * Gets the extended selection, which is a representation of selection that spans multiple nodes
+     * that exist within the subtree of the node defining selection.
+     *
+     * <p><b>Note:</b> Nodes that are candidates to contain a selection should return
+     * {@code true} from {@link #isFocusable()} and {@link #isFocused()}.
+     * The start and end {@link SelectionPosition}s of this {@link Selection}
+     * should exist within {@code this} node or its descendants.
+     *
+     * @return The extended selection within the node's subtree, or {@code null} if no selection
+     *     exists.
+     */
+    @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+    public @Nullable Selection getSelection() {
+        if (mSelection != null) {
+            mSelection.getStart().setWindowId(mWindowId);
+            mSelection.getStart().setConnectionId(mConnectionId);
+            mSelection.getEnd().setWindowId(mWindowId);
+            mSelection.getEnd().setConnectionId(mConnectionId);
+        }
+        return mSelection;
+    }
+
+    /**
      * Gets whether this node is visible to the user.
      * <p>
      * Between {@link Build.VERSION_CODES#JELLY_BEAN API 16} and
@@ -4168,6 +4235,15 @@ public class AccessibilityNodeInfo implements Parcelable {
      *         there is no text selection and no cursor.
      */
     public int getTextSelectionStart() {
+        if (Flags.a11ySelectionApi()) {
+            Selection current = getSelection();
+            if ((current != null)
+                    && current.getStart().usesNode(this)
+                    && current.getEnd().usesNode(this)) {
+                return current.getStart().getOffset();
+            }
+            return UNDEFINED_SELECTION_INDEX;
+        }
         return mTextSelectionStart;
     }
 
@@ -4183,6 +4259,15 @@ public class AccessibilityNodeInfo implements Parcelable {
      *         there is no text selection and no cursor.
      */
     public int getTextSelectionEnd() {
+        if (Flags.a11ySelectionApi()) {
+            Selection current = getSelection();
+            if ((current != null)
+                    && current.getStart().usesNode(this)
+                    && current.getEnd().usesNode(this)) {
+                return current.getEnd().getOffset();
+            }
+            return UNDEFINED_SELECTION_INDEX;
+        }
         return mTextSelectionEnd;
     }
 
@@ -4201,6 +4286,13 @@ public class AccessibilityNodeInfo implements Parcelable {
      */
     public void setTextSelection(int start, int end) {
         enforceNotSealed();
+        if (Flags.a11ySelectionApi()) {
+            Selection selection =
+                    new Selection(
+                            new SelectionPosition(this, start), new SelectionPosition(this, end));
+            setSelection(selection);
+            return;
+        }
         mTextSelectionStart = start;
         mTextSelectionEnd = end;
     }
@@ -4875,6 +4967,10 @@ public class AccessibilityNodeInfo implements Parcelable {
             nonDefaultFields |= bitAt(fieldIndex);
         }
         fieldIndex++;
+        if (!Objects.equals(mSelection, DEFAULT.mSelection)) {
+            nonDefaultFields |= bitAt(fieldIndex);
+        }
+        fieldIndex++;
         if (mChecked != DEFAULT.mChecked) {
             nonDefaultFields |= bitAt(fieldIndex);
         }
@@ -5033,6 +5129,9 @@ public class AccessibilityNodeInfo implements Parcelable {
             parcel.writeInt(mCollectionItemInfo.getColumnSpan());
             parcel.writeInt(mCollectionItemInfo.isHeading() ? 1 : 0);
             parcel.writeInt(mCollectionItemInfo.isSelected() ? 1 : 0);
+            if (Flags.a11ySortDirectionApi()) {
+                parcel.writeInt(mCollectionItemInfo.getSortDirection());
+            }
         }
 
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
@@ -5053,6 +5152,9 @@ public class AccessibilityNodeInfo implements Parcelable {
         }
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
             parcel.writeLong(mLeashedParentNodeId);
+        }
+        if (isBitSet(nonDefaultFields, fieldIndex++)) {
+            mSelection.writeToParcel(parcel, flags);
         }
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
             parcel.writeInt(mChecked);
@@ -5164,14 +5266,32 @@ public class AccessibilityNodeInfo implements Parcelable {
                         ci.mImportantForAccessibilityItemCount);
         CollectionItemInfo cii = other.mCollectionItemInfo;
         CollectionItemInfo.Builder builder = new CollectionItemInfo.Builder();
-        mCollectionItemInfo = (cii == null)  ? null
-                : builder.setRowTitle(cii.mRowTitle).setRowIndex(cii.mRowIndex).setRowSpan(
-                        cii.mRowSpan).setColumnTitle(cii.mColumnTitle).setColumnIndex(
-                                cii.mColumnIndex).setColumnSpan(cii.mColumnSpan).setHeading(
-                                        cii.mHeading).setSelected(cii.mSelected).build();
+        if (cii == null) {
+            mCollectionItemInfo = null;
+        } else {
+            builder.setRowTitle(cii.mRowTitle).setRowIndex(cii.mRowIndex).setRowSpan(
+                    cii.mRowSpan).setColumnTitle(cii.mColumnTitle).setColumnIndex(
+                    cii.mColumnIndex).setColumnSpan(cii.mColumnSpan).setHeading(
+                    cii.mHeading).setSelected(cii.mSelected);
+            if (Flags.a11ySortDirectionApi()) {
+                builder.setSortDirection(cii.mSortDirection);
+            }
+            mCollectionItemInfo = builder.build();
+        }
         ExtraRenderingInfo ti = other.mExtraRenderingInfo;
         mExtraRenderingInfo = (ti == null) ? null
                 : new ExtraRenderingInfo(ti);
+
+        if (Flags.a11ySelectionApi()) {
+            if (other.getSelection() != null) {
+                SelectionPosition sps = other.getSelection().getStart();
+                SelectionPosition spe = other.getSelection().getEnd();
+                mSelection =
+                        new Selection(
+                                new SelectionPosition(sps.mSourceNodeId, sps.getOffset()),
+                                new SelectionPosition(spe.mSourceNodeId, spe.getOffset()));
+            }
+        }
     }
 
     /**
@@ -5311,17 +5431,19 @@ public class AccessibilityNodeInfo implements Parcelable {
                         parcel.readInt())
                 : null;
 
-        mCollectionItemInfo = isBitSet(nonDefaultFields, fieldIndex++)
-                ? new CollectionItemInfo(
-                        parcel.readString(),
-                        parcel.readInt(),
-                        parcel.readInt(),
-                        parcel.readString(),
-                        parcel.readInt(),
-                        parcel.readInt(),
-                        parcel.readInt() == 1,
-                        parcel.readInt() == 1)
-                : null;
+        if (isBitSet(nonDefaultFields, fieldIndex++)) {
+            CollectionItemInfo.Builder builder = new CollectionItemInfo.Builder();
+            builder.setRowTitle(parcel.readString()).setRowIndex(parcel.readInt()).setRowSpan(
+                    parcel.readInt()).setColumnTitle(parcel.readString()).setColumnIndex(
+                    parcel.readInt()).setColumnSpan(parcel.readInt()).setHeading(
+                    parcel.readInt() == 1).setSelected(parcel.readInt() == 1);
+            if (Flags.a11ySortDirectionApi()) {
+                builder.setSortDirection(parcel.readInt());
+            }
+            mCollectionItemInfo = builder.build();
+        } else {
+            mCollectionItemInfo = null;
+        }
 
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
             mTouchDelegateInfo = TouchDelegateInfo.CREATOR.createFromParcel(parcel);
@@ -5342,6 +5464,9 @@ public class AccessibilityNodeInfo implements Parcelable {
         }
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
             mLeashedParentNodeId = parcel.readLong();
+        }
+        if (isBitSet(nonDefaultFields, fieldIndex++)) {
+            mSelection = Selection.CREATOR.createFromParcel(parcel);
         }
         if (isBitSet(nonDefaultFields, fieldIndex++)) {
             mChecked = parcel.readInt();
@@ -5494,6 +5619,9 @@ public class AccessibilityNodeInfo implements Parcelable {
                 }
                 if (action == R.id.accessibilityActionScrollInDirection) {
                     return "ACTION_SCROLL_IN_DIRECTION";
+                }
+                if (action == R.id.accessibilityActionSetExtendedSelection) {
+                    return "ACTION_SET_EXTENDED_SELECTION";
                 }
                 return "ACTION_UNKNOWN";
             }
@@ -5696,8 +5824,273 @@ public class AccessibilityNodeInfo implements Parcelable {
     }
 
     /**
+     * A class which defines either the start or end of a selection that can span across multiple
+     * AccessibilityNodeInfo objects.
+     *
+     * @see AccessibilityNodeInfo.Selection
+     */
+    @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+    public static final class SelectionPosition implements Parcelable {
+
+        private final int mOffset;
+        private final long mSourceNodeId;
+        private int mConnectionId;
+        private int mWindowId;
+
+        /**
+         * Instantiates a new SelectionPosition.
+         *
+         * @param node The {@link AccessibilityNodeInfo} for the node of this selection.
+         * @param offset The offset for a {@link SelectionPosition} within {@code view}'s text
+         *     content, which should be a value between 0 and the length of {@code view}'s text.
+         */
+        public SelectionPosition(@NonNull AccessibilityNodeInfo node, int offset) {
+            this(node.mSourceNodeId, offset);
+        }
+
+        /**
+         * Instantiates a new SelectionPosition.
+         *
+         * @param view The {@link View} containing the text associated with this selection
+         *     position.
+         * @param offset The offset for a selection position within {@code view}'s text content,
+         *     which should be a value between 0 and the length of {@code view}'s text.
+         */
+        public SelectionPosition(@NonNull View view, int offset) {
+            this(
+                    makeNodeId(
+                            view.getAccessibilityViewId(), AccessibilityNodeProvider.HOST_VIEW_ID),
+                    offset);
+        }
+
+        /**
+         * Instantiates a new {@link SelectionPosition}.
+         *
+         * @param view The view whose virtual descendant is associated with the selection position.
+         * @param virtualDescendantId The ID of the virtual descendant within {@code view}'s virtual
+         *     subtree that contains the selection position.
+         * @param offset The offset for a selection position within the virtual descendant's text
+         *     content, which should be a value between 0 and the length of the descendant's text.
+         * @see AccessibilityNodeProvider
+         */
+        public SelectionPosition(@NonNull View view, int virtualDescendantId, int offset) {
+            this(makeNodeId(view.getAccessibilityViewId(), virtualDescendantId), offset);
+        }
+
+        private SelectionPosition(long sourceNodeId, int offset) {
+            mOffset = offset;
+            mSourceNodeId = sourceNodeId;
+        }
+
+        private SelectionPosition(Parcel in) {
+            mOffset = in.readInt();
+            mSourceNodeId = in.readLong();
+        }
+
+        private void setWindowId(int windowId) {
+            mWindowId = windowId;
+        }
+
+        private void setConnectionId(int connectionId) {
+            mConnectionId = connectionId;
+        }
+
+        /**
+         * Gets the node for {@code this} {@link SelectionPosition}
+         * <br>
+         * <strong>Note:</strong> This api can only be called from {@link AccessibilityService}.
+         *
+         * @return The node associated with {@code this} {@link SelectionPosition}
+         */
+        public @Nullable AccessibilityNodeInfo getNode() {
+            return getNodeForAccessibilityId(mConnectionId, mWindowId, mSourceNodeId);
+        }
+
+        /**
+         * Gets the offset for {@code this} {@link SelectionPosition}.
+         *
+         * @return A value from 0 to the length of {@link #getNode()}'s content representing the
+         *     offset of the {@link SelectionPosition}
+         */
+        public int getOffset() {
+            return mOffset;
+        }
+
+        private boolean usesNode(@NonNull AccessibilityNodeInfo node) {
+            return this.mSourceNodeId == node.mSourceNodeId
+                    && this.mConnectionId == node.mConnectionId
+                    && this.mWindowId == node.mWindowId;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (other == null) {
+                return false;
+            }
+
+            if (other == this) {
+                return true;
+            }
+
+            if (getClass() != other.getClass()) {
+                return false;
+            }
+
+            SelectionPosition rhs = (SelectionPosition) other;
+            if (getOffset() != rhs.getOffset()) {
+                return false;
+            }
+
+            return mSourceNodeId == rhs.mSourceNodeId;
+        }
+
+        @Override
+        public int hashCode() {
+            final long prime = 877;
+            long result = 1;
+
+            if (mOffset != 0) {
+                result *= mOffset;
+            }
+
+            if (mSourceNodeId != UNDEFINED_NODE_ID) {
+                result *= mSourceNodeId;
+            }
+
+            return Long.hashCode(result * prime);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public void writeToParcel(@NonNull Parcel dest, int flags) {
+            dest.writeInt(mOffset);
+            dest.writeLong(mSourceNodeId);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        /**
+         * @see android.os.Parcelable.Creator
+         */
+        @NonNull
+        public static final Creator<SelectionPosition> CREATOR =
+                new Creator<SelectionPosition>() {
+                    @Override
+                    public SelectionPosition createFromParcel(Parcel in) {
+                        return new SelectionPosition(in);
+                    }
+
+                    @Override
+                    public SelectionPosition[] newArray(int size) {
+                        return new SelectionPosition[size];
+                    }
+                };
+    }
+
+    /**
+     * Represents a selection of content that may extend across more than one {@link
+     * AccessibilityNodeInfo} instance.
+     *
+     * @see AccessibilityNodeInfo.SelectionPosition
+     */
+    @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+    public static final class Selection implements Parcelable {
+
+        private final SelectionPosition mStart;
+        private final SelectionPosition mEnd;
+
+        /**
+         * Instantiates a new Selection.
+         *
+         * @param start The start of the extended selection.
+         * @param end The end of the extended selection.
+         */
+        public Selection(@NonNull SelectionPosition start, @NonNull SelectionPosition end) {
+            this.mStart = start;
+            this.mEnd = end;
+        }
+
+        private Selection(Parcel in) {
+            mStart = SelectionPosition.CREATOR.createFromParcel(in);
+            mEnd = SelectionPosition.CREATOR.createFromParcel(in);
+        }
+
+        /**
+         * @return The start of the extended selection.
+         */
+        public @NonNull SelectionPosition getStart() {
+            return mStart;
+        }
+
+        /**
+         * @return The end of the extended selection.
+         */
+        public @NonNull SelectionPosition getEnd() {
+            return mEnd;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == null) {
+                return false;
+            }
+
+            if (obj == this) {
+                return true;
+            }
+
+            if (getClass() != obj.getClass()) {
+                return false;
+            }
+
+            Selection rhs = (Selection) obj;
+            return getStart().equals(rhs.getStart()) && getEnd().equals(rhs.getEnd());
+        }
+
+        @Override
+        public int hashCode() {
+            final int prime = 17;
+            return prime * getStart().hashCode() * getEnd().hashCode();
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public void writeToParcel(@NonNull Parcel dest, int flags) {
+            mStart.writeToParcel(dest, flags);
+            mEnd.writeToParcel(dest, flags);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        /**
+         * @see android.os.Parcelable.Creator
+         */
+        @NonNull
+        public static final Creator<Selection> CREATOR =
+                new Creator<Selection>() {
+                    @Override
+                    public Selection createFromParcel(Parcel in) {
+                        return new Selection(in);
+                    }
+
+                    @Override
+                    public Selection[] newArray(int size) {
+                        return new Selection[size];
+                    }
+                };
+    }
+
+    /**
      * A class defining an action that can be performed on an {@link AccessibilityNodeInfo}.
-     * Each action has a unique id that is mandatory and optional data.
+     * Each action has a mandatory unique id and optional data.
      * <p>
      * There are three categories of actions:
      * <ul>
@@ -6419,6 +6812,29 @@ public class AccessibilityNodeInfo implements Parcelable {
         @NonNull public static final AccessibilityAction ACTION_SHOW_TEXT_SUGGESTIONS =
                 new AccessibilityAction(R.id.accessibilityActionShowTextSuggestions);
 
+        /**
+         * Action to set the extended selection. Performing this action with no arguments clears the
+         * selection.
+         *
+         * <p><strong>Arguments:</strong> {@link
+         * AccessibilityNodeInfo#ACTION_ARGUMENT_SELECTION_PARCELABLE
+         * AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_PARCELABLE}<br>
+         * <strong>Example:</strong> <code><pre><p>
+         *  Bundle arguments = new Bundle();
+         *  Selection selection = new Selection(null, null);
+         *  arguments.setParcelable(
+         *          AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_PARCELABLE, selection);
+         *  info.performAction(
+         *          AccessibilityAction.ACTION_SET_EXTENDED_SELECTION.getId(), arguments);
+         * </pre></code>
+         *
+         * @see AccessibilityNodeInfo#ACTION_ARGUMENT_SELECTION_PARCELABLE
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SELECTION_API)
+        @NonNull
+        public static final AccessibilityAction ACTION_SET_EXTENDED_SELECTION =
+                new AccessibilityAction(R.id.accessibilityActionSetExtendedSelection);
+
         private final int mActionId;
         private final CharSequence mLabel;
 
@@ -7031,6 +7447,55 @@ public class AccessibilityNodeInfo implements Parcelable {
      */
     public static final class CollectionItemInfo {
         /**
+         * There is no sort direction.
+         *
+         * @see #getSortDirection()
+         * @see Builder#setSortDirection(int)
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+        public static final int SORT_DIRECTION_NONE = 0;
+
+        /**
+         * Items are sorted in ascending order (e.g., A-Z, 0-9).
+         *
+         * @see #getSortDirection()
+         * @see Builder#setSortDirection(int)
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+        public static final int SORT_DIRECTION_ASCENDING = 1;
+
+        /**
+         * Items are sorted in descending order (e.g., Z-A, 9-0).
+         *
+         * @see #getSortDirection()
+         * @see Builder#setSortDirection(int)
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+        public static final int SORT_DIRECTION_DESCENDING = 2;
+
+        /**
+         * Items are sorted, but using a method other than ascending
+         * or descending (e.g., based on relevance or a custom algorithm).
+         *
+         * @see #getSortDirection()
+         * @see Builder#setSortDirection(int)
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+        public static final int SORT_DIRECTION_OTHER = 3;
+
+        /** @hide */
+        @Retention(RetentionPolicy.SOURCE)
+        @IntDef(
+                prefix = "SORT_DIRECTION_",
+                value = {
+                        SORT_DIRECTION_NONE,
+                        SORT_DIRECTION_ASCENDING,
+                        SORT_DIRECTION_DESCENDING,
+                        SORT_DIRECTION_OTHER,
+                })
+        public @interface SortDirection {}
+
+        /**
          * Instantiates a CollectionItemInfo that is a clone of another one.
          *
          * @deprecated Object pooling has been discontinued. Create a new instance using the
@@ -7045,7 +7510,7 @@ public class AccessibilityNodeInfo implements Parcelable {
         public static CollectionItemInfo obtain(CollectionItemInfo other) {
             return new CollectionItemInfo(other.mRowTitle, other.mRowIndex, other.mRowSpan,
                 other.mColumnTitle, other.mColumnIndex, other.mColumnSpan, other.mHeading,
-                other.mSelected);
+                other.mSelected, other.mSortDirection);
         }
 
         /**
@@ -7124,6 +7589,7 @@ public class AccessibilityNodeInfo implements Parcelable {
         private int mRowIndex;
         private int mColumnSpan;
         private int mRowSpan;
+        private @SortDirection int mSortDirection;
         private boolean mSelected;
         private String mRowTitle;
         private String mColumnTitle;
@@ -7189,6 +7655,28 @@ public class AccessibilityNodeInfo implements Parcelable {
         }
 
         /**
+         * Creates a new instance.
+         *
+         * @param rowTitle The row title at which the item is located.
+         * @param rowIndex The row index at which the item is located.
+         * @param rowSpan The number of rows the item spans.
+         * @param columnTitle The column title at which the item is located.
+         * @param columnIndex The column index at which the item is located.
+         * @param columnSpan The number of columns the item spans.
+         * @param heading Whether the item is a heading.
+         * @param selected Whether the item is selected.
+         * @param sortDirection The sort direction applied to the data associated with this node.
+         * @hide
+         */
+        public CollectionItemInfo(@Nullable String rowTitle, int rowIndex, int rowSpan,
+                @Nullable String columnTitle, int columnIndex, int columnSpan, boolean heading,
+                boolean selected, @SortDirection int sortDirection) {
+            this(rowTitle, rowIndex, rowSpan, columnTitle, columnIndex, columnSpan, heading,
+                    selected);
+            mSortDirection = sortDirection;
+        }
+
+        /**
          * Gets the column index at which the item is located.
          *
          * @return The column index.
@@ -7222,6 +7710,29 @@ public class AccessibilityNodeInfo implements Parcelable {
          */
         public int getRowSpan() {
             return mRowSpan;
+        }
+
+        /**
+         * Gets the sort direction applied to the data associated with this
+         * node.
+         * <p>
+         * This item can only be set on a heading node within a table collection.
+         * Given the heading node's collection item, a subsequent collection item uses this sort
+         * direction if it has the same row or column index, and a greater index in the other
+         * dimension. For example, an item at row 2, column 2 can reference a heading at row 2,
+         * column 1 for its sort direction.
+         *
+         * @return The current sort direction, one of:
+         *     <ul>
+         *       <li>{@link #SORT_DIRECTION_NONE}
+         *       <li>{@link #SORT_DIRECTION_ASCENDING}
+         *       <li>{@link #SORT_DIRECTION_DESCENDING}
+         *       <li>{@link #SORT_DIRECTION_OTHER}
+         *     </ul>
+         */
+        @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+        public @SortDirection int getSortDirection() {
+            return mSortDirection;
         }
 
         /**
@@ -7282,6 +7793,10 @@ public class AccessibilityNodeInfo implements Parcelable {
             mSelected = false;
             mRowTitle = null;
             mColumnTitle = null;
+
+            if (Flags.a11ySortDirectionApi()) {
+                mSortDirection = SORT_DIRECTION_NONE;
+            }
         }
 
         /**
@@ -7293,6 +7808,7 @@ public class AccessibilityNodeInfo implements Parcelable {
             private int mRowIndex;
             private int mColumnSpan;
             private int mRowSpan;
+            private int mSortDirection;
             private boolean mSelected;
             private String mRowTitle;
             private String mColumnTitle;
@@ -7364,6 +7880,32 @@ public class AccessibilityNodeInfo implements Parcelable {
             }
 
             /**
+             * Sets the sort direction for this item.
+             * <p>
+             * Valid only if {@link AccessibilityNodeInfo#isHeading()} returns {@code true}.
+             * Indicates that collection content associated with this heading is presented in the
+             * indicated sort direction. It should only be called by accessibility providers. For
+             * accessibility services, see {@link #getSortDirection()} to query the current state.
+             *
+             * @param sortDirection the sort direction of this collection item info
+             * @throws IllegalArgumentException If {@code sortDirection} is not one of:
+             *     <ul>
+             *       <li>{@link #SORT_DIRECTION_NONE}
+             *       <li>{@link #SORT_DIRECTION_ASCENDING}
+             *       <li>{@link #SORT_DIRECTION_DESCENDING}
+             *       <li>{@link #SORT_DIRECTION_OTHER}
+             *     </ul>
+             * @return This builder
+             */
+            @FlaggedApi(Flags.FLAG_A11Y_SORT_DIRECTION_API)
+            @NonNull
+            public CollectionItemInfo.Builder setSortDirection(@SortDirection int sortDirection) {
+                enforceValidSortDirection(sortDirection);
+                mSortDirection = sortDirection;
+                return this;
+            }
+
+            /**
              * Sets the collection item is selected.
              *
              * @param selected The number of rows spans
@@ -7414,7 +7956,26 @@ public class AccessibilityNodeInfo implements Parcelable {
                 collectionItemInfo.mRowTitle = mRowTitle;
                 collectionItemInfo.mColumnTitle = mColumnTitle;
 
+                if (Flags.a11ySortDirectionApi()) {
+                    collectionItemInfo.mSortDirection = mSortDirection;
+                }
+
                 return collectionItemInfo;
+            }
+        }
+
+        private static void enforceValidSortDirection(int sortDirection) {
+            if (Flags.a11ySortDirectionApi()) {
+                switch (sortDirection) {
+                    case SORT_DIRECTION_NONE:
+                    case SORT_DIRECTION_ASCENDING:
+                    case SORT_DIRECTION_DESCENDING:
+                    case SORT_DIRECTION_OTHER:
+                        return;
+                    default:
+                        throw new IllegalArgumentException(
+                                "Unknown sort direction: " + sortDirection);
+                }
             }
         }
     }

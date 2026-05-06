@@ -20,25 +20,21 @@ import static android.view.KeyCharacterMap.VIRTUAL_KEYBOARD;
 import static android.view.MotionEvent.ACTION_DOWN;
 import static android.view.MotionEvent.ACTION_HOVER_MOVE;
 import static android.view.MotionEvent.ACTION_UP;
-import static android.view.WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY;
-import static android.view.WindowManagerPolicyConstants.FLAG_PASS_TO_USER;
 
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.everyItem;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.hamcrest.MockitoHamcrest.argThat;
 
 import android.accessibilityservice.GestureDescription.GestureStep;
@@ -48,10 +44,12 @@ import android.graphics.Point;
 import android.os.Handler;
 import android.os.Message;
 import android.os.RemoteException;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.WindowManagerPolicyConstants;
 import android.view.accessibility.AccessibilityEvent;
 
 import androidx.test.runner.AndroidJUnit4;
@@ -64,6 +62,7 @@ import org.hamcrest.Matcher;
 import org.hamcrest.TypeSafeMatcher;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -77,7 +76,7 @@ import java.util.List;
  */
 @RunWith(AndroidJUnit4.class)
 public class MotionEventInjectorTest {
-    private static final String LOG_TAG = "MotionEventInjectorTest";
+
     private static final Matcher<MotionEvent> IS_ACTION_DOWN =
             new MotionEventActionMatcher(ACTION_DOWN);
     private static final Matcher<MotionEvent> IS_ACTION_POINTER_DOWN =
@@ -119,6 +118,9 @@ public class MotionEventInjectorTest {
     private static final int EDGEFLAGS = 0;
     private static final float POINTER_SIZE = 1;
     private static final int METASTATE = 0;
+
+    @Rule
+    public SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     MotionEventInjector mMotionEventInjector;
     IAccessibilityServiceClient mServiceInterface;
@@ -201,7 +203,8 @@ public class MotionEventInjectorTest {
         verifyNoMoreInteractions(next);
         mMessageCapturingHandler.sendOneMessage(); // Send a motion event
 
-        final int expectedFlags = FLAG_PASS_TO_USER | FLAG_INJECTED_FROM_ACCESSIBILITY;
+        final int expectedFlags = WindowManagerPolicyConstants.FLAG_PASS_TO_USER
+                | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY;
         verify(next).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), eq(expectedFlags));
         verify(next).onMotionEvent(argThat(mIsLineStart), argThat(mIsLineStart), eq(expectedFlags));
         verifyNoMoreInteractions(next);
@@ -215,7 +218,7 @@ public class MotionEventInjectorTest {
         verifyNoMoreInteractions(next);
         reset(next);
 
-        verifyZeroInteractions(mServiceInterface);
+        verifyNoMoreInteractions(mServiceInterface);
 
         mMessageCapturingHandler.sendOneMessage(); // Send a motion event
         verify(next).onMotionEvent(argThat(allOf(mIsLineEnd, hasRightDownTime)),
@@ -224,6 +227,20 @@ public class MotionEventInjectorTest {
 
         verify(mServiceInterface).onPerformGestureResult(LINE_SEQUENCE, true);
         verifyNoMoreInteractions(mServiceInterface);
+    }
+
+    @Test
+    public void testInjectEvents_fromAccessibilityTool_providesToolPolicyFlag() {
+        EventStreamTransformation next = attachMockNext(mMotionEventInjector);
+        injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE,
+                /*fromAccessibilityTool=*/true);
+
+        mMessageCapturingHandler.sendOneMessage(); // Send a motion event
+        verify(next).onMotionEvent(
+                argThat(mIsLineStart), argThat(mIsLineStart),
+                eq(WindowManagerPolicyConstants.FLAG_PASS_TO_USER
+                        | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY
+                        | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL));
     }
 
     @Test
@@ -251,31 +268,32 @@ public class MotionEventInjectorTest {
     }
 
     @Test
-    public void testRegularEvent_afterGestureComplete_shouldPassToNext() {
+    public void testRegularEvent_afterGestureComplete_shouldPassToNext_withNoPolicyFlagChanges() {
         EventStreamTransformation next = attachMockNext(mMotionEventInjector);
         injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE);
         mMessageCapturingHandler.sendAllMessages(); // Send all motion events
         reset(next);
         mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
         verify(next).onMotionEvent(argThat(mIsClickDown), argThat(mIsClickDown),
-                eq(FLAG_INJECTED_FROM_ACCESSIBILITY));
+                // The regular event passing through the filter should have no policy flag changes
+                eq(0));
     }
 
     @Test
-    public void testInjectEvents_withRealGestureUnderway_shouldCancelRealAndPassInjected() {
+    public void testInjectEvents_withRealGestureUnderway_shouldNotCancelReal_ShouldPassInjected() {
         EventStreamTransformation next = attachMockNext(mMotionEventInjector);
         mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
         injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE);
 
-        verify(next, times(2)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
+        verify(next, times(1)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
         assertThat(mCaptor1.getAllValues().get(0), mIsClickDown);
-        assertThat(mCaptor1.getAllValues().get(1), IS_ACTION_CANCEL);
         reset(next);
 
         mMessageCapturingHandler.sendOneMessage(); // Send a motion event
         verify(next).onMotionEvent(
                 argThat(mIsLineStart), argThat(mIsLineStart),
-                eq(FLAG_PASS_TO_USER | FLAG_INJECTED_FROM_ACCESSIBILITY));
+                eq(WindowManagerPolicyConstants.FLAG_PASS_TO_USER
+                        | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY));
     }
 
     @Test
@@ -307,25 +325,29 @@ public class MotionEventInjectorTest {
 
         mMessageCapturingHandler.sendOneMessage(); // Send a motion event
         verify(next).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(),
-                eq(FLAG_PASS_TO_USER | FLAG_INJECTED_FROM_ACCESSIBILITY));
+                eq(WindowManagerPolicyConstants.FLAG_PASS_TO_USER
+                        | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY));
         verify(next).onMotionEvent(
                 argThat(mIsLineStart), argThat(mIsLineStart),
-                eq(FLAG_PASS_TO_USER | FLAG_INJECTED_FROM_ACCESSIBILITY));
+                eq(WindowManagerPolicyConstants.FLAG_PASS_TO_USER
+                        | WindowManagerPolicyConstants.FLAG_INJECTED_FROM_ACCESSIBILITY));
     }
 
     @Test
-    public void testOnMotionEvents_openInjectedGestureInProgress_shouldCancelAndNotifyAndPassReal()
+    public void testOnMotionEvents_openInjectedGestureInProgress_shouldNotCancel_shouldPassReal()
             throws RemoteException {
         EventStreamTransformation next = attachMockNext(mMotionEventInjector);
         injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE);
         mMessageCapturingHandler.sendOneMessage(); // Send a motion event
         mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
+        mMessageCapturingHandler.sendAllMessages();
 
-        verify(next, times(3)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
+        verify(next, times(4)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
         assertThat(mCaptor1.getAllValues().get(0), mIsLineStart);
-        assertThat(mCaptor1.getAllValues().get(1), IS_ACTION_CANCEL);
-        assertThat(mCaptor1.getAllValues().get(2), mIsClickDown);
-        verify(mServiceInterface).onPerformGestureResult(LINE_SEQUENCE, false);
+        assertThat(mCaptor1.getAllValues().get(1), mIsClickDown);
+        assertThat(mCaptor1.getAllValues().get(2), mIsLineMiddle);
+        assertThat(mCaptor1.getAllValues().get(3), mIsLineEnd);
+        verify(mServiceInterface).onPerformGestureResult(LINE_SEQUENCE, true);
     }
 
     @Test
@@ -343,35 +365,6 @@ public class MotionEventInjectorTest {
         assertThat(mCaptor1.getAllValues().get(1), mIsLineMiddle);
         assertThat(mCaptor1.getAllValues().get(2), mIsLineEnd);
         verify(mServiceInterface).onPerformGestureResult(LINE_SEQUENCE, true);
-    }
-
-    @Test
-    public void testOnMotionEvents_closedInjectedGestureInProgress_shouldOnlyNotifyAndPassReal()
-            throws RemoteException {
-        EventStreamTransformation next = attachMockNext(mMotionEventInjector);
-        // Tack a click down to the end of the line
-        TouchPoint clickTouchPoint = new TouchPoint();
-        clickTouchPoint.mIsStartOfPath = true;
-        clickTouchPoint.mX = CLICK_POINT.x;
-        clickTouchPoint.mY = CLICK_POINT.y;
-        mLineList.add(new GestureStep(0, 1, new TouchPoint[] {clickTouchPoint}));
-
-        injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE);
-
-        // Send 3 motion events, leaving the extra down in the queue
-        mMessageCapturingHandler.sendOneMessage();
-        mMessageCapturingHandler.sendOneMessage();
-        mMessageCapturingHandler.sendOneMessage();
-
-        mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
-
-        verify(next, times(4)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
-        assertThat(mCaptor1.getAllValues().get(0), mIsLineStart);
-        assertThat(mCaptor1.getAllValues().get(1), mIsLineMiddle);
-        assertThat(mCaptor1.getAllValues().get(2), mIsLineEnd);
-        assertThat(mCaptor1.getAllValues().get(3), mIsClickDown);
-        verify(mServiceInterface).onPerformGestureResult(LINE_SEQUENCE, false);
-        assertFalse(mMessageCapturingHandler.hasMessages());
     }
 
     @Test
@@ -636,27 +629,6 @@ public class MotionEventInjectorTest {
     }
 
     @Test
-    public void testContinuedGesture_realGestureArrivesInBetween_getsCanceled()
-            throws Exception {
-        EventStreamTransformation next = attachMockNext(mMotionEventInjector);
-        injectEventsSync(mContinuedLineList1, mServiceInterface, CONTINUED_LINE_SEQUENCE_1);
-        mMessageCapturingHandler.sendAllMessages(); // Send all motion events
-        verify(mServiceInterface).onPerformGestureResult(CONTINUED_LINE_SEQUENCE_1, true);
-
-        mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
-
-        injectEventsSync(mContinuedLineList2, mServiceInterface, CONTINUED_LINE_SEQUENCE_2);
-        mMessageCapturingHandler.sendAllMessages(); // Send all motion events
-        verify(mServiceInterface).onPerformGestureResult(CONTINUED_LINE_SEQUENCE_2, false);
-        verify(next, times(4)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
-        List<MotionEvent> events = mCaptor1.getAllValues();
-        assertThat(events.get(0), allOf(isAtPoint(CONTINUED_LINE_START), IS_ACTION_DOWN));
-        assertThat(events.get(1), allOf(isAtPoint(CONTINUED_LINE_MID1), IS_ACTION_MOVE));
-        assertThat(events.get(2), IS_ACTION_CANCEL);
-        assertThat(events.get(3), allOf(isAtPoint(CLICK_POINT), IS_ACTION_DOWN));
-    }
-
-    @Test
     public void testClearEvents_realGestureInProgress_shouldForgetAboutGesture() {
         EventStreamTransformation next = attachMockNext(mMotionEventInjector);
         mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
@@ -670,17 +642,18 @@ public class MotionEventInjectorTest {
     }
 
     @Test
-    public void testClearEventsOnOtherSource_realGestureInProgress_shouldNotForgetAboutGesture() {
+    public void testClearEventsOnOtherSource_shouldNotCancelRealOrInjectedGesture() {
         EventStreamTransformation next = attachMockNext(mMotionEventInjector);
         mMotionEventInjector.onMotionEvent(mClickDownEvent, mClickDownEvent, 0);
         mMotionEventInjector.clearEvents(OTHER_EVENT_SOURCE);
         injectEventsSync(mLineList, mServiceInterface, LINE_SEQUENCE);
-        mMessageCapturingHandler.sendOneMessage(); // Send a motion event
+        mMessageCapturingHandler.sendAllMessages();
 
-        verify(next, times(3)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
+        verify(next, times(4)).onMotionEvent(mCaptor1.capture(), mCaptor2.capture(), anyInt());
         assertThat(mCaptor1.getAllValues().get(0), mIsClickDown);
-        assertThat(mCaptor1.getAllValues().get(1), IS_ACTION_CANCEL);
-        assertThat(mCaptor1.getAllValues().get(2), mIsLineStart);
+        assertThat(mCaptor1.getAllValues().get(1), mIsLineStart);
+        assertThat(mCaptor1.getAllValues().get(2), mIsLineMiddle);
+        assertThat(mCaptor1.getAllValues().get(3), mIsLineEnd);
     }
 
     @Test
@@ -731,8 +704,14 @@ public class MotionEventInjectorTest {
 
     private void injectEventsSync(List<GestureStep> gestureSteps,
             IAccessibilityServiceClient serviceInterface, int sequence) {
+        injectEventsSync(gestureSteps, serviceInterface, sequence, false);
+    }
+
+    private void injectEventsSync(List<GestureStep> gestureSteps,
+            IAccessibilityServiceClient serviceInterface, int sequence,
+            boolean fromAccessibilityTool) {
         mMotionEventInjector.injectEvents(gestureSteps, serviceInterface, sequence,
-                Display.DEFAULT_DISPLAY);
+                Display.DEFAULT_DISPLAY, fromAccessibilityTool);
         // Dispatch the message sent by the injector. Our simple handler doesn't guarantee stuff
         // happens in order.
         mMessageCapturingHandler.sendLastMessage();

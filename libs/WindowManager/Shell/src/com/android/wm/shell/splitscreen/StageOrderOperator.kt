@@ -20,6 +20,7 @@ import android.content.Context
 import com.android.internal.protolog.ProtoLog
 import com.android.launcher3.icons.IconProvider
 import com.android.wm.shell.ShellTaskOrganizer
+import com.android.wm.shell.bubbles.BubbleController
 import com.android.wm.shell.common.SyncTransactionQueue
 import com.android.wm.shell.protolog.ShellProtoLogGroup
 import com.android.wm.shell.shared.split.SplitScreenConstants
@@ -52,8 +53,9 @@ class StageOrderOperator (
         stageCallbacks: StageTaskListener.StageListenerCallbacks,
         syncQueue: SyncTransactionQueue,
         iconProvider: IconProvider,
-        windowDecorViewModel: Optional<WindowDecorViewModel>
-    ) {
+        windowDecorViewModel: Optional<WindowDecorViewModel>,
+        bubbleController: Optional<BubbleController>,
+) {
 
     private val MAX_STAGES = 3
     /**
@@ -77,14 +79,16 @@ class StageOrderOperator (
 
     init {
         for(i in 0 until MAX_STAGES) {
-            allStages.add(StageTaskListener(context,
+            allStages.add(StageTaskListener(
+                context,
                 taskOrganizer,
                 displayId,
                 stageCallbacks,
                 syncQueue,
                 iconProvider,
                 windowDecorViewModel,
-                stageIds[i])
+                stageIds[i],
+                bubbleController)
             )
         }
     }
@@ -95,13 +99,16 @@ class StageOrderOperator (
      */
     fun onEnteringSplit(@SnapPosition goingToLayout: Int) {
         if (goingToLayout == currentLayout) {
-            // Add protolog here. Return for now, but maybe we want to handle swap case, TBD
+            ProtoLog.d(ShellProtoLogGroup.WM_SHELL_SPLIT_SCREEN,
+                "Entering Split requested same layout split is in: %d", goingToLayout)
             return
         }
         val freeStages: List<StageTaskListener> =
             allStages.filterNot { activeStages.contains(it) }
         when(goingToLayout) {
-            SplitScreenConstants.SNAP_TO_2_50_50 -> {
+            SplitScreenConstants.SNAP_TO_2_50_50,
+            SplitScreenConstants.SNAP_TO_2_33_66,
+            SplitScreenConstants.SNAP_TO_2_66_33 -> {
                 if (activeStages.size < 2) {
                     // take from allStages and add into activeStages
                     for (i in 0 until (2 - activeStages.size)) {

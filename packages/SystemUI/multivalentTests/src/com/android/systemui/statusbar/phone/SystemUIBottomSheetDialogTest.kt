@@ -20,33 +20,38 @@ import android.view.WindowManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.kosmos.runTest
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
+import com.android.systemui.model.sysUiState
+import com.android.systemui.model.sysuiStateInteractor
+import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_DIALOG_SHOWING
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.argumentCaptor
 import com.android.systemui.util.mockito.capture
 import com.android.systemui.util.mockito.mock
+import com.google.common.truth.Truth.assertThat
 import kotlin.test.Test
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.runner.RunWith
 import org.mockito.Mockito.verify
+import org.mockito.kotlin.eq
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @RunWithLooper(setAsMainLooper = true)
 class SystemUIBottomSheetDialogTest : SysuiTestCase() {
 
-    private val kosmos = testKosmos()
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
     private val configurationController = mock<ConfigurationController>()
     private val config = mock<Configuration>()
     private val delegate = mock<DialogDelegate<Dialog>>()
+    private val dialogManager = kosmos.mockSystemUIDialogManager
+    private val defaultDisplaySysuiState = kosmos.sysUiState
 
     private lateinit var dialog: SystemUIBottomSheetDialog
 
@@ -61,42 +66,66 @@ class SystemUIBottomSheetDialogTest : SysuiTestCase() {
                     delegate,
                     TestLayout(),
                     0,
+                    dialogManager,
+                    sysuiStateInteractor,
                 )
             }
     }
 
     @Test
     fun onStart_registersConfigCallback() {
-        kosmos.testScope.runTest {
+        kosmos.runTest {
             dialog.show()
-            runCurrent()
-
             verify(configurationController).addCallback(any())
         }
     }
 
     @Test
     fun onStop_unregisterConfigCallback() {
-        kosmos.testScope.runTest {
+        kosmos.runTest {
             dialog.show()
-            runCurrent()
             dialog.dismiss()
-            runCurrent()
 
             verify(configurationController).removeCallback(any())
         }
     }
 
     @Test
-    fun onConfigurationChanged_calledInDelegate() {
-        kosmos.testScope.runTest {
+    fun onStop_unregistersThenUnregistersWithDialogManager() {
+        kosmos.runTest {
             dialog.show()
-            runCurrent()
+
+            verify(dialogManager).setShowing(eq(dialog), eq(true))
+
+            dialog.dismiss()
+
+            verify(dialogManager).setShowing(eq(dialog), eq(false))
+        }
+    }
+
+    @Test
+    fun onStart_setsSysUIFlagsCorrectly() {
+        kosmos.runTest {
+            assertThat(defaultDisplaySysuiState.isFlagEnabled(SYSUI_STATE_DIALOG_SHOWING)).isFalse()
+
+            dialog.show()
+
+            assertThat(defaultDisplaySysuiState.isFlagEnabled(SYSUI_STATE_DIALOG_SHOWING)).isTrue()
+
+            dialog.dismiss()
+
+            assertThat(defaultDisplaySysuiState.isFlagEnabled(SYSUI_STATE_DIALOG_SHOWING)).isFalse()
+        }
+    }
+
+    @Test
+    fun onConfigurationChanged_calledInDelegate() {
+        kosmos.runTest {
+            dialog.show()
             val captor = argumentCaptor<ConfigurationController.ConfigurationListener>()
             verify(configurationController).addCallback(capture(captor))
 
             captor.value.onConfigChanged(config)
-            runCurrent()
 
             verify(delegate).onConfigurationChanged(any(), any())
         }

@@ -19,6 +19,7 @@ package com.android.systemui.brightness.ui.viewmodel
 import com.android.systemui.brightness.domain.interactor.brightnessPolicyEnforcementInteractor
 import com.android.systemui.brightness.domain.interactor.screenBrightnessInteractor
 import com.android.systemui.classifier.domain.interactor.falsingInteractor
+import com.android.systemui.graphics.imageLoader
 import com.android.systemui.haptics.slider.sliderHapticsViewModelFactory
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.settings.brightness.domain.interactor.brightnessMirrorShowingInteractor
@@ -32,10 +33,11 @@ val Kosmos.brightnessSliderViewModelFactory: BrightnessSliderViewModel.Factory b
                     screenBrightnessInteractor = screenBrightnessInteractor,
                     brightnessPolicyEnforcementInteractor = brightnessPolicyEnforcementInteractor,
                     hapticsViewModelFactory = sliderHapticsViewModelFactory,
-                    brightnessMirrorShowingInteractor = brightnessMirrorShowingInteractor,
+                    brightnessMirrorShowingInteractorLazy = { brightnessMirrorShowingInteractor },
                     supportsMirroring = allowsMirroring,
                     falsingInteractor = falsingInteractor,
                     brightnessWarningToast = brightnessWarningToast,
+                    imageLoader = imageLoader,
                 )
             }
         }

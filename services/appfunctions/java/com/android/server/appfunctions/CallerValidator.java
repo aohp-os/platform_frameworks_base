@@ -17,11 +17,16 @@
 package com.android.server.appfunctions;
 
 import android.Manifest;
+import android.annotation.IntDef;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.os.UserHandle;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.infra.AndroidFuture;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Interface for validating that the caller has the correct privilege to call an AppFunctionManager
@@ -48,21 +53,18 @@ public interface CallerValidator {
      *
      * @param targetUserHandle The user which the caller is requesting to execute as.
      * @param claimedCallingPackage The package name of the caller.
-     * @return The user handle that the call should run as. Will always be a concrete user.
      * @throws IllegalArgumentException if the target user is a special user.
      * @throws SecurityException if caller trying to interact across users without {@link
      *     Manifest.permission#INTERACT_ACROSS_USERS_FULL}
      */
-    UserHandle verifyTargetUserHandle(
+    void verifyTargetUserHandle(
             @NonNull UserHandle targetUserHandle, @NonNull String claimedCallingPackage);
 
     /**
      * Validates that the caller can execute the specified app function.
      *
      * <p>The caller can execute if the app function's package name is the same as the caller's
-     * package or the caller has either {@link Manifest.permission#EXECUTE_APP_FUNCTIONS_TRUSTED} or
-     * {@link Manifest.permission#EXECUTE_APP_FUNCTIONS} granted. In some cases, app functions can
-     * still opt-out of caller having {@link Manifest.permission#EXECUTE_APP_FUNCTIONS}.
+     * package or the caller has the {@link Manifest.permission#EXECUTE_APP_FUNCTIONS} granted.
      *
      * @param callingUid The calling uid.
      * @param callingPid The calling pid.
@@ -72,13 +74,67 @@ public interface CallerValidator {
      * @param functionId The id of the app function to execute.
      * @return Whether the caller can execute the specified app function.
      */
-    AndroidFuture<Boolean> verifyCallerCanExecuteAppFunction(
+    @CanExecuteAppFunctionResult
+    AndroidFuture<Integer> verifyCallerCanExecuteAppFunction(
             int callingUid,
             int callingPid,
             @NonNull UserHandle targetUser,
             @NonNull String callerPackageName,
             @NonNull String targetPackageName,
             @NonNull String functionId);
+
+    /**
+     * Validates that the caller has permission to interact with {@code targetUserId}.
+     *
+     * <p>The caller must either be the same user as target user. Or it would require to have {@link
+     * Manifest.permission#INTERACT_ACROSS_USERS_FULL} permission.
+     *
+     * @param targetUserId The target user id.
+     * @param callingUid The calling uid.
+     * @param callingPid The calling pid.
+     * @throws SecurityException if caller cannot interact with the target user.
+     */
+    void verifyUserInteraction(int targetUserId, int callingUid, int callingPid);
+
+    /**
+     * Validates that the caller has permission to interact with {@code targetUserId}.
+     *
+     * <p>The caller must either be the same user as target user. Or it would require to have {@link
+     * Manifest.permission#INTERACT_ACROSS_USERS_FULL} permission.
+     *
+     * @param targetUserId The target user id.
+     * @param callingUid The calling uid.
+     * @param callingPid The calling pid.
+     * @param callingPackageName The calling package name.
+     * @throws SecurityException if caller cannot interact with the target user.
+     */
+    void verifyUserInteraction(
+            int targetUserId, int callingUid, int callingPid, @Nullable String callingPackageName);
+
+    @IntDef(
+            prefix = {"CAN_EXECUTE_APP_FUNCTIONS_"},
+            value = {
+                CAN_EXECUTE_APP_FUNCTIONS_DENIED,
+                CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_SAME_PACKAGE,
+                CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_HAS_PERMISSION,
+            })
+    @Retention(RetentionPolicy.SOURCE)
+    @interface CanExecuteAppFunctionResult {}
+
+    /** Callers are not allowed to execute app functions. */
+    int CAN_EXECUTE_APP_FUNCTIONS_DENIED = 0;
+
+    /**
+     * Callers can execute app functions because they are calling app functions from the same
+     * package.
+     */
+    int CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_SAME_PACKAGE = 1;
+
+    /**
+     * Callers can execute app functions because they have the necessary permission. This case also
+     * applies when a caller with the permission invokes their own app functions.
+     */
+    int CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_HAS_PERMISSION = 2;
 
     /**
      * Checks if the app function policy is allowed.

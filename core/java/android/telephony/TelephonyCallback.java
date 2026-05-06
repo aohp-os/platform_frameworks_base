@@ -47,6 +47,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -633,8 +634,6 @@ public class TelephonyCallback {
      *
      * @hide
      */
-
-    @FlaggedApi(Flags.FLAG_EMERGENCY_CALLBACK_MODE_NOTIFICATION)
     @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     @SystemApi
     public static final int EVENT_EMERGENCY_CALLBACK_MODE_CHANGED = 40;
@@ -807,9 +806,7 @@ public class TelephonyCallback {
      * @hide
      */
     public void init(@NonNull @CallbackExecutor Executor executor) {
-        if (executor == null) {
-            throw new IllegalArgumentException("TelephonyCallback Executor must be non-null");
-        }
+        Objects.requireNonNull(executor, "TelephonyCallback Executor must be non-null");
         callback = new IPhoneStateListenerStub(this, executor);
     }
 
@@ -1009,7 +1006,7 @@ public class TelephonyCallback {
      */
     public interface CellInfoListener {
         /**
-         * Callback invoked when a observed cell info has changed or new cells have been added
+         * Callback invoked when an observed cell info has changed or new cells have been added
          * or removed on the registered subscription.
          * Note, the registration subscription ID s from {@link TelephonyManager} object
          * which registers TelephonyCallback by
@@ -1746,7 +1743,6 @@ public class TelephonyCallback {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_EMERGENCY_CALLBACK_MODE_NOTIFICATION)
     @SystemApi
     public interface EmergencyCallbackModeListener {
         /**
@@ -1814,12 +1810,10 @@ public class TelephonyCallback {
 
     /**
      * Interface for carrier roaming non-terrestrial network listener.
-     *
-     * @hide
      */
-    @SystemApi
-    @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
-    public interface CarrierRoamingNtnModeListener {
+
+    @FlaggedApi(Flags.FLAG_TELEPHONY_SATELLITE_APIS)
+    public interface CarrierRoamingNtnListener {
         /**
          * Callback invoked when carrier roaming non-terrestrial network mode changes.
          *
@@ -2284,8 +2278,6 @@ public class TelephonyCallback {
         @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
         public void onCallbackModeStarted(@TelephonyManager.EmergencyCallbackModeType int type,
                 long durationMillis, int subscriptionId) {
-            if (!Flags.emergencyCallbackModeNotification()) return;
-
             EmergencyCallbackModeListener listener =
                     (EmergencyCallbackModeListener) mTelephonyCallbackWeakRef.get();
             Log.d(LOG_TAG, "onCallBackModeStarted:type=" + type + ", listener=" + listener);
@@ -2300,8 +2292,6 @@ public class TelephonyCallback {
         @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
         public void onCallbackModeRestarted(@TelephonyManager.EmergencyCallbackModeType int type,
                 long durationMillis, int subscriptionId) {
-            if (!Flags.emergencyCallbackModeNotification()) return;
-
             EmergencyCallbackModeListener listener =
                     (EmergencyCallbackModeListener) mTelephonyCallbackWeakRef.get();
             Log.d(LOG_TAG, "onCallbackModeRestarted:type=" + type + ", listener=" + listener);
@@ -2316,8 +2306,6 @@ public class TelephonyCallback {
         @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
         public void onCallbackModeStopped(@TelephonyManager.EmergencyCallbackModeType int type,
                 @TelephonyManager.EmergencyCallbackModeStopReason int reason, int subscriptionId) {
-            if (!Flags.emergencyCallbackModeNotification()) return;
-
             EmergencyCallbackModeListener listener =
                     (EmergencyCallbackModeListener) mTelephonyCallbackWeakRef.get();
             Log.d(LOG_TAG, "onCallBackModeStopped:type=" + type
@@ -2330,10 +2318,8 @@ public class TelephonyCallback {
         }
 
         public void onCarrierRoamingNtnModeChanged(boolean active) {
-            if (!Flags.carrierEnabledSatelliteFlag()) return;
-
-            CarrierRoamingNtnModeListener listener =
-                    (CarrierRoamingNtnModeListener) mTelephonyCallbackWeakRef.get();
+            CarrierRoamingNtnListener listener =
+                    (CarrierRoamingNtnListener) mTelephonyCallbackWeakRef.get();
             if (listener == null) return;
 
             Binder.withCleanCallingIdentity(
@@ -2341,10 +2327,8 @@ public class TelephonyCallback {
         }
 
         public void onCarrierRoamingNtnEligibleStateChanged(boolean eligible) {
-            if (!Flags.carrierRoamingNbIotNtn()) return;
-
-            CarrierRoamingNtnModeListener listener =
-                    (CarrierRoamingNtnModeListener) mTelephonyCallbackWeakRef.get();
+            CarrierRoamingNtnListener listener =
+                    (CarrierRoamingNtnListener) mTelephonyCallbackWeakRef.get();
             if (listener == null) return;
 
             Binder.withCleanCallingIdentity(() -> mExecutor.execute(
@@ -2353,10 +2337,8 @@ public class TelephonyCallback {
 
         public void onCarrierRoamingNtnAvailableServicesChanged(
                 @NetworkRegistrationInfo.ServiceType int[] availableServices) {
-            if (!Flags.carrierRoamingNbIotNtn()) return;
-
-            CarrierRoamingNtnModeListener listener =
-                    (CarrierRoamingNtnModeListener) mTelephonyCallbackWeakRef.get();
+            CarrierRoamingNtnListener listener =
+                    (CarrierRoamingNtnListener) mTelephonyCallbackWeakRef.get();
             if (listener == null) return;
 
             Binder.withCleanCallingIdentity(() -> mExecutor.execute(
@@ -2365,10 +2347,8 @@ public class TelephonyCallback {
 
         public void onCarrierRoamingNtnSignalStrengthChanged(
                 @NonNull NtnSignalStrength ntnSignalStrength) {
-            if (!Flags.carrierRoamingNbIotNtn()) return;
-
-            CarrierRoamingNtnModeListener listener =
-                    (CarrierRoamingNtnModeListener) mTelephonyCallbackWeakRef.get();
+            CarrierRoamingNtnListener listener =
+                    (CarrierRoamingNtnListener) mTelephonyCallbackWeakRef.get();
             if (listener == null) return;
 
             Binder.withCleanCallingIdentity(() -> mExecutor.execute(

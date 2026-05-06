@@ -35,7 +35,7 @@
     <string name="keyboard_layout_portuguese" msgid="2888198587329660305">"Portugis"</string>
     <string name="keyboard_layout_slovak" msgid="2469379934672837296">"Slovakia"</string>
     <string name="keyboard_layout_slovenian" msgid="1735933028924982368">"Slovenia"</string>
-    <string name="keyboard_layout_turkish" msgid="7736163250907964898">"Turki"</string>
+    <string name="keyboard_layout_turkish" msgid="7736163250907964898">"Turkiye"</string>
     <string name="keyboard_layout_turkish_f" msgid="9130320856010776018">"Turki F"</string>
     <string name="keyboard_layout_ukrainian" msgid="8176637744389480417">"Ukraina"</string>
     <string name="keyboard_layout_arabic" msgid="5671970465174968712">"Arab"</string>
@@ -56,4 +56,6 @@
     <string name="keyboard_layout_montenegrin_latin" msgid="1467832503378949945">"Montenegro (Latin)"</string>
     <string name="keyboard_layout_serbian_cyrillic" msgid="7013541044323542196">"Serbia (Sirilik)"</string>
     <string name="keyboard_layout_montenegrin_cyrillic" msgid="2391253952894077421">"Montenegro (Sirilik)"</string>
+    <string name="keyboard_layout_romanian" msgid="8698989892731726903">"Rumania"</string>
+    <string name="keyboard_layout_english_india" msgid="7962353311188603367">"Inggris (India)"</string>
 </resources>

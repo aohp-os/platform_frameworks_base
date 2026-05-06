@@ -15,6 +15,9 @@
  */
 package com.android.systemui.statusbar.notification.collection.inflation
 
+import android.app.NotificationChannel
+import android.app.NotificationChannel.SOCIAL_MEDIA_ID
+import android.app.NotificationManager.IMPORTANCE_LOW
 import android.database.ContentObserver
 import android.os.Handler
 import android.platform.test.annotations.DisableFlags
@@ -27,13 +30,15 @@ import com.android.server.notification.Flags.FLAG_SCREENSHARE_NOTIFICATION_HIDIN
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.NotificationLockscreenUserManager
+import com.android.systemui.statusbar.NotificationLockscreenUserManager.REDACTION_TYPE_NONE
+import com.android.systemui.statusbar.NotificationLockscreenUserManager.REDACTION_TYPE_PUBLIC
+import com.android.systemui.statusbar.RankingBuilder
 import com.android.systemui.statusbar.notification.collection.GroupEntry
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder
 import com.android.systemui.statusbar.notification.collection.listbuilder.NotifSection
 import com.android.systemui.statusbar.notification.collection.provider.SectionStyleProvider
 import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager
 import com.android.systemui.statusbar.notification.row.shared.AsyncGroupHeaderViewInflation
-import com.android.systemui.statusbar.notification.row.shared.AsyncHybridViewInflation
 import com.android.systemui.statusbar.policy.SensitiveNotificationProtectionController
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
@@ -42,6 +47,7 @@ import com.android.systemui.util.mockito.withArgCaptor
 import com.android.systemui.util.settings.FakeSettings
 import com.android.systemui.util.settings.SecureSettings
 import com.google.common.truth.Truth.assertThat
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.Before
@@ -154,10 +160,8 @@ class NotifUiAdjustmentProviderTest : SysuiTestCase() {
     }
 
     @Test
-    @EnableFlags(AsyncHybridViewInflation.FLAG_NAME)
     fun becomeChildInGroup_asyncHybirdFlagEnabled_needReInflation() {
         // Given: an Entry that is not child in group
-        // AsyncHybridViewInflation flag is enabled
         val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
         assertThat(oldAdjustment.isChildInGroup).isFalse()
 
@@ -169,24 +173,6 @@ class NotifUiAdjustmentProviderTest : SysuiTestCase() {
 
         // Then: need re-inflation
         assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
-    }
-
-    @Test
-    @DisableFlags(AsyncHybridViewInflation.FLAG_NAME)
-    fun becomeChildInGroup_asyncHybirdFlagDisabled_noNeedForReInflation() {
-        // Given: an Entry that is not child in group
-        // AsyncHybridViewInflation flag is disabled
-        val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertThat(oldAdjustment.isChildInGroup).isFalse()
-
-        // When: the Entry becomes a group child
-        entry.markAsGroupChild()
-        val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertThat(newAdjustment.isChildInGroup).isTrue()
-        assertThat(newAdjustment).isNotEqualTo(oldAdjustment)
-
-        // Then: need no re-inflation
-        assertFalse(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
     }
 
     @Test
@@ -212,12 +198,12 @@ class NotifUiAdjustmentProviderTest : SysuiTestCase() {
         whenever(sensitiveNotifProtectionController.shouldProtectNotification(entry))
             .thenReturn(false)
         val oldAdjustment: NotifUiAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertFalse(oldAdjustment.needsRedaction)
+        assertEquals(REDACTION_TYPE_NONE, oldAdjustment.redactionType)
 
         whenever(sensitiveNotifProtectionController.shouldProtectNotification(entry))
             .thenReturn(true)
         val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertTrue(newAdjustment.needsRedaction)
+        assertEquals(REDACTION_TYPE_PUBLIC, newAdjustment.redactionType)
 
         // Then: need re-inflation
         assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
@@ -229,14 +215,89 @@ class NotifUiAdjustmentProviderTest : SysuiTestCase() {
         whenever(sensitiveNotifProtectionController.shouldProtectNotification(entry))
             .thenReturn(false)
         val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertFalse(oldAdjustment.needsRedaction)
+        assertEquals(REDACTION_TYPE_NONE, oldAdjustment.redactionType)
 
         whenever(sensitiveNotifProtectionController.shouldProtectNotification(entry))
             .thenReturn(true)
         val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
-        assertFalse(newAdjustment.needsRedaction)
+        assertEquals(REDACTION_TYPE_NONE, newAdjustment.redactionType)
 
         // Then: need no re-inflation
         assertFalse(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
+    }
+
+    @Test
+    @EnableFlags(android.app.Flags.FLAG_NM_SUMMARIZATION_UI)
+    fun changeIsSummarization_needReInflation_newlySummarized() {
+        // Given: an Entry with no summarization
+        val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
+        assertThat(oldAdjustment.summarization).isNull()
+
+        // When: the Entry now has a summarization
+        val rb = RankingBuilder(entry.ranking)
+        rb.setSummarization("summary!")
+        entry.ranking = rb.build()
+        val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
+        assertThat(newAdjustment).isNotEqualTo(oldAdjustment)
+
+        // Then: Need re-inflation
+        assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
+    }
+
+    @Test
+    @EnableFlags(android.app.Flags.FLAG_NM_SUMMARIZATION_UI)
+    fun changeIsSummarization_needReInflation_summarizationChanged() {
+        // Given: an Entry with no summarization
+        val rb = RankingBuilder(entry.ranking)
+        rb.setSummarization("summary!")
+        entry.ranking = rb.build()
+        val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
+
+        // When: the Entry now has a new summarization
+        val rb2 = RankingBuilder(entry.ranking)
+        rb2.setSummarization("summary new!")
+        entry.ranking = rb2.build()
+        val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
+        assertThat(newAdjustment).isNotEqualTo(oldAdjustment)
+
+        // Then: Need re-inflation
+        assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
+    }
+
+    @Test
+    @EnableFlags(android.app.Flags.FLAG_NOTIFICATION_CLASSIFICATION_UI)
+    fun changeIsBundled_needReInflation_becomesBundled() {
+        // Given: an Entry that is not bundled
+        val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
+
+        // When: the Entry is now bundled
+        val rb = RankingBuilder(entry.ranking)
+        rb.setChannel(NotificationChannel(SOCIAL_MEDIA_ID, "social", IMPORTANCE_LOW))
+        entry.ranking = rb.build()
+        val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
+        assertThat(newAdjustment).isNotEqualTo(oldAdjustment)
+
+        // Then: Need re-inflation
+        assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
+    }
+
+    @Test
+    @EnableFlags(android.app.Flags.FLAG_NOTIFICATION_CLASSIFICATION_UI)
+    fun changeIsBundled_needReInflation_becomesUnbundled() {
+        // Given: an Entry that is bundled
+        val rb = RankingBuilder(entry.ranking)
+        rb.setChannel(NotificationChannel(SOCIAL_MEDIA_ID, "social", IMPORTANCE_LOW))
+        entry.ranking = rb.build()
+        val oldAdjustment = adjustmentProvider.calculateAdjustment(entry)
+
+        // When: the Entry is now not bundled
+        val rb2 = RankingBuilder(entry.ranking)
+        rb2.setChannel(NotificationChannel("anything", "anything", IMPORTANCE_LOW))
+        entry.ranking = rb2.build()
+        val newAdjustment = adjustmentProvider.calculateAdjustment(entry)
+        assertThat(newAdjustment).isNotEqualTo(oldAdjustment)
+
+        // Then: Need re-inflation
+        assertTrue(NotifUiAdjustment.needReinflate(oldAdjustment, newAdjustment))
     }
 }

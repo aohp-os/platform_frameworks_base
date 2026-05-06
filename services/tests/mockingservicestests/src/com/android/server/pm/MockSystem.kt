@@ -16,6 +16,7 @@
 package com.android.server.pm
 
 import android.app.AppOpsManager
+import android.app.AppOpsManagerInternal
 import android.app.PropertyInvalidatedCache
 import android.content.Context
 import android.content.Intent
@@ -61,6 +62,7 @@ import com.android.internal.pm.parsing.pkg.PackageImpl
 import com.android.internal.pm.parsing.pkg.ParsedPackage
 import com.android.internal.pm.pkg.parsing.ParsingPackage
 import com.android.internal.pm.pkg.parsing.ParsingPackageUtils
+import com.android.server.IoThread
 import com.android.server.LocalManagerRegistry
 import com.android.server.LocalServices
 import com.android.server.LockGuard
@@ -68,12 +70,12 @@ import com.android.server.SystemConfig
 import com.android.server.SystemServerInitThreadPool
 import com.android.server.compat.PlatformCompat
 import com.android.server.extendedtestutils.wheneverStatic
-import com.android.server.pm.dex.DexManager
 import com.android.server.pm.dex.DynamicCodeLogger
 import com.android.server.pm.permission.PermissionManagerServiceInternal
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.resolution.ComponentResolver
 import com.android.server.pm.snapshot.PackageDataSnapshot
+import com.android.server.pm.verify.developer.DeveloperVerifierController
 import com.android.server.pm.verify.domain.DomainVerificationManagerInternal
 import com.android.server.sdksandbox.SdkSandboxManagerLocal
 import com.android.server.testutils.TestHandler
@@ -155,6 +157,8 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
                 .mockStatic(LocalManagerRegistry::class.java)
                 .mockStatic(DeviceConfig::class.java, Mockito.CALLS_REAL_METHODS)
                 .mockStatic(HexEncoding::class.java)
+                .mockStatic(DeveloperVerifierController::class.java)
+                .mockStatic(IoThread::class.java)
                 .apply(withSession)
         session = apply.startMocking()
         whenever(mocks.settings.insertPackageSettingLPw(
@@ -195,6 +199,7 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         val componentResolver: ComponentResolver = mock()
         val permissionManagerInternal: PermissionManagerServiceInternal = mock()
         val appOpsManager: AppOpsManager = mock()
+        val appOpsManagerInternal: AppOpsManagerInternal = mock()
         val incrementalManager: IncrementalManager = mock()
         val platformCompat: PlatformCompat = mock()
         val settings: Settings = mock()
@@ -210,7 +215,6 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         val appsFilter: AppsFilterImpl = mock {
             whenever(snapshot()) { appsFilterSnapshot }
         }
-        val dexManager: DexManager = mock()
         val dynamicCodeLogger: DynamicCodeLogger = mock()
         val installer: Installer = mock()
         val displayMetrics: DisplayMetrics = mock()
@@ -286,12 +290,14 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         whenever(mocks.injector.permissionManagerServiceInternal) {
             mocks.permissionManagerInternal
         }
+        whenever(mocks.injector.appOpsManagerInternal) {
+            mocks.appOpsManagerInternal
+        }
         whenever(mocks.injector.incrementalManager).thenReturn(mocks.incrementalManager)
         whenever(mocks.injector.compatibility).thenReturn(mocks.platformCompat)
         whenever(mocks.injector.settings).thenReturn(mocks.settings)
         whenever(mocks.injector.crossProfileIntentFilterHelper)
                 .thenReturn(mocks.crossProfileIntentFilterHelper)
-        whenever(mocks.injector.dexManager).thenReturn(mocks.dexManager)
         whenever(mocks.injector.dynamicCodeLogger).thenReturn(mocks.dynamicCodeLogger)
         whenever(mocks.injector.systemConfig).thenReturn(mocks.systemConfig)
         whenever(mocks.injector.apexManager).thenReturn(mocks.apexManager)
@@ -308,7 +314,8 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
         whenever(mocks.injector.handler) { mocks.handler }
         whenever(mocks.injector.defaultAppProvider) { mocks.defaultAppProvider }
         whenever(mocks.injector.backgroundHandler) { mocks.backgroundHandler }
-        whenever(mocks.injector.packageInstallerService) { mocks.packageInstallerService }
+        whenever(mocks.injector.getPackageInstallerService(nullable())) {
+            mocks.packageInstallerService }
         whenever(mocks.injector.updateOwnershipHelper) { mocks.updateOwnershipHelper }
         whenever(mocks.injector.getSystemService(AppOpsManager::class.java)) { mocks.appOpsManager }
         wheneverStatic { SystemConfig.getInstance() }.thenReturn(mocks.systemConfig)
@@ -347,7 +354,7 @@ class MockSystem(withSession: (StaticMockitoSessionBuilder) -> Unit = {}) {
             android.util.Pair(PackageAbiHelper.Abis("", ""),
                     PackageAbiHelper.NativeLibraryPaths("", false, "", ""))
         }
-        whenever(mocks.userManagerInternal.getUsers(true, false, false)).thenReturn(DEFAULT_USERS)
+        whenever(mocks.userManagerInternal.getUsers(false)).thenReturn(DEFAULT_USERS)
         whenever(mocks.userManagerService.userIds).thenReturn(intArrayOf(0))
         whenever(mocks.userManagerService.exists(0)).thenReturn(true)
         whenever(mocks.packageAbiHelper.deriveNativeLibraryPaths(any(AndroidPackage::class.java),

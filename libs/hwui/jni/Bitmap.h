@@ -33,9 +33,9 @@ enum BitmapCreateFlags {
     kBitmapCreateFlag_Premultiplied = 0x2,
 };
 
-jobject createBitmap(JNIEnv* env, Bitmap* bitmap,
-            int bitmapCreateFlags, jbyteArray ninePatchChunk = nullptr,
-            jobject ninePatchInsets = nullptr, int density = -1);
+jobject createBitmap(JNIEnv* env, Bitmap* bitmap, int bitmapCreateFlags,
+                    jbyteArray ninePatchChunk = nullptr, jobject ninePatchInsets = nullptr,
+                    int density = -1);
 
 Bitmap& toBitmap(jlong bitmapHandle);
 

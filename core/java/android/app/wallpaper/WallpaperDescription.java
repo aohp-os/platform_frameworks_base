@@ -16,12 +16,7 @@
 
 package android.app.wallpaper;
 
-import static android.app.Flags.FLAG_LIVE_WALLPAPER_CONTENT_HANDLING;
-
-import android.annotation.FlaggedApi;
-import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
-import android.annotation.TestApi;
 import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.app.WallpaperManager.ScreenOrientation;
@@ -67,7 +62,6 @@ import java.util.Objects;
  * component. Each {@link WallpaperDescription} can have distinct metadata.
  * </p>
  */
-@FlaggedApi(FLAG_LIVE_WALLPAPER_CONTENT_HANDLING)
 public final class WallpaperDescription implements Parcelable {
     private static final String TAG = "WallpaperDescription";
     private static final  String XML_TAG_CONTENT = "content";
@@ -118,14 +112,16 @@ public final class WallpaperDescription implements Parcelable {
     }
 
     /**
-     * @return the title for this wallpaper, with each list element intended to be a separate
-     * line, or {@code null} if not provided
+     * @return the title for this wallpaper, or {@code null} if not provided
      */
     @Nullable public CharSequence getTitle() {
         return mTitle;
     }
 
-    /** @return the description for this wallpaper */
+    /**
+     * @return the description for this wallpaper, with each list element intended to be shown on a
+     * separate line in the UI
+     */
     @NonNull
     public List<CharSequence> getDescription() {
         return mDescription;
@@ -166,6 +162,12 @@ public final class WallpaperDescription implements Parcelable {
      */
     public float getSampleSize() {
         return mSampleSize;
+    }
+
+    @Override
+    public String toString() {
+        String component = (mComponent != null) ? mComponent.toString() : "{null}";
+        return  component + ":" + mId;
     }
 
     ////// Comparison overrides
@@ -512,8 +514,7 @@ public final class WallpaperDescription implements Parcelable {
          * @hide
          */
         @NonNull
-        @TestApi
-        @SuppressLint("MissingGetterMatchingBuilder")
+        @SystemApi
         public Builder setCropHints(@NonNull Map<Point, Rect> cropHints) {
             mCropHints = new SparseArray<>();
             cropHints.forEach(
@@ -529,8 +530,7 @@ public final class WallpaperDescription implements Parcelable {
          * @hide
          */
         @NonNull
-        @TestApi
-        @SuppressLint("MissingGetterMatchingBuilder")
+        @SystemApi
         public Builder setCropHints(@NonNull SparseArray<Rect> cropHints) {
             mCropHints = cropHints;
             return this;
@@ -560,6 +560,7 @@ public final class WallpaperDescription implements Parcelable {
 
     private static List<Pair<Integer, String>> screenDimensionPairs() {
         return List.of(
+                new Pair<>(WallpaperManager.ORIENTATION_UNKNOWN, "Unknown"),
                 new Pair<>(WallpaperManager.ORIENTATION_PORTRAIT, "Portrait"),
                 new Pair<>(WallpaperManager.ORIENTATION_LANDSCAPE, "Landscape"),
                 new Pair<>(WallpaperManager.ORIENTATION_SQUARE_PORTRAIT, "SquarePortrait"),

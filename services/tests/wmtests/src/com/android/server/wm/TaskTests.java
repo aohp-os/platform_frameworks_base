@@ -49,6 +49,7 @@ import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.Task.FLAG_FORCE_HIDDEN_FOR_TASK_ORG;
 import static com.android.server.wm.TaskFragment.EMBEDDED_DIM_AREA_PARENT_TASK;
 import static com.android.server.wm.TaskFragment.TASK_FRAGMENT_VISIBILITY_VISIBLE_BEHIND_TRANSLUCENT;
+import static com.android.server.wm.WindowContainer.POSITION_BOTTOM;
 import static com.android.server.wm.WindowContainer.POSITION_TOP;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -86,20 +87,20 @@ import android.graphics.Color;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.IBinder;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.util.DisplayMetrics;
 import android.util.Xml;
-import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.SurfaceControl;
+import android.view.WindowInsetsController;
 import android.window.TaskFragmentOrganizer;
 
 import androidx.test.filters.MediumTest;
 
 import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
-
-import libcore.junit.util.compat.CoreCompatChangeRule;
+import com.android.window.flags.Flags;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -185,6 +186,29 @@ public class TaskTests extends WindowTestsBase {
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    public void testRemoveOnlyChildNestedTask_removesFocusFromRoot() {
+        // A created-by-organizer root task at the bottom.
+        final Task bottomRootTask = createTask(mDisplayContent);
+        bottomRootTask.mCreatedByOrganizer = true;
+        // Then a task with an activity on top of it.
+        final Task middleTask = createTask(mDisplayContent);
+        createActivityRecord(middleTask);
+        // And a created-by-organizer root task with a child task with an activity.
+        final Task topRootTask = createTask(mDisplayContent);
+        topRootTask.mCreatedByOrganizer = true;
+        final Task childTask = new TaskBuilder(mSupervisor).setParentTask(topRootTask).build();
+        createActivityRecord(childTask);
+        assertEquals(topRootTask, mDisplayContent.getFocusedRootTask());
+
+        // Reparent the top leaf task to the bottom root task.
+        childTask.reparent(bottomRootTask, POSITION_BOTTOM);
+
+        // Root is now empty, so it can't be focused.
+        assertNotEquals(topRootTask, mDisplayContent.getFocusedRootTask());
+    }
+
+    @Test
     public void testRemoveContainer_deferRemoval() {
         final Task rootTask = createTask(mDisplayContent);
         final Task task = createTaskInRootTask(rootTask, 0 /* userId */);
@@ -240,7 +264,7 @@ public class TaskTests extends WindowTestsBase {
         final Task originalTask = activityMain.getTask();
         final ActivityRecord activityPip = new ActivityBuilder(mAtm).setTask(originalTask).build();
         activityPip.setState(RESUMED, "test");
-        mAtm.mRootWindowContainer.moveActivityToPinnedRootTask(activityPip, "test");
+        mAtm.mRootWindowContainer.moveActivityToPinnedRootTaskForTest(activityPip, "test");
         final Task pinnedActivityTask = activityPip.getTask();
 
         // Simulate pinnedActivityTask unintentionally added to recent during top activity resume.
@@ -413,78 +437,95 @@ public class TaskTests extends WindowTestsBase {
     }
 
     @Test
-    @CoreCompatChangeRule.EnableCompatChanges({ActivityInfo.FORCE_RESIZE_APP})
-    public void testIsResizeable_nonResizeable_forceResize_overridesEnabled_Resizeable() {
+    public void testIsResizeable_nonResizeable_forceResize_overridesEnabled_resizeable() {
         final Task task = new TaskBuilder(mSupervisor)
                 .setCreateActivity(true)
-                .setComponent(
-                        ComponentName.createRelative(mContext, SizeCompatTests.class.getName()))
                 .build();
         task.setResizeMode(RESIZE_MODE_UNRESIZEABLE);
+        final ActivityRecord activity = task.getRootActivity();
+        final AppCompatResizeOverrides resizeOverrides =
+                activity.mAppCompatController.getResizeOverrides();
+        spyOn(activity);
+        spyOn(resizeOverrides);
+        doReturn(true).when(resizeOverrides).shouldOverrideForceResizeApp();
+        task.intent = null;
+        task.setIntent(activity);
         // Override should take effect and task should be resizeable.
         assertTrue(task.getTaskInfo().isResizeable);
     }
 
     @Test
-    @CoreCompatChangeRule.EnableCompatChanges({ActivityInfo.FORCE_RESIZE_APP})
-    public void testIsResizeable_nonResizeable_forceResize_overridesDisabled_nonResizeable() {
-        final Task task = new TaskBuilder(mSupervisor)
-                .setCreateActivity(true)
-                .setComponent(
-                        ComponentName.createRelative(mContext, SizeCompatTests.class.getName()))
-                .build();
-        task.setResizeMode(RESIZE_MODE_UNRESIZEABLE);
-
-        // Disallow resize overrides.
-        task.mAllowForceResizeOverride = false;
-
-        // Override should not take effect and task should be un-resizeable.
-        assertFalse(task.getTaskInfo().isResizeable);
-    }
-
-    @Test
-    @CoreCompatChangeRule.EnableCompatChanges({ActivityInfo.FORCE_NON_RESIZE_APP})
     public void testIsResizeable_resizeable_forceNonResize_overridesEnabled_nonResizeable() {
         final Task task = new TaskBuilder(mSupervisor)
                 .setCreateActivity(true)
-                .setComponent(
-                        ComponentName.createRelative(mContext, SizeCompatTests.class.getName()))
                 .build();
         task.setResizeMode(RESIZE_MODE_RESIZEABLE);
+        final ActivityRecord activity = task.getRootActivity();
+        final AppCompatResizeOverrides resizeOverrides =
+                activity.mAppCompatController.getResizeOverrides();
+        spyOn(activity);
+        spyOn(resizeOverrides);
+        doReturn(true).when(resizeOverrides).shouldOverrideForceNonResizeApp();
+        task.intent = null;
+        task.setIntent(activity);
 
         // Override should take effect and task should be un-resizeable.
         assertFalse(task.getTaskInfo().isResizeable);
     }
 
     @Test
-    @CoreCompatChangeRule.EnableCompatChanges({ActivityInfo.FORCE_NON_RESIZE_APP})
-    public void testIsResizeable_resizeable_forceNonResize_overridesDisabled_Resizeable() {
+    public void testIsResizeable_resizeableTask_fullscreenOverride_resizeable() {
         final Task task = new TaskBuilder(mSupervisor)
                 .setCreateActivity(true)
-                .setComponent(
-                        ComponentName.createRelative(mContext, SizeCompatTests.class.getName()))
                 .build();
-        task.setResizeMode(RESIZE_MODE_RESIZEABLE);
+        task.setResizeMode(RESIZE_MODE_UNRESIZEABLE);
+        final ActivityRecord activity = task.getRootActivity();
+        final AppCompatAspectRatioOverrides aspectRatioOverrides =
+                activity.mAppCompatController.getAspectRatioOverrides();
+        spyOn(aspectRatioOverrides);
+        doReturn(true).when(aspectRatioOverrides).hasFullscreenOverride();
+        task.intent = null;
+        task.setIntent(activity);
 
-        // Disallow resize overrides.
-        task.mAllowForceResizeOverride = false;
-
-        // Override should not take effect and task should be resizeable.
+        // Override should take effect and task should be resizeable.
         assertTrue(task.getTaskInfo().isResizeable);
     }
 
     @Test
-    @CoreCompatChangeRule.EnableCompatChanges({ActivityInfo.FORCE_NON_RESIZE_APP})
-    public void testIsResizeable_systemWideForceResize_compatForceNonResize__Resizeable() {
+    public void testIsResizeable_resizeableTask_universalResizeable_resizeable() {
         final Task task = new TaskBuilder(mSupervisor)
                 .setCreateActivity(true)
-                .setComponent(
-                        ComponentName.createRelative(mContext, SizeCompatTests.class.getName()))
+                .build();
+        task.setResizeMode(RESIZE_MODE_UNRESIZEABLE);
+        final ActivityRecord activity = task.getRootActivity();
+        spyOn(activity);
+        doReturn(true).when(activity).isUniversalResizeable();
+        task.intent = null;
+        task.setIntent(activity);
+
+        // Override should take effect and task should be resizeable.
+        assertTrue(task.getTaskInfo().isResizeable);
+    }
+
+    @Test
+    public void testIsResizeable_systemWideForceResize_compatForceNonResize_resizeable() {
+        final Task task = new TaskBuilder(mSupervisor)
+                .setCreateActivity(true)
+                .setComponent(ComponentName.createRelative(mContext, TaskTests.class.getName()))
                 .build();
         task.setResizeMode(RESIZE_MODE_RESIZEABLE);
 
         // Set system-wide force resizeable override.
         task.mAtmService.mForceResizableActivities = true;
+
+        final ActivityRecord activity = task.getRootActivity();
+        final AppCompatResizeOverrides resizeOverrides =
+                activity.mAppCompatController.getResizeOverrides();
+        spyOn(activity);
+        spyOn(resizeOverrides);
+        doReturn(true).when(resizeOverrides).shouldOverrideForceNonResizeApp();
+        task.intent = null;
+        task.setIntent(activity);
 
         // System wide override should tak priority over app compat override so the task should
         // remain resizeable.
@@ -527,6 +568,7 @@ public class TaskTests extends WindowTestsBase {
 
     @Test
     public void testHandlesOrientationChangeFromDescendant() {
+        mDisplayContent.setIgnoreOrientationRequest(false);
         final Task rootTask = createTask(mDisplayContent,
                 WINDOWING_MODE_MULTI_WINDOW, ACTIVITY_TYPE_STANDARD);
         final Task leafTask1 = createTaskInRootTask(rootTask, 0 /* userId */);
@@ -683,9 +725,7 @@ public class TaskTests extends WindowTestsBase {
                 .setWindowingMode(WINDOWING_MODE_FREEFORM).build();
         Task task = rootTask.getBottomMostTask();
         task.getRootActivity().setOrientation(SCREEN_ORIENTATION_UNSPECIFIED);
-        DisplayInfo info = new DisplayInfo();
-        display.mDisplay.getDisplayInfo(info);
-        final Rect fullScreenBounds = new Rect(0, 0, info.logicalWidth, info.logicalHeight);
+        final Rect fullScreenBounds = new Rect(display.getBounds());
         final Rect freeformBounds = new Rect(fullScreenBounds);
         freeformBounds.inset((int) (freeformBounds.width() * 0.2),
                 (int) (freeformBounds.height() * 0.2));
@@ -895,6 +935,14 @@ public class TaskTests extends WindowTestsBase {
         assertEquals(largerPortraitBounds, inOutConfig.windowConfiguration.getAppBounds());
         assertEquals(800, inOutConfig.screenHeightDp); // 960/(192/160) = 800
         assertEquals(450, inOutConfig.screenWidthDp); // 540/(192/160) = 450
+
+        // Shift the bounds to be half outside the display (e.g. flexible/offscreen split).
+        inOutConfig.windowConfiguration.getBounds().offset(0, -longSide / 2);
+        inOutConfig.windowConfiguration.setAppBounds(null);
+        task.computeConfigResourceOverrides(inOutConfig, parentConfig);
+        assertEquals("Shifted override bounds should not be clipped by parent",
+                inOutConfig.windowConfiguration.getBounds().height(),
+                inOutConfig.windowConfiguration.getAppBounds().height());
 
         inOutConfig.setToDefaults();
         // Landscape bounds.
@@ -1250,6 +1298,9 @@ public class TaskTests extends WindowTestsBase {
         activity1.finishing = true;
 
         assertNull("No activity must be reported if all are finishing", task.getRootActivity());
+        assertEquals("The task id of finishing root activity must be reported.",
+                task.mTaskId, mAtm.mActivityClientController.getTaskForActivity(
+                        activity0.token, true /* onlyRoot */));
     }
 
     /**
@@ -1570,6 +1621,7 @@ public class TaskTests extends WindowTestsBase {
 
     @Test
     public void testNotSpecifyOrientationByFloatingTask() {
+        mDisplayContent.setIgnoreOrientationRequest(false);
         final Task task = new TaskBuilder(mSupervisor)
                 .setCreateActivity(true).setCreateParentTask(true).build();
         final ActivityRecord activity = task.getTopMostActivity();
@@ -1589,6 +1641,7 @@ public class TaskTests extends WindowTestsBase {
 
     @Test
     public void testNotSpecifyOrientation_taskDisplayAreaNotFocused() {
+        mDisplayContent.setIgnoreOrientationRequest(false);
         final TaskDisplayArea firstTaskDisplayArea = mDisplayContent.getDefaultTaskDisplayArea();
         final TaskDisplayArea secondTaskDisplayArea = createTaskDisplayArea(
                 mDisplayContent, mRootWindowContainer.mWmService, "TestTaskDisplayArea",
@@ -1625,6 +1678,7 @@ public class TaskTests extends WindowTestsBase {
 
     @Test
     public void testTaskOrientationOnDisplayWindowingModeChange() {
+        mDisplayContent.setIgnoreOrientationRequest(false);
         // Skip unnecessary operations to speed up the test.
         mAtm.deferWindowLayout();
         final Task task = getTestTask();
@@ -1640,16 +1694,6 @@ public class TaskTests extends WindowTestsBase {
         assertEquals(SCREEN_ORIENTATION_LANDSCAPE, task.getOrientation());
         assertEquals(SCREEN_ORIENTATION_LANDSCAPE, display.getLastOrientation());
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, display.getConfiguration().orientation);
-    }
-
-    @Test
-    public void testGetNonNullDimmerOnUntrustedDisplays() {
-        final DisplayInfo untrustedDisplayInfo = new DisplayInfo(mDisplayInfo);
-        untrustedDisplayInfo.flags &= ~Display.FLAG_TRUSTED;
-        final DisplayContent untrustedDisplay = createNewDisplay(untrustedDisplayInfo);
-        final ActivityRecord activity = createActivityRecord(untrustedDisplay);
-        activity.setOccludesParent(false);
-        assertNotNull(activity.getTask().getDimmer());
     }
 
     @Test
@@ -1747,8 +1791,7 @@ public class TaskTests extends WindowTestsBase {
 
         primary.mVisibleRequested = true;
         secondary.mVisibleRequested = true;
-        primary.setAdjacentTaskFragment(secondary);
-        secondary.setAdjacentTaskFragment(primary);
+        primary.setAdjacentTaskFragments(new TaskFragment.AdjacentSet(primary, secondary));
         primary.setEmbeddedDimArea(EMBEDDED_DIM_AREA_PARENT_TASK);
         doReturn(true).when(primary).shouldBoostDimmer();
         task.assignChildLayers(t);
@@ -2105,6 +2148,127 @@ public class TaskTests extends WindowTestsBase {
 
         // Ensure the td is set for the original root task
         assertEquals(Color.RED, task.getTaskDescription().getBackgroundColor());
+    }
+
+    @Test
+    public void testUpdateTopOpaqueSystemBarsAppearanceWhenActivityBecomesTransparent() {
+        final Task task = createTask(mDisplayContent);
+        final ActivityRecord activity = createActivityRecord(task);
+        final ActivityManager.TaskDescription td = new ActivityManager.TaskDescription();
+        td.setSystemBarsAppearance(
+                WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND);
+        activity.setTaskDescription(td);
+
+        assertEquals(WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND,
+                task.getTaskDescription().getTopOpaqueSystemBarsAppearance());
+
+        activity.setOccludesParent(false);
+
+        assertEquals(0, task.getTaskDescription().getTopOpaqueSystemBarsAppearance());
+    }
+
+    @Test
+    public void testUpdateTopOpaqueSystemBarsAppearanceWhenActivityBecomesOpaque() {
+        final Task task = createTask(mDisplayContent);
+        final ActivityRecord activity = createActivityRecord(task);
+        activity.setOccludesParent(false);
+
+        final ActivityManager.TaskDescription td = new ActivityManager.TaskDescription();
+        td.setSystemBarsAppearance(
+                WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND);
+        activity.setTaskDescription(td);
+
+        assertEquals(0, task.getTaskDescription().getTopOpaqueSystemBarsAppearance());
+
+        activity.setOccludesParent(true);
+
+        assertEquals(WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND,
+                task.getTaskDescription().getTopOpaqueSystemBarsAppearance());
+
+    }
+
+    @Test
+    public void testIsForceExcludedFromRecents_defaultFalse() {
+        final Task task = createTask(mDisplayContent);
+        assertFalse(task.isForceExcludedFromRecents());
+    }
+
+    @Test
+    public void testSetForceExcludedFromRecents_returnsForceExcludedFromRecents() {
+        final Task task = createTask(mDisplayContent);
+
+        task.setForceExcludedFromRecents(true);
+
+        assertTrue(task.isForceExcludedFromRecents());
+    }
+
+    @Test
+    public void testSetForceExcludedFromRecents_resetsTaskForceExcludedFromRecents() {
+        final Task task = createTask(mDisplayContent);
+        task.setForceExcludedFromRecents(true);
+
+        task.setForceExcludedFromRecents(false);
+
+        assertFalse(task.isForceExcludedFromRecents());
+    }
+
+    @Test
+    public void testAllowRelingquish_updateMinDimensions() {
+        // r0 allows relingquish
+        final ActivityRecord r0 = new ActivityBuilder(mAtm)
+                .setCreateTask(true)
+                .setWindowLayout(new ActivityInfo.WindowLayout(
+                        0, 0, 0, 0, 0, 500 /* minWidth */, 1000 /* minHeight*/))
+                .setActivityFlags(FLAG_RELINQUISH_TASK_IDENTITY)
+                .build();
+        final Task task = r0.getTask();
+
+        assertEquals(500, task.mMinWidth);
+        assertEquals(1000, task.mMinHeight);
+
+        final ActivityRecord r1 = new ActivityBuilder(mAtm)
+                .setTask(task)
+                .setWindowLayout(new ActivityInfo.WindowLayout(
+                        0, 0, 0, 0, 0, 1000 /* minWidth */, 500 /* minHeight*/))
+                .build();
+
+        assertEquals(1000, task.mMinWidth);
+        assertEquals(500, task.mMinHeight);
+    }
+
+    @Test
+    public void testDisallowRelingquish_notUpdateMinDimensions() {
+        // r0 disallows relingquish
+        final ActivityRecord r0 = new ActivityBuilder(mAtm)
+                .setCreateTask(true)
+                .setWindowLayout(new ActivityInfo.WindowLayout(
+                        0, 0, 0, 0, 0, 500 /* minWidth */, 1000 /* minHeight*/))
+                .build();
+        final Task task = r0.getTask();
+
+        assertEquals(500, task.mMinWidth);
+        assertEquals(1000, task.mMinHeight);
+
+        final ActivityRecord r1 = new ActivityBuilder(mAtm)
+                .setTask(task)
+                .setWindowLayout(new ActivityInfo.WindowLayout(
+                        0, 0, 0, 0, 0, 1000 /* minWidth */, 500 /* minHeight*/))
+                .build();
+
+        assertEquals(500, task.mMinWidth);
+        assertEquals(1000, task.mMinHeight);
+    }
+
+    @Test
+    public void testRemoveImmediately_resetHasBennVisible() {
+        final Task task = getTestTask();
+        task.setHasBeenVisible(true);
+
+        assertTrue(task.getHasBeenVisible());
+
+        task.removeImmediately("test");
+
+        assertFalse(task.getHasBeenVisible());
     }
 
     private Task getTestTask() {

@@ -28,6 +28,7 @@ import static android.view.MotionEvent.ACTION_UP;
 
 import android.annotation.NonNull;
 import android.graphics.PointF;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -43,6 +44,8 @@ import androidx.annotation.Nullable;
  * All touch events must be passed through this class to track a drag event.
  */
 public class DragDetector {
+    private static final String TAG = "DragDetector";
+
     private final MotionEventHandler mEventHandler;
 
     private final PointF mInputDownPoint = new PointF();
@@ -87,6 +90,11 @@ public class DragDetector {
      * {@link #mEventHandler} handles the previous down event if the event shouldn't be passed
      */
     public boolean onMotionEvent(View v, MotionEvent ev) {
+        if (ev.isSynthesizedTouchpadGesture()) {
+            // Touchpad finger gestures are ignored.
+            return false;
+        }
+
         final boolean isTouchScreen =
                 (ev.getSource() & SOURCE_TOUCHSCREEN) == SOURCE_TOUCHSCREEN;
         if (!isTouchScreen) {
@@ -109,8 +117,12 @@ public class DragDetector {
                     return mResultOfDownAction;
                 }
                 final int dragPointerIndex = ev.findPointerIndex(mDragPointerId);
+                // TODO(b/400635953): Separate the app header and its buttons'
+                // touch listeners so they're not handled by the same DragDetector.
                 if (dragPointerIndex == -1) {
-                    throw new IllegalStateException("Failed to find primary pointer!");
+                    Log.w(TAG, "Invalid pointer index on ACTION_MOVE. Drag"
+                        + " pointer id: " + mDragPointerId);
+                    return mResultOfDownAction;
                 }
                 if (!mIsDragEvent) {
                     float dx = ev.getRawX(dragPointerIndex) - mInputDownPoint.x;

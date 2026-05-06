@@ -31,19 +31,27 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SystemService;
 import android.content.Context;
+import android.os.Binder;
+import android.os.DeadObjectException;
+import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.ShellCallback;
+import android.util.ArraySet;
 import android.util.Log;
 import android.util.proto.ProtoInputStream;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -67,36 +75,69 @@ import java.util.TreeMap;
  */
 @SystemService(Context.PROTOLOG_CONFIGURATION_SERVICE)
 public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationService.Stub
-        implements ProtoLogConfigurationService {
+        implements ProtoLogConfigurationService, IBinder.DeathRecipient {
     private static final String LOG_TAG = "ProtoLogConfigurationService";
 
     private final ProtoLogDataSource mDataSource;
+
+    /**
+     * Lock for synchronizing access to {@link #mConfigFileCounts}, {@link #mRegisteredGroups},
+     * {@link #mClientRecords}, {@link #mLogGroupToLogcatStatus}, and {@link ClientRecord#groups}.
+     */
+    private final Object mConfigLock = new Object();
 
     /**
      * Keeps track of how many of each viewer config file is currently registered.
      * Use to keep track of which viewer config files are actively being used in tracing and might
      * need to be dumped on flush.
      */
+    @GuardedBy("mConfigLock")
     private final Map<String, Integer> mConfigFileCounts = new HashMap<>();
+
     /**
-     * Keeps track of the viewer config file of each client if available.
+     * Container for data about a {@link IProtoLogClient} that needs to get cleaned up when the
+     * client goes away.
      */
-    private final Map<IProtoLogClient, String> mClientConfigFiles = new HashMap<>();
+    private static final class ClientRecord {
+        /** Immutable Binder.Stub for communication with the client. */
+        @NonNull
+        public final IProtoLogClient client;
+
+        /** Immutable name of the viewer config file of each client if available. */
+        @Nullable
+        public final String configFile;
+
+        /**
+         * Mutable set of ProtoLog groups registered for this client to actively trace.
+         */
+        @GuardedBy("mConfigLock")
+        @NonNull
+        public final Set<String> groups = new ArraySet<>();
+
+        public ClientRecord(@NonNull IProtoLogClient client, @Nullable String configFile) {
+            this.client = client;
+            this.configFile = configFile;
+        }
+    }
+
+    /**
+     * Keeps track of all the clients that are actively tracing.
+     */
+    @GuardedBy("mConfigLock")
+    private final Map<IBinder, ClientRecord> mClientRecords = new HashMap<>();
 
     /**
      * Keeps track of all the protolog groups that have been registered by clients and are still
      * being actively traced.
      */
+    @GuardedBy("mConfigLock")
     private final Set<String> mRegisteredGroups = new HashSet<>();
-    /**
-     * Keeps track of all the clients that are actively tracing a given protolog group.
-     */
-    private final Map<String, Set<IProtoLogClient>> mGroupToClients = new HashMap<>();
 
     /**
      * Keeps track of whether or not a given group should be logged to logcat.
      * True when logging to logcat, false otherwise.
      */
+    @GuardedBy("mConfigLock")
     private final Map<String, Boolean> mLogGroupToLogcatStatus = new TreeMap<>();
 
     /**
@@ -134,74 +175,6 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
         mDataSource = datasource;
     }
 
-    public static class RegisterClientArgs extends IRegisterClientArgs.Stub {
-        /**
-         * The viewer config file to be registered for this client ProtoLog process.
-         */
-        @Nullable
-        private String mViewerConfigFile = null;
-        /**
-         * The list of all groups that this client protolog process supports and might trace.
-         */
-        @NonNull
-        private String[] mGroups = new String[0];
-        /**
-         * The default logcat status of the ProtoLog client. True is logging to logcat, false
-         * otherwise. The indices should match the indices in {@link mGroups}.
-         */
-        @NonNull
-        private boolean[] mLogcatStatus = new boolean[0];
-
-        public record GroupConfig(@NonNull String group, boolean logToLogcat) {}
-
-        /**
-         * Specify groups to register with this client that will be used for protologging in this
-         * process.
-         * @param groups to register with this client.
-         * @return self
-         */
-        public RegisterClientArgs setGroups(GroupConfig... groups) {
-            mGroups = new String[groups.length];
-            mLogcatStatus = new boolean[groups.length];
-
-            for (int i = 0; i < groups.length; i++) {
-                mGroups[i] = groups[i].group;
-                mLogcatStatus[i] = groups[i].logToLogcat;
-            }
-
-            return this;
-        }
-
-        /**
-         * Set the viewer config file that the logs in this process are using.
-         * @param viewerConfigFile The file path of the viewer config.
-         * @return self
-         */
-        public RegisterClientArgs setViewerConfigFile(@NonNull String viewerConfigFile) {
-            mViewerConfigFile = viewerConfigFile;
-
-            return this;
-        }
-
-        @Override
-        @NonNull
-        public String[] getGroups() {
-            return mGroups;
-        }
-
-        @Override
-        @NonNull
-        public boolean[] getGroupsDefaultLogcatStatus() {
-            return mLogcatStatus;
-        }
-
-        @Nullable
-        @Override
-        public String getViewerConfigFile() {
-            return mViewerConfigFile;
-        }
-    }
-
     @FunctionalInterface
     public interface ViewerConfigFileTracer {
         /**
@@ -216,22 +189,84 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
     }
 
     @Override
-    public void registerClient(@NonNull IProtoLogClient client, @NonNull IRegisterClientArgs args)
+    public void registerClient(@NonNull IProtoLogClient client, @NonNull RegisterClientArgs args)
             throws RemoteException {
-        client.asBinder().linkToDeath(() -> onClientBinderDeath(client), /* flags */ 0);
+        final IBinder clientBinder = client.asBinder();
 
-        final String viewerConfigFile = args.getViewerConfigFile();
-        if (viewerConfigFile != null) {
-            registerViewerConfigFile(client, viewerConfigFile);
+        final String viewerConfigFile = args.viewerConfigFile;
+
+        synchronized (mConfigLock) {
+            mClientRecords.put(clientBinder, new ClientRecord(client, viewerConfigFile));
+
+            if (viewerConfigFile != null) {
+                mConfigFileCounts.put(viewerConfigFile,
+                        mConfigFileCounts.getOrDefault(viewerConfigFile, 0) + 1);
+            }
+
+            registerGroupsLocked(client, args.groups, args.groupsDefaultLogcatStatus);
         }
 
-        registerGroups(client, args.getGroups(), args.getGroupsDefaultLogcatStatus());
+        clientBinder.linkToDeath(this, /* flags= */ 0);
+    }
+
+    @Override
+    public void registerGroups(@NonNull IProtoLogClient client, @NonNull RegisterGroupsArgs args)
+            throws RemoteException {
+        synchronized (mConfigLock) {
+            registerGroupsLocked(client, args.groups, args.groupsDefaultLogcatStatus);
+        }
+    }
+
+    /**
+     * Unregister the {@param client}.
+     */
+    @Override
+    public void unregisterClient(@Nullable IProtoLogClient client) {
+        if (client == null) {
+            return;
+        }
+
+        final IBinder clientBinder = client.asBinder();
+        if (clientBinder != null) {
+            clientBinder.unlinkToDeath(this, /* flags= */ 0);
+        }
+
+        // Retrieve the client record for cleanup.
+        final ClientRecord clientRecord;
+        boolean dumpViewerConfig = false;
+        synchronized (mConfigLock) {
+            clientRecord = mClientRecords.remove(clientBinder);
+            if (clientRecord == null) {
+                return;
+            }
+
+            if (clientRecord.configFile != null) {
+                final var newCount = mConfigFileCounts.get(clientRecord.configFile) - 1;
+                mConfigFileCounts.put(clientRecord.configFile, newCount);
+
+                if (newCount == 0) {
+                    mConfigFileCounts.remove(clientRecord.configFile);
+                    dumpViewerConfig = true;
+                }
+            }
+        }
+
+        // Dump the tracing config now if no other client is going to dump the same config file.
+        if (dumpViewerConfig) {
+            mViewerConfigFileTracer.trace(mDataSource, clientRecord.configFile);
+        }
     }
 
     @Override
     public void onShellCommand(@Nullable FileDescriptor in, @Nullable FileDescriptor out,
             @Nullable FileDescriptor err, @NonNull String[] args, @Nullable ShellCallback callback,
             @NonNull ResultReceiver resultReceiver) throws RemoteException {
+        final int callingUid = Binder.getCallingUid();
+        if (callingUid != Process.ROOT_UID && callingUid != Process.SHELL_UID) {
+            resultReceiver.send(-1, null);
+            throw new SecurityException("Shell commands are only callable by ADB");
+        }
+
         new ProtoLogCommandHandler(this)
                 .exec(this, in, out, err, args, callback, resultReceiver);
     }
@@ -243,7 +278,9 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
     @Override
     @NonNull
     public String[] getGroups() {
-        return mRegisteredGroups.toArray(new String[0]);
+        synchronized (mConfigLock) {
+            return mRegisteredGroups.toArray(new String[0]);
+        }
     }
 
     /**
@@ -251,8 +288,8 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
      * @param groups we want to enable logging them to logcat for.
      */
     @Override
-    public void enableProtoLogToLogcat(@NonNull String... groups) {
-        toggleProtoLogToLogcat(true, groups);
+    public void enableProtoLogToLogcat(@NonNull PrintWriter pw, @NonNull String... groups) {
+        toggleProtoLogToLogcat(pw, true, groups);
     }
 
     /**
@@ -260,8 +297,8 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
      * @param groups we want to disable from being logged to logcat.
      */
     @Override
-    public void disableProtoLogToLogcat(@NonNull String... groups) {
-        toggleProtoLogToLogcat(false, groups);
+    public void disableProtoLogToLogcat(@NonNull PrintWriter pw, @NonNull String... groups) {
+        toggleProtoLogToLogcat(pw, false, groups);
     }
 
     /**
@@ -271,7 +308,10 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
      */
     @Override
     public boolean isLoggingToLogcat(@NonNull String group) {
-        final Boolean isLoggingToLogcat = mLogGroupToLogcatStatus.get(group);
+        final Boolean isLoggingToLogcat;
+        synchronized (mConfigLock) {
+            isLoggingToLogcat = mLogGroupToLogcatStatus.get(group);
+        }
 
         if (isLoggingToLogcat == null) {
             throw new RuntimeException(
@@ -281,14 +321,25 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
         return isLoggingToLogcat;
     }
 
-    private void registerViewerConfigFile(
-            @NonNull IProtoLogClient client, @NonNull String viewerConfigFile) {
-        final var count = mConfigFileCounts.getOrDefault(viewerConfigFile, 0);
-        mConfigFileCounts.put(viewerConfigFile, count + 1);
-        mClientConfigFiles.put(client, viewerConfigFile);
+    /**
+     * Legacy method (no longer called) inherited from {@link IBinder.DeathRecipient}.
+     *
+     * Because the method is non-default, it has to be implemented, but the newer version taking an
+     * IBinder will always be called instead.
+     */
+    public void binderDied() {
     }
 
-    private void registerGroups(@NonNull IProtoLogClient client, @NonNull String[] groups,
+    /**
+     * Unregister client when its owner dies - inherited from {@link IBinder.DeathRecipient}
+     */
+    @Override
+    public void binderDied(@NonNull IBinder clientBinder) {
+        unregisterClient(IProtoLogClient.Stub.asInterface(clientBinder));
+    }
+
+    @GuardedBy("mConfigLock")
+    private void registerGroupsLocked(@NonNull IProtoLogClient client, @NonNull String[] groups,
             @NonNull boolean[] logcatStatuses) throws RemoteException {
         if (groups.length != logcatStatuses.length) {
             throw new RuntimeException(
@@ -297,56 +348,82 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
                         + " and logcatStatuses has length " + logcatStatuses.length);
         }
 
+        final var clientRecord = mClientRecords.get(client.asBinder());
+        if (clientRecord == null) {
+            Log.wtf(LOG_TAG, "Trying to add groups to unregistered client: " + client);
+            return;
+        }
+
         for (int i = 0; i < groups.length; i++) {
             String group = groups[i];
             boolean logcatStatus = logcatStatuses[i];
 
+            final boolean requestedLogToLogcat;
             mRegisteredGroups.add(group);
+            clientRecord.groups.add(group);
 
-            mGroupToClients.putIfAbsent(group, new HashSet<>());
-            mGroupToClients.get(group).add(client);
+            mLogGroupToLogcatStatus.putIfAbsent(group, logcatStatus);
+            requestedLogToLogcat = mLogGroupToLogcatStatus.get(group);
 
-            if (!mLogGroupToLogcatStatus.containsKey(group)) {
-                mLogGroupToLogcatStatus.put(group, logcatStatus);
-            }
-
-            boolean requestedLogToLogcat = mLogGroupToLogcatStatus.get(group);
             if (requestedLogToLogcat != logcatStatus) {
-                client.toggleLogcat(requestedLogToLogcat, new String[] { group });
+                client.toggleLogcat(requestedLogToLogcat, new String[]{group});
             }
         }
     }
 
-    private void toggleProtoLogToLogcat(boolean enabled, @NonNull String[] groups) {
-        final var clientToGroups = new HashMap<IProtoLogClient, Set<String>>();
-
-        for (String group : groups) {
-            final var clients = mGroupToClients.get(group);
-
-            if (clients == null) {
-                // No clients associated to this group
-                Log.w(LOG_TAG, "Attempting to toggle log to logcat for group " + group
-                        + " with no registered clients.");
-                continue;
+    private void toggleProtoLogToLogcat(
+            @NonNull PrintWriter pw, boolean enabled, @NonNull String[] groups
+    ) {
+        // For each client, if its groups intersect the given list, send the command to toggle.
+        synchronized (mConfigLock) {
+            final String[] groupsToToggle;
+            if (groups.length == 0) {
+                groupsToToggle = mRegisteredGroups.toArray(new String[0]);
+            } else {
+                groupsToToggle = groups;
             }
 
-            for (IProtoLogClient client : clients) {
-                clientToGroups.putIfAbsent(client, new HashSet<>());
-                clientToGroups.get(client).add(group);
-            }
-        }
+            for (var clientRecord : mClientRecords.values()) {
+                final ArraySet<String> affectedGroups;
+                affectedGroups = new ArraySet<>(clientRecord.groups);
+                affectedGroups.retainAll(Arrays.asList(groupsToToggle));
 
-        for (IProtoLogClient client : clientToGroups.keySet()) {
-            try {
-                client.toggleLogcat(enabled, clientToGroups.get(client).toArray(new String[0]));
-            } catch (RemoteException e) {
-                throw new RuntimeException(
-                        "Failed to toggle logcat status for groups on client", e);
+                if (!affectedGroups.isEmpty()) {
+                    final var clientGroups = affectedGroups.toArray(new String[0]);
+                    try {
+                        pw.println("Toggling logcat logging for client " + clientRecord.client
+                                + " to " + enabled + " for groups: ["
+                                + String.join(", ", clientGroups) + "]");
+                        clientRecord.client.toggleLogcat(enabled, clientGroups);
+                        pw.println("- Done");
+                    } catch (DeadObjectException e) {
+                        pw.println("- Failed (client may have died)");
+                        Log.w(LOG_TAG, "Failed to toggle logcat status for groups on client "
+                                + clientRecord.client + ", it likely has died", e);
+                    } catch (RemoteException e) {
+                        pw.println("- Failed (unexpected RemoteException)");
+                        throw new RuntimeException(
+                                "Failed to toggle logcat status for groups on client", e);
+                    }
+                }
             }
-        }
 
-        for (String group : groups) {
-            mLogGroupToLogcatStatus.put(group, enabled);
+            // Groups that actually have no clients associated indicate some kind of a bug.
+            Set<String> noOpGroups = new ArraySet<>(Arrays.asList(groupsToToggle));
+            mClientRecords.forEach((k, r) -> noOpGroups.removeAll(r.groups));
+
+            // Send out a warning in logcat and the PrintWriter for unrecognized groups.
+            for (String group : noOpGroups) {
+                var warning = "Attempting to toggle log to logcat for group " + group
+                        + " with no registered clients. This is a no-op.";
+                Log.w(LOG_TAG, warning);
+                pw.println("WARNING: " + warning);
+            }
+
+            // Flip the status of the groups in our record-keeping.
+            for (String group : groupsToToggle) {
+                mLogGroupToLogcatStatus.put(group, enabled);
+            }
         }
     }
 
@@ -355,8 +432,17 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
     }
 
     private void onTracingInstanceFlush() {
-        for (String fileName : mConfigFileCounts.keySet()) {
-            mViewerConfigFileTracer.trace(mDataSource, fileName);
+        final var configFilesToDump = new HashSet<String>();
+        synchronized (mConfigLock) {
+            for (var entry : mConfigFileCounts.entrySet()) {
+                if (entry.getValue() > 0) {
+                    configFilesToDump.add(entry.getKey());
+                }
+            }
+        }
+
+        for (var configFileName : configFilesToDump) {
+            mViewerConfigFileTracer.trace(mDataSource, configFileName);
         }
     }
 
@@ -374,19 +460,6 @@ public class ProtoLogConfigurationServiceImpl extends IProtoLogConfigurationServ
                         "Failed to load viewer config file " + viewerConfigFilePath, e);
             }
         });
-    }
-
-    private void onClientBinderDeath(@NonNull IProtoLogClient client) {
-        // Dump the tracing config now if no other client is going to dump the same config file.
-        String configFile = mClientConfigFiles.get(client);
-        if (configFile != null) {
-            final var newCount = mConfigFileCounts.get(configFile) - 1;
-            mConfigFileCounts.put(configFile, newCount);
-            boolean lastProcessWithViewerConfig = newCount == 0;
-            if (lastProcessWithViewerConfig) {
-                mViewerConfigFileTracer.trace(mDataSource, configFile);
-            }
-        }
     }
 
     private static void writeViewerConfigGroup(

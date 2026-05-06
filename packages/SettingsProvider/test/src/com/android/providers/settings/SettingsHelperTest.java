@@ -16,6 +16,8 @@
 
 package com.android.providers.settings;
 
+import static com.android.settings.testutils.DeviceStateAutoRotateSettingTestUtils.setDeviceStateRotationLockEnabled;
+
 import static com.google.common.truth.Truth.assertThat;
 
 import static junit.framework.Assert.assertEquals;
@@ -28,14 +30,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import android.app.backup.BackupAnnotations.OperationType;
+import android.app.backup.BackupRestoreEventLogger;
+import android.app.backup.BackupRestoreEventLogger.DataTypeResult;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.AssetFileDescriptor;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.database.MatrixCursor;
+import android.hardware.devicestate.DeviceStateManager;
 import android.media.AudioManager;
 import android.media.Utils;
 import android.net.Uri;
@@ -64,6 +71,8 @@ import org.junit.runner.RunWith;
 import org.junit.runners.MethodSorters;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 /**
  * Tests for the SettingsHelperTest
@@ -83,22 +92,33 @@ public class SettingsHelperTest {
             "content://media/internal/audio/media/30?title=DefaultAlarm&canonical=1";
     private static final String VIBRATION_FILE_NAME = "haptics.xml";
 
+    private static final LocaleList LOCALE_LIST =
+        LocaleList.forLanguageTags("en-US,en-UK");
+
     private SettingsHelper mSettingsHelper;
 
     @Rule
     public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+    @Rule
+    public MockitoRule mockitoRule = MockitoJUnit.rule();
 
     @Mock private Context mContext;
     @Mock private Resources mResources;
     @Mock private AudioManager mAudioManager;
     @Mock private TelephonyManager mTelephonyManager;
+    @Mock private DeviceStateManager mDeviceStateManager;
 
-    @Mock private MockContentResolver mContentResolver;
+    private MockContentResolver mContentResolver;
     private MockSettingsProvider mSettingsProvider;
+
+    private BackupRestoreEventLogger mBackupRestoreEventLogger;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
+
+        when(mContext.getSystemService(eq(DeviceStateManager.class))).thenReturn(
+                mDeviceStateManager);
         when(mContext.getSystemService(eq(Context.AUDIO_SERVICE))).thenReturn(mAudioManager);
         when(mContext.getSystemService(eq(Context.TELEPHONY_SERVICE))).thenReturn(
                 mTelephonyManager);
@@ -111,6 +131,8 @@ public class SettingsHelperTest {
         when(mContext.getContentResolver()).thenReturn(mContentResolver);
         mSettingsProvider = new MockSettingsProvider(mContext);
         mContentResolver.addProvider(Settings.AUTHORITY, mSettingsProvider);
+        mBackupRestoreEventLogger = new BackupRestoreEventLogger(OperationType.RESTORE);
+        mSettingsHelper.setBackupRestoreEventLogger(mBackupRestoreEventLogger);
     }
 
     @After
@@ -372,7 +394,46 @@ public class SettingsHelperTest {
                         LocaleList.forLanguageTags("zh-Hant-TW"),  // current
                         new String[] { "fa-Arab-AF-u-nu-latn", "zh-Hant-TW" }));  // supported
 
+        assertEquals(LocaleList.forLanguageTags("en-US,zh-Hans-TW,fr-FR"),
+                SettingsHelper.resolveLocales(
+                        // restore
+                        LocaleList.forLanguageTags("en-UK,en-GB,zh-Hans-HK,fr-FR"),
 
+                        // current
+                        LocaleList.forLanguageTags("en-US,zh-Hans-TW"),
+
+                        // supported
+                        new String[] {
+                                "en-US" , "zh-Hans-TW" , "en-UK", "en-GB", "zh-Hans-HK", "fr-FR"
+                        }));
+
+        assertEquals(LocaleList.forLanguageTags("en-US-u-ms-uksystem-mu-celsius"),
+                SettingsHelper.resolveLocales(
+                        // restore
+                        LocaleList.forLanguageTags("en-US-u-ms-uksystem-mu-celsius"),
+
+                        // current
+                        LocaleList.forLanguageTags("en-US"),
+
+                        // supported
+                        new String[] {
+                                "en-US"
+                        }));
+
+        assertEquals(LocaleList.forLanguageTags(
+                "en-US-u-ms-uksystem-mu-celsius,fr-FR-u-ms-uksystem-mu-celsius"),
+                SettingsHelper.resolveLocales(
+                        // restore
+                        LocaleList.forLanguageTags(
+                                "en-US-u-ms-uksystem-mu-celsius,fr-FR-u-ms-uksystem-mu-celsius"),
+
+                        // current
+                        LocaleList.forLanguageTags("en-US"),
+
+                        // supported
+                        new String[] {
+                                "en-US", "fr-FR"
+                        }));
     }
 
     @Test
@@ -710,9 +771,25 @@ public class SettingsHelperTest {
                 com.android.internal.R.bool.config_ringtoneVibrationSettingsSupported)).thenReturn(
                 true);
         String testRingtoneVibrationValue = createUriWithVibration(DEFAULT_RINGTONE_VALUE);
-        String testNotificationVibrationValue = createUriWithVibration(DEFAULT_NOTIFICATION_VALUE);
+
+        final String newRingtoneValueUncanonicalized =
+                "content://media/internal/audio/media/10";
+        final String newRingtoneValueCanonicalized = DEFAULT_RINGTONE_VALUE;
+
         ContentProvider mockMediaContentProvider =
                 new MockContentProvider(mContext) {
+                    @Override
+                    public Uri uncanonicalize(Uri url) {
+                        assertThat(url).isEqualTo(Uri.parse(testRingtoneVibrationValue));
+                        return Uri.parse(newRingtoneValueUncanonicalized);
+                    }
+
+                    @Override
+                    public Uri canonicalize(Uri url) {
+                        assertThat(url).isEqualTo(Uri.parse(newRingtoneValueUncanonicalized));
+                        return Uri.parse(newRingtoneValueCanonicalized);
+                    }
+
                     @Override
                     public String getType(Uri url) {
                         return "audio/ogg";
@@ -721,9 +798,136 @@ public class SettingsHelperTest {
         mContentResolver.addProvider(MediaStore.AUTHORITY, mockMediaContentProvider);
         resetRingtoneSettingsToDefault();
 
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Uri.EMPTY,
+                Settings.System.RINGTONE,
+                testRingtoneVibrationValue,
+                0);
+
         assertRingtoneSettingsRestoring(Settings.System.RINGTONE, testRingtoneVibrationValue);
+    }
+
+    @Test
+    @EnableFlags({android.media.audio.Flags.FLAG_ENABLE_RINGTONE_HAPTICS_CUSTOMIZATION,
+            com.android.server.notification.Flags.FLAG_NOTIFICATION_VIBRATION_IN_SOUND_URI})
+    public void testRestoreValue_notificationVibrationSupport_restoreValue() {
+        when(mResources.getBoolean(
+                com.android.internal.R.bool.config_ringtoneVibrationSettingsSupported)).thenReturn(
+                true);
+        String testNotificationVibrationValue = createUriWithVibration(DEFAULT_NOTIFICATION_VALUE);
+        final String newNotificationValueUncanonicalized =
+                "content://media/internal/audio/media/20";
+        final String newNotificationValueCanonicalized = DEFAULT_NOTIFICATION_VALUE;
+
+        ContentProvider mockMediaContentProvider =
+                new MockContentProvider(mContext) {
+                    @Override
+                    public Uri uncanonicalize(Uri url) {
+                        assertThat(url).isEqualTo(Uri.parse(testNotificationVibrationValue));
+                        return Uri.parse(newNotificationValueUncanonicalized);
+                    }
+
+                    @Override
+                    public Uri canonicalize(Uri url) {
+                        assertThat(url).isEqualTo(Uri.parse(newNotificationValueUncanonicalized));
+                        return Uri.parse(newNotificationValueCanonicalized);
+                    }
+
+                    @Override
+                    public String getType(Uri url) {
+                        return "audio/ogg";
+                    }
+                };
+        mContentResolver.addProvider(MediaStore.AUTHORITY, mockMediaContentProvider);
+        resetRingtoneSettingsToDefault();
+
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Uri.EMPTY,
+                Settings.System.NOTIFICATION_SOUND,
+                testNotificationVibrationValue,
+                0);
+
         assertRingtoneSettingsRestoring(
                 Settings.System.NOTIFICATION_SOUND, testNotificationVibrationValue);
+    }
+
+    @Test
+    @EnableFlags({android.media.audio.Flags.FLAG_ENABLE_RINGTONE_HAPTICS_CUSTOMIZATION,
+            com.android.server.notification.Flags.FLAG_NOTIFICATION_VIBRATION_IN_SOUND_URI})
+    public void testRestoreValue_customRingtone_notificationSound_Vibration_useCustomLookup() {
+        when(mResources.getBoolean(
+                com.android.internal.R.bool.config_ringtoneVibrationSettingsSupported)).thenReturn(
+                true);
+
+        final String sourceRingtoneValue = createUriWithVibration(
+                "content://0@media/external/audio/media/1?title=Song&canonical=1");
+        final String newRingtoneValueUncanonicalized =
+                "content://0@media/external/audio/media/100";
+        final String newRingtoneValueCanonicalized =
+                "content://0@media/external/audio/media/100?title=Song&canonical=1";
+        final String expectedRingtoneValue =
+                createUriWithVibration(newRingtoneValueCanonicalized);
+
+        MatrixCursor cursor = new MatrixCursor(new String[] {BaseColumns._ID});
+        cursor.addRow(new Object[] {100L});
+
+        ContentProvider mockMediaContentProvider =
+                new MockContentProvider(mContext) {
+                    @Override
+                    public Uri uncanonicalize(Uri url) {
+                        // mock the lookup failure in regular MediaProvider.uncanonicalize.
+                        return null;
+                    }
+
+                    @Override
+                    public Uri canonicalize(Uri url) {
+                        assertThat(url).isEqualTo(Uri.parse(newRingtoneValueUncanonicalized));
+                        return Uri.parse(newRingtoneValueCanonicalized);
+                    }
+
+                    @Override
+                    public String getType(Uri url) {
+                        return "audio/ogg";
+                    }
+
+                    @Override
+                    public Cursor query(
+                            Uri uri,
+                            String[] projection,
+                            String selection,
+                            String[] selectionArgs,
+                            String sortOrder) {
+                        assertThat(uri)
+                                .isEqualTo(Uri.parse("content://0@media/external/audio/media"));
+                        assertThat(projection).isEqualTo(new String[] {"_id"});
+                        assertThat(selection).isEqualTo("is_ringtone=1 AND title=?");
+                        assertThat(selectionArgs).isEqualTo(new String[] {"Song"});
+                        return cursor;
+                    }
+                };
+
+        mContentResolver.addProvider(MediaStore.AUTHORITY, mockMediaContentProvider);
+        mContentResolver.addProvider("0@" + MediaStore.AUTHORITY, mockMediaContentProvider);
+
+        resetRingtoneSettingsToDefault();
+
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Uri.EMPTY,
+                Settings.System.RINGTONE,
+                sourceRingtoneValue,
+                0);
+
+        assertThat(Settings.System.getString(mContentResolver, Settings.System.RINGTONE))
+                .isEqualTo(expectedRingtoneValue);
     }
 
     private static class MockSettingsProvider extends MockContentProvider {
@@ -754,8 +958,7 @@ public class SettingsHelperTest {
 
     @Test
     public void restoreValue_autoRotation_deviceStateAutoRotationDisabled_restoresValue() {
-        when(mResources.getStringArray(R.array.config_perDeviceStateRotationLockDefaults))
-                .thenReturn(new String[]{});
+        setDeviceStateRotationLockEnabled(/* enable= */ false, mResources, mDeviceStateManager);
         int previousValue = 0;
         int newValue = 1;
         setAutoRotationSettingValue(previousValue);
@@ -767,8 +970,7 @@ public class SettingsHelperTest {
 
     @Test
     public void restoreValue_autoRotation_deviceStateAutoRotationEnabled_doesNotRestoreValue() {
-        when(mResources.getStringArray(R.array.config_perDeviceStateRotationLockDefaults))
-                .thenReturn(new String[]{"0:1", "1:1"});
+        setDeviceStateRotationLockEnabled(/* enable= */ true, mResources, mDeviceStateManager);
         int previousValue = 0;
         int newValue = 1;
         setAutoRotationSettingValue(previousValue);
@@ -776,6 +978,89 @@ public class SettingsHelperTest {
         restoreAutoRotationSetting(newValue);
 
         assertThat(getAutoRotationSettingValue()).isEqualTo(previousValue);
+    }
+
+    @Test
+    public void getLocaleList_returnsLocaleList() {
+        Configuration config = new Configuration();
+        config.setLocales(LOCALE_LIST);
+        when(mResources.getConfiguration()).thenReturn(config);
+
+        assertThat(mSettingsHelper.getLocaleList()).isEqualTo(LOCALE_LIST);
+    }
+
+    @Test
+    public void
+    restoreValue_restoresSetting_secureUri_logsSuccessWithSecureDatatype()
+    {
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Settings.Secure.CONTENT_URI,
+                SETTING_KEY,
+                SETTING_VALUE,
+                /* restoredFromSdkInt */ 0);
+
+        DataTypeResult loggingResult =
+            getLoggingResultForDatatype(SettingsBackupRestoreKeys.KEY_SECURE);
+        assertThat(loggingResult).isNotNull();
+        assertThat(loggingResult.getSuccessCount()).isEqualTo(1);
+    }
+
+    @Test
+    public void
+    restoreValue_restoresSetting_systemUri_logsSuccessWithSystemDatatype()
+    {
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Settings.System.CONTENT_URI,
+                SETTING_KEY,
+                SETTING_VALUE,
+                /* restoredFromSdkInt */ 0);
+
+        DataTypeResult loggingResult =
+            getLoggingResultForDatatype(SettingsBackupRestoreKeys.KEY_SYSTEM);
+        assertThat(loggingResult).isNotNull();
+        assertThat(loggingResult.getSuccessCount()).isEqualTo(1);
+    }
+
+    @Test
+    public void
+    restoreValue_restoresSetting_globalUri_logsSuccessWithGlobalDatatype()
+    {
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Settings.Global.CONTENT_URI,
+                SETTING_KEY,
+                SETTING_VALUE,
+                /* restoredFromSdkInt */ 0);
+
+        DataTypeResult loggingResult =
+            getLoggingResultForDatatype(SettingsBackupRestoreKeys.KEY_GLOBAL);
+        assertThat(loggingResult).isNotNull();
+        assertThat(loggingResult.getSuccessCount()).isEqualTo(1);
+    }
+
+    @Test
+    public void restoreValue_doesNotRestoreSetting_logsFailure() {
+        mSettingsHelper.restoreValue(
+                mContext,
+                mContentResolver,
+                new ContentValues(),
+                Uri.EMPTY,
+                SETTING_KEY,
+                SETTING_VALUE,
+                /* restoredFromSdkInt */ 0);
+
+        DataTypeResult loggingResult =
+            getLoggingResultForDatatype(SettingsBackupRestoreKeys.KEY_UNKNOWN);
+        assertThat(loggingResult).isNotNull();
+        assertThat(loggingResult.getFailCount()).isEqualTo(1);
     }
 
     private int getAutoRotationSettingValue() {
@@ -837,5 +1122,14 @@ public class SettingsHelperTest {
 
         assertThat(Settings.System.getString(mContentResolver, settings))
                 .isEqualTo(testRingtoneSettingsValue);
+    }
+
+    private DataTypeResult getLoggingResultForDatatype(String dataType) {
+        for (DataTypeResult result : mBackupRestoreEventLogger.getLoggingResults()) {
+            if (result.getDataType().equals(dataType)) {
+                return result;
+            }
+        }
+        return null;
     }
 }

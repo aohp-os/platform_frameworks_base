@@ -19,7 +19,7 @@ package com.android.location.fused;
 import static android.content.Intent.ACTION_USER_SWITCHED;
 import static android.location.LocationManager.GPS_PROVIDER;
 import static android.location.LocationManager.NETWORK_PROVIDER;
-import static android.location.LocationRequest.QUALITY_LOW_POWER;
+import static android.location.LocationRequest.QUALITY_HIGH_ACCURACY;
 import static android.location.provider.ProviderProperties.ACCURACY_FINE;
 import static android.location.provider.ProviderProperties.POWER_USAGE_LOW;
 
@@ -38,6 +38,7 @@ import android.location.provider.LocationProviderBase;
 import android.location.provider.ProviderProperties;
 import android.location.provider.ProviderRequest;
 import android.os.Bundle;
+import android.util.Log;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
@@ -50,6 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class FusedLocationProvider extends LocationProviderBase {
 
     private static final String TAG = "FusedLocationProvider";
+    private static final String ATTRIBUTION_TAG = "FusedOverlayService";
 
     private static final ProviderProperties PROPERTIES = new ProviderProperties.Builder()
                 .setHasAltitudeSupport(true)
@@ -60,6 +62,9 @@ public class FusedLocationProvider extends LocationProviderBase {
                 .build();
 
     private static final long MAX_LOCATION_COMPARISON_NS = 11 * 1000000000L; // 11 seconds
+    // Maximum request interval at which we will activate GPS (because GPS sometimes consumes
+    // excessive power with large intervals).
+    private static final long MAX_GPS_INTERVAL_MS = 5 * 1000; // 5 seconds
 
     private final Object mLock = new Object();
 
@@ -83,8 +88,8 @@ public class FusedLocationProvider extends LocationProviderBase {
 
     public FusedLocationProvider(Context context) {
         super(context, TAG, PROPERTIES);
-        mContext = context;
-        mLocationManager = Objects.requireNonNull(context.getSystemService(LocationManager.class));
+        mContext = context.createAttributionContext(ATTRIBUTION_TAG);
+        mLocationManager = Objects.requireNonNull(mContext.getSystemService(LocationManager.class));
 
         mGpsListener = new ChildLocationListener(GPS_PROVIDER);
         mNetworkListener = new ChildLocationListener(NETWORK_PROVIDER);
@@ -164,8 +169,10 @@ public class FusedLocationProvider extends LocationProviderBase {
             mNlpPresent = mLocationManager.hasProvider(NETWORK_PROVIDER);
         }
 
+        boolean requestAllowsGps = mRequest.getQuality() == QUALITY_HIGH_ACCURACY
+                && mRequest.getIntervalMillis() <= MAX_GPS_INTERVAL_MS;
         long gpsInterval =
-                mGpsPresent && (!mNlpPresent || mRequest.getQuality() < QUALITY_LOW_POWER)
+                mGpsPresent && requestAllowsGps
                         ? mRequest.getIntervalMillis() : INTERVAL_DISABLED;
         long networkInterval = mNlpPresent ? mRequest.getIntervalMillis() : INTERVAL_DISABLED;
 
@@ -301,8 +308,13 @@ public class FusedLocationProvider extends LocationProviderBase {
                             .setWorkSource(mRequest.getWorkSource())
                             .setHiddenFromAppOps(true)
                             .build();
-                    mLocationManager.requestLocationUpdates(mProvider, request,
-                            mContext.getMainExecutor(), this);
+
+                    try {
+                        mLocationManager.requestLocationUpdates(
+                                mProvider, request, mContext.getMainExecutor(), this);
+                    } catch (IllegalArgumentException e) {
+                        Log.e(TAG, "Failed to request location updates");
+                    }
                 }
             }
         }
@@ -311,7 +323,11 @@ public class FusedLocationProvider extends LocationProviderBase {
             synchronized (mLock) {
                 int requestCode = mNextFlushCode++;
                 mPendingFlushes.put(requestCode, callback);
-                mLocationManager.requestFlush(mProvider, this, requestCode);
+                try {
+                    mLocationManager.requestFlush(mProvider, this, requestCode);
+                } catch (IllegalArgumentException e) {
+                    Log.e(TAG, "Failed to request flush");
+                }
             }
         }
 

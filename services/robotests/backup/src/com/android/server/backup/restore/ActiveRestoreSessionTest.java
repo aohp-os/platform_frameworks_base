@@ -51,6 +51,7 @@ import android.platform.test.annotations.Presubmit;
 
 import com.android.server.EventLogTags;
 import com.android.server.backup.BackupAgentTimeoutParameters;
+import com.android.server.backup.BackupWakeLock;
 import com.android.server.backup.OperationStorage;
 import com.android.server.backup.TransportManager;
 import com.android.server.backup.UserBackupManagerService;
@@ -103,7 +104,7 @@ public class ActiveRestoreSessionTest {
     @Mock private OperationStorage mOperationStorage;
     private ShadowLooper mShadowBackupLooper;
     private ShadowApplication mShadowApplication;
-    private UserBackupManagerService.BackupWakeLock mWakeLock;
+    private BackupWakeLock mWakeLock;
     private TransportData mTransport;
     private RestoreSet mRestoreSet1;
     private RestoreSet mRestoreSet2;
@@ -215,8 +216,8 @@ public class ActiveRestoreSessionTest {
     public void testGetAvailableRestoreSets_forEmptyRestoreSets() throws Exception {
         mShadowApplication.grantPermissions(android.Manifest.permission.BACKUP);
         TransportMock transportMock = setUpTransport(mTransport);
-        when(transportMock.transport.getAvailableRestoreSets()).thenReturn(
-                Arrays.asList(new RestoreSet[0]));
+        when(transportMock.transport.getAvailableRestoreSets())
+                .thenReturn(Arrays.asList(new RestoreSet[0]));
         IRestoreSession restoreSession = createActiveRestoreSession(PACKAGE_1, mTransport);
 
         int result = restoreSession.getAvailableRestoreSets(mObserver, mMonitor);
@@ -341,8 +342,9 @@ public class ActiveRestoreSessionTest {
         IRestoreSession restoreSession =
                 createActiveRestoreSessionWithRestoreSets(null, mTransport, mRestoreSet1);
 
-        int result = restoreSession.restorePackages(TOKEN_1, mObserver,
-                new String[] {PACKAGE_1, PACKAGE_2}, mMonitor);
+        int result =
+                restoreSession.restorePackages(
+                        TOKEN_1, mObserver, new String[] {PACKAGE_1, PACKAGE_2}, mMonitor);
 
         mShadowBackupLooper.runToEndOfTasks();
         assertThat(result).isEqualTo(0);
@@ -363,8 +365,8 @@ public class ActiveRestoreSessionTest {
         IRestoreSession restoreSession =
                 createActiveRestoreSessionWithRestoreSets(null, mTransport, mRestoreSet1);
 
-        restoreSession.restorePackages(TOKEN_1, mObserver, new String[] {PACKAGE_1, PACKAGE_2},
-                mMonitor);
+        restoreSession.restorePackages(
+                TOKEN_1, mObserver, new String[] {PACKAGE_1, PACKAGE_2}, mMonitor);
 
         mShadowBackupLooper.runToEndOfTasks();
         assertThat(ShadowPerformUnifiedRestoreTask.getLastCreated().isFullSystemRestore()).isTrue();
@@ -406,8 +408,9 @@ public class ActiveRestoreSessionTest {
         setUpTransport(mTransport);
         IRestoreSession restoreSession = createActiveRestoreSession(null, mTransport);
 
-        int result = restoreSession.restorePackages(TOKEN_1, mObserver, new String[] {PACKAGE_1},
-                mMonitor);
+        int result =
+                restoreSession.restorePackages(
+                        TOKEN_1, mObserver, new String[] {PACKAGE_1}, mMonitor);
 
         assertThat(result).isEqualTo(-1);
     }
@@ -419,8 +422,9 @@ public class ActiveRestoreSessionTest {
         IRestoreSession restoreSession =
                 createActiveRestoreSessionWithRestoreSets(PACKAGE_1, mTransport, mRestoreSet1);
 
-        int result = restoreSession.restorePackages(TOKEN_1, mObserver, new String[] {PACKAGE_2},
-                mMonitor);
+        int result =
+                restoreSession.restorePackages(
+                        TOKEN_1, mObserver, new String[] {PACKAGE_2}, mMonitor);
 
         assertThat(result).isEqualTo(-1);
     }
@@ -437,8 +441,8 @@ public class ActiveRestoreSessionTest {
         expectThrows(
                 IllegalStateException.class,
                 () ->
-                        restoreSession.restorePackages(TOKEN_1, mObserver, new String[] {PACKAGE_1},
-                                mMonitor));
+                        restoreSession.restorePackages(
+                                TOKEN_1, mObserver, new String[] {PACKAGE_1}, mMonitor));
     }
 
     @Test
@@ -448,8 +452,9 @@ public class ActiveRestoreSessionTest {
         IRestoreSession restoreSession =
                 createActiveRestoreSessionWithRestoreSets(null, mTransport, mRestoreSet1);
 
-        int result = restoreSession.restorePackages(TOKEN_1, mObserver, new String[] {PACKAGE_1},
-                mMonitor);
+        int result =
+                restoreSession.restorePackages(
+                        TOKEN_1, mObserver, new String[] {PACKAGE_1}, mMonitor);
 
         assertThat(result).isEqualTo(-1);
     }
@@ -584,7 +589,9 @@ public class ActiveRestoreSessionTest {
     private IRestoreSession createActiveRestoreSession(
             String packageName, TransportData transport) {
         return new ActiveRestoreSession(
-                mBackupManagerService, packageName, transport.transportName,
+                mBackupManagerService,
+                packageName,
+                transport.transportName,
                 mBackupEligibilityRules);
     }
 
@@ -593,7 +600,9 @@ public class ActiveRestoreSessionTest {
             throws RemoteException {
         ActiveRestoreSession restoreSession =
                 new ActiveRestoreSession(
-                        mBackupManagerService, packageName, transport.transportName,
+                        mBackupManagerService,
+                        packageName,
+                        transport.transportName,
                         mBackupEligibilityRules);
         restoreSession.setRestoreSets(Arrays.asList(restoreSets));
         return restoreSession;

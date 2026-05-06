@@ -25,23 +25,21 @@
 #include "Paint.h"
 #include "Properties.h"
 #include "RenderNode.h"
+#include "SkColor.h"
 #include "Typeface.h"
 #include "hwui/PaintFilter.h"
 #include "pipeline/skia/SkiaRecordingCanvas.h"
 
-#ifdef __ANDROID__
+#ifdef __linux__
 #include <com_android_graphics_hwui_flags.h>
 namespace flags = com::android::graphics::hwui::flags;
-#else
+#else // __linux__
 namespace flags {
-constexpr bool high_contrast_text_luminance() {
-    return false;
-}
 constexpr bool high_contrast_text_small_text_rect() {
     return false;
 }
 }  // namespace flags
-#endif
+#endif // __linux__
 
 namespace android {
 
@@ -56,7 +54,7 @@ static inline void drawStroke(SkScalar left, SkScalar right, SkScalar top, SkSca
     canvas->drawRect(left, top, right, bottom, paint);
 }
 
-static void simplifyPaint(int color, Paint* paint) {
+static void simplifyPaint(SkColor4f color, Paint* paint) {
     paint->setColor(color);
     paint->setShader(nullptr);
     paint->setColorFilter(nullptr);
@@ -74,6 +72,41 @@ static void simplifyPaint(int color, Paint* paint) {
     paint->setStrokeJoin(SkPaint::kRound_Join);
     paint->setLooper(nullptr);
     paint->setBlendMode(SkBlendMode::kSrcOver);
+}
+
+namespace {
+
+static bool shouldDarkenTextForHighContrast(const uirenderer::Lab& lab) {
+    // LINT.IfChange(hct_darken)
+    return lab.L <= 50;
+    // LINT.ThenChange(/core/java/android/text/Layout.java:hct_darken)
+}
+
+}  // namespace
+
+static void adjustHighContrastInnerTextColor(uirenderer::Lab* lab) {
+    bool darken = shouldDarkenTextForHighContrast(*lab);
+    bool isGrayscale = abs(lab->a) < 10 && abs(lab->b) < 10;
+    if (isGrayscale) {
+        // For near-grayscale text we first remove all color.
+        lab->a = lab->b = 0;
+        if (lab->L > 40 && lab->L < 60) {
+            // Text near "middle gray" is pushed to a more contrasty gray.
+            lab->L = darken ? 20 : 80;
+        } else {
+            // Other grayscale text is pushed completely white or black.
+            lab->L = darken ? 0 : 100;
+        }
+    } else {
+        // For color text we ensure the text is bright enough (for light text)
+        // or dark enough (for dark text) to stand out against the background,
+        // without touching the A and B components so we retain color.
+        if (darken && lab->L > 20.f) {
+            lab->L = 20.0f;
+        } else if (!darken && lab->L < 90.f) {
+            lab->L = 90.0f;
+        }
+    }
 }
 
 class DrawTextFunctor {
@@ -113,28 +146,21 @@ public:
 
         if (CC_UNLIKELY(canvas->isHighContrastText() && paint.getAlpha() != 0)) {
             // high contrast draw path
-            int color = paint.getColor();
-            bool darken;
-            // This equation should match the one in core/java/android/text/Layout.java
-            if (flags::high_contrast_text_luminance()) {
-                uirenderer::Lab lab = uirenderer::sRGBToLab(color);
-                darken = lab.L <= 50;
-            } else {
-                int channelSum = SkColorGetR(color) + SkColorGetG(color) + SkColorGetB(color);
-                darken = channelSum < (128 * 3);
-            }
+            uirenderer::Lab lab = uirenderer::sRGBToLab(paint.getColor4f());
+            bool darken = shouldDarkenTextForHighContrast(lab);
 
             // outline
             gDrawTextBlobMode = DrawTextBlobMode::HctOutline;
             Paint outlinePaint(paint);
-            simplifyPaint(darken ? SK_ColorWHITE : SK_ColorBLACK, &outlinePaint);
+            simplifyPaint(darken ? SkColors::kWhite : SkColors::kBlack, &outlinePaint);
             outlinePaint.setStyle(SkPaint::kStrokeAndFill_Style);
             canvas->drawGlyphs(glyphFunc, glyphCount, outlinePaint, x, y, totalAdvance);
 
             // inner
             gDrawTextBlobMode = DrawTextBlobMode::HctInner;
             Paint innerPaint(paint);
-            simplifyPaint(darken ? SK_ColorBLACK : SK_ColorWHITE, &innerPaint);
+            adjustHighContrastInnerTextColor(&lab);
+            simplifyPaint(uirenderer::LabToSRGB(lab, 1.0f), &innerPaint);
             innerPaint.setStyle(SkPaint::kFill_Style);
             canvas->drawGlyphs(glyphFunc, glyphCount, innerPaint, x, y, totalAdvance);
             gDrawTextBlobMode = DrawTextBlobMode::Normal;

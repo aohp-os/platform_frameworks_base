@@ -37,6 +37,7 @@ import android.content.pm.PackageManagerInternal;
 import android.content.pm.Signature;
 import android.content.pm.SigningDetails;
 import android.content.pm.UserInfo;
+import android.app.PropertyInvalidatedCache;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
@@ -45,10 +46,13 @@ import android.os.UserHandle;
 import android.platform.test.annotations.Presubmit;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.Pair;
 import android.util.SparseArray;
 
 import androidx.annotation.NonNull;
 
+import android.app.ApplicationPackageManager;
+import android.content.pm.PackageManager;
 import com.android.internal.pm.parsing.pkg.PackageImpl;
 import com.android.internal.pm.parsing.pkg.ParsedPackage;
 import com.android.internal.pm.pkg.component.ParsedActivity;
@@ -63,8 +67,10 @@ import com.android.internal.pm.pkg.component.ParsedUsesPermissionImpl;
 import com.android.internal.pm.pkg.parsing.ParsingPackage;
 import com.android.server.om.OverlayReferenceMapper;
 import com.android.server.pm.pkg.AndroidPackage;
+import com.android.server.utils.Watchable;
 import com.android.server.utils.WatchableTester;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -80,8 +86,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 @Presubmit
 @RunWith(JUnit4.class)
@@ -246,6 +250,55 @@ public class AppsFilterImplTest {
                 (Answer<Boolean>) invocation ->
                         ((AndroidPackage) invocation.getArgument(SYSTEM_USER)).getTargetSdkVersion()
                                 >= Build.VERSION_CODES.R);
+        PropertyInvalidatedCache.setTestMode(true);
+        PackageManager.sApplicationInfoCache.testPropertyName();
+        ApplicationPackageManager.sGetPackagesForUidCache.testPropertyName();
+    }
+
+    @After
+    public void tearDown() {
+        PropertyInvalidatedCache.setTestMode(false);
+    }
+
+    /**
+     * A class to make it easier to verify that PM caches are properly invalidated by
+     * AppsFilterImpl operations.  This extends WatchableTester to test the cache nonces along
+     * with change reporting.
+     */
+    private static class NonceTester extends WatchableTester {
+        // The nonces from caches under consideration.  The no-parameter constructor fetches the
+        // values from the cacches.
+        private static record Nonces(long applicationInfo, long packageInfo) {
+            Nonces() {
+                this(ApplicationPackageManager.sGetPackagesForUidCache.getNonce(),
+                        PackageManager.sApplicationInfoCache.getNonce());
+            }
+        }
+
+        // Track the latest cache nonces.
+        private Nonces mNonces;
+
+        NonceTester(Watchable w, String k) {
+            super(w, k);
+            mNonces = new Nonces();
+        }
+
+        @Override
+        public void verifyChangeReported(String msg) {
+            super.verifyChangeReported(msg);
+            Nonces update = new Nonces();
+            assertTrue(msg, update.applicationInfo != mNonces.applicationInfo);
+            assertTrue(msg, update.packageInfo != mNonces.packageInfo);
+            mNonces = update;
+        }
+
+        @Override
+        public void verifyNoChangeReported(String msg) {
+            super.verifyNoChangeReported(msg);
+            Nonces update = new Nonces();
+            assertTrue(msg, update.applicationInfo == mNonces.applicationInfo);
+            assertTrue(msg, update.packageInfo == mNonces.packageInfo);
+        }
     }
 
     @Test
@@ -885,18 +938,15 @@ public class AppsFilterImplTest {
                         return null;
                     }
 
-                    @NonNull
+                    @Nullable
                     @Override
-                    public Map<String, Set<String>> getTargetToOverlayables(
+                    public Pair<String, String> getTargetToOverlayables(
                             @NonNull AndroidPackage pkg) {
                         if (overlay.getPackageName().equals(pkg.getPackageName())) {
-                            Map<String, Set<String>> map = new ArrayMap<>();
-                            Set<String> set = new ArraySet<>();
-                            set.add(overlay.getOverlayTargetOverlayableName());
-                            map.put(overlay.getOverlayTarget(), set);
-                            return map;
+                            return Pair.create(overlay.getOverlayTarget(),
+                                    overlay.getOverlayTargetOverlayableName());
                         }
-                        return Collections.emptyMap();
+                        return null;
                     }
                 },
                 mMockHandler);
@@ -977,18 +1027,15 @@ public class AppsFilterImplTest {
                         return null;
                     }
 
-                    @NonNull
+                    @Nullable
                     @Override
-                    public Map<String, Set<String>> getTargetToOverlayables(
+                    public Pair<String, String> getTargetToOverlayables(
                             @NonNull AndroidPackage pkg) {
                         if (overlay.getPackageName().equals(pkg.getPackageName())) {
-                            Map<String, Set<String>> map = new ArrayMap<>();
-                            Set<String> set = new ArraySet<>();
-                            set.add(overlay.getOverlayTargetOverlayableName());
-                            map.put(overlay.getOverlayTarget(), set);
-                            return map;
+                            return Pair.create(overlay.getOverlayTarget(),
+                                    overlay.getOverlayTargetOverlayableName());
                         }
-                        return Collections.emptyMap();
+                        return null;
                     }
                 },
                 mMockHandler);
@@ -1175,7 +1222,7 @@ public class AppsFilterImplTest {
         final AppsFilterImpl appsFilter =
                 new AppsFilterImpl(mFeatureConfigMock, new String[]{}, /* systemAppsQueryable */
                         false, /* overlayProvider */ null, mMockHandler);
-        final WatchableTester watcher = new WatchableTester(appsFilter, "onChange");
+        final WatchableTester watcher = new NonceTester(appsFilter, "onChange");
         watcher.register();
         simulateAddBasicAndroid(appsFilter);
         watcher.verifyChangeReported("addBasicAndroid");
@@ -1486,7 +1533,8 @@ public class AppsFilterImplTest {
                 DUMMY_TARGET_APPID);
         final PackageSetting calling = simulateAddPackage(appsFilter,
                 pkg("com.some.other.package").addUsesPermission(
-                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0)),
+                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0,
+                                Collections.emptySet())),
                 DUMMY_CALLING_APPID);
 
         assertFalse(
@@ -1505,7 +1553,8 @@ public class AppsFilterImplTest {
 
         final PackageSetting calling = simulateAddPackage(appsFilter,
                 pkg("com.some.other.package").addUsesPermission(
-                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0)),
+                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0,
+                                Collections.emptySet())),
                 DUMMY_CALLING_APPID);
 
         final PackageSetting target = simulateAddPackage(appsFilter,
@@ -1534,7 +1583,8 @@ public class AppsFilterImplTest {
 
         final PackageSetting target = simulateAddPackage(appsFilter,
                 pkg("com.some.other.package").addUsesPermission(
-                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0)),
+                        new ParsedUsesPermissionImpl("com.some.custom_permission", 0,
+                                Collections.emptySet())),
                 DUMMY_TARGET_APPID);
 
         assertTrue(
@@ -1558,15 +1608,15 @@ public class AppsFilterImplTest {
         final PackageSetting calling1 = simulateAddPackage(appsFilter,
                 pkg("com.some.other.package")
                         .addUsesPermission(new ParsedUsesPermissionImpl(
-                                "com.some.custom_permission1", 0)),
+                                "com.some.custom_permission1", 0, Collections.emptySet())),
                 DUMMY_CALLING_APPID);
 
         final PackageSetting calling2 = simulateAddPackage(appsFilter,
                 pkg("com.some.another.package")
                         .addUsesPermission(new ParsedUsesPermissionImpl(
-                                "com.some.custom_permission2", 0))
+                                "com.some.custom_permission2", 0, Collections.emptySet()))
                         .addUsesPermission(new ParsedUsesPermissionImpl(
-                                "com.some.custom_permission3", 0)),
+                                "com.some.custom_permission3", 0, Collections.emptySet())),
                 DUMMY_CALLING_APPID + 1);
 
         assertFalse(
@@ -1599,7 +1649,7 @@ public class AppsFilterImplTest {
         final PackageSetting calling = simulateAddPackage(appsFilter,
                 pkg("com.some.other.package")
                         .addUsesPermission(new ParsedUsesPermissionImpl(
-                                "com.some.custom_permission", 0)),
+                                "com.some.custom_permission", 0, Collections.emptySet())),
                 DUMMY_CALLING_APPID);
 
         assertFalse(

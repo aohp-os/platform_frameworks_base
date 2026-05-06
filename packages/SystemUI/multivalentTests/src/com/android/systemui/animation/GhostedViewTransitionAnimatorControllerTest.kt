@@ -17,16 +17,20 @@
 package com.android.systemui.animation
 
 import android.os.HandlerThread
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.testing.TestableLooper
 import android.view.View
 import android.widget.FrameLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.jank.InteractionJankMonitor
+import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.animation.view.LaunchableFrameLayout
 import com.google.common.truth.Truth.assertThat
 import org.junit.Assert.assertThrows
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -40,6 +44,14 @@ class GhostedViewTransitionAnimatorControllerTest : SysuiTestCase() {
     }
 
     private val interactionJankMonitor = FakeInteractionJankMonitor()
+    private lateinit var transitionRegistry: FakeViewTransitionRegistry
+    private lateinit var transitioningView: View
+
+    @Before
+    fun setup() {
+        transitioningView = LaunchableFrameLayout(mContext)
+        transitionRegistry = FakeViewTransitionRegistry()
+    }
 
     @Test
     fun animatingOrphanViewDoesNotCrash() {
@@ -67,10 +79,10 @@ class GhostedViewTransitionAnimatorControllerTest : SysuiTestCase() {
         parent.addView((launchView))
         val launchController =
             GhostedViewTransitionAnimatorController(
-                    launchView,
+                launchView,
                 launchCujType = LAUNCH_CUJ,
                 returnCujType = RETURN_CUJ,
-                interactionJankMonitor = interactionJankMonitor
+                interactionJankMonitor = interactionJankMonitor,
             )
         launchController.onTransitionAnimationStart(isExpandingFullyAbove = true)
         assertThat(interactionJankMonitor.ongoing).containsExactly(LAUNCH_CUJ)
@@ -81,12 +93,13 @@ class GhostedViewTransitionAnimatorControllerTest : SysuiTestCase() {
         val returnView = LaunchableFrameLayout(mContext)
         parent.addView((returnView))
         val returnController =
-            object : GhostedViewTransitionAnimatorController(
-                returnView,
-                launchCujType = LAUNCH_CUJ,
-                returnCujType = RETURN_CUJ,
-                interactionJankMonitor = interactionJankMonitor
-            ) {
+            object :
+                GhostedViewTransitionAnimatorController(
+                    returnView,
+                    launchCujType = LAUNCH_CUJ,
+                    returnCujType = RETURN_CUJ,
+                    interactionJankMonitor = interactionJankMonitor,
+                ) {
                 override val isLaunching = false
             }
         returnController.onTransitionAnimationStart(isExpandingFullyAbove = true)
@@ -96,13 +109,31 @@ class GhostedViewTransitionAnimatorControllerTest : SysuiTestCase() {
         assertThat(interactionJankMonitor.finished).containsExactly(LAUNCH_CUJ, RETURN_CUJ)
     }
 
+    @EnableFlags(Flags.FLAG_DECOUPLE_VIEW_CONTROLLER_IN_ANIMLIB)
+    @Test
+    fun testViewsAreRegisteredInTransitionRegistry() {
+        GhostedViewTransitionAnimatorController(
+            transitioningView = transitioningView,
+            transitionRegistry = transitionRegistry,
+        )
+        assertThat(transitionRegistry.registry).isNotEmpty()
+    }
+
+    @DisableFlags(Flags.FLAG_DECOUPLE_VIEW_CONTROLLER_IN_ANIMLIB)
+    @Test
+    fun testNotUseRegistryIfDecouplingFlagDisabled() {
+        GhostedViewTransitionAnimatorController(
+            transitioningView = transitioningView,
+            transitionRegistry = transitionRegistry,
+        )
+        assertThat(transitionRegistry.registry).isEmpty()
+    }
+
     /**
      * A fake implementation of [InteractionJankMonitor] which stores ongoing and finished CUJs and
      * allows inspection.
      */
-    private class FakeInteractionJankMonitor : InteractionJankMonitor(
-        HandlerThread("testThread")
-    ) {
+    private class FakeInteractionJankMonitor : InteractionJankMonitor(HandlerThread("testThread")) {
         val ongoing: MutableSet<Int> = mutableSetOf()
         val finished: MutableSet<Int> = mutableSetOf()
 
@@ -115,6 +146,34 @@ class GhostedViewTransitionAnimatorControllerTest : SysuiTestCase() {
             ongoing.remove(cujType)
             finished.add(cujType)
             return true
+        }
+    }
+
+    private class FakeViewTransitionRegistry : ViewTransitionRegistry {
+
+        val registry = mutableMapOf<ViewTransitionToken, View>()
+        val token = ViewTransitionToken()
+
+        override fun register(view: View): ViewTransitionToken {
+            registry[token] = view
+            view.setTag(R.id.tag_view_transition_token, token)
+            return token
+        }
+
+        override fun unregister(token: ViewTransitionToken) {
+            registry.remove(token)?.setTag(R.id.tag_view_transition_token, null)
+        }
+
+        override fun getView(token: ViewTransitionToken): View? {
+            return registry[token]
+        }
+
+        override fun getViewToken(view: View): ViewTransitionToken? {
+            return view.getTag(R.id.tag_view_transition_token) as? ViewTransitionToken
+        }
+
+        override fun onRegistryUpdate() {
+            // empty
         }
     }
 }

@@ -34,6 +34,7 @@ public class DocumentedOperation {
 
     public static final int FLOAT_ARRAY = 10;
     public static final int INT_ARRAY = 11;
+    public static final int BYTE_ARRAY = 12;
 
     @NonNull final String mCategory;
     int mId;
@@ -49,6 +50,12 @@ public class DocumentedOperation {
     int mExamplesWidth = 100;
     int mExamplesHeight = 100;
 
+    /**
+     * Returns the string representation of a field type
+     *
+     * @param type
+     * @return
+     */
     @NonNull
     public static String getType(int type) {
         switch (type) {
@@ -74,6 +81,8 @@ public class DocumentedOperation {
                 return "FLOAT[]";
             case INT_ARRAY:
                 return "INT[]";
+            case BYTE_ARRAY:
+                return "byte[]";
         }
         return "UNKNOWN";
     }
@@ -117,6 +126,11 @@ public class DocumentedOperation {
         return mVarSize;
     }
 
+    /**
+     * Returns the size of the operation fields
+     *
+     * @return size in bytes
+     */
     public int getSizeFields() {
         int size = 0;
         mVarSize = "";
@@ -152,12 +166,29 @@ public class DocumentedOperation {
         return mExamplesHeight;
     }
 
+    /**
+     * Document a field of the operation
+     *
+     * @param type
+     * @param name
+     * @param description
+     * @return
+     */
     @NonNull
     public DocumentedOperation field(int type, @NonNull String name, @NonNull String description) {
         mFields.add(new OperationField(type, name, description));
         return this;
     }
 
+    /**
+     * Document a field of the operation
+     *
+     * @param type
+     * @param name
+     * @param varSize
+     * @param description
+     * @return
+     */
     @NonNull
     public DocumentedOperation field(
             int type, @NonNull String name, @NonNull String varSize, @NonNull String description) {
@@ -165,6 +196,13 @@ public class DocumentedOperation {
         return this;
     }
 
+    /**
+     * Add possible values for the operation field
+     *
+     * @param name
+     * @param value
+     * @return
+     */
     @NonNull
     public DocumentedOperation possibleValues(@NonNull String name, int value) {
         if (!mFields.isEmpty()) {
@@ -173,24 +211,50 @@ public class DocumentedOperation {
         return this;
     }
 
+    /**
+     * Add a description
+     *
+     * @param description
+     * @return
+     */
     @NonNull
     public DocumentedOperation description(@NonNull String description) {
         mDescription = description;
         return this;
     }
 
+    /**
+     * Add arbitrary text as examples
+     *
+     * @param examples
+     * @return
+     */
     @NonNull
     public DocumentedOperation examples(@NonNull String examples) {
         mTextExamples = examples;
         return this;
     }
 
+    /**
+     * Add an example image
+     *
+     * @param name the title of the image
+     * @param imagePath the path of the image
+     * @return
+     */
     @NonNull
     public DocumentedOperation exampleImage(@NonNull String name, @NonNull String imagePath) {
         mExamples.add(new StringPair(name, imagePath));
         return this;
     }
 
+    /**
+     * Add examples with a given size
+     *
+     * @param width
+     * @param height
+     * @return
+     */
     @NonNull
     public DocumentedOperation examplesDimension(int width, int height) {
         mExamplesWidth = width;

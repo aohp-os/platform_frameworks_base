@@ -31,9 +31,7 @@ import android.view.inputmethod.CursorAnchorInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.ImeTracker;
 import android.view.inputmethod.InputBinding;
-import android.view.inputmethod.InputMethod;
 import android.view.inputmethod.InputMethodSubtype;
-import android.window.ImeOnBackInvokedDispatcher;
 
 import com.android.internal.inputmethod.IConnectionlessHandwritingCallback;
 import com.android.internal.inputmethod.IInlineSuggestionsRequestCallback;
@@ -158,14 +156,14 @@ final class IInputMethodInvoker {
     void startInput(IBinder startInputToken, IRemoteInputConnection remoteInputConnection,
             EditorInfo editorInfo, boolean restarting,
             @InputMethodNavButtonFlags int navButtonFlags,
-            @NonNull ImeOnBackInvokedDispatcher imeDispatcher) {
+            @NonNull ResultReceiver imeBackCallbackReceiver) {
         final IInputMethod.StartInputParams params = new IInputMethod.StartInputParams();
         params.startInputToken = startInputToken;
         params.remoteInputConnection = remoteInputConnection;
         params.editorInfo = editorInfo;
         params.restarting = restarting;
         params.navigationBarFlags = navButtonFlags;
-        params.imeDispatcher = imeDispatcher;
+        params.imeBackCallbackReceiver = imeBackCallbackReceiver;
         try {
             mTarget.startInput(params);
         } catch (RemoteException e) {
@@ -202,12 +200,13 @@ final class IInputMethodInvoker {
 
     // TODO(b/192412909): Convert this back to void method
     @AnyThread
-    boolean showSoftInput(IBinder showInputToken, @NonNull ImeTracker.Token statsToken,
-            @InputMethod.ShowFlags int flags, ResultReceiver resultReceiver) {
+    boolean showSoftInput(@NonNull ImeTracker.Token statsToken) {
         try {
-            mTarget.showSoftInput(showInputToken, statsToken, flags, resultReceiver);
+            ImeTracker.forLogging().onProgress(statsToken, ImeTracker.PHASE_SERVER_IME_INVOKER);
+            mTarget.showSoftInput(statsToken);
         } catch (RemoteException e) {
             logRemoteException(e);
+            ImeTracker.forLogging().onFailed(statsToken, ImeTracker.PHASE_SERVER_IME_INVOKER);
             return false;
         }
         return true;
@@ -215,12 +214,13 @@ final class IInputMethodInvoker {
 
     // TODO(b/192412909): Convert this back to void method
     @AnyThread
-    boolean hideSoftInput(IBinder hideInputToken, @NonNull ImeTracker.Token statsToken,
-            int flags, ResultReceiver resultReceiver) {
+    boolean hideSoftInput(@NonNull ImeTracker.Token statsToken) {
         try {
-            mTarget.hideSoftInput(hideInputToken, statsToken, flags, resultReceiver);
+            ImeTracker.forLogging().onProgress(statsToken, ImeTracker.PHASE_SERVER_IME_INVOKER);
+            mTarget.hideSoftInput(statsToken);
         } catch (RemoteException e) {
             logRemoteException(e);
+            ImeTracker.forLogging().onFailed(statsToken, ImeTracker.PHASE_SERVER_IME_INVOKER);
             return false;
         }
         return true;

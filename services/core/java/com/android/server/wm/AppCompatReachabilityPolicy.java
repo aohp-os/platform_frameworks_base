@@ -27,6 +27,7 @@ import static com.android.internal.util.FrameworkStatsLog.LETTERBOX_POSITION_CHA
 import static com.android.server.wm.AppCompatConfiguration.LETTERBOX_HORIZONTAL_REACHABILITY_POSITION_CENTER;
 import static com.android.server.wm.AppCompatConfiguration.LETTERBOX_VERTICAL_REACHABILITY_POSITION_CENTER;
 
+import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.graphics.Rect;
@@ -34,6 +35,8 @@ import android.graphics.Rect;
 import com.android.internal.annotations.VisibleForTesting;
 
 import java.io.PrintWriter;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.function.Supplier;
 
 /**
@@ -48,6 +51,26 @@ class AppCompatReachabilityPolicy {
     @Nullable
     @VisibleForTesting
     Supplier<Rect> mLetterboxInnerBoundsSupplier;
+
+    /** @hide */
+    @IntDef(prefix = { "REACHABILITY_SOURCE_" }, value = {
+            REACHABILITY_SOURCE_CORE,
+            REACHABILITY_SOURCE_SHELL,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ReachabilitySource {}
+
+    /**
+     * This is the value used when the double tap is coming from the Letterbox surfaces in Core.
+     * @hide
+     */
+    public static final int REACHABILITY_SOURCE_CORE = 0;
+
+    /**
+     * This is the value used when the double tap is coming from the Letterbox surfaces in Shell.
+     * @hide
+     */
+    public static final int REACHABILITY_SOURCE_SHELL = 1;
 
     AppCompatReachabilityPolicy(@NonNull ActivityRecord activityRecord,
             @NonNull AppCompatConfiguration appCompatConfiguration) {
@@ -65,19 +88,30 @@ class AppCompatReachabilityPolicy {
     }
 
     /**
-     * Handles double tap events for reachability.
+     * Handles double tap events for reachability from Core.
      * <p/>
      * @param x Double tap x coordinate.
      * @param y Double tap y coordinate.
      */
     void handleDoubleTap(int x, int y) {
-        handleHorizontalDoubleTap(x);
-        handleVerticalDoubleTap(y);
+        handleDoubleTap(x, y, REACHABILITY_SOURCE_CORE);
+    }
+
+    /**
+     * Handles double tap events for reachability.
+     * <p/>
+     * @param x Double tap x coordinate.
+     * @param y Double tap y coordinate.
+     * @param source The Source of the double-tap event.
+     */
+    void handleDoubleTap(int x, int y, @ReachabilitySource int source) {
+        handleHorizontalDoubleTap(x, source);
+        handleVerticalDoubleTap(y, source);
     }
 
     void dump(@NonNull PrintWriter pw, @NonNull String prefix) {
         final AppCompatReachabilityOverrides reachabilityOverrides =
-                mActivityRecord.mAppCompatController.getAppCompatReachabilityOverrides();
+                mActivityRecord.mAppCompatController.getReachabilityOverrides();
         pw.println(prefix + "  isVerticalThinLetterboxed=" + reachabilityOverrides
                 .isVerticalThinLetterboxed());
         pw.println(prefix + "  isHorizontalThinLetterboxed=" + reachabilityOverrides
@@ -94,11 +128,14 @@ class AppCompatReachabilityPolicy {
                 mActivityRecord.getParent().getConfiguration()));
     }
 
-    private void handleHorizontalDoubleTap(int x) {
+    private void handleHorizontalDoubleTap(int x, @ReachabilitySource int source) {
         final AppCompatReachabilityOverrides reachabilityOverrides =
-                mActivityRecord.mAppCompatController.getAppCompatReachabilityOverrides();
-        if (!reachabilityOverrides.isHorizontalReachabilityEnabled()
-                || mActivityRecord.isInTransition()) {
+                mActivityRecord.mAppCompatController.getReachabilityOverrides();
+        // The check on the transition state only makes sense if the event is coming from core.
+        // In case the event is coming from Shell, the transition should not be considered.
+        final boolean skipWhenOnTransition = source == REACHABILITY_SOURCE_CORE
+                && mActivityRecord.inTransition();
+        if (!reachabilityOverrides.isHorizontalReachabilityEnabled() || skipWhenOnTransition) {
             return;
         }
         final Rect letterboxInnerFrame = getLetterboxInnerFrame();
@@ -107,7 +144,7 @@ class AppCompatReachabilityPolicy {
             return;
         }
         final AppCompatDeviceStateQuery deviceStateQuery = mActivityRecord.mAppCompatController
-                .getAppCompatDeviceStateQuery();
+                .getDeviceStateQuery();
         final boolean isInFullScreenBookMode = deviceStateQuery
                     .isDisplayFullScreenAndSeparatingHinge()
                 && mAppCompatConfiguration.getIsAutomaticReachabilityInBookModeEnabled();
@@ -140,11 +177,14 @@ class AppCompatReachabilityPolicy {
         mActivityRecord.recomputeConfiguration();
     }
 
-    private void handleVerticalDoubleTap(int y) {
+    private void handleVerticalDoubleTap(int y, @ReachabilitySource int source) {
         final AppCompatReachabilityOverrides reachabilityOverrides =
-                mActivityRecord.mAppCompatController.getAppCompatReachabilityOverrides();
-        if (!reachabilityOverrides.isVerticalReachabilityEnabled()
-                || mActivityRecord.isInTransition()) {
+                mActivityRecord.mAppCompatController.getReachabilityOverrides();
+        // The check on the transition state only makes sense if the event is coming from core.
+        // In case the event is coming from Shell, the transition should not be considered.
+        final boolean skipWhenOnTransition = source == REACHABILITY_SOURCE_CORE
+                && mActivityRecord.inTransition();
+        if (!reachabilityOverrides.isVerticalReachabilityEnabled() || skipWhenOnTransition) {
             return;
         }
         final Rect letterboxInnerFrame = getLetterboxInnerFrame();
@@ -153,7 +193,7 @@ class AppCompatReachabilityPolicy {
             return;
         }
         final AppCompatDeviceStateQuery deviceStateQuery = mActivityRecord.mAppCompatController
-                .getAppCompatDeviceStateQuery();
+                .getDeviceStateQuery();
         final boolean isInFullScreenTabletopMode = deviceStateQuery
                 .isDisplayFullScreenAndSeparatingHinge();
         final int letterboxPositionForVerticalReachability = mAppCompatConfiguration

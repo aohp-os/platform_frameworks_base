@@ -100,14 +100,14 @@ public class InsetsAnimationControlImplTest {
         topConsumer.setControl(
                 new InsetsSourceControl(ID_STATUS_BAR, WindowInsets.Type.statusBars(),
                         mStatusLeash, true, new Point(0, 0), Insets.of(0, 100, 0, 0)),
-                new int[1], new int[1], new int[1]);
+                new int[1], new int[1], new int[1], new int[1]);
 
         InsetsSourceConsumer navConsumer = new InsetsSourceConsumer(ID_NAVIGATION_BAR,
                 WindowInsets.Type.navigationBars(), mInsetsState, mMockController);
         navConsumer.setControl(
                 new InsetsSourceControl(ID_NAVIGATION_BAR, WindowInsets.Type.navigationBars(),
                         mNavLeash, true, new Point(400, 0), Insets.of(0, 0, 100, 0)),
-                new int[1], new int[1], new int[1]);
+                new int[1], new int[1], new int[1], new int[1]);
         mMockController.setRequestedVisibleTypes(0, WindowInsets.Type.navigationBars());
         navConsumer.applyLocalVisibilityOverride();
 
@@ -126,7 +126,8 @@ public class InsetsAnimationControlImplTest {
         };
 
         mController = new InsetsAnimationControlImpl(controls,
-                new Rect(0, 0, 500, 500), mInsetsState, mMockListener, systemBars(),
+                new Rect(0, 0, 500, 500), new Rect(0, 0, 500, 500),
+                mInsetsState, mMockListener, systemBars(),
                 mMockController, mMockController, spec /* insetsAnimationSpecCreator */,
                 0 /* animationType */, 0 /* layoutInsetsDuringAnimation */, null /* translator */,
                 null /* statsToken */);

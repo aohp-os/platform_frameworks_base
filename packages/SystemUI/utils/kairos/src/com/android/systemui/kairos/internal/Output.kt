@@ -16,44 +16,50 @@
 
 package com.android.systemui.kairos.internal
 
-import com.android.systemui.kairos.util.Just
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
+import com.android.systemui.kairos.util.NameData
+import com.android.systemui.kairos.util.forceInit
 
 internal class Output<A>(
-    val context: CoroutineContext = EmptyCoroutineContext,
-    val onDeath: suspend () -> Unit = {},
-    val onEmit: suspend EvalScope.(A) -> Unit,
+    val nameData: NameData,
+    val onDeath: () -> Unit = {},
+    val onEmit: EvalScope.(A) -> Unit,
 ) {
+
+    init {
+        nameData.forceInit()
+    }
 
     val schedulable = Schedulable.O(this)
 
-    @Volatile var upstream: NodeConnection<A>? = null
-    @Volatile var result: Any? = NoResult
+    var upstream: NodeConnection<A>? = null
+    var result: Any? = NoResult
 
     private object NoResult
 
     // invoked by network
-    suspend fun visit(evalScope: EvalScope) {
+    fun visit(evalScope: EvalScope) {
         val upstreamResult = result
         check(upstreamResult !== NoResult) { "output visited with null upstream result" }
-        result = null
+        result = NoResult
         @Suppress("UNCHECKED_CAST") evalScope.onEmit(upstreamResult as A)
     }
 
-    suspend fun kill() {
+    fun kill() {
         onDeath()
+        upstream = null
     }
 
-    suspend fun schedule(evalScope: EvalScope) {
-        val upstreamResult =
-            checkNotNull(upstream) { "output scheduled with null upstream" }.getPushEvent(evalScope)
-        if (upstreamResult is Just) {
-            result = upstreamResult.value
-            evalScope.scheduleOutput(this)
-        }
+    fun schedule(logIndent: Int, evalScope: EvalScope) {
+        result =
+            checkNotNull(upstream) { "output scheduled with null upstream" }
+                .getPushEvent(logIndent, evalScope)
+        evalScope.scheduleOutput(this)
     }
+
+    override fun toString(): String = "${super.toString()}[$nameData]"
 }
 
-internal inline fun OneShot(crossinline onEmit: suspend EvalScope.() -> Unit): Output<Unit> =
-    Output<Unit>(onEmit = { onEmit() }).apply { result = Unit }
+internal inline fun OneShot(
+    nameData: NameData,
+    crossinline onEmit: EvalScope.() -> Unit,
+): Output<Unit> = Output<Unit>(nameData, onEmit = { onEmit() }).apply { result = Unit }

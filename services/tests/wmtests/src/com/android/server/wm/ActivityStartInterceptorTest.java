@@ -53,7 +53,9 @@ import android.content.pm.UserPackage;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.DexmakerShareClassLoaderRule;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -132,6 +134,8 @@ public class ActivityStartInterceptorTest {
 
     private SparseArray<ActivityInterceptorCallback> mActivityInterceptorCallbacks =
             new SparseArray<>();
+
+    @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Before
     public void setUp() throws RemoteException {
@@ -234,6 +238,19 @@ public class ActivityStartInterceptorTest {
         when(mPackageManagerInternal.getSuspendedDialogInfo(TEST_PACKAGE_NAME, suspender,
                 TEST_USER_ID)).thenReturn(dialogInfo);
         return dialogInfo;
+    }
+
+    @Test
+    public void testInterceptIncorrectHomeIntent() {
+        // Create a non-standard home intent
+        final Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+        homeIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+
+        // Ensure the intent is intercepted and normalized to standard home intent.
+        assertTrue(mInterceptor.intercept(homeIntent, null, mAInfo, null, null, null, 0, 0, null,
+                mTaskDisplayArea, false));
+        assertTrue(ActivityRecord.isHomeIntent(homeIntent));
     }
 
     @Test
@@ -376,6 +393,30 @@ public class ActivityStartInterceptorTest {
                 null, mTaskDisplayArea));
 
         // THEN the returned intent is the secondary home intent
+        assertSame(expectedIntent, mInterceptor.mIntent);
+    }
+
+    @EnableFlags(android.companion.virtualdevice.flags.Flags.FLAG_AUTOMATED_APP_LAUNCH_INTERCEPTION)
+    @Test
+    public void testAutomatedAppIntentInterception() {
+        // GIVEN the package we're about to launch is automated
+        Intent originalIntent = new Intent();
+
+        Intent expectedIntent = new Intent(Intent.ACTION_MAIN);
+        expectedIntent.addCategory(Intent.CATEGORY_SECONDARY_HOME);
+        expectedIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        final int secondaryDisplayId = 7;
+        when(mTaskDisplayArea.getDisplayId()).thenReturn(secondaryDisplayId);
+        when(mSupervisor.createAutomatedAppLaunchWarningIntent(
+                TEST_PACKAGE_NAME, TEST_USER_ID, TEST_CALLING_PACKAGE, secondaryDisplayId))
+                .thenReturn(expectedIntent);
+
+        // THEN calling intercept returns true
+        assertTrue(mInterceptor.intercept(originalIntent, null, mAInfo, null, null, null, 0, 0,
+                null, mTaskDisplayArea));
+
+        // THEN the returned intent is the replacement intent
         assertSame(expectedIntent, mInterceptor.mIntent);
     }
 

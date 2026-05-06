@@ -95,8 +95,6 @@
   <java-symbol type="id" name="find" />
   <java-symbol type="id" name="fullscreenArea" />
   <java-symbol type="id" name="group_divider" />
-  <java-symbol type="id" name="hard_keyboard_section" />
-  <java-symbol type="id" name="hard_keyboard_switch" />
   <java-symbol type="id" name="headers" />
   <java-symbol type="id" name="hour" />
   <java-symbol type="id" name="icon" />
@@ -221,6 +219,23 @@
   <java-symbol type="id" name="inbox_text4" />
   <java-symbol type="id" name="inbox_text5" />
   <java-symbol type="id" name="inbox_text6" />
+  <java-symbol type="id" name="metric_view_0" />
+  <java-symbol type="id" name="metric_view_1" />
+  <java-symbol type="id" name="metric_view_2" />
+  <java-symbol type="id" name="metric_label_0" />
+  <java-symbol type="id" name="metric_label_1" />
+  <java-symbol type="id" name="metric_label_2" />
+  <java-symbol type="id" name="metric_value_0" />
+  <java-symbol type="id" name="metric_value_1" />
+  <java-symbol type="id" name="metric_value_2" />
+  <java-symbol type="id" name="metric_chronometer_0" />
+  <java-symbol type="id" name="metric_chronometer_1" />
+  <java-symbol type="id" name="metric_chronometer_2" />
+  <java-symbol type="id" name="metric_unit_0" />
+  <java-symbol type="id" name="metric_unit_1" />
+  <java-symbol type="id" name="metric_unit_2" />
+  <java-symbol type="id" name="alt_title" />
+  <java-symbol type="id" name="app_name_text_divider" />
   <java-symbol type="id" name="status_bar_latest_event_content" />
   <java-symbol type="id" name="notification_main_column" />
   <java-symbol type="id" name="notification_headerless_view_column" />
@@ -291,6 +306,7 @@
   <java-symbol type="integer" name="config_audio_ring_vol_steps" />
   <java-symbol type="integer" name="config_audio_alarm_min_vol" />
   <java-symbol type="bool" name="config_audio_ringer_mode_affects_alarm_stream" />
+  <java-symbol type="bool" name="config_multi_audio_focus_enabled_default" />
   <java-symbol type="bool" name="config_spatial_audio_head_tracking_enabled_default" />
   <java-symbol type="bool" name="config_avoidGfxAccel" />
   <java-symbol type="bool" name="config_bluetooth_address_validation" />
@@ -363,10 +379,15 @@
   <java-symbol type="bool" name="config_speed_up_audio_on_mt_calls" />
   <java-symbol type="bool" name="config_useFixedVolume" />
   <java-symbol type="bool" name="config_isMainUserPermanentAdmin"/>
+  <java-symbol type="bool" name="config_disallowRemovingLastAdminUser"/>
+  <java-symbol type="bool" name="config_supportProfilesOnNonMainUser"/>
+  <java-symbol type="bool" name="config_createInitialUser"/>
+  <java-symbol type="bool" name="config_designateMainUser"/>
   <java-symbol type="bool" name="config_canSwitchToHeadlessSystemUser"/>
   <java-symbol type="bool" name="config_enableMultiUserUI"/>
   <java-symbol type="bool" name="config_enableMultipleAdmins"/>
-  <java-symbol type="bool" name="config_bootToHeadlessSystemUser"/>
+  <java-symbol type="bool" name="config_allowAlarmsOnStoppedUsers"/>
+  <java-symbol type="bool" name="config_showNotificationForBackgroundUserAlarms"/>
   <java-symbol type="bool" name="config_omnipresentCommunalUser"/>
   <java-symbol type="bool" name="config_enableNewAutoSelectNetworkUI"/>
   <java-symbol type="bool" name="config_disableUsbPermissionDialogs"/>
@@ -403,6 +424,7 @@
   <java-symbol type="bool" name="config_windowShowCircularMask" />
   <java-symbol type="bool" name="config_predictShowStartingSurface" />
   <java-symbol type="bool" name="config_windowEnableCircularEmulatorDisplayOverlay" />
+  <java-symbol type="bool" name="config_windowEnableScreenBrightnessEmulatorDisplayOverlay" />
   <java-symbol type="bool" name="config_supportMicNearUltrasound" />
   <java-symbol type="bool" name="config_supportSpeakerNearUltrasound" />
   <java-symbol type="bool" name="config_supportAudioSourceUnprocessed" />
@@ -424,6 +446,7 @@
   <java-symbol type="bool" name="config_guestUserAutoCreated" />
   <java-symbol type="bool" name="config_guestUserAllowEphemeralStateChange" />
   <java-symbol type="bool" name="config_localDisplaysMirrorContent" />
+  <java-symbol type="bool" name="config_allowPresentationOnInternalDisplay" />
   <java-symbol type="bool" name="config_ignoreUdfpsVote" />
   <java-symbol type="bool" name="config_enableProximityService" />
   <java-symbol type="bool" name="config_enableVirtualDeviceManager" />
@@ -493,7 +516,7 @@
   <java-symbol type="integer" name="config_lockSoundVolumeDb" />
   <java-symbol type="integer" name="config_multiuserMaximumUsers" />
   <java-symbol type="integer" name="config_multiuserMaxRunningUsers" />
-  <java-symbol type="integer" name="config_backgroundUserScheduledStopTimeSecs" />
+  <java-symbol type="integer" name="config_backgroundUserConsideredDispensableTimeSecs" />
   <java-symbol type="bool" name="config_multiuserDelayUserDataLocking" />
   <java-symbol type="bool" name="config_multiuserVisibleBackgroundUsers" />
   <java-symbol type="bool" name="config_multiuserVisibleBackgroundUsersOnDefaultDisplay" />
@@ -531,6 +554,13 @@
   <java-symbol type="bool" name="config_enableUdcSysfsUsbStateUpdate"/>
   <java-symbol type="bool" name="config_enableSearchTileHideIllustrationInPrivateSpace"/>
 
+  <java-symbol type="color" name="shade_panel_fg" />
+  <java-symbol type="color" name="shade_panel_bg" />
+  <java-symbol type="color" name="shade_panel_scrim" />
+  <java-symbol type="color" name="surface_effect_0" />
+  <java-symbol type="color" name="surface_effect_1" />
+  <java-symbol type="color" name="surface_effect_2" />
+  <java-symbol type="color" name="surface_effect_3" />
   <java-symbol type="color" name="tab_indicator_text_v4" />
 
   <java-symbol type="dimen" name="accessibility_touch_slop" />
@@ -576,10 +606,12 @@
   <java-symbol type="dimen" name="notification_top_pad_large_text" />
   <java-symbol type="dimen" name="notification_top_pad_large_text_narrow" />
   <java-symbol type="dimen" name="notification_badge_size" />
+  <java-symbol type="dimen" name="notification_2025_badge_size" />
   <java-symbol type="dimen" name="immersive_mode_cling_width" />
   <java-symbol type="dimen" name="accessibility_magnification_indicator_width" />
   <java-symbol type="dimen" name="circular_display_mask_thickness" />
   <java-symbol type="dimen" name="user_icon_size" />
+  <java-symbol type="dimen" name="round_scrollbar_width" />
 
   <java-symbol type="string" name="add_account_button_label" />
   <java-symbol type="string" name="addToDictionary" />
@@ -641,6 +673,7 @@
   <java-symbol type="string" name="auto_data_switch_title" />
   <java-symbol type="string" name="auto_data_switch_content" />
   <java-symbol type="string" name="RestrictedStateContentMsimTemplate" />
+  <java-symbol type="string" name="emergency_calling_do_not_show_again" />
   <java-symbol type="string" name="notification_channel_network_alert" />
   <java-symbol type="string" name="notification_channel_call_forward" />
   <java-symbol type="string" name="notification_channel_emergency_callback" />
@@ -814,6 +847,12 @@
   <java-symbol type="string" name="lockscreen_access_pattern_start" />
   <java-symbol type="string" name="lockscreen_emergency_call" />
   <java-symbol type="string" name="lockscreen_return_to_call" />
+  <java-symbol type="string" name="long_press_power_to_turn_off_tv_toast" />
+  <java-symbol type="string" name="tv_watchdog_notification_channel_name" />
+  <java-symbol type="string" name="tv_watchdog_notification_title" />
+  <java-symbol type="string" name="tv_watchdog_notification_content" />
+  <java-symbol type="integer" name="config_turnOffTvToastSuppressionDelayMs" />
+  <java-symbol type="integer" name="config_turnOffTvToastPostDelayMs" />
   <java-symbol type="string" name="low_memory" />
   <java-symbol type="string" name="mic_access_off_toast" />
   <java-symbol type="string" name="mic_access_on_toast" />
@@ -967,7 +1006,9 @@
   <java-symbol type="string" name="scCellularNetworkSecuritySummary" />
   <java-symbol type="string" name="scCellularNetworkSecurityTitle" />
   <java-symbol type="string" name="scCellularNetworkSecurityLearnMore" />
+  <java-symbol type="string" name="scIDIssueSummaryWithCellularID" />
   <java-symbol type="string" name="scIdentifierDisclosureIssueSummary" />
+  <java-symbol type="string" name="scIDIssueSummaryNotificationWithCellularID" />
   <java-symbol type="string" name="scIdentifierDisclosureIssueSummaryNotification" />
   <java-symbol type="string" name="scIdentifierDisclosureIssueTitle" />
   <java-symbol type="string" name="scNullCipherIssueActionGotIt" />
@@ -978,6 +1019,9 @@
   <java-symbol type="string" name="scNullCipherIssueNonEncryptedSummary" />
   <java-symbol type="string" name="scNullCipherIssueNonEncryptedSummaryNotification" />
   <java-symbol type="string" name="scNullCipherIssueNonEncryptedTitle" />
+  <java-symbol type="string" name="cellular_identifier_imsi" />
+  <java-symbol type="string" name="cellular_identifier_imei" />
+  <java-symbol type="string" name="cellular_identifier_suci" />
   <java-symbol type="string" name="selected" />
   <java-symbol type="string" name="sendText" />
   <java-symbol type="string" name="sending" />
@@ -1074,9 +1118,15 @@
   <java-symbol type="string" name="granularity_label_line" />
   <java-symbol type="string" name="default_audio_route_id" />
   <java-symbol type="string" name="default_audio_route_name" />
+  <java-symbol type="string" name="default_audio_route_name_analog" />
+  <java-symbol type="string" name="default_audio_route_name_arc" />
+  <java-symbol type="string" name="default_audio_route_name_aux" />
+  <java-symbol type="string" name="default_audio_route_name_digital" />
   <java-symbol type="string" name="default_audio_route_name_dock_speakers" />
+  <java-symbol type="string" name="default_audio_route_name_earc" />
   <java-symbol type="string" name="default_audio_route_name_external_device" />
   <java-symbol type="string" name="default_audio_route_name_headphones" />
+  <java-symbol type="string" name="default_audio_route_name_hdmi_tv" />
   <java-symbol type="string" name="default_audio_route_name_usb" />
   <java-symbol type="string" name="default_audio_route_category_name" />
   <java-symbol type="string" name="stk_cc_ss_to_dial" />
@@ -1095,6 +1145,8 @@
   <java-symbol type="string" name="media_route_status_in_use" />
   <java-symbol type="string" name="owner_name" />
   <java-symbol type="string" name="guest_name" />
+  <java-symbol type="string" name="headless_system_user_name" />
+  <java-symbol type="string" name="unnamed_user_name" />
   <java-symbol type="string" name="config_chooseAccountActivity" />
   <java-symbol type="string" name="config_chooseTypeAndAccountActivity" />
   <java-symbol type="string" name="config_chooserActivity" />
@@ -1121,6 +1173,7 @@
   <java-symbol type="string" name="profile_label_work_3" />
   <java-symbol type="string" name="profile_label_test" />
   <java-symbol type="string" name="profile_label_communal" />
+  <java-symbol type="string" name="profile_label_supervising" />
   <java-symbol type="string" name="accessibility_label_managed_profile" />
   <java-symbol type="string" name="accessibility_label_private_profile" />
   <java-symbol type="string" name="accessibility_label_clone_profile" />
@@ -1309,6 +1362,7 @@
   <java-symbol type="array" name="config_securityStatePackages" />
   <java-symbol type="array" name="stoppable_fgs_system_apps" />
   <java-symbol type="array" name="vendor_stoppable_fgs_system_apps" />
+  <java-symbol type="array" name="config_availableEMValueOptions" />
 
   <java-symbol type="drawable" name="default_wallpaper" />
   <java-symbol type="drawable" name="default_lock_wallpaper" />
@@ -1384,6 +1438,17 @@
   <java-symbol type="drawable" name="ic_print_error" />
   <java-symbol type="drawable" name="ic_lock" />
   <java-symbol type="drawable" name="ic_lock_open" />
+  <java-symbol type="drawable" name="ic_lock_bugreport" />
+  <java-symbol type="drawable" name="ic_lock_bugreport_round" />
+  <java-symbol type="drawable" name="ic_lock_lockdown_round" />
+  <java-symbol type="drawable" name="ic_lock_power_off" />
+  <java-symbol type="drawable" name="ic_lock_power_off_round" />
+  <java-symbol type="drawable" name="ic_logout" />
+  <java-symbol type="drawable" name="ic_logout_round" />
+  <java-symbol type="drawable" name="ic_restart" />
+  <java-symbol type="drawable" name="ic_restart_round" />
+  <java-symbol type="drawable" name="ic_screenshot" />
+  <java-symbol type="drawable" name="ic_screenshot_round" />
   <java-symbol type="drawable" name="jog_dial_arrow_long_left_green" />
   <java-symbol type="drawable" name="jog_dial_arrow_long_right_red" />
   <java-symbol type="drawable" name="jog_dial_arrow_short_left_and_right" />
@@ -1513,8 +1578,10 @@
   <java-symbol type="drawable" name="ic_feedback_downrank" />
 
   <java-symbol type="drawable" name="ic_account_circle" />
+  <java-symbol type="drawable" name="material_ic_account_circle" />
   <java-symbol type="drawable" name="ic_dual_screen" />
   <java-symbol type="drawable" name="ic_thermostat" />
+  <java-symbol type="drawable" name="ic_security_privacy_notification_badge" />
   <java-symbol type="color" name="user_icon_1" />
   <java-symbol type="color" name="user_icon_2" />
   <java-symbol type="color" name="user_icon_3" />
@@ -1532,6 +1599,7 @@
   <java-symbol type="color" name="profile_badge_2_dark" />
   <java-symbol type="color" name="profile_badge_3_dark" />
   <java-symbol type="color" name="instant_app_badge" />
+  <java-symbol type="color" name="security_privacy_notification_tint_normal" />
 
   <java-symbol type="layout" name="action_bar_home" />
   <java-symbol type="layout" name="action_bar_title_item" />
@@ -1585,12 +1653,10 @@
   <java-symbol type="layout" name="icon_menu_layout" />
   <java-symbol type="layout" name="input_method" />
   <java-symbol type="layout" name="input_method_extract_view" />
+  <java-symbol type="layout" name="input_method_switch_dialog" />
   <java-symbol type="layout" name="input_method_switch_item" />
   <java-symbol type="layout" name="input_method_switch_item_divider" />
   <java-symbol type="layout" name="input_method_switch_item_header" />
-  <java-symbol type="layout" name="input_method_switch_item_new" />
-  <java-symbol type="layout" name="input_method_switch_dialog_new" />
-  <java-symbol type="layout" name="input_method_switch_dialog_title" />
   <java-symbol type="layout" name="js_prompt" />
   <java-symbol type="layout" name="list_content_simple" />
   <java-symbol type="layout" name="list_menu_item_checkbox" />
@@ -1677,7 +1743,6 @@
   <java-symbol type="xml" name="sms_short_codes" />
   <java-symbol type="xml" name="audio_assets" />
   <java-symbol type="xml" name="global_keys" />
-  <java-symbol type="xml" name="default_zen_mode_config" />
   <java-symbol type="xml" name="sms_7bit_translation_table" />
   <java-symbol type="xml" name="color_extraction" />
 
@@ -1718,12 +1783,15 @@
   <java-symbol type="style" name="PointerIconVectorStyleFillBlue" />
   <java-symbol type="style" name="PointerIconVectorStyleFillPurple" />
   <java-symbol type="attr" name="pointerIconVectorFill" />
+  <java-symbol type="attr" name="pointerIconVectorFillInverse" />
   <java-symbol type="style" name="PointerIconVectorStyleStrokeWhite" />
   <java-symbol type="style" name="PointerIconVectorStyleStrokeBlack" />
   <java-symbol type="style" name="PointerIconVectorStyleStrokeNone" />
   <java-symbol type="attr" name="pointerIconVectorStroke" />
+  <java-symbol type="attr" name="pointerIconVectorStrokeInverse" />
   <java-symbol type="style" name="TextAppearance.DeviceDefault.Notification.Title" />
   <java-symbol type="style" name="TextAppearance.DeviceDefault.Notification.Info" />
+  <java-symbol type="style" name="TextAppearance.DeviceDefault.Notification" />
 
   <java-symbol type="attr" name="mediaRouteButtonStyle" />
   <java-symbol type="attr" name="externalRouteEnabledDrawable" />
@@ -1731,9 +1799,9 @@
   <java-symbol type="layout" name="media_route_controller_dialog" />
   <java-symbol type="layout" name="media_route_list_item" />
   <java-symbol type="id" name="media_route_list" />
+  <java-symbol type="id" name="empty_subtitle" />
   <java-symbol type="id" name="media_route_volume_layout" />
   <java-symbol type="id" name="media_route_volume_slider" />
-  <java-symbol type="id" name="media_route_control_frame" />
   <java-symbol type="id" name="media_route_extended_settings_button" />
   <java-symbol type="id" name="media_route_progress_bar" />
   <java-symbol type="string" name="media_route_chooser_title" />
@@ -1785,7 +1853,6 @@
   <java-symbol type="array" name="config_longPressVibePattern" />
   <java-symbol type="array" name="config_virtualKeyVibePattern" />
   <java-symbol type="array" name="config_doubleClickVibePattern" />
-  <java-symbol type="array" name="config_safeModeEnabledVibePattern" />
   <java-symbol type="attr" name="actionModePopupWindowStyle" />
   <java-symbol type="attr" name="dialogCustomTitleDecorLayout" />
   <java-symbol type="attr" name="dialogTitleDecorLayout" />
@@ -1943,9 +2010,11 @@
   <java-symbol type="string" name="global_action_silent_mode_on_status" />
   <java-symbol type="string" name="global_action_toggle_silent_mode" />
   <java-symbol type="string" name="global_action_lockdown" />
+  <java-symbol type="string" name="global_action_unrestricted_lock" />
   <java-symbol type="string" name="global_action_voice_assist" />
   <java-symbol type="string" name="global_action_assist" />
   <java-symbol type="string" name="global_action_screenshot" />
+  <java-symbol type="string" name="global_action_standby" />
   <java-symbol type="string" name="invalidPuk" />
   <java-symbol type="string" name="lockscreen_carrier_default" />
   <java-symbol type="style" name="Animation.LockScreen" />
@@ -2038,33 +2107,35 @@
   <java-symbol type="bool" name="config_enableActivityRecognitionHardwareOverlay" />
   <java-symbol type="bool" name="config_defaultAdasGnssLocationEnabled" />
   <java-symbol type="bool" name="config_enableFusedLocationOverlay" />
+  <java-symbol type="bool" name="config_enableGnssLocationOverlay" />
+  <java-symbol type="bool" name="config_fusedLocationOverlayUnstableFallback" />
+  <java-symbol type="bool" name="config_gnssLocationOverlayUnstableFallback" />
   <java-symbol type="bool" name="config_useGnssHardwareProvider" />
   <java-symbol type="bool" name="config_enableGeocoderOverlay" />
   <java-symbol type="bool" name="config_enableGeofenceOverlay" />
+  <java-symbol type="bool" name="config_enableGnssAssistanceOverlay" />
   <java-symbol type="bool" name="config_enableNetworkLocationOverlay" />
   <java-symbol type="bool" name="config_sf_limitedAlpha" />
   <java-symbol type="bool" name="config_unplugTurnsOnScreen" />
   <java-symbol type="bool" name="config_usbChargingMessage" />
   <java-symbol type="bool" name="config_skipScreenOnBrightnessRamp" />
+  <java-symbol type="bool" name="config_skipScreenOffTransition" />
   <java-symbol type="bool" name="config_allowAutoBrightnessWhileDozing" />
   <java-symbol type="bool" name="config_allowTheaterModeWakeFromUnplug" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromGesture" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromCameraLens" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromPowerKey" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromKey" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromMotion" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromMotionWhenNotDreaming" />
-  <java-symbol type="bool" name="config_allowTheaterModeWakeFromLidSwitch" />
   <java-symbol type="bool" name="config_allowTheaterModeWakeFromDock" />
   <java-symbol type="bool" name="config_allowTheaterModeWakeFromWindowLayout" />
   <java-symbol type="bool" name="config_keepDreamingWhenUnplugging" />
+  <java-symbol type="bool" name="config_alwaysAllowDreamRotation" />
   <java-symbol type="bool" name="config_glanceableHubEnabled" />
+  <java-symbol type="bool" name="config_glanceableHubEnabledByDefault" />
+  <java-symbol type="integer" name="config_whenToStartHubModeDefault" />
+  <java-symbol type="bool" name="config_onlyShowGlanceableHubWhenWirelessChargingDefault" />
+  <java-symbol type="bool" name="config_lowLightDisplayBehaviorEnabledDefault" />
+  <java-symbol type="integer" name="config_lowLightDisplayBehaviorDefault" />
   <java-symbol type="integer" name="config_keyguardDrawnTimeout" />
-  <java-symbol type="bool" name="config_goToSleepOnButtonPressTheaterMode" />
   <java-symbol type="bool" name="config_supportLongPressPowerWhenNonInteractive" />
   <java-symbol type="bool" name="config_supportShortPressPowerWhenDefaultDisplayOn" />
   <java-symbol type="bool" name="config_wimaxEnabled" />
-  <java-symbol type="bool" name="show_ongoing_ime_switcher" />
   <java-symbol type="color" name="config_defaultNotificationColor" />
   <java-symbol type="color" name="decor_view_status_guard" />
   <java-symbol type="color" name="decor_view_status_guard_light" />
@@ -2143,10 +2214,14 @@
   <java-symbol type="integer" name="config_vibratorControlServiceDumpSizeLimit" />
   <java-symbol type="integer" name="config_vibratorControlServiceDumpAggregationTimeMillisLimit" />
   <java-symbol type="integer" name="config_defaultVibrationAmplitude" />
+  <java-symbol type="array" name="config_vibrationIntensityScaleFactors" />
+  <java-symbol type="array" name="config_externalVibrationIntensityScaleFactors" />
   <java-symbol type="dimen" name="config_hapticChannelMaxVibrationAmplitude" />
   <java-symbol type="dimen" name="config_keyboardHapticFeedbackFixedAmplitude" />
   <java-symbol type="bool" name="config_keyboardVibrationSettingsSupported" />
   <java-symbol type="bool" name="config_ringtoneVibrationSettingsSupported" />
+  <java-symbol type="array" name="config_ringtoneVibrationPatternToMetricIdMapping" />
+  <java-symbol type="array" name="config_notificationVibrationPatternToMetricIdMapping" />
   <java-symbol type="integer" name="config_vibrationWaveformRampStepDuration" />
   <java-symbol type="bool" name="config_ignoreVibrationsOnWirelessCharger" />
   <java-symbol type="integer" name="config_vibrationWaveformRampDownDuration" />
@@ -2214,6 +2289,7 @@
   <java-symbol type="string" name="car_mode_disable_notification_message" />
   <java-symbol type="string" name="car_mode_disable_notification_title" />
   <java-symbol type="string" name="chooser_wallpaper" />
+  <java-symbol type="string" name="config_preferredSystemImageEditor" />
   <java-symbol type="string" name="config_systemImageEditor" />
   <java-symbol type="string" name="config_datause_iface" />
   <java-symbol type="string" name="config_activityRecognitionHardwarePackageName" />
@@ -2223,6 +2299,7 @@
   <java-symbol type="string" name="config_gnssLocationProviderPackageName" />
   <java-symbol type="string" name="config_geocoderProviderPackageName" />
   <java-symbol type="string" name="config_geofenceProviderPackageName" />
+  <java-symbol type="string" name="config_gnssAssistanceProviderPackageName" />
   <java-symbol type="string" name="config_networkLocationProviderPackageName" />
   <java-symbol type="string" name="config_wimaxManagerClassname" />
   <java-symbol type="string" name="config_wimaxNativeLibLocation" />
@@ -2257,10 +2334,11 @@
   <java-symbol type="string" name="factorytest_no_action" />
   <java-symbol type="string" name="factorytest_not_system" />
   <java-symbol type="string" name="factorytest_reboot" />
-  <java-symbol type="string" name="hardware" />
   <java-symbol type="string" name="heavy_weight_notification" />
   <java-symbol type="string" name="heavy_weight_notification_detail" />
   <java-symbol type="string" name="image_wallpaper_component" />
+  <java-symbol type="string" name="fallback_wallpaper_component" />
+  <java-symbol type="bool" name="config_isLiveWallpaperSupportedInDesktopExperience" />
   <java-symbol type="string" name="input_method_binding_label" />
   <java-symbol type="string" name="input_method_ime_switch_long_click_action_desc" />
   <java-symbol type="string" name="launch_warning_original" />
@@ -2323,14 +2401,17 @@
   <java-symbol type="bool" name="config_dreamsSupported" />
   <java-symbol type="bool" name="config_dreamsEnabledByDefault" />
   <java-symbol type="bool" name="config_dreamsEnabledOnBattery" />
+  <java-symbol type="bool" name="config_dreamsShowWhenToDreamSetting" />
   <java-symbol type="bool" name="config_dreamsActivatedOnDockByDefault" />
   <java-symbol type="bool" name="config_dreamsActivatedOnSleepByDefault" />
+  <java-symbol type="bool" name="config_dreamsActivatedOnPosturedByDefault" />
   <java-symbol type="integer" name="config_dreamsBatteryLevelMinimumWhenPowered" />
   <java-symbol type="integer" name="config_dreamsBatteryLevelMinimumWhenNotPowered" />
   <java-symbol type="integer" name="config_dreamsBatteryLevelDrainCutoff" />
   <java-symbol type="string" name="config_dreamsDefaultComponent" />
   <java-symbol type="bool" name="config_dreamsDisabledByAmbientModeSuppressionConfig" />
   <java-symbol type="bool" name="config_dreamsOnlyEnabledForDockUser" />
+  <java-symbol type="bool" name="config_onlyDreamWhenWirelessChargingDefault" />
   <java-symbol type="integer" name="config_dreamOpenAnimationDuration" />
   <java-symbol type="integer" name="config_dreamCloseAnimationDuration" />
   <java-symbol type="array" name="config_supportedDreamComplications" />
@@ -2373,6 +2454,9 @@
   <java-symbol type="string" name="config_secondaryLocationTimeZoneProviderPackageName" />
   <java-symbol type="bool" name="config_enableTelephonyTimeZoneDetection" />
   <java-symbol type="bool" name="config_supportTelephonyTimeZoneFallback" />
+  <java-symbol type="bool" name="config_enableTimeZoneNotificationsSupported" />
+  <java-symbol type="bool" name="config_enableTimeZoneNotificationsTrackingSupported" />
+  <java-symbol type="bool" name="config_enableTimeZoneManualChangeTrackingSupported" />
   <java-symbol type="bool" name="config_autoResetAirplaneMode" />
   <java-symbol type="string" name="config_notificationAccessConfirmationActivity" />
   <java-symbol type="bool" name="config_preventImeStartupUnlessTextEditor" />
@@ -2395,8 +2479,12 @@
   <java-symbol type="layout" name="notification_material_action_list" />
   <java-symbol type="layout" name="notification_material_action_tombstone" />
   <java-symbol type="layout" name="notification_2025_template_collapsed_base" />
+  <java-symbol type="layout" name="notification_2025_template_collapsed_metric" />
+  <java-symbol type="layout" name="notification_2025_template_expanded_metric" />
   <java-symbol type="layout" name="notification_2025_template_expanded_base" />
   <java-symbol type="layout" name="notification_2025_template_heads_up_base" />
+  <java-symbol type="layout" name="notification_2025_template_compact_heads_up_base" />
+  <java-symbol type="layout" name="notification_2025_template_compact_heads_up_messaging" />
   <java-symbol type="layout" name="notification_2025_template_header" />
   <java-symbol type="layout" name="notification_2025_template_collapsed_messaging" />
   <java-symbol type="layout" name="notification_2025_template_collapsed_media" />
@@ -2587,9 +2675,9 @@
 
   <!-- Gestural Nav buttons within InputMethodService -->
   <java-symbol type="dimen" name="input_method_nav_key_button_ripple_max_width" />
+  <java-symbol type="dimen" name="input_method_navigation_bar_height" />
   <java-symbol type="drawable" name="ic_ime_nav_back" />
   <java-symbol type="drawable" name="ic_ime_switcher" />
-  <java-symbol type="drawable" name="ic_ime_switcher_new" />
   <java-symbol type="id" name="input_method_nav_back" />
   <java-symbol type="id" name="input_method_nav_buttons" />
   <java-symbol type="id" name="input_method_nav_center_group" />
@@ -2724,6 +2812,7 @@
   <java-symbol type="string" name="biometric_dialog_default_title" />
   <java-symbol type="string" name="biometric_dialog_default_subtitle" />
   <java-symbol type="string" name="biometric_or_screen_lock_dialog_default_subtitle" />
+  <java-symbol type="string" name="biometric_dialog_secondary_display_toast" />
   <java-symbol type="string" name="biometric_error_hw_unavailable" />
   <java-symbol type="string" name="biometric_error_user_canceled" />
   <java-symbol type="string" name="biometric_not_recognized" />
@@ -2999,6 +3088,7 @@
 
   <java-symbol type="integer" name="config_defaultNightMode" />
 
+  <java-symbol type="integer" name="config_jobSchedulerBackgroundJobsDelay" />
   <java-symbol type="integer" name="config_jobSchedulerInactivityIdleThreshold" />
   <java-symbol type="integer" name="config_jobSchedulerInactivityIdleThresholdOnStablePower" />
   <java-symbol type="integer" name="config_jobSchedulerIdleWindowSlop" />
@@ -3123,6 +3213,7 @@
   <java-symbol type="color" name="chooser_row_divider" />
   <java-symbol type="layout" name="chooser_row_direct_share" />
   <java-symbol type="bool" name="config_supportDoubleTapWake" />
+  <java-symbol type="bool" name="config_supportDoubleTapSleep" />
   <java-symbol type="drawable" name="ic_perm_device_info" />
   <java-symbol type="string" name="config_radio_access_family" />
   <java-symbol type="string" name="notification_inbox_ellipsis" />
@@ -3166,8 +3257,8 @@
   <java-symbol type="integer" name="config_cameraLiftTriggerSensorType" />
   <java-symbol type="string" name="config_cameraLiftTriggerSensorStringType" />
   <java-symbol type="bool" name="config_cameraDoubleTapPowerGestureEnabled" />
-  <java-symbol type="bool" name="config_doubleTapPowerGestureEnabled" />
-  <java-symbol type="integer" name="config_defaultDoubleTapPowerGestureAction" />
+  <java-symbol type="integer" name="config_doubleTapPowerGestureMode" />
+  <java-symbol type="integer" name="config_doubleTapPowerGestureMultiTargetDefaultAction" />
   <java-symbol type="bool" name="config_emergencyGestureEnabled" />
   <java-symbol type="bool" name="config_defaultEmergencyGestureEnabled" />
   <java-symbol type="bool" name="config_defaultEmergencyGestureSoundEnabled" />
@@ -3223,6 +3314,7 @@
   <java-symbol type="id" name="expand_button_pill_colorized_layer" />
   <java-symbol type="id" name="expand_button_number" />
   <java-symbol type="id" name="expand_button_icon" />
+  <java-symbol type="id" name="close_button_pill_colorized_layer" />
   <java-symbol type="id" name="alternate_expand_target" />
   <java-symbol type="id" name="notification_header" />
   <java-symbol type="id" name="notification_top_line" />
@@ -3230,6 +3322,8 @@
   <java-symbol type="id" name="header_text_divider" />
   <java-symbol type="id" name="header_text_secondary_divider" />
   <java-symbol type="drawable" name="ic_expand_notification" />
+  <java-symbol type="drawable" name="ic_notification_2025_collapse" />
+  <java-symbol type="drawable" name="ic_notification_2025_expand" />
   <java-symbol type="drawable" name="ic_collapse_notification" />
   <java-symbol type="drawable" name="notification_close_button_icon" />
   <java-symbol type="drawable" name="ic_expand_bundle" />
@@ -3242,6 +3336,20 @@
   <java-symbol type="dimen" name="notification_heading_margin_end" />
   <java-symbol type="dimen" name="notification_content_margin_top" />
   <java-symbol type="dimen" name="notification_content_margin" />
+  <java-symbol type="dimen" name="notification_2025_margin" />
+  <java-symbol type="dimen" name="notification_2025_content_margin_end" />
+  <java-symbol type="dimen" name="notification_2025_content_margin_top" />
+  <java-symbol type="dimen" name="notification_2025_content_margin_start" />
+  <java-symbol type="dimen" name="notification_2025_content_margin_start_summarization" />
+  <java-symbol type="dimen" name="notification_text_message_start_padding_summarization" />
+  <java-symbol type="dimen" name="notification_text_message_start_padding" />
+  <java-symbol type="dimen" name="notification_2025_expand_button_horizontal_icon_padding" />
+  <java-symbol type="dimen" name="notification_2025_expand_button_reduced_end_padding" />
+  <java-symbol type="dimen" name="notification_2025_expand_button_right_icon_spacing" />
+  <java-symbol type="dimen" name="notification_2025_right_icon_margin_end" />
+  <java-symbol type="dimen" name="notification_2025_extra_space_for_expander" />
+  <java-symbol type="dimen" name="notification_2025_action_list_margin_bottom" />
+  <java-symbol type="dimen" name="notification_2025_smart_reply_container_margin" />
   <java-symbol type="dimen" name="notification_progress_margin_horizontal" />
   <java-symbol type="dimen" name="notification_header_background_height" />
   <java-symbol type="dimen" name="notification_header_touchable_height" />
@@ -3296,6 +3404,7 @@
   <java-symbol type="string" name="status_bar_no_calling" />
   <java-symbol type="string" name="status_bar_call_strength" />
   <java-symbol type="string" name="status_bar_mobile" />
+  <java-symbol type="string" name="status_bar_stacked_mobile" />
   <java-symbol type="string" name="status_bar_ethernet" />
   <java-symbol type="string" name="status_bar_vpn" />
   <java-symbol type="string" name="status_bar_microphone" />
@@ -3331,6 +3440,15 @@
   <java-symbol type="string" name="page_size_compat_apk_warning" />
   <java-symbol type="string" name="page_size_compat_elf_warning" />
   <java-symbol type="string" name="page_size_compat_apk_and_elf_warning" />
+  <java-symbol type="string" name="page_size_compat_apk_warning_4kb" />
+  <java-symbol type="string" name="page_size_compat_elf_warning_4kb" />
+  <java-symbol type="string" name="page_size_compat_apk_and_elf_warning_4kb" />
+  <java-symbol type="string" name="page_size_compat_never_show" />
+  <java-symbol type="string" name="page_size_compat_elf_not_aligned" />
+  <java-symbol type="string" name="page_size_compat_apk_not_aligned" />
+  <java-symbol type="string" name="page_size_compat_apk_and_elf_not_aligned" />
+  <java-symbol type="string" name="page_size_compat_unknown" />
+  <java-symbol type="string" name="page_size_compat_title" />
 
   <!--  Work profile unlaunchable app alert dialog-->
   <java-symbol type="style" name="AlertDialogWithEmergencyButton"/>
@@ -3345,6 +3463,9 @@
   <java-symbol type="string" name="private_space_set_up_screen_lock_message" />
   <!-- Message shown in the dialog prompting the user to set up a screen lock to delete private space from Reset Options [CHAR LIMIT=120] -->
   <java-symbol type="string" name="private_space_set_up_screen_lock_for_reset" />
+
+  <!-- Allowlist of private space apps to receive ACTION_(LOCKED_)BOOT_COMPLETED intents immediately -->
+  <java-symbol type="array" name="config_privateSpaceBootCompletedImmediateReceivers" />
 
   <java-symbol type="string" name="deprecated_target_sdk_message" />
   <java-symbol type="string" name="deprecated_target_sdk_app_store" />
@@ -3371,23 +3492,9 @@
   <java-symbol type="string" name="duration_hours_shortest_future" />
   <java-symbol type="string" name="duration_days_shortest_future" />
   <java-symbol type="string" name="duration_years_shortest_future" />
-  <java-symbol type="string" name="duration_minutes_shortest_past" />
-  <java-symbol type="string" name="duration_hours_shortest_past" />
-  <java-symbol type="string" name="duration_days_shortest_past" />
-  <java-symbol type="string" name="duration_years_shortest_past" />
 
   <java-symbol type="string" name="duration_minutes_medium" />
   <java-symbol type="string" name="duration_hours_medium" />
-  <java-symbol type="string" name="duration_days_medium" />
-  <java-symbol type="string" name="duration_years_medium" />
-  <java-symbol type="string" name="duration_minutes_medium_future" />
-  <java-symbol type="string" name="duration_hours_medium_future" />
-  <java-symbol type="string" name="duration_days_medium_future" />
-  <java-symbol type="string" name="duration_years_medium_future" />
-  <java-symbol type="string" name="duration_minutes_medium_past" />
-  <java-symbol type="string" name="duration_hours_medium_past" />
-  <java-symbol type="string" name="duration_days_medium_past" />
-  <java-symbol type="string" name="duration_years_medium_past" />
 
   <java-symbol type="string" name="duration_minutes_relative" />
   <java-symbol type="string" name="duration_hours_relative" />
@@ -3433,6 +3540,7 @@
   <java-symbol type="dimen" name="notification_messaging_spacing_conversation_group" />
 
   <java-symbol type="dimen" name="notification_text_margin_top" />
+  <java-symbol type="dimen" name="notification_2025_text_margin_top" />
   <java-symbol type="dimen" name="notification_inbox_item_top_padding" />
 
   <!-- WallpaperManager config -->
@@ -3467,6 +3575,7 @@
   <java-symbol type="dimen" name="input_extract_action_button_height" />
 
   <java-symbol type="dimen" name="notification_action_list_height" />
+  <java-symbol type="dimen" name="notification_2025_action_list_height" />
   <java-symbol type="dimen" name="notification_action_emphasized_height" />
 
   <!-- TV Remote Service package -->
@@ -3474,6 +3583,11 @@
 
   <!-- Notifications: MessagingStyle -->
   <java-symbol type="string" name="notification_messaging_title_template" />
+
+  <!-- Notifications: MetricStyle -->
+  <java-symbol type="string" name="notification_metric_label_unit" />
+  <java-symbol type="string" name="notification_metric_label_unit_separator" />
+  <java-symbol type="string" name="notification_metric_label_separator" />
 
   <!-- Notifications: CallStyle -->
   <java-symbol type="layout" name="notification_template_material_call" />
@@ -3682,6 +3796,7 @@
   <java-symbol type="drawable" name="ic_screenshot" />
   <java-symbol type="drawable" name="ic_faster_emergency" />
   <java-symbol type="drawable" name="ic_media_seamless" />
+  <java-symbol type="drawable" name="ic_standby" />
   <java-symbol type="drawable" name="emergency_icon" />
 
   <java-symbol type="array" name="config_convert_to_emergency_number_map" />
@@ -3740,6 +3855,7 @@
   <java-symbol type="raw" name="fallback_categories" />
 
   <java-symbol type="string" name="config_icon_mask" />
+  <java-symbol type="string" name="config_banner_mask" />
   <java-symbol type="string" name="config_batterymeterPerimeterPath" />
   <java-symbol type="string" name="config_batterymeterErrorPerimeterPath" />
   <java-symbol type="string" name="config_batterymeterFillMask" />
@@ -3765,12 +3881,16 @@
   <java-symbol type="string" name="accessibility_shortcut_disabling_service" />
   <java-symbol type="string" name="color_inversion_feature_name" />
   <java-symbol type="string" name="color_correction_feature_name" />
+  <java-symbol type="string" name="autoclick_feature_name"/>
+  <java-symbol type="string" name="mouse_keys_feature_name"/>
   <java-symbol type="string" name="reduce_bright_colors_feature_name" />
   <java-symbol type="string" name="config_defaultAccessibilityService" />
   <java-symbol type="string" name="config_defaultSelectToSpeakService" />
+  <java-symbol type="string" name="config_defaultVoiceAccessService" />
   <java-symbol type="string" name="config_defaultAccessibilityNotificationSound" />
   <java-symbol type="string" name="accessibility_shortcut_spoken_feedback" />
   <java-symbol type="array" name="config_trustedAccessibilityServices" />
+  <java-symbol type="array" name="config_forceInvertPackageBlocklist" />
 
   <java-symbol type="string" name="accessibility_select_shortcut_menu_title" />
   <java-symbol type="string" name="accessibility_edit_shortcut_menu_button_title" />
@@ -3816,13 +3936,28 @@
   <java-symbol type="drawable" name="ic_accessibility_color_correction" />
   <java-symbol type="drawable" name="ic_accessibility_generic" />
   <java-symbol type="drawable" name="ic_accessibility_hearing_aid" />
+  <java-symbol type="drawable" name="ic_accessibility_hearing_aid_disconnected" />
+  <java-symbol type="drawable" name="ic_accessibility_hearing_aid_green_dot" />
+  <java-symbol type="drawable" name="ic_accessibility_hearing_aid_blue_dot" />
   <java-symbol type="drawable" name="ic_accessibility_magnification" />
   <java-symbol type="drawable" name="ic_accessibility_reduce_bright_colors" />
   <java-symbol type="drawable" name="ic_accessibility_one_handed" />
 
+  <java-symbol type="string" name="hearing_device_status_disconnected" />
+  <java-symbol type="string" name="hearing_device_status_connected" />
+  <java-symbol type="string" name="hearing_device_status_active" />
+  <java-symbol type="string" name="hearing_device_status_loading" />
+
   <java-symbol type="string" name="hearing_aids_feature_name" />
   <java-symbol type="string" name="reduce_bright_colors_feature_name" />
   <java-symbol type="string" name="one_handed_mode_feature_name" />
+
+  <java-symbol type="string" name="hearing_device_switch_phone_mic_notification_title" />
+  <java-symbol type="string" name="hearing_device_switch_hearing_mic_notification_title" />
+  <java-symbol type="string" name="hearing_device_switch_phone_mic_notification_text" />
+  <java-symbol type="string" name="hearing_device_switch_hearing_mic_notification_text" />
+  <java-symbol type="string" name="hearing_device_notification_switch_button" />
+  <java-symbol type="string" name="hearing_device_notification_settings_button" />
 
   <!-- com.android.internal.widget.RecyclerView -->
   <java-symbol type="id" name="item_touch_helper_previous_elevation"/>
@@ -3915,6 +4050,7 @@
   <java-symbol type="dimen" name="notification_big_picture_max_width"/>
   <java-symbol type="dimen" name="notification_right_icon_size"/>
   <java-symbol type="dimen" name="notification_right_icon_content_margin"/>
+  <java-symbol type="dimen" name="notification_2025_right_icon_content_margin"/>
   <java-symbol type="dimen" name="notification_actions_icon_drawable_size"/>
   <java-symbol type="dimen" name="notification_custom_view_max_image_height"/>
   <java-symbol type="dimen" name="notification_custom_view_max_image_width"/>
@@ -3924,6 +4060,7 @@
   <java-symbol type="dimen" name="notification_progress_tracker_height" />
   <java-symbol type="dimen" name="notification_progress_segSeg_gap" />
   <java-symbol type="dimen" name="notification_progress_segPoint_gap" />
+  <java-symbol type="dimen" name="notification_progress_segments_min_width" />
   <java-symbol type="dimen" name="notification_progress_segments_height" />
   <java-symbol type="dimen" name="notification_progress_segments_faded_height" />
   <java-symbol type="dimen" name="notification_progress_segments_corner_radius" />
@@ -4003,6 +4140,7 @@
   <java-symbol type="string" name="notification_channel_network_available" />
   <java-symbol type="array" name="config_defaultCloudSearchServices" />
   <java-symbol type="string" name="notification_channel_vpn" />
+  <java-symbol type="string" name="notification_channel_system_time" />
   <java-symbol type="string" name="notification_channel_device_admin" />
   <java-symbol type="string" name="notification_channel_alerts" />
   <java-symbol type="string" name="notification_channel_retail_mode" />
@@ -4010,8 +4148,11 @@
   <java-symbol type="string" name="notification_channel_heavy_weight_app" />
   <java-symbol type="string" name="notification_channel_system_changes" />
   <java-symbol type="string" name="notification_channel_accessibility_magnification" />
+  <java-symbol type="string" name="notification_channel_accessibility_hearing_device" />
   <java-symbol type="string" name="notification_channel_accessibility_security_policy" />
   <java-symbol type="string" name="notification_channel_display" />
+  <java-symbol type="string" name="time_zone_change_notification_title" />
+  <java-symbol type="string" name="time_zone_change_notification_body" />
   <java-symbol type="string" name="config_defaultAutofillService" />
   <java-symbol type="string" name="config_defaultFieldClassificationService" />
   <java-symbol type="string" name="config_defaultOnDeviceSpeechRecognitionService" />
@@ -4062,6 +4203,14 @@
 
   <java-symbol type="bool" name="config_enableCredentialFactoryResetProtection" />
   <java-symbol type="bool" name="config_disableWeaverOnUnsecuredUsers" />
+  <java-symbol type="bool" name="config_softwareLskfRateLimiterEnforcing" />
+
+  <java-symbol type="bool" name="config_lockPinEnhancedPrivacyDefault" />
+  <java-symbol type="bool" name="config_lockPatternVisibleDefault" />
+
+  <java-symbol type="bool" name="config_enableFailedAuthLock" />
+  <java-symbol type="integer" name="config_maxAllowedFailedAuthAttempts" />
+  <java-symbol type="bool" name="config_enableFailedAuthLockToggle" />
 
   <!-- ETWS primary messages -->
   <java-symbol type="string" name="etws_primary_default_message_earthquake" />
@@ -4104,6 +4253,9 @@
   <java-symbol type="integer" name="config_autoGroupAtCount" />
   <java-symbol type="bool" name="config_dozeAlwaysOnDisplayAvailable" />
   <java-symbol type="bool" name="config_dozePickupGestureEnabled" />
+  <java-symbol type="bool" name="config_dozeEnabled" />
+  <java-symbol type="bool" name="config_dozeTapGestureEnabled" />
+  <java-symbol type="bool" name="config_dozeDoubleTapGestureEnabled" />
   <java-symbol type="bool" name="config_dozeAlwaysOnEnabled" />
   <java-symbol type="bool" name="config_dozeSupportsAodWallpaper" />
   <java-symbol type="bool" name="config_displayBlanksAfterDoze" />
@@ -4112,6 +4264,18 @@
   <java-symbol type="integer" name="config_storageManagerDaystoRetainDefault" />
   <java-symbol type="string" name="config_headlineFontFamily" />
   <java-symbol type="string" name="config_headlineFontFamilyMedium" />
+  <java-symbol type="string" name="config_bodyFontFamily" />
+
+
+  <java-symbol type="integer" name="config_pressedStateDurationMillis" />
+  <java-symbol type="integer" name="config_tapTimeoutMillis" />
+  <java-symbol type="integer" name="config_jumpTapTimeoutMillis" />
+  <java-symbol type="integer" name="config_doubleTapTimeoutMillis" />
+  <java-symbol type="integer" name="config_doubleTapMinTimeMillis" />
+  <java-symbol type="integer" name="config_zoomControlsTimeoutMillis" />
+  <java-symbol type="integer" name="config_defaultActionModeHideDurationMillis" />
+  <java-symbol type="dimen" name="config_hoverTapSlop" />
+  <java-symbol type="dimen" name="config_scrollFriction" />
 
   <java-symbol type="drawable" name="stat_sys_vitals" />
 
@@ -4149,6 +4313,7 @@
   <java-symbol type="id" name="snooze_button" />
   <java-symbol type="dimen" name="text_size_body_2_material" />
   <java-symbol type="dimen" name="notification_icon_circle_size" />
+  <java-symbol type="drawable" name="notification_2025_conversation_icon_background" />
   <java-symbol type="drawable" name="notification_icon_circle" />
   <java-symbol type="drawable" name="notification_progress_icon_background" />
   <java-symbol type="dimen" name="messaging_avatar_size" />
@@ -4198,6 +4363,7 @@
 
   <java-symbol type="string" name="keyguard_accessibility_pattern_unlock" />
   <java-symbol type="string" name="keyguard_accessibility_pin_unlock" />
+  <java-symbol type="string" name="keyguard_accessibility_secure_lock_device_biometric_unlock" />
   <java-symbol type="string" name="keyguard_accessibility_sim_pin_unlock" />
   <java-symbol type="string" name="keyguard_accessibility_sim_puk_unlock" />
   <java-symbol type="string" name="keyguard_accessibility_password_unlock" />
@@ -4294,7 +4460,6 @@
   <java-symbol type="attr" name="opticalInsetRight" />
   <java-symbol type="attr" name="opticalInsetBottom" />
 
-  <java-symbol type="drawable" name="ic_lock_lockdown" />
   <java-symbol type="drawable" name="ic_arrow_forward" />
   <java-symbol type="drawable" name="ic_permission" />
 
@@ -4518,6 +4683,7 @@
   <java-symbol type="string" name="config_factoryResetPackage" />
   <java-symbol type="array" name="config_highRefreshRateBlacklist" />
   <java-symbol type="array" name="config_angleAllowList" />
+  <java-symbol type="array" name="config_angleDenyList" />
   <java-symbol type="array" name="config_forceSlowJpegModeList" />
   <java-symbol type="array" name="pause_wallpaper_render_when_state_change" />
   <java-symbol type="bool" name="config_pauseWallpaperRenderWhenStateChangeEnabled" />
@@ -4582,6 +4748,7 @@
   <java-symbol type="string" name="config_rawContactsLocalAccountName" />
   <java-symbol type="string" name="config_rawContactsLocalAccountType" />
   <java-symbol type="array" name="config_rawContactsEligibleDefaultAccountTypes" />
+  <java-symbol type="bool" name="config_rawContactsAccountRestrictionEnabled" />
 
   <!-- For App Standby -->
   <java-symbol type="string" name="as_app_forced_to_restricted_bucket" />
@@ -4664,7 +4831,8 @@
   <java-symbol type="dimen" name="conversation_icon_container_top_padding" />
   <java-symbol type="dimen" name="conversation_icon_container_top_padding_small_avatar" />
   <java-symbol type="layout" name="notification_template_material_conversation" />
-  <java-symbol type="layout" name="notification_2025_template_conversation" />
+  <java-symbol type="layout" name="notification_2025_template_collapsed_conversation" />
+  <java-symbol type="layout" name="notification_2025_template_expanded_conversation" />
   <java-symbol type="dimen" name="button_padding_horizontal_material" />
   <java-symbol type="dimen" name="button_inset_horizontal_material" />
   <java-symbol type="layout" name="conversation_face_pile_layout" />
@@ -4694,6 +4862,8 @@
   <java-symbol type="id" name="resolver_empty_state_container" />
   <java-symbol type="id" name="button_bar_container" />
   <java-symbol type="id" name="title_container" />
+  <java-symbol type="id" name="shortcuts_container" />
+  <java-symbol type="id" name="chooser_row" />
   <java-symbol type="string" name="resolver_cross_profile_blocked" />
   <java-symbol type="string" name="resolver_cant_share_with_work_apps_explanation" />
   <java-symbol type="string" name="resolver_cant_share_with_personal_apps_explanation" />
@@ -4703,6 +4873,9 @@
   <java-symbol type="string" name="resolver_no_work_apps_available" />
   <java-symbol type="string" name="resolver_no_personal_apps_available" />
   <java-symbol type="string" name="resolver_switch_on_work" />
+  <java-symbol type="string" name="shortcut_group_a11y_title" />
+  <java-symbol type="string" name="suggested_apps_group_a11y_title" />
+  <java-symbol type="string" name="all_apps_group_a11y_title" />
   <java-symbol type="drawable" name="ic_screenshot_edit" />
   <java-symbol type="dimen" name="resolver_empty_state_height" />
   <java-symbol type="dimen" name="resolver_empty_state_height_with_tabs" />
@@ -4714,6 +4887,7 @@
   <java-symbol type="dimen" name="resolver_empty_state_container_padding_top" />
   <java-symbol type="dimen" name="resolver_empty_state_container_padding_bottom" />
   <java-symbol type="dimen" name="resolver_profile_tab_margin" />
+  <java-symbol type="bool" name="config_resolverActivityFilterLastUsed" />
 
   <java-symbol type="string" name="config_deviceSpecificDisplayAreaPolicyProvider" />
 
@@ -4741,6 +4915,7 @@
   <java-symbol type="bool" name="config_showUserSwitcherByDefault" />
   <java-symbol type="bool" name="config_allowChangeUserSwitcherEnabled" />
   <java-symbol type="bool" name="config_enableUserSwitcherUponUserCreation" />
+  <java-symbol type="bool" name="config_userSwitchingMustGoThroughLoginScreen" />
 
   <!-- Set to true to make assistant show in front of the dream/screensaver. -->
   <java-symbol type="bool" name="config_assistantOnTopOfDream"/>
@@ -4854,7 +5029,7 @@
   <java-symbol type="bool" name="config_isCompatFakeFocusEnabled" />
   <java-symbol type="bool" name="config_isWindowManagerCameraCompatTreatmentEnabled" />
   <java-symbol type="bool" name="config_isWindowManagerCameraCompatSplitScreenAspectRatioEnabled" />
-  <java-symbol type="dimen" name="config_windowManagerCameraCompatAspectRatio" />
+  <java-symbol type="bool" name="config_isCameraCompatSimulateRequestedOrientationTreatmentEnabled" />
   <java-symbol type="bool" name="config_skipActivityRelaunchWhenDocking" />
 
   <java-symbol type="bool" name="config_hideDisplayCutoutWithDisplayArea" />
@@ -4868,6 +5043,7 @@
   <java-symbol type="bool" name="config_magnification_area" />
   <java-symbol type="bool" name="config_magnification_always_on_enabled" />
   <java-symbol type="bool" name="config_magnification_keep_zoom_level_when_context_changed" />
+  <java-symbol type="bool" name="config_magnification_magnify_keyboard_default" />
 
   <java-symbol type="bool" name="config_trackerAppNeedsPermissions"/>
   <!-- FullScreenMagnification thumbnail -->
@@ -5134,6 +5310,12 @@
   <java-symbol type="bool" name="config_cecQuerySadMaxDisabled_allowed" />
   <java-symbol type="bool" name="config_cecQuerySadMaxDisabled_default" />
 
+  <java-symbol type="bool" name="config_cecTvBehaviorOnStandbyMessage_userConfigurable" />
+  <java-symbol type="bool" name="config_cecTvBehaviorOnStandbyMessageGoToSleep_allowed" />
+  <java-symbol type="bool" name="config_cecTvBehaviorOnStandbyMessageGoToSleep_default" />
+  <java-symbol type="bool" name="config_cecTvBehaviorOnStandbyMessageGoToDream_allowed" />
+  <java-symbol type="bool" name="config_cecTvBehaviorOnStandbyMessageGoToDream_default" />
+
   <!-- eARC Configuration -->
   <java-symbol type="bool" name="config_earcEnabled_userConfigurable" />
   <java-symbol type="bool" name="config_earcFeatureEnabled_allowed" />
@@ -5145,6 +5327,7 @@
   <java-symbol type="id" name="remote_views_next_child" />
   <java-symbol type="id" name="remote_views_stable_id" />
   <java-symbol type="id" name="remote_views_override_id" />
+  <java-symbol type="id" name="remoteViewsMetricsId" />
 
   <!-- View and control prompt -->
   <java-symbol type="drawable" name="ic_accessibility_24dp" />
@@ -5358,19 +5541,185 @@
   <java-symbol type="string" name="screen_not_shared_sensitive_content"/>
 
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugHighBatteryLevel" />
+  <java-symbol type="integer" name="config_batteryStatsHighBatteryLevelAfterCharge" />
   <java-symbol type="bool" name="config_batteryStatsResetOnUnplugAfterSignificantCharge" />
   <java-symbol type="string" name="config_powerStatsThrottlePeriods" />
   <java-symbol type="integer" name="config_powerStatsAggregationPeriod" />
   <java-symbol type="integer" name="config_aggregatedPowerStatsSpanDuration" />
   <java-symbol type="integer" name="config_accumulatedBatteryUsageStatsSpanSize" />
+  <java-symbol type="integer" name="config_batteryHistoryStorageSize" />
+  <java-symbol type="integer" name="config_batteryHistoryDumpWindowSize" />
+  <java-symbol type="integer" name="config_batteryHistoryDumpCheckinWindowSize" />
+  <java-symbol type="integer" name="config_batteryHistoryDumpRealCheckinWindowSize" />
+  <java-symbol type="integer" name="config_powerStatsLogPeriodLowFrequencyMs" />
+  <java-symbol type="integer" name="config_powerStatsLogPeriodHighFrequencyMs" />
 
   <!--Dynamic Tokens-->
+  <java-symbol name="system_accent1_0_light" type="color"/>
+  <java-symbol name="system_accent1_10_light" type="color"/>
+  <java-symbol name="system_accent1_50_light" type="color"/>
+  <java-symbol name="system_accent1_100_light" type="color"/>
+  <java-symbol name="system_accent1_200_light" type="color"/>
+  <java-symbol name="system_accent1_300_light" type="color"/>
+  <java-symbol name="system_accent1_400_light" type="color"/>
+  <java-symbol name="system_accent1_500_light" type="color"/>
+  <java-symbol name="system_accent1_600_light" type="color"/>
+  <java-symbol name="system_accent1_700_light" type="color"/>
+  <java-symbol name="system_accent1_800_light" type="color"/>
+  <java-symbol name="system_accent1_900_light" type="color"/>
+  <java-symbol name="system_accent1_1000_light" type="color"/>
+  <java-symbol name="system_accent2_0_light" type="color"/>
+  <java-symbol name="system_accent2_10_light" type="color"/>
+  <java-symbol name="system_accent2_50_light" type="color"/>
+  <java-symbol name="system_accent2_100_light" type="color"/>
+  <java-symbol name="system_accent2_200_light" type="color"/>
+  <java-symbol name="system_accent2_300_light" type="color"/>
+  <java-symbol name="system_accent2_400_light" type="color"/>
+  <java-symbol name="system_accent2_500_light" type="color"/>
+  <java-symbol name="system_accent2_600_light" type="color"/>
+  <java-symbol name="system_accent2_700_light" type="color"/>
+  <java-symbol name="system_accent2_800_light" type="color"/>
+  <java-symbol name="system_accent2_900_light" type="color"/>
+  <java-symbol name="system_accent2_1000_light" type="color"/>
+  <java-symbol name="system_accent3_0_light" type="color"/>
+  <java-symbol name="system_accent3_10_light" type="color"/>
+  <java-symbol name="system_accent3_50_light" type="color"/>
+  <java-symbol name="system_accent3_100_light" type="color"/>
+  <java-symbol name="system_accent3_200_light" type="color"/>
+  <java-symbol name="system_accent3_300_light" type="color"/>
+  <java-symbol name="system_accent3_400_light" type="color"/>
+  <java-symbol name="system_accent3_500_light" type="color"/>
+  <java-symbol name="system_accent3_600_light" type="color"/>
+  <java-symbol name="system_accent3_700_light" type="color"/>
+  <java-symbol name="system_accent3_800_light" type="color"/>
+  <java-symbol name="system_accent3_900_light" type="color"/>
+  <java-symbol name="system_accent3_1000_light" type="color"/>
+  <java-symbol name="system_neutral1_0_light" type="color"/>
+  <java-symbol name="system_neutral1_10_light" type="color"/>
+  <java-symbol name="system_neutral1_50_light" type="color"/>
+  <java-symbol name="system_neutral1_100_light" type="color"/>
+  <java-symbol name="system_neutral1_200_light" type="color"/>
+  <java-symbol name="system_neutral1_300_light" type="color"/>
+  <java-symbol name="system_neutral1_400_light" type="color"/>
+  <java-symbol name="system_neutral1_500_light" type="color"/>
+  <java-symbol name="system_neutral1_600_light" type="color"/>
+  <java-symbol name="system_neutral1_700_light" type="color"/>
+  <java-symbol name="system_neutral1_800_light" type="color"/>
+  <java-symbol name="system_neutral1_900_light" type="color"/>
+  <java-symbol name="system_neutral1_1000_light" type="color"/>
+  <java-symbol name="system_neutral2_0_light" type="color"/>
+  <java-symbol name="system_neutral2_10_light" type="color"/>
+  <java-symbol name="system_neutral2_50_light" type="color"/>
+  <java-symbol name="system_neutral2_100_light" type="color"/>
+  <java-symbol name="system_neutral2_200_light" type="color"/>
+  <java-symbol name="system_neutral2_300_light" type="color"/>
+  <java-symbol name="system_neutral2_400_light" type="color"/>
+  <java-symbol name="system_neutral2_500_light" type="color"/>
+  <java-symbol name="system_neutral2_600_light" type="color"/>
+  <java-symbol name="system_neutral2_700_light" type="color"/>
+  <java-symbol name="system_neutral2_800_light" type="color"/>
+  <java-symbol name="system_neutral2_900_light" type="color"/>
+  <java-symbol name="system_neutral2_1000_light" type="color"/>
+  <java-symbol name="system_error_0_light" type="color"/>
+  <java-symbol name="system_error_10_light" type="color"/>
+  <java-symbol name="system_error_50_light" type="color"/>
+  <java-symbol name="system_error_100_light" type="color"/>
+  <java-symbol name="system_error_200_light" type="color"/>
+  <java-symbol name="system_error_300_light" type="color"/>
+  <java-symbol name="system_error_400_light" type="color"/>
+  <java-symbol name="system_error_500_light" type="color"/>
+  <java-symbol name="system_error_600_light" type="color"/>
+  <java-symbol name="system_error_700_light" type="color"/>
+  <java-symbol name="system_error_800_light" type="color"/>
+  <java-symbol name="system_error_900_light" type="color"/>
+  <java-symbol name="system_error_1000_light" type="color"/>
+
+  <java-symbol name="system_accent1_0_dark" type="color"/>
+  <java-symbol name="system_accent1_10_dark" type="color"/>
+  <java-symbol name="system_accent1_50_dark" type="color"/>
+  <java-symbol name="system_accent1_100_dark" type="color"/>
+  <java-symbol name="system_accent1_200_dark" type="color"/>
+  <java-symbol name="system_accent1_300_dark" type="color"/>
+  <java-symbol name="system_accent1_400_dark" type="color"/>
+  <java-symbol name="system_accent1_500_dark" type="color"/>
+  <java-symbol name="system_accent1_600_dark" type="color"/>
+  <java-symbol name="system_accent1_700_dark" type="color"/>
+  <java-symbol name="system_accent1_800_dark" type="color"/>
+  <java-symbol name="system_accent1_900_dark" type="color"/>
+  <java-symbol name="system_accent1_1000_dark" type="color"/>
+  <java-symbol name="system_accent2_0_dark" type="color"/>
+  <java-symbol name="system_accent2_10_dark" type="color"/>
+  <java-symbol name="system_accent2_50_dark" type="color"/>
+  <java-symbol name="system_accent2_100_dark" type="color"/>
+  <java-symbol name="system_accent2_200_dark" type="color"/>
+  <java-symbol name="system_accent2_300_dark" type="color"/>
+  <java-symbol name="system_accent2_400_dark" type="color"/>
+  <java-symbol name="system_accent2_500_dark" type="color"/>
+  <java-symbol name="system_accent2_600_dark" type="color"/>
+  <java-symbol name="system_accent2_700_dark" type="color"/>
+  <java-symbol name="system_accent2_800_dark" type="color"/>
+  <java-symbol name="system_accent2_900_dark" type="color"/>
+  <java-symbol name="system_accent2_1000_dark" type="color"/>
+  <java-symbol name="system_accent3_0_dark" type="color"/>
+  <java-symbol name="system_accent3_10_dark" type="color"/>
+  <java-symbol name="system_accent3_50_dark" type="color"/>
+  <java-symbol name="system_accent3_100_dark" type="color"/>
+  <java-symbol name="system_accent3_200_dark" type="color"/>
+  <java-symbol name="system_accent3_300_dark" type="color"/>
+  <java-symbol name="system_accent3_400_dark" type="color"/>
+  <java-symbol name="system_accent3_500_dark" type="color"/>
+  <java-symbol name="system_accent3_600_dark" type="color"/>
+  <java-symbol name="system_accent3_700_dark" type="color"/>
+  <java-symbol name="system_accent3_800_dark" type="color"/>
+  <java-symbol name="system_accent3_900_dark" type="color"/>
+  <java-symbol name="system_accent3_1000_dark" type="color"/>
+  <java-symbol name="system_neutral1_0_dark" type="color"/>
+  <java-symbol name="system_neutral1_10_dark" type="color"/>
+  <java-symbol name="system_neutral1_50_dark" type="color"/>
+  <java-symbol name="system_neutral1_100_dark" type="color"/>
+  <java-symbol name="system_neutral1_200_dark" type="color"/>
+  <java-symbol name="system_neutral1_300_dark" type="color"/>
+  <java-symbol name="system_neutral1_400_dark" type="color"/>
+  <java-symbol name="system_neutral1_500_dark" type="color"/>
+  <java-symbol name="system_neutral1_600_dark" type="color"/>
+  <java-symbol name="system_neutral1_700_dark" type="color"/>
+  <java-symbol name="system_neutral1_800_dark" type="color"/>
+  <java-symbol name="system_neutral1_900_dark" type="color"/>
+  <java-symbol name="system_neutral1_1000_dark" type="color"/>
+  <java-symbol name="system_neutral2_0_dark" type="color"/>
+  <java-symbol name="system_neutral2_10_dark" type="color"/>
+  <java-symbol name="system_neutral2_50_dark" type="color"/>
+  <java-symbol name="system_neutral2_100_dark" type="color"/>
+  <java-symbol name="system_neutral2_200_dark" type="color"/>
+  <java-symbol name="system_neutral2_300_dark" type="color"/>
+  <java-symbol name="system_neutral2_400_dark" type="color"/>
+  <java-symbol name="system_neutral2_500_dark" type="color"/>
+  <java-symbol name="system_neutral2_600_dark" type="color"/>
+  <java-symbol name="system_neutral2_700_dark" type="color"/>
+  <java-symbol name="system_neutral2_800_dark" type="color"/>
+  <java-symbol name="system_neutral2_900_dark" type="color"/>
+  <java-symbol name="system_neutral2_1000_dark" type="color"/>
+  <java-symbol name="system_error_0_dark" type="color"/>
+  <java-symbol name="system_error_10_dark" type="color"/>
+  <java-symbol name="system_error_50_dark" type="color"/>
+  <java-symbol name="system_error_100_dark" type="color"/>
+  <java-symbol name="system_error_200_dark" type="color"/>
+  <java-symbol name="system_error_300_dark" type="color"/>
+  <java-symbol name="system_error_400_dark" type="color"/>
+  <java-symbol name="system_error_500_dark" type="color"/>
+  <java-symbol name="system_error_600_dark" type="color"/>
+  <java-symbol name="system_error_700_dark" type="color"/>
+  <java-symbol name="system_error_800_dark" type="color"/>
+  <java-symbol name="system_error_900_dark" type="color"/>
+  <java-symbol name="system_error_1000_dark" type="color"/>
+
   <java-symbol name="materialColorBackground" type="color"/>
   <java-symbol name="materialColorControlActivated" type="color"/>
   <java-symbol name="materialColorControlHighlight" type="color"/>
   <java-symbol name="materialColorControlNormal" type="color"/>
   <java-symbol name="materialColorError" type="color"/>
   <java-symbol name="materialColorErrorContainer" type="color"/>
+  <java-symbol name="materialColorErrorDim" type="color"/>
   <java-symbol name="materialColorInverseOnSurface" type="color"/>
   <java-symbol name="materialColorInversePrimary" type="color"/>
   <java-symbol name="materialColorInverseSurface" type="color"/>
@@ -5387,6 +5736,7 @@
   <java-symbol name="materialColorOnTertiaryContainer" type="color"/>
   <java-symbol name="materialColorOutline" type="color"/>
   <java-symbol name="materialColorOutlineVariant" type="color"/>
+  <java-symbol name="materialColorPaletteKeyColorError" type="color"/>
   <java-symbol name="materialColorPaletteKeyColorNeutral" type="color"/>
   <java-symbol name="materialColorPaletteKeyColorNeutralVariant" type="color"/>
   <java-symbol name="materialColorPaletteKeyColorPrimary" type="color"/>
@@ -5394,9 +5744,12 @@
   <java-symbol name="materialColorPaletteKeyColorTertiary" type="color"/>
   <java-symbol name="materialColorPrimary" type="color"/>
   <java-symbol name="materialColorPrimaryContainer" type="color"/>
+  <java-symbol name="materialColorPrimaryDim" type="color"/>
   <java-symbol name="materialColorScrim" type="color"/>
   <java-symbol name="materialColorSecondary" type="color"/>
   <java-symbol name="materialColorSecondaryContainer" type="color"/>
+  <java-symbol name="materialColorSecondaryDim" type="color"/>
+  <java-symbol name="materialColorSemanticRedContainerHigh" type="color"/>
   <java-symbol name="materialColorShadow" type="color"/>
   <java-symbol name="materialColorSurface" type="color"/>
   <java-symbol name="materialColorSurfaceBright" type="color"/>
@@ -5410,6 +5763,7 @@
   <java-symbol name="materialColorSurfaceVariant" type="color"/>
   <java-symbol name="materialColorTertiary" type="color"/>
   <java-symbol name="materialColorTertiaryContainer" type="color"/>
+  <java-symbol name="materialColorTertiaryDim" type="color"/>
   <java-symbol name="materialColorTextHintInverse" type="color"/>
   <java-symbol name="materialColorTextPrimaryInverse" type="color"/>
   <java-symbol name="materialColorTextPrimaryInverseDisableOnly" type="color"/>
@@ -5450,133 +5804,51 @@
   <java-symbol name="customColorWeatherTemp" type="color"/>
   <java-symbol name="customColorWidgetBackground" type="color"/>
 
-  <java-symbol type="attr" name="materialColorBackground"/>
-  <java-symbol type="attr" name="materialColorControlActivated"/>
-  <java-symbol type="attr" name="materialColorControlHighlight"/>
-  <java-symbol type="attr" name="materialColorControlNormal"/>
-  <java-symbol type="attr" name="materialColorError"/>
-  <java-symbol type="attr" name="materialColorErrorContainer"/>
-  <java-symbol type="attr" name="materialColorInverseOnSurface"/>
-  <java-symbol type="attr" name="materialColorInversePrimary"/>
-  <java-symbol type="attr" name="materialColorInverseSurface"/>
-  <java-symbol type="attr" name="materialColorOnBackground"/>
-  <java-symbol type="attr" name="materialColorOnError"/>
-  <java-symbol type="attr" name="materialColorOnErrorContainer"/>
-  <java-symbol type="attr" name="materialColorOnPrimary"/>
-  <java-symbol type="attr" name="materialColorOnPrimaryContainer"/>
-  <java-symbol type="attr" name="materialColorOnSecondary"/>
-  <java-symbol type="attr" name="materialColorOnSecondaryContainer"/>
-  <java-symbol type="attr" name="materialColorOnSurface"/>
-  <java-symbol type="attr" name="materialColorOnSurfaceVariant"/>
-  <java-symbol type="attr" name="materialColorOnTertiary"/>
-  <java-symbol type="attr" name="materialColorOnTertiaryContainer"/>
-  <java-symbol type="attr" name="materialColorOutline"/>
-  <java-symbol type="attr" name="materialColorOutlineVariant"/>
-  <java-symbol type="attr" name="materialColorPaletteKeyColorNeutral"/>
-  <java-symbol type="attr" name="materialColorPaletteKeyColorNeutralVariant"/>
-  <java-symbol type="attr" name="materialColorPaletteKeyColorPrimary"/>
-  <java-symbol type="attr" name="materialColorPaletteKeyColorSecondary"/>
-  <java-symbol type="attr" name="materialColorPaletteKeyColorTertiary"/>
-  <java-symbol type="attr" name="materialColorPrimary"/>
-  <java-symbol type="attr" name="materialColorPrimaryContainer"/>
-  <java-symbol type="attr" name="materialColorScrim"/>
-  <java-symbol type="attr" name="materialColorSecondary"/>
-  <java-symbol type="attr" name="materialColorSecondaryContainer"/>
-  <java-symbol type="attr" name="materialColorShadow"/>
-  <java-symbol type="attr" name="materialColorSurface"/>
-  <java-symbol type="attr" name="materialColorSurfaceBright"/>
-  <java-symbol type="attr" name="materialColorSurfaceContainer"/>
-  <java-symbol type="attr" name="materialColorSurfaceContainerHigh"/>
-  <java-symbol type="attr" name="materialColorSurfaceContainerHighest"/>
-  <java-symbol type="attr" name="materialColorSurfaceContainerLow"/>
-  <java-symbol type="attr" name="materialColorSurfaceContainerLowest"/>
-  <java-symbol type="attr" name="materialColorSurfaceDim"/>
-  <java-symbol type="attr" name="materialColorSurfaceTint"/>
-  <java-symbol type="attr" name="materialColorSurfaceVariant"/>
-  <java-symbol type="attr" name="materialColorTertiary"/>
-  <java-symbol type="attr" name="materialColorTertiaryContainer"/>
-  <java-symbol type="attr" name="materialColorTextHintInverse"/>
-  <java-symbol type="attr" name="materialColorTextPrimaryInverse"/>
-  <java-symbol type="attr" name="materialColorTextPrimaryInverseDisableOnly"/>
-  <java-symbol type="attr" name="materialColorTextSecondaryAndTertiaryInverse"/>
-  <java-symbol type="attr" name="materialColorTextSecondaryAndTertiaryInverseDisabled"/>
-  <java-symbol type="attr" name="materialColorOnPrimaryFixed"/>
-  <java-symbol type="attr" name="materialColorOnPrimaryFixedVariant"/>
-  <java-symbol type="attr" name="materialColorOnSecondaryFixed"/>
-  <java-symbol type="attr" name="materialColorOnSecondaryFixedVariant"/>
-  <java-symbol type="attr" name="materialColorOnTertiaryFixed"/>
-  <java-symbol type="attr" name="materialColorOnTertiaryFixedVariant"/>
-  <java-symbol type="attr" name="materialColorPrimaryFixed"/>
-  <java-symbol type="attr" name="materialColorPrimaryFixedDim"/>
-  <java-symbol type="attr" name="materialColorSecondaryFixed"/>
-  <java-symbol type="attr" name="materialColorSecondaryFixedDim"/>
-  <java-symbol type="attr" name="materialColorTertiaryFixed"/>
-  <java-symbol type="attr" name="materialColorTertiaryFixedDim"/>
-  <java-symbol type="attr" name="customColorBrandA"/>
-  <java-symbol type="attr" name="customColorBrandB"/>
-  <java-symbol type="attr" name="customColorBrandC"/>
-  <java-symbol type="attr" name="customColorBrandD"/>
-  <java-symbol type="attr" name="customColorClockHour"/>
-  <java-symbol type="attr" name="customColorClockMinute"/>
-  <java-symbol type="attr" name="customColorClockSecond"/>
-  <java-symbol type="attr" name="customColorOnShadeActive"/>
-  <java-symbol type="attr" name="customColorOnShadeActiveVariant"/>
-  <java-symbol type="attr" name="customColorOnShadeInactive"/>
-  <java-symbol type="attr" name="customColorOnShadeInactiveVariant"/>
-  <java-symbol type="attr" name="customColorOnThemeApp"/>
-  <java-symbol type="attr" name="customColorOverviewBackground"/>
-  <java-symbol type="attr" name="customColorShadeActive"/>
-  <java-symbol type="attr" name="customColorShadeDisabled"/>
-  <java-symbol type="attr" name="customColorShadeInactive"/>
-  <java-symbol type="attr" name="customColorThemeApp"/>
-  <java-symbol type="attr" name="customColorThemeAppRing"/>
-  <java-symbol type="attr" name="customColorThemeNotif"/>
-  <java-symbol type="attr" name="customColorUnderSurface"/>
-  <java-symbol type="attr" name="customColorWeatherTemp"/>
-  <java-symbol type="attr" name="customColorWidgetBackground"/>
-
-  <java-symbol name="system_widget_background_light" type="color"/>
-  <java-symbol name="system_clock_hour_light" type="color"/>
-  <java-symbol name="system_clock_minute_light" type="color"/>
-  <java-symbol name="system_clock_second_light" type="color"/>
-  <java-symbol name="system_theme_app_light" type="color"/>
-  <java-symbol name="system_on_theme_app_light" type="color"/>
-  <java-symbol name="system_theme_app_ring_light" type="color"/>
-  <java-symbol name="system_theme_notif_light" type="color"/>
   <java-symbol name="system_brand_a_light" type="color"/>
   <java-symbol name="system_brand_b_light" type="color"/>
   <java-symbol name="system_brand_c_light" type="color"/>
   <java-symbol name="system_brand_d_light" type="color"/>
-  <java-symbol name="system_under_surface_light" type="color"/>
-  <java-symbol name="system_shade_active_light" type="color"/>
+  <java-symbol name="system_clock_hour_light" type="color"/>
+  <java-symbol name="system_clock_minute_light" type="color"/>
+  <java-symbol name="system_clock_second_light" type="color"/>
   <java-symbol name="system_on_shade_active_light" type="color"/>
   <java-symbol name="system_on_shade_active_variant_light" type="color"/>
-  <java-symbol name="system_shade_inactive_light" type="color"/>
   <java-symbol name="system_on_shade_inactive_light" type="color"/>
   <java-symbol name="system_on_shade_inactive_variant_light" type="color"/>
-  <java-symbol name="system_shade_disabled_light" type="color"/>
+  <java-symbol name="system_on_theme_app_light" type="color"/>
   <java-symbol name="system_overview_background_light" type="color"/>
-  <java-symbol name="system_widget_background_dark" type="color"/>
-  <java-symbol name="system_clock_hour_dark" type="color"/>
-  <java-symbol name="system_clock_minute_dark" type="color"/>
-  <java-symbol name="system_clock_second_dark" type="color"/>
-  <java-symbol name="system_theme_app_dark" type="color"/>
-  <java-symbol name="system_on_theme_app_dark" type="color"/>
-  <java-symbol name="system_theme_app_ring_dark" type="color"/>
-  <java-symbol name="system_theme_notif_dark" type="color"/>
+  <java-symbol name="system_shade_active_light" type="color"/>
+  <java-symbol name="system_shade_disabled_light" type="color"/>
+  <java-symbol name="system_shade_inactive_light" type="color"/>
+  <java-symbol name="system_theme_app_light" type="color"/>
+  <java-symbol name="system_theme_app_ring_light" type="color"/>
+  <java-symbol name="system_theme_notif_light" type="color"/>
+  <java-symbol name="system_under_surface_light" type="color"/>
+  <java-symbol name="system_weather_temp_light" type="color"/>
+  <java-symbol name="system_widget_background_light" type="color"/>
+
   <java-symbol name="system_brand_a_dark" type="color"/>
   <java-symbol name="system_brand_b_dark" type="color"/>
   <java-symbol name="system_brand_c_dark" type="color"/>
   <java-symbol name="system_brand_d_dark" type="color"/>
-  <java-symbol name="system_under_surface_dark" type="color"/>
-  <java-symbol name="system_shade_active_dark" type="color"/>
+  <java-symbol name="system_clock_hour_dark" type="color"/>
+  <java-symbol name="system_clock_minute_dark" type="color"/>
+  <java-symbol name="system_clock_second_dark" type="color"/>
   <java-symbol name="system_on_shade_active_dark" type="color"/>
   <java-symbol name="system_on_shade_active_variant_dark" type="color"/>
-  <java-symbol name="system_shade_inactive_dark" type="color"/>
   <java-symbol name="system_on_shade_inactive_dark" type="color"/>
   <java-symbol name="system_on_shade_inactive_variant_dark" type="color"/>
-  <java-symbol name="system_shade_disabled_dark" type="color"/>
+  <java-symbol name="system_on_theme_app_dark" type="color"/>
   <java-symbol name="system_overview_background_dark" type="color"/>
+  <java-symbol name="system_shade_active_dark" type="color"/>
+  <java-symbol name="system_shade_disabled_dark" type="color"/>
+  <java-symbol name="system_shade_inactive_dark" type="color"/>
+  <java-symbol name="system_theme_app_dark" type="color"/>
+  <java-symbol name="system_theme_app_ring_dark" type="color"/>
+  <java-symbol name="system_theme_notif_dark" type="color"/>
+  <java-symbol name="system_under_surface_dark" type="color"/>
+  <java-symbol name="system_weather_temp_dark" type="color"/>
+  <java-symbol name="system_widget_background_dark" type="color"/>
 
   <java-symbol type="attr" name="actionModeUndoDrawable" />
   <java-symbol type="attr" name="actionModeRedoDrawable" />
@@ -5653,11 +5925,77 @@
   <java-symbol type="bool" name="config_enable_a11y_fullscreen_magnification_overscroll_handler" />
   <java-symbol type="dimen" name="accessibility_fullscreen_magnification_gesture_edge_slop" />
 
+  <!-- Accessibility autoclick related -->
+  <java-symbol type="layout" name="accessibility_autoclick_type_panel" />
+  <java-symbol type="string" name="accessibility_autoclick_type_settings_panel_title" />
+  <java-symbol type="string" name="accessibility_autoclick_left_click" />
+  <java-symbol type="string" name="accessibility_autoclick_right_click" />
+  <java-symbol type="string" name="accessibility_autoclick_double_click" />
+  <java-symbol type="string" name="accessibility_autoclick_drag" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll" />
+  <java-symbol type="string" name="accessibility_autoclick_long_press" />
+  <java-symbol type="string" name="accessibility_autoclick_pause" />
+  <java-symbol type="string" name="accessibility_autoclick_resume" />
+  <java-symbol type="string" name="accessibility_autoclick_position" />
+  <java-symbol type="dimen" name="accessibility_autoclick_type_panel_button_spacing" />
+  <java-symbol type="dimen" name="accessibility_autoclick_type_panel_button_size" />
+  <java-symbol type="dimen" name="accessibility_autoclick_type_panel_divider_height" />
+  <java-symbol type="dimen" name="accessibility_autoclick_type_panel_divider_width" />
+  <java-symbol type="dimen" name="accessibility_autoclick_panel_resting_elevation" />
+  <java-symbol type="dimen" name="accessibility_autoclick_panel_hover_elevation" />
+  <java-symbol type="id" name="accessibility_autoclick_type_panel" />
+  <java-symbol type="id" name="accessibility_autoclick_button_group_container" />
+  <java-symbol type="id" name="accessibility_autoclick_click_type_button_group_container" />
+  <java-symbol type="id" name="accessibility_autoclick_left_click_button" />
+  <java-symbol type="id" name="accessibility_autoclick_right_click_button" />
+  <java-symbol type="id" name="accessibility_autoclick_double_click_button" />
+  <java-symbol type="id" name="accessibility_autoclick_drag_button" />
+  <java-symbol type="id" name="accessibility_autoclick_scroll_button" />
+  <java-symbol type="id" name="accessibility_autoclick_long_press_button" />
+  <java-symbol type="id" name="accessibility_autoclick_pause_button" />
+  <java-symbol type="id" name="accessibility_autoclick_position_button" />
+  <java-symbol type="drawable" name="accessibility_autoclick_pause" />
+  <java-symbol type="drawable" name="accessibility_autoclick_resume" />
+  <java-symbol type="drawable" name="ic_accessibility_autoclick" />
+  <java-symbol type="drawable" name="ic_accessibility_mouse_keys" />
+  <java-symbol type="drawable" name="accessibility_autoclick_position_top_left" />
+  <java-symbol type="drawable" name="accessibility_autoclick_position_top_right" />
+  <java-symbol type="drawable" name="accessibility_autoclick_position_bottom_left" />
+  <java-symbol type="drawable" name="accessibility_autoclick_position_bottom_right" />
+
+  <!-- Accessibility autoclick scroll panel related -->
+  <java-symbol type="layout" name="accessibility_autoclick_scroll_panel" />
+  <java-symbol type="dimen" name="accessibility_autoclick_scroll_panel_button_size" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_up" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_down" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_left" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_right" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_exit" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_up_background" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_down_background" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_left_background" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_right_background" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_exit_background" />
+  <java-symbol type="drawable" name="accessibility_autoclick_scroll_panel_container" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_up" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_down" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_left" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_right" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_exit" />
+  <java-symbol type="string" name="accessibility_autoclick_scroll_panel_title" />
+  <java-symbol type="id" name="accessibility_autoclick_scroll_panel" />
+  <java-symbol type="id" name="scroll_up" />
+  <java-symbol type="id" name="scroll_down" />
+  <java-symbol type="id" name="scroll_left" />
+  <java-symbol type="id" name="scroll_right" />
+  <java-symbol type="id" name="scroll_exit" />
+
   <!-- For HapticFeedbackConstants configurability defined at HapticFeedbackCustomization -->
   <java-symbol type="string" name="config_hapticFeedbackCustomizationFile" />
   <java-symbol type="xml" name="haptic_feedback_customization" />
   <java-symbol type="xml" name="haptic_feedback_customization_source_rotary_encoder" />
   <java-symbol type="xml" name="haptic_feedback_customization_source_touchscreen" />
+  <java-symbol type="xml" name="haptic_feedback_customization_usage_gesture_input" />
 
   <!-- For ActivityManager PSS profiling configurability -->
   <java-symbol type="bool" name="config_am_disablePssProfiling" />
@@ -5702,6 +6040,7 @@
   <!-- System notification for satellite service -->
   <java-symbol type="string" name="satellite_notification_title" />
   <java-symbol type="string" name="satellite_notification_summary" />
+  <java-symbol type="string" name="satellite_notification_summary_with_data" />
   <java-symbol type="string" name="satellite_notification_manual_title" />
   <java-symbol type="string" name="satellite_notification_manual_summary" />
   <java-symbol type="string" name="satellite_notification_open_message" />
@@ -5757,8 +6096,17 @@
   <!-- Whether desktop mode is supported on the current device  -->
   <java-symbol type="bool" name="config_isDesktopModeSupported" />
 
+  <!-- Whether the developer option for desktop mode is supported on the current device  -->
+  <java-symbol type="bool" name="config_isDesktopModeDevOptionSupported" />
+
+  <!-- Whether the current device's internal display can host desktop sessions.  -->
+  <java-symbol type="bool" name="config_canInternalDisplayHostDesktops" />
+
   <!-- Maximum number of active tasks on a given Desktop Windowing session. Set to 0 for unlimited. -->
   <java-symbol type="integer" name="config_maxDesktopWindowingActiveTasks"/>
+
+  <!-- Maximum number desks on a device running Desktop Windowing. Set to 0 for unlimited. -->
+  <java-symbol type="integer" name="config_maxDesktopWindowingDesks"/>
 
   <!-- Whether a display enters desktop mode by default when the windowing mode of the display's
        root TaskDisplayArea is set to WINDOWING_MODE_FREEFORM. -->
@@ -5768,8 +6116,11 @@
        screen. -->
   <java-symbol type="bool" name="config_dragToMaximizeInDesktopMode" />
 
-  <!-- Whether showing the app handle is supported on this device -->
-  <java-symbol type="bool" name="config_enableAppHandle" />
+  <!-- Whether the home screen should be shown behind freeform tasks in desktop mode. -->
+  <java-symbol type="bool" name="config_showHomeBehindDesktop" />
+
+  <!-- List of packages which should be exempt from desktop mode. -->
+  <java-symbol type="array" name="config_desktopExemptPackages" />
 
   <!-- Frame rate compatibility value for Wallpaper -->
   <java-symbol type="integer" name="config_wallpaperFrameRateCompatibility" />
@@ -5825,10 +6176,13 @@
   <java-symbol type="string" name="keyboard_shortcut_group_applications_calendar" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications_contacts" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications_email" />
+  <java-symbol type="string" name="keyboard_shortcut_group_applications_files" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications_maps" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications_music" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications_sms" />
   <java-symbol type="string" name="keyboard_shortcut_group_applications" />
+
+  <java-symbol type="integer" name="config_globalActionsDialogTimeout" />
 
   <!-- Fingerprint loe notification string -->
   <java-symbol type="string" name="fingerprint_loe_notification_msg" />
@@ -5845,11 +6199,19 @@
   <!-- Fingerprint screen off unlock config -->
   <java-symbol type="bool" name="config_screen_off_udfps_enabled" />
 
-  <!-- Style for Wear Material3 Button. Will only be used for sdk 36 or above. -->
-  <java-symbol type="style" name="Widget.DeviceDefault.Button.WearMaterial3" />
+  <!-- Default toggle for fp screen of unlcok-->
+  <java-symbol type="bool" name="config_screen_off_udfps_default_on" />
 
-  <!-- Style for Wear Material3 AlertDialog. Will only be used for sdk 36 or above. -->
-  <java-symbol type="style" name="AlertDialog.DeviceDefault.WearMaterial3" />
+  <!-- Style for Material3. Will only be used for sdk 36 or above. -->
+  <java-symbol type="style" name="Widget.Material3" />
+  <java-symbol type="style" name="Widget.Material3.Button" />
+  <java-symbol type="style" name="Widget.Material3.Button.Filled" />
+  <java-symbol type="style" name="Widget.Material3.Button.FilledTonal" />
+  <java-symbol type="style" name="Widget.Material3.Button.Outlined" />
+  <java-symbol type="style" name="Widget.Material3.Button.Text" />
+
+  <!-- Style for Material3 AlertDialog. Will only be used for sdk 36 or above. -->
+  <java-symbol type="style" name="AlertDialog.Material3" />
 
   <java-symbol type="bool" name="config_allowNormalBrightnessForDozePolicy" />
 
@@ -5889,5 +6251,99 @@
   <java-symbol type="dimen" name="config_shapeCornerRadiusLarge"/>
   <java-symbol type="dimen" name="config_shapeCornerRadiusXlarge"/>
 
+  <!-- Whether the device supports Wi-Fi USD feature. -->
+  <java-symbol type="bool" name="config_deviceSupportsWifiUsd" />
 
+  <java-symbol type="array" name="config_notificationDefaultUnsupportedAdjustments" />
+  <java-symbol type="drawable" name="ic_notification_summarization" />
+  <java-symbol type="dimen" name="notification_collapsed_height_with_summarization" />
+
+  <!-- Device CMF Theming Settings -->
+  <java-symbol type="array" name="theming_defaults" />
+
+  <java-symbol type="string" name="config_help_url_action_disabled_by_advanced_protection" />
+
+  <!-- Advanced Protection Service USB feature -->
+
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_notification_app_title" />
+
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_replug_notification_title" />
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_notification_title" />
+
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_replug_notification_text" />
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_data_notification_text" />
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_charge_notification_text" />
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_charge_data_notification_text" />
+
+  <java-symbol type="string" name="usb_apm_usb_plugged_in_when_locked_notification_silence_action_text" />
+
+  <java-symbol type="string" name="usb_apm_usb_notification_silenced_title" />
+  <java-symbol type="string" name="usb_apm_usb_notification_silenced_text" />
+
+  <java-symbol type="string" name="usb_apm_usb_suspicious_activity_notification_title" />
+  <java-symbol type="string" name="usb_apm_usb_suspicious_activity_notification_text" />
+
+  <java-symbol type="string" name="prefs_bugreport" />
+  <java-symbol type="string" name="key_warning_state" />
+  <java-symbol type="integer" name="bugreport_state_unknown" />
+  <java-symbol type="integer" name="bugreport_state_show" />
+  <java-symbol type="integer" name="bugreport_state_hide" />
+
+  <!-- Enable OEMs to support scale up anim across tasks.-->
+  <java-symbol type="bool" name="config_enableCrossTaskScaleUpAnimation" />
+
+  <!-- Default height of desktop view's header for desktop tasks on launch. -->
+  <java-symbol type="dimen" name="desktop_view_default_header_height" />
+  <!-- Default height of desktop view's large header for desktop tasks on launch. -->
+  <java-symbol type="dimen" name="desktop_view_default_large_header_height" />
+
+  <!-- Enable OEMs to support different frr notification target component activity -->
+  <java-symbol type="string" name="config_fingerprintFrrTargetComponent" />
+  <java-symbol type="string" name="fingerprint_frr_notification_title" />
+  <java-symbol type="string" name="fingerprint_frr_notification_msg" />
+
+  <!-- Default name for newly configured tv profile. -->
+  <java-symbol type="string" name="config_configured_tv_profile_name" />
+
+  <!-- Whether cv is available on the device. -->
+  <java-symbol type="bool" name="config_cv_available" />
+
+  <!-- The selection toolbar render service component name -->
+  <java-symbol type="string" name="config_systemUiSelectionToolbarRenderService" />
+
+  <!-- Whether Sys UI reboot UI is prioritized for reocvery triggered UI. -->
+  <java-symbol type="bool" name="config_prioritizeSysUiForRecoveryRebootUi" />
+
+  <!-- Maximum number of devices that allows for audio sharing. -->
+  <java-symbol type="integer" name="config_audio_sharing_maximum_sinks" />
+
+  <!-- Values for the user-configurable text cursor blink interval. -->
+  <java-symbol type="integer" name="def_accessibility_text_cursor_blink_interval_ms" />
+  <java-symbol type="integer" name="no_blink_accessibility_text_cursor_blink_interval_ms" />
+  <java-symbol type="array" name="accessibility_text_cursor_blink_intervals" />
+  <java-symbol type="string" name="no_blink_accessibility_text_cursor_blink_label" />
+  <java-symbol type="array" name="accessibility_text_cursor_blink_labels" />
+
+  <!-- Developer verification service provider -->
+  <java-symbol type="string" name="config_developerVerificationServiceProviderPackageName" />
+  <!-- Developer verification policy delegate -->
+  <java-symbol type="string" name="config_developerVerificationPolicyDelegatePackageName" />
+
+  <!-- Package and class info to bind to ProximityProviderService -->
+  <java-symbol type="string" name="proximity_provider_service_package_name" />
+  <java-symbol type="string" name="proximity_provider_service_class_name" />
+
+  <java-symbol type="string" name="exit_toast_on_long_press_escape" />
+
+
+  <!-- For partial sleep wake locks. -->
+  <java-symbol type="bool" name="config_allowPartialSleepWakeLocks" />
+  <java-symbol type="integer" name="config_maximumPartialSleepWakeLockDuration" />
+
+  <!-- For App Functions -->
+  <java-symbol type="array" name="config_appFunctionDeviceSettingsPackages" />
+  <java-symbol type="array" name="config_defaultAppFunctionAgentAllowlist" />
+
+  <!-- Action for opening trusted location settings page -->
+  <java-symbol type="string" name="trusted_location_settings_action" />
 </resources>

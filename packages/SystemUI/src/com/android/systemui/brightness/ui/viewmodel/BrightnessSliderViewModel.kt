@@ -17,6 +17,8 @@
 package com.android.systemui.brightness.ui.viewmodel
 
 import android.content.Context
+import androidx.annotation.DrawableRes
+import androidx.annotation.FloatRange
 import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import com.android.systemui.brightness.domain.interactor.BrightnessPolicyEnforcementInteractor
@@ -24,9 +26,9 @@ import com.android.systemui.brightness.domain.interactor.ScreenBrightnessInterac
 import com.android.systemui.brightness.shared.model.GammaBrightness
 import com.android.systemui.classifier.Classifier
 import com.android.systemui.classifier.domain.interactor.FalsingInteractor
-import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
-import com.android.systemui.common.shared.model.Text
+import com.android.systemui.common.shared.model.asIcon
+import com.android.systemui.graphics.ImageLoader
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
 import com.android.systemui.lifecycle.ExclusiveActivatable
 import com.android.systemui.lifecycle.Hydrator
@@ -34,9 +36,12 @@ import com.android.systemui.res.R
 import com.android.systemui.settings.brightness.domain.interactor.BrightnessMirrorShowingInteractor
 import com.android.systemui.settings.brightness.ui.BrightnessWarningToast
 import com.android.systemui.utils.PolicyRestriction
+import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * View Model for a brightness slider.
@@ -53,27 +58,31 @@ constructor(
     private val screenBrightnessInteractor: ScreenBrightnessInteractor,
     private val brightnessPolicyEnforcementInteractor: BrightnessPolicyEnforcementInteractor,
     val hapticsViewModelFactory: SliderHapticsViewModel.Factory,
-    private val brightnessMirrorShowingInteractor: BrightnessMirrorShowingInteractor,
+    private val brightnessMirrorShowingInteractorLazy: Lazy<BrightnessMirrorShowingInteractor>,
     private val falsingInteractor: FalsingInteractor,
     @Assisted private val supportsMirroring: Boolean,
     private val brightnessWarningToast: BrightnessWarningToast,
+    private val imageLoader: ImageLoader,
 ) : ExclusiveActivatable() {
+
+    init {
+        if (supportsMirroring) {
+            // Create eagerly only if supported
+            brightnessMirrorShowingInteractorLazy.get()
+        }
+    }
 
     private val hydrator = Hydrator("BrightnessSliderViewModel.hydrator")
 
     val currentBrightness by
         hydrator.hydratedStateOf(
             "currentBrightness",
-            GammaBrightness(0),
+            initialValue,
             screenBrightnessInteractor.gammaBrightness,
         )
 
     val maxBrightness = screenBrightnessInteractor.maxGammaBrightness
     val minBrightness = screenBrightnessInteractor.minGammaBrightness
-
-    val label = Text.Resource(R.string.quick_settings_brightness_dialog_title)
-
-    val icon = Icon.Resource(R.drawable.ic_brightness_full, ContentDescription.Resource(label.res))
 
     val policyRestriction = brightnessPolicyEnforcementInteractor.brightnessPolicyRestriction
 
@@ -94,6 +103,18 @@ constructor(
         falsingInteractor.isFalseTouch(Classifier.BRIGHTNESS_SLIDER)
     }
 
+    suspend fun loadImage(@DrawableRes resId: Int, context: Context): Icon.Loaded? {
+        return withTimeoutOrNull(500L) {
+            imageLoader
+                .loadDrawable(
+                    android.graphics.drawable.Icon.createWithResource(context, resId),
+                    maxHeight = 200,
+                    maxWidth = 200,
+                )
+                ?.asIcon(null, resId)
+        }
+    }
+
     /**
      * As a brightness slider is dragged, the corresponding events should be sent using this method.
      */
@@ -104,24 +125,21 @@ constructor(
         }
     }
 
-    /**
-     * Format the current value of brightness as a percentage between the minimum and maximum gamma.
-     */
-    fun formatValue(value: Int): String {
-        val min = minBrightness.value
-        val max = maxBrightness.value
-        val coercedValue = value.coerceIn(min, max)
-        val percentage = (coercedValue - min) * 100 / (max - min)
-        // This is not finalized UI so using fixed string
-        return "$percentage%"
-    }
-
     fun setIsDragging(dragging: Boolean) {
-        brightnessMirrorShowingInteractor.setMirrorShowing(dragging && supportsMirroring)
+        if (supportsMirroring) {
+            brightnessMirrorShowingInteractorLazy.get().setMirrorShowing(dragging)
+        }
     }
 
     val showMirror by
-        hydrator.hydratedStateOf("showMirror", brightnessMirrorShowingInteractor.isShowing)
+        hydrator.hydratedStateOf(
+            "showMirror",
+            if (supportsMirroring) {
+                brightnessMirrorShowingInteractorLazy.get().isShowing
+            } else {
+                MutableStateFlow(false)
+            },
+        )
 
     override suspend fun onActivated(): Nothing {
         hydrator.activate()
@@ -130,6 +148,26 @@ constructor(
     @AssistedFactory
     interface Factory {
         fun create(supportsMirroring: Boolean): BrightnessSliderViewModel
+    }
+
+    companion object {
+        val initialValue = GammaBrightness(-1)
+
+        private val icons =
+            BrightnessIcons(
+                brightnessLow = R.drawable.ic_brightness_low,
+                brightnessMid = R.drawable.ic_brightness_medium,
+                brightnessHigh = R.drawable.ic_brightness_full,
+            )
+
+        @DrawableRes
+        fun getIconForPercentage(@FloatRange(0.0, 100.0) percentage: Float): Int {
+            return when {
+                percentage <= 20f -> icons.brightnessLow
+                percentage >= 80f -> icons.brightnessHigh
+                else -> icons.brightnessMid
+            }
+        }
     }
 }
 
@@ -143,3 +181,9 @@ sealed interface Drag {
 
     @JvmInline value class Stopped(override val brightness: GammaBrightness) : Drag
 }
+
+private data class BrightnessIcons(
+    @DrawableRes val brightnessLow: Int,
+    @DrawableRes val brightnessMid: Int,
+    @DrawableRes val brightnessHigh: Int,
+)

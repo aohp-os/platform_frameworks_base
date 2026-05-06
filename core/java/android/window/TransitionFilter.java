@@ -31,8 +31,6 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.view.WindowManager;
 
-import com.android.window.flags.Flags;
-
 /**
  * A parcelable filter that can be used for rerouting transitions to a remote. This is a local
  * representation so that the transition system doesn't need to make blocking queries over
@@ -192,6 +190,9 @@ public final class TransitionFilter implements Parcelable {
 
         public int mWindowingMode = WINDOWING_MODE_UNDEFINED;
 
+        /** If true, this requirement only matches tasks moving between displays. */
+        public boolean mIsCrossDisplayMove = false;
+
         public Requirement() {
         }
 
@@ -210,6 +211,7 @@ public final class TransitionFilter implements Parcelable {
             mCustomAnimation = customAnimRaw == 0 ? null : Boolean.valueOf(customAnimRaw == 2);
             mTaskFragmentToken = in.readStrongBinder();
             mWindowingMode = in.readInt();
+            mIsCrossDisplayMove = in.readBoolean();
         }
 
         /** Go through changes and find if at-least one change matches this filter */
@@ -261,9 +263,7 @@ public final class TransitionFilter implements Parcelable {
                         // only applies to activity/task
                         && (change.getTaskInfo() != null
                                 || change.getActivityComponent() != null)) {
-                    final TransitionInfo.AnimationOptions opts =
-                            Flags.moveAnimationOptionsToChange() ? change.getAnimationOptions()
-                                    : info.getAnimationOptions();
+                    final TransitionInfo.AnimationOptions opts = change.getAnimationOptions();
                     if (opts != null) {
                         boolean canActuallyOverride = change.getTaskInfo() == null
                                 || opts.getOverrideTaskTransition();
@@ -277,6 +277,12 @@ public final class TransitionFilter implements Parcelable {
                 if (mWindowingMode != WINDOWING_MODE_UNDEFINED) {
                     if (change.getTaskInfo() == null
                             || change.getTaskInfo().getWindowingMode() != mWindowingMode) {
+                        continue;
+                    }
+                }
+                if (mIsCrossDisplayMove) {
+                    if (change.getTaskInfo() == null
+                            || change.getStartDisplayId() == change.getEndDisplayId()) {
                         continue;
                     }
                 }
@@ -333,6 +339,7 @@ public final class TransitionFilter implements Parcelable {
             dest.writeInt(customAnimRaw);
             dest.writeStrongBinder(mTaskFragmentToken);
             dest.writeInt(mWindowingMode);
+            dest.writeBoolean(mIsCrossDisplayMove);
         }
 
         @NonNull
@@ -382,6 +389,7 @@ public final class TransitionFilter implements Parcelable {
             }
             out.append(" windowingMode="
                     + WindowConfiguration.windowingModeToString(mWindowingMode));
+            out.append(" isCrossDisplayMove=" + mIsCrossDisplayMove);
             out.append("}");
             return out.toString();
         }

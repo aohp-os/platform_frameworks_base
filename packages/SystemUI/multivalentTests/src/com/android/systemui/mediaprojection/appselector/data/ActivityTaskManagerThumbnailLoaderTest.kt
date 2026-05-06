@@ -17,7 +17,6 @@ import com.android.systemui.shared.system.ActivityManagerWrapper
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -26,7 +25,6 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 @SmallTest
-@OptIn(ExperimentalCoroutinesApi::class)
 class ActivityTaskManagerThumbnailLoaderTest : SysuiTestCase() {
 
     private val dispatcher = UnconfinedTestDispatcher()
@@ -91,7 +89,7 @@ class ActivityTaskManagerThumbnailLoaderTest : SysuiTestCase() {
                 /* height= */ 100,
                 HardwareBuffer.RGBA_8888,
                 /* layers= */ 1,
-                /* usage= */ HardwareBuffer.USAGE_CPU_READ_OFTEN
+                /* usage= */ HardwareBuffer.USAGE_CPU_READ_OFTEN,
             ),
             ColorSpace.get(ColorSpace.Named.SRGB),
             Configuration.ORIENTATION_PORTRAIT,
@@ -105,6 +103,7 @@ class ActivityTaskManagerThumbnailLoaderTest : SysuiTestCase() {
             /* appearance= */ 0,
             /* isTranslucent= */ false,
             /* hasImeSurface= */ false,
-            /* uiMode */ 0
+            /* uiMode */ 0,
+            /* densityDpi */ 300,
         )
 }

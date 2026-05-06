@@ -20,16 +20,15 @@ import android.content.applicationContext
 import android.view.layoutInflater
 import android.view.windowManager
 import com.android.systemui.biometrics.domain.interactor.biometricStatusInteractor
-import com.android.systemui.biometrics.domain.interactor.displayStateInteractor
 import com.android.systemui.biometrics.domain.interactor.sideFpsSensorInteractor
+import com.android.systemui.display.domain.interactor.displayStateInteractor
 import com.android.systemui.keyguard.domain.interactor.deviceEntrySideFpsOverlayInteractor
 import com.android.systemui.keyguard.ui.viewmodel.sideFpsProgressBarViewModel
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.applicationCoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.android.systemui.power.domain.interactor.powerInteractor
 
-@OptIn(ExperimentalCoroutinesApi::class)
 val Kosmos.sideFpsOverlayViewBinder by Fixture {
     SideFpsOverlayViewBinder(
         applicationScope = applicationCoroutineScope,
@@ -40,6 +39,7 @@ val Kosmos.sideFpsOverlayViewBinder by Fixture {
         { layoutInflater },
         { sideFpsProgressBarViewModel },
         { sideFpsSensorInteractor },
-        { windowManager }
+        { windowManager },
+        { powerInteractor },
     )
 }

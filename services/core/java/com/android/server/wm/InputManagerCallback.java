@@ -128,8 +128,7 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
     @Override
     public void notifyConfigurationChanged() {
         Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "notifyConfigurationChanged");
-        final boolean changed = !com.android.window.flags.Flags.filterIrrelevantInputDeviceChange()
-                || updateLastInputConfigurationSources();
+        final boolean changed = updateLastInputConfigurationSources();
 
         // Even if the input devices are not changed, there could be other pending changes
         // during booting. It's fine to apply earlier.
@@ -147,6 +146,9 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
                 mInputDevicesReadyMonitor.notifyAll();
             }
         }
+
+        mService.onInputDevicesChanged();
+
         Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
     }
 
@@ -232,9 +234,8 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
      * ordinary dispatch.
      */
     @Override
-    public long interceptKeyBeforeDispatching(
-            IBinder focusedToken, KeyEvent event, int policyFlags) {
-        return mService.mPolicy.interceptKeyBeforeDispatching(focusedToken, event, policyFlags);
+    public boolean interceptKeyBeforeDispatching(IBinder focusedToken, KeyEvent event) {
+        return mService.mPolicy.interceptKeyBeforeDispatching(focusedToken, event);
     }
 
     /**
@@ -341,6 +342,13 @@ final class InputManagerCallback implements InputManagerService.WindowManagerCal
                     .setParent(inputOverlay)
                     .setCallsite("InputManagerCallback.createSurfaceForGestureMonitor")
                     .build();
+        }
+    }
+
+    @Override
+    public boolean isKeyguardLocked(int displayId) {
+        synchronized (mService.mGlobalLock) {
+            return mService.mAtmService.mKeyguardController.isKeyguardLocked(displayId);
         }
     }
 

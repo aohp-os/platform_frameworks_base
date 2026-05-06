@@ -61,6 +61,10 @@ public class AssistUtils {
     public static final int INVOCATION_TYPE_ASSIST_BUTTON = 7;
     /** value for INVOCATION_TYPE_KEY: long press on nav handle */
     public static final int INVOCATION_TYPE_NAV_HANDLE_LONG_PRESS = 8;
+    /** value for INVOCATION_TYPE_KEY: sysui launcher */
+    public static final int INVOCATION_TYPE_LAUNCHER_SYSTEM_SHORTCUT = 9;
+    /** value for INVOCATION_TYPE_KEY: status bar icon */
+    public static final int INVOCATION_TYPE_STATUS_BAR_ICON = 10;
 
     private final Context mContext;
     private final IVoiceInteractionManagerService mVoiceInteractionManagerService;

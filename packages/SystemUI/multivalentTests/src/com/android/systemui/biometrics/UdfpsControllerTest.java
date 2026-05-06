@@ -16,6 +16,8 @@
 
 package com.android.systemui.biometrics;
 
+import static com.android.systemui.SysuiTestCaseExtKt.testKosmos;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -43,14 +45,12 @@ import android.os.RemoteException;
 import android.testing.TestableLooper.RunWithLooper;
 import android.view.LayoutInflater;
 import android.view.Surface;
-import android.view.View;
-import android.view.ViewRootImpl;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityManager;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager;
 import com.android.internal.logging.InstanceIdSequence;
 import com.android.internal.util.LatencyTracker;
 import com.android.keyguard.KeyguardUpdateMonitor;
@@ -61,15 +61,18 @@ import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams;
 import com.android.systemui.biometrics.udfps.SinglePointerTouchProcessor;
 import com.android.systemui.biometrics.ui.viewmodel.DefaultUdfpsTouchOverlayViewModel;
 import com.android.systemui.biometrics.ui.viewmodel.DeviceEntryUdfpsTouchOverlayViewModel;
+import com.android.systemui.biometrics.ui.viewmodel.PromptUdfpsTouchOverlayViewModel;
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor;
 import com.android.systemui.camera.CameraGestureHelper;
 import com.android.systemui.classifier.FalsingCollector;
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryFaceAuthInteractor;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.ScreenLifecycle;
+import com.android.systemui.keyguard.UserActivityNotifierKosmosKt;
+import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
+import com.android.systemui.kosmos.Kosmos;
 import com.android.systemui.log.SessionTracker;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
@@ -78,7 +81,6 @@ import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.power.shared.model.WakeSleepReason;
 import com.android.systemui.power.shared.model.WakefulnessState;
 import com.android.systemui.shade.domain.interactor.ShadeInteractor;
-import com.android.systemui.statusbar.LockscreenShadeTransitionController;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
@@ -92,9 +94,9 @@ import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.time.FakeSystemClock;
 import com.android.systemui.util.time.SystemClock;
 
-import dagger.Lazy;
+import com.google.android.msdl.domain.MSDLPlayer;
 
-import javax.inject.Provider;
+import dagger.Lazy;
 
 import kotlinx.coroutines.CoroutineScope;
 
@@ -111,11 +113,13 @@ import org.mockito.junit.MockitoRule;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.inject.Provider;
+
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 @RunWithLooper(setAsMainLooper = true)
 public class UdfpsControllerTest extends SysuiTestCase {
-
+    private final Kosmos mKosmos = testKosmos(this);
     private static final long TEST_REQUEST_ID = 70;
 
     @Rule
@@ -129,7 +133,7 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Mock
     private FingerprintManager mFingerprintManager;
     @Mock
-    private ViewCaptureAwareWindowManager mWindowManager;
+    private WindowManager mWindowManager;
     @Mock
     private StatusBarStateController mStatusBarStateController;
     @Mock
@@ -146,8 +150,6 @@ public class UdfpsControllerTest extends SysuiTestCase {
     private PowerManager mPowerManager;
     @Mock
     private AccessibilityManager mAccessibilityManager;
-    @Mock
-    private LockscreenShadeTransitionController mLockscreenShadeTransitionController;
     @Mock
     private ScreenLifecycle mScreenLifecycle;
     @Mock
@@ -174,9 +176,6 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Mock
     private UdfpsDisplayMode mUdfpsDisplayMode;
     @Mock
-    private FeatureFlags mFeatureFlags;
-    // Stuff for configuring mocks
-    @Mock
     private SystemUIDialogManager mSystemUIDialogManager;
     @Mock
     private ActivityTransitionAnimator mActivityTransitionAnimator;
@@ -193,39 +192,29 @@ public class UdfpsControllerTest extends SysuiTestCase {
     @Mock
     private UdfpsOverlayInteractor mUdfpsOverlayInteractor;
     @Mock
-    private UdfpsKeyguardAccessibilityDelegate mUdfpsKeyguardAccessibilityDelegate;
-    @Mock
     private SelectedUserInteractor mSelectedUserInteractor;
+    @Mock
+    private Lazy<WakefulnessLifecycle> mWakefulnessLifecycle;
 
     // Capture listeners so that they can be used to send events
     @Captor
     private ArgumentCaptor<IUdfpsOverlayController> mOverlayCaptor;
     private IUdfpsOverlayController mOverlayController;
     @Captor
-    private ArgumentCaptor<View> mViewCaptor;
-    @Captor
-    private ArgumentCaptor<View.OnHoverListener> mHoverListenerCaptor;
-    @Captor
-    private ArgumentCaptor<Runnable> mOnDisplayConfiguredCaptor;
-    @Captor
     private ArgumentCaptor<ScreenLifecycle.Observer> mScreenObserverCaptor;
-    @Captor
-    private ArgumentCaptor<UdfpsController.UdfpsOverlayController> mUdfpsOverlayControllerCaptor;
-    private ScreenLifecycle.Observer mScreenObserver;
     private FingerprintSensorPropertiesInternal mOpticalProps;
-    private FingerprintSensorPropertiesInternal mUltrasonicProps;
     private PowerInteractor mPowerInteractor;
     private FakePowerRepository mPowerRepository;
     @Mock
     private InputManager mInputManager;
-    @Mock
-    private ViewRootImpl mViewRootImpl;
     @Mock
     private KeyguardTransitionInteractor mKeyguardTransitionInteractor;
     @Mock
     private Lazy<DeviceEntryUdfpsTouchOverlayViewModel> mDeviceEntryUdfpsTouchOverlayViewModel;
     @Mock
     private Lazy<DefaultUdfpsTouchOverlayViewModel> mDefaultUdfpsTouchOverlayViewModel;
+    @Mock
+    private Lazy<PromptUdfpsTouchOverlayViewModel> mPromptUdfpsTouchOverlayViewModel;
     @Mock
     private Provider<CameraGestureHelper> mCameraGestureHelper;
 
@@ -265,13 +254,6 @@ public class UdfpsControllerTest extends SysuiTestCase {
                 5 /* maxEnrollmentsPerUser */,
                 componentInfo,
                 FingerprintSensorProperties.TYPE_UDFPS_OPTICAL,
-                true /* resetLockoutRequiresHardwareAuthToken */);
-
-        mUltrasonicProps = new FingerprintSensorPropertiesInternal(2 /* sensorId */,
-                SensorProperties.STRENGTH_STRONG,
-                5 /* maxEnrollmentsPerUser */,
-                componentInfo,
-                FingerprintSensorProperties.TYPE_UDFPS_ULTRASONIC,
                 true /* resetLockoutRequiresHardwareAuthToken */);
 
         mFgExecutor = new FakeExecutor(new FakeSystemClock());
@@ -321,19 +303,21 @@ public class UdfpsControllerTest extends SysuiTestCase {
                 mAlternateBouncerInteractor,
                 mInputManager,
                 mock(DeviceEntryFaceAuthInteractor.class),
-                mUdfpsKeyguardAccessibilityDelegate,
                 mSelectedUserInteractor,
                 mKeyguardTransitionInteractor,
                 mDeviceEntryUdfpsTouchOverlayViewModel,
                 mDefaultUdfpsTouchOverlayViewModel,
+                mPromptUdfpsTouchOverlayViewModel,
                 mUdfpsOverlayInteractor,
                 mPowerInteractor,
-                mock(CoroutineScope.class)
+                mock(CoroutineScope.class),
+                UserActivityNotifierKosmosKt.getUserActivityNotifier(mKosmos),
+                mWakefulnessLifecycle,
+                mock(MSDLPlayer.class)
         );
         verify(mFingerprintManager).setUdfpsOverlayController(mOverlayCaptor.capture());
         mOverlayController = mOverlayCaptor.getValue();
         verify(mScreenLifecycle).addObserver(mScreenObserverCaptor.capture());
-        mScreenObserver = mScreenObserverCaptor.getValue();
 
         mUdfpsController.updateOverlayParams(sensorProps, new UdfpsOverlayParams());
         mUdfpsController.setUdfpsDisplayMode(mUdfpsDisplayMode);

@@ -44,6 +44,7 @@ import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.TestableContext;
 
 import androidx.test.InstrumentationRegistry;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -51,13 +52,12 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @SmallTest
-@RunWith(Parameterized.class)
+@RunWith(AndroidJUnit4.class)
 public class NotificationRankingUpdateTest {
 
     private static final String NOTIFICATION_CHANNEL_ID = "test_channel_id";
@@ -67,15 +67,6 @@ public class NotificationRankingUpdateTest {
 
     @Rule
     public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
-
-    // TODO(b/284297289): remove this flag set once resolved.
-    @Parameterized.Parameters(name = "rankingUpdateAshmem={0}")
-    public static Boolean[] getRankingUpdateAshmem() {
-        return new Boolean[] { true, false };
-    }
-
-    @Parameterized.Parameter
-    public boolean mRankingUpdateAshmem;
 
     @Rule
     public TestableContext mContext =
@@ -124,7 +115,8 @@ public class NotificationRankingUpdateTest {
                     getRankingAdjustment(i),
                     isBubble(i),
                     getProposedImportance(i),
-                    hasSensitiveContent(i)
+                    hasSensitiveContent(i),
+                    getSummarization(i)
             );
             rankings[i] = ranking;
         }
@@ -334,6 +326,17 @@ public class NotificationRankingUpdateTest {
     }
 
     /**
+     * Produces a String that can be used to represent getSummarization, based on the provided
+     * index.
+     */
+    public static String getSummarization(int index) {
+        if ((android.app.Flags.nmSummarizationUi() || android.app.Flags.nmSummarization())) {
+            return "summary " + index;
+        }
+        return null;
+    }
+
+    /**
      * Produces a boolean that can be used to represent isBubble, based on the provided index.
      */
     public static boolean isBubble(int index) {
@@ -420,12 +423,6 @@ public class NotificationRankingUpdateTest {
     public void setUp() {
         mNotificationChannel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, "test channel",
                 NotificationManager.IMPORTANCE_DEFAULT);
-
-        if (mRankingUpdateAshmem) {
-            mSetFlagsRule.enableFlags(Flags.FLAG_RANKING_UPDATE_ASHMEM);
-        } else {
-            mSetFlagsRule.disableFlags(Flags.FLAG_RANKING_UPDATE_ASHMEM);
-        }
     }
 
     /**
@@ -461,7 +458,8 @@ public class NotificationRankingUpdateTest {
                 /* rankingAdjustment= */ 0,
                 /* isBubble= */ false,
                 /* proposedImportance= */ 0,
-                /* sensitiveContent= */ false
+                /* sensitiveContent= */ false,
+                /* summarization = */ null
         );
         return ranking;
     }
@@ -472,15 +470,11 @@ public class NotificationRankingUpdateTest {
         NotificationRankingUpdate nru = generateUpdate(getContext());
         Parcel parcel = Parcel.obtain();
         nru.writeToParcel(parcel, 0);
-        if (Flags.rankingUpdateAshmem()) {
-            assertTrue(nru.isFdNotNullAndClosed());
-        }
+        assertTrue(nru.isFdNotNullAndClosed());
         parcel.setDataPosition(0);
         NotificationRankingUpdate nru1 = NotificationRankingUpdate.CREATOR.createFromParcel(parcel);
         // The rankingUpdate file descriptor is only non-null in the new path.
-        if (Flags.rankingUpdateAshmem()) {
-            assertTrue(nru1.isFdNotNullAndClosed());
-        }
+        assertTrue(nru1.isFdNotNullAndClosed());
         detailedAssertEquals(nru, nru1);
         parcel.recycle();
     }
@@ -550,7 +544,8 @@ public class NotificationRankingUpdateTest {
                 tweak.getRankingAdjustment(),
                 tweak.isBubble(),
                 tweak.getProposedImportance(),
-                tweak.hasSensitiveContent()
+                tweak.hasSensitiveContent(),
+                tweak.getSummarization()
         );
         assertNotEquals(nru, nru2);
     }
@@ -616,9 +611,6 @@ public class NotificationRankingUpdateTest {
 
     @Test
     public void testRankingUpdate_writesSmartActionToParcel() {
-        if (!Flags.rankingUpdateAshmem()) {
-            return;
-        }
         ArrayList<Notification.Action> actions = new ArrayList<>();
         PendingIntent intent = PendingIntent.getBroadcast(
                 getContext(),
@@ -654,9 +646,6 @@ public class NotificationRankingUpdateTest {
 
     @Test
     public void testRankingUpdate_handlesEmptySmartActionList() {
-        if (!Flags.rankingUpdateAshmem()) {
-            return;
-        }
         ArrayList<Notification.Action> actions = new ArrayList<>();
         NotificationListenerService.Ranking ranking =
                 createEmptyTestRanking(TEST_KEY, 123, actions);
@@ -677,9 +666,6 @@ public class NotificationRankingUpdateTest {
 
     @Test
     public void testRankingUpdate_handlesNullSmartActionList() {
-        if (!Flags.rankingUpdateAshmem()) {
-            return;
-        }
         NotificationListenerService.Ranking ranking =
                 createEmptyTestRanking(TEST_KEY, 123, null);
         NotificationRankingUpdate rankingUpdate = new NotificationRankingUpdate(

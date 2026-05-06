@@ -28,6 +28,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.os.SystemProperties;
 import android.print.ILayoutResultCallback;
 import android.print.IPrintDocumentAdapter;
 import android.print.IPrintDocumentAdapterObserver;
@@ -40,6 +41,7 @@ import android.util.Log;
 
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.printspooler.R;
+import com.android.printspooler.flags.Flags;
 import com.android.printspooler.util.PageRangeUtils;
 
 import libcore.io.IoUtils;
@@ -59,6 +61,9 @@ public final class RemotePrintDocument {
 
     private static final boolean DEBUG = false;
 
+    private static final String PRINT_DEBUG_LOG_PROP = "debug.printing.logs.enabled";
+    private static final String PRINT_DEBUG_LOG_PROP_ENABLED = "true";
+
     private static final long FORCE_CANCEL_TIMEOUT = 1000; // ms
 
     private static final int STATE_INITIAL = 0;
@@ -70,6 +75,7 @@ public final class RemotePrintDocument {
     private static final int STATE_CANCELING = 6;
     private static final int STATE_CANCELED = 7;
     private static final int STATE_DESTROYED = 8;
+    private static final int STATE_INVALID = 9;
 
     private final Context mContext;
 
@@ -183,7 +189,7 @@ public final class RemotePrintDocument {
     }
 
     public void start() {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLED] start()");
         }
         if (mState == STATE_FAILED) {
@@ -207,7 +213,7 @@ public final class RemotePrintDocument {
     public boolean update(PrintAttributes attributes, PageRange[] pages, boolean preview) {
         boolean willUpdate;
 
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLED] update()");
         }
 
@@ -268,7 +274,7 @@ public final class RemotePrintDocument {
             mState = STATE_UPDATING;
         } else {
             willUpdate = false;
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[SKIPPING] No update needed");
             }
         }
@@ -282,12 +288,13 @@ public final class RemotePrintDocument {
     }
 
     public void finish() {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLED] finish()");
         }
         if (mState != STATE_STARTED && mState != STATE_UPDATED
                 && mState != STATE_FAILED && mState != STATE_CANCELING
-                && mState != STATE_CANCELED && mState != STATE_DESTROYED) {
+                && mState != STATE_CANCELED && mState != STATE_DESTROYED
+                && mState != STATE_INVALID) {
             throw new IllegalStateException("Cannot finish in state:"
                     + stateToString(mState));
         }
@@ -300,8 +307,18 @@ public final class RemotePrintDocument {
         }
     }
 
+    /**
+     * Mark this document as invalid.
+     */
+    public void invalid() {
+        if (DEBUG || debugLogsEnabled()) {
+            Log.i(LOG_TAG, "[CALLED] invalid()");
+        }
+        mState = STATE_INVALID;
+    }
+
     public void cancel(boolean force) {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLED] cancel(" + force + ")");
         }
 
@@ -317,7 +334,7 @@ public final class RemotePrintDocument {
     }
 
     public void destroy() {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLED] destroy()");
         }
         if (mState == STATE_DESTROYED) {
@@ -364,7 +381,7 @@ public final class RemotePrintDocument {
         try {
             file = mDocumentInfo.fileProvider.acquireFile(null);
             in = new FileInputStream(file);
-            out = contentResolver.openOutputStream(uri);
+            out = contentResolver.openOutputStream(uri, "wt");
             final byte[] buffer = new byte[8192];
             while (true) {
                 final int readByteCount = in.read(buffer);
@@ -385,21 +402,21 @@ public final class RemotePrintDocument {
     }
 
     private void notifyUpdateCanceled() {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLING] onUpdateCanceled()");
         }
         mUpdateCallbacks.onUpdateCanceled();
     }
 
     private void notifyUpdateCompleted() {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLING] onUpdateCompleted()");
         }
         mUpdateCallbacks.onUpdateCompleted(mDocumentInfo);
     }
 
     private void notifyUpdateFailed(CharSequence error) {
-        if (DEBUG) {
+        if (DEBUG || debugLogsEnabled()) {
             Log.i(LOG_TAG, "[CALLING] notifyUpdateFailed()");
         }
         mUpdateCallbacks.onUpdateFailed(error);
@@ -465,6 +482,13 @@ public final class RemotePrintDocument {
         }
     }
 
+    private static boolean debugLogsEnabled() {
+        if (!Flags.enablePrintDebugOption()) {
+            return false;
+        }
+        return PRINT_DEBUG_LOG_PROP_ENABLED.equals(SystemProperties.get(PRINT_DEBUG_LOG_PROP));
+    }
+
     private static String stateToString(int state) {
         switch (state) {
             case STATE_FINISHED: {
@@ -490,6 +514,9 @@ public final class RemotePrintDocument {
             }
             case STATE_DESTROYED: {
                 return "STATE_DESTROYED";
+            }
+            case STATE_INVALID: {
+                return "STATE_INVALID";
             }
             default: {
                 return "STATE_UNKNOWN";
@@ -596,7 +623,7 @@ public final class RemotePrintDocument {
          * and thereby does not need to be canceled anymore.
          */
         protected void removeForceCancel() {
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 if (mHandler.hasMessages(MSG_FORCE_CANCEL)) {
                     Log.i(LOG_TAG, "[FORCE CANCEL] Removed");
                 }
@@ -627,7 +654,7 @@ public final class RemotePrintDocument {
 
             if (isCanceling()) {
                 if (force) {
-                    if (DEBUG) {
+                    if (DEBUG || debugLogsEnabled()) {
                         Log.i(LOG_TAG, "[FORCE CANCEL] queued");
                     }
                     mHandler.sendMessageDelayed(
@@ -704,7 +731,7 @@ public final class RemotePrintDocument {
 
         private void forceCancel() {
             if (isCanceling()) {
-                if (DEBUG) {
+                if (DEBUG || debugLogsEnabled()) {
                     Log.i(LOG_TAG, "[FORCE CANCEL] executed");
                 }
                 failed("Command did not respond to cancellation in "
@@ -740,7 +767,7 @@ public final class RemotePrintDocument {
             running();
 
             try {
-                if (DEBUG) {
+                if (DEBUG || debugLogsEnabled()) {
                     Log.i(LOG_TAG, "[PERFORMING] layout");
                 }
                 mDocument.changed = false;
@@ -757,7 +784,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onLayoutStarted");
             }
 
@@ -779,7 +806,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onLayoutFinished");
             }
 
@@ -813,7 +840,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onLayoutFailed");
             }
 
@@ -833,7 +860,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onLayoutCanceled");
             }
 
@@ -879,7 +906,7 @@ public final class RemotePrintDocument {
                 // The command might have been force canceled, see
                 // AsyncCommand.AsyncCommandHandler#handleMessage
                 if (isFailed()) {
-                    if (DEBUG) {
+                    if (DEBUG || debugLogsEnabled()) {
                         Log.i(LOG_TAG, "[CALLBACK] on failed layout command");
                     }
 
@@ -1040,7 +1067,7 @@ public final class RemotePrintDocument {
                         out = new FileOutputStream(file);
 
                         // Async call to initiate the other process writing the data.
-                        if (DEBUG) {
+                        if (DEBUG || debugLogsEnabled()) {
                             Log.i(LOG_TAG, "[PERFORMING] write");
                         }
                         mAdapter.write(mPages, sink, mRemoteResultCallback, mSequence);
@@ -1079,7 +1106,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteStarted");
             }
 
@@ -1100,7 +1127,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteFinished");
             }
 
@@ -1131,7 +1158,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteFailed");
             }
 
@@ -1149,7 +1176,7 @@ public final class RemotePrintDocument {
                 return;
             }
 
-            if (DEBUG) {
+            if (DEBUG || debugLogsEnabled()) {
                 Log.i(LOG_TAG, "[CALLBACK] onWriteCanceled");
             }
 
@@ -1177,7 +1204,7 @@ public final class RemotePrintDocument {
                 // The command might have been force canceled, see
                 // AsyncCommand.AsyncCommandHandler#handleMessage
                 if (isFailed()) {
-                    if (DEBUG) {
+                    if (DEBUG || debugLogsEnabled()) {
                         Log.i(LOG_TAG, "[CALLBACK] on failed write command");
                     }
 

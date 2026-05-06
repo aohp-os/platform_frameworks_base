@@ -18,7 +18,6 @@
 package com.android.systemui.keyguard.data.repository
 
 import android.annotation.FloatRange
-import com.android.systemui.Flags.transitionRaceCondition
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.TransitionInfo
@@ -33,9 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -90,16 +87,6 @@ class FakeKeyguardTransitionRepository(
         testScope,
     )
 
-    private val _currentTransitionInfo: MutableStateFlow<TransitionInfo> =
-        MutableStateFlow(
-            TransitionInfo(
-                ownerName = "",
-                from = KeyguardState.OFF,
-                to = KeyguardState.LOCKSCREEN,
-                animator = null,
-            )
-        )
-    override var currentTransitionInfoInternal = _currentTransitionInfo.asStateFlow()
     override var currentTransitionInfo =
         TransitionInfo(
             ownerName = "",
@@ -124,8 +111,8 @@ class FakeKeyguardTransitionRepository(
     /**
      * Sends TransitionSteps between [from] and [to], calling [runCurrent] after each step.
      *
-     * By default, sends steps through FINISHED (STARTED, RUNNING, FINISHED) but can be halted part
-     * way using [throughTransitionState].
+     * By default, sends steps through FINISHED (STARTED, RUNNING @0.5f, RUNNING @1f, FINISHED) but
+     * can be halted part way using [throughTransitionState].
      */
     suspend fun sendTransitionSteps(
         from: KeyguardState,
@@ -134,6 +121,25 @@ class FakeKeyguardTransitionRepository(
         throughTransitionState: TransitionState = TransitionState.FINISHED,
     ) {
         sendTransitionSteps(from, to, testScope.testScheduler, throughTransitionState)
+    }
+
+    /**
+     * Sends a STARTED step between [from] and [to], followed by two RUNNING steps at value
+     * [throughValue] / 2 and [throughValue], calling [runCurrent] after each step.
+     */
+    suspend fun sendTransitionStepsThroughRunning(
+        from: KeyguardState,
+        to: KeyguardState,
+        testScope: TestScope,
+        throughValue: Float = 1f,
+    ) {
+        sendTransitionSteps(
+            from,
+            to,
+            testScope.testScheduler,
+            TransitionState.RUNNING,
+            throughValue,
+        )
     }
 
     /**
@@ -178,14 +184,15 @@ class FakeKeyguardTransitionRepository(
     /**
      * Sends TransitionSteps between [from] and [to], calling [runCurrent] after each step.
      *
-     * By default, sends steps through FINISHED (STARTED, RUNNING, FINISHED) but can be halted part
-     * way using [throughTransitionState].
+     * By default, sends steps through FINISHED (STARTED, RUNNING @0.5f, RUNNING @1f, FINISHED) but
+     * can be halted part way using [throughTransitionState].
      */
     suspend fun sendTransitionSteps(
         from: KeyguardState,
         to: KeyguardState,
         testScheduler: TestCoroutineScheduler,
         throughTransitionState: TransitionState = TransitionState.FINISHED,
+        throughTransitionValue: Float = 1f,
     ) {
         val lastStep = _transitions.replayCache.lastOrNull()
         if (lastStep != null && lastStep.transitionState != TransitionState.FINISHED) {
@@ -216,13 +223,14 @@ class FakeKeyguardTransitionRepository(
             throughTransitionState == TransitionState.RUNNING ||
                 throughTransitionState == TransitionState.FINISHED
         ) {
+            // Send two steps to better simulate RUNNING transitions.
             sendTransitionStep(
                 step =
                     TransitionStep(
                         transitionState = TransitionState.RUNNING,
                         from = from,
                         to = to,
-                        value = 0.5f,
+                        value = throughTransitionValue / 2f,
                     )
             )
             testScheduler.runCurrent()
@@ -233,7 +241,7 @@ class FakeKeyguardTransitionRepository(
                         transitionState = TransitionState.RUNNING,
                         from = from,
                         to = to,
-                        value = 1f,
+                        value = throughTransitionValue,
                     )
             )
             testScheduler.runCurrent()
@@ -294,13 +302,8 @@ class FakeKeyguardTransitionRepository(
         validateStep: Boolean = true,
     ) {
         if (step.transitionState == TransitionState.STARTED) {
-            if (transitionRaceCondition()) {
-                currentTransitionInfo =
-                    TransitionInfo(from = step.from, to = step.to, animator = null, ownerName = "")
-            } else {
-                _currentTransitionInfo.value =
-                    TransitionInfo(from = step.from, to = step.to, animator = null, ownerName = "")
-            }
+            currentTransitionInfo =
+                TransitionInfo(from = step.from, to = step.to, animator = null, ownerName = "")
         }
 
         _transitions.replayCache.last().let { lastStep ->
@@ -346,12 +349,7 @@ class FakeKeyguardTransitionRepository(
     }
 
     override suspend fun startTransition(info: TransitionInfo): UUID? {
-        if (transitionRaceCondition()) {
-            currentTransitionInfo = info
-        } else {
-            _currentTransitionInfo.value = info
-        }
-
+        currentTransitionInfo = info
         if (sendTransitionStepsOnStartTransition) {
             sendTransitionSteps(from = info.from, to = info.to, testScope = testScope)
         }
@@ -394,13 +392,19 @@ class FakeKeyguardTransitionRepository(
     override suspend fun forceFinishCurrentTransition() {
         _transitions.tryEmit(
             TransitionStep(
-                _currentTransitionInfo.value.from,
-                _currentTransitionInfo.value.to,
+                currentTransitionInfo.from,
+                currentTransitionInfo.to,
                 1f,
                 TransitionState.FINISHED,
-                ownerName = _currentTransitionInfo.value.ownerName,
+                ownerName = currentTransitionInfo.ownerName,
             )
         )
+    }
+
+    suspend fun transitionTo(from: KeyguardState, to: KeyguardState) {
+        sendTransitionStep(TransitionStep(from, to, 0f, TransitionState.STARTED))
+        sendTransitionStep(TransitionStep(from, to, 0.5f, TransitionState.RUNNING))
+        sendTransitionStep(TransitionStep(from, to, 1f, TransitionState.FINISHED))
     }
 }
 

@@ -16,6 +16,7 @@
 
 package com.android.server.notification;
 
+import android.annotation.Nullable;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.media.AudioManager;
@@ -26,10 +27,11 @@ import android.provider.Settings.Global;
 import android.service.notification.IConditionProvider;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.ZenModeConfig;
+import android.service.notification.ZenModeConfig.ConfigOrigin;
 import android.service.notification.ZenModeDiff;
 import android.util.LocalLog;
 
-import com.android.internal.annotations.VisibleForTesting;
+import androidx.annotation.VisibleForTesting;
 
 import java.io.PrintWriter;
 import java.util.List;
@@ -38,8 +40,22 @@ public class ZenLog {
 
     private static final int SIZE = Build.IS_DEBUGGABLE ? 200 : 100;
 
+    /**
+     * State changes: related to updating ZenModeConfig (e.g. add AZR) and its aftereffects
+     *  (e.g. calculated new consolidated policy).
+     */
     private static final LocalLog STATE_CHANGES = new LocalLog(SIZE);
+
+    /**
+     * Interception events: related to decisions about individual notifications (e.g. matches
+     * call filter).
+     */
     private static final LocalLog INTERCEPTION_EVENTS = new LocalLog(SIZE);
+
+    /**
+     * Other events: neither of the above (e.g. NLS updates listener hints).
+     */
+    private static final LocalLog OTHER_EVENTS = new LocalLog(SIZE);
 
     private static final int TYPE_INTERCEPTED = 1;
     private static final int TYPE_SET_RINGER_MODE_EXTERNAL = 3;
@@ -60,6 +76,7 @@ public class ZenLog {
     private static final int TYPE_ALERT_ON_UPDATED_INTERCEPT = 21;
     private static final int TYPE_APPLY_DEVICE_EFFECT = 22;
     private static final int TYPE_SCHEDULE_APPLY_DEVICE_EFFECT = 23;
+    // If adding new types, consider updating append() to choose the most appropriate LocalLog.
 
     public static void traceIntercepted(NotificationRecord record, String reason) {
         append(TYPE_INTERCEPTED, record.getKey() + "," + reason);
@@ -119,16 +136,17 @@ public class ZenLog {
         append(TYPE_UNSUBSCRIBE, uri + "," + subscribeResult(provider, e));
     }
 
-    public static void traceConfig(String reason, ComponentName triggeringComponent,
-            ZenModeConfig oldConfig, ZenModeConfig newConfig, int callingUid) {
+    public static void traceConfig(@ConfigOrigin int origin, String reason,
+            @Nullable ComponentName triggeringComponent, ZenModeConfig oldConfig,
+            ZenModeConfig newConfig, int callingUid) {
         ZenModeDiff.ConfigDiff diff = new ZenModeDiff.ConfigDiff(oldConfig, newConfig);
-        if (diff == null || !diff.hasDiff()) {
-            append(TYPE_CONFIG, reason + " no changes");
+        if (!diff.hasDiff()) {
+            append(TYPE_CONFIG, reason + " (" + originToString(origin) + ") no changes");
         } else {
-            append(TYPE_CONFIG, reason
-                    + " - " + triggeringComponent + " : " + callingUid
-                    + ",\n" + (newConfig != null ? newConfig.toString() : null)
-                    + ",\n" + diff);
+            append(TYPE_CONFIG, reason + " (" + originToString(origin) + ") from uid " + callingUid
+                    + (triggeringComponent != null ? " - " + triggeringComponent : "") + ",\n"
+                    + (newConfig != null ? newConfig.toString() : null) + ",\n"
+                    + diff);
         }
     }
 
@@ -137,8 +155,9 @@ public class ZenLog {
     }
 
     public static void traceEffectsSuppressorChanged(List<ComponentName> oldSuppressors,
-            List<ComponentName> newSuppressors, long suppressedEffects) {
-        append(TYPE_SUPPRESSOR_CHANGED, "suppressed effects:" + suppressedEffects + ","
+            List<ComponentName> newSuppressors, long oldSuppressedEffects, long suppressedEffects) {
+        append(TYPE_SUPPRESSOR_CHANGED, "suppressed effects:"
+                + oldSuppressedEffects + "->" + suppressedEffects + ","
                 + componentListToString(oldSuppressors) + "->"
                 + componentListToString(newSuppressors));
     }
@@ -241,7 +260,22 @@ public class ZenLog {
         }
     }
 
-    private static String componentToString(ComponentName component) {
+    private static String originToString(@ConfigOrigin int origin) {
+        return switch (origin) {
+            case ZenModeConfig.ORIGIN_UNKNOWN -> "ORIGIN_UNKNOWN";
+            case ZenModeConfig.ORIGIN_INIT -> "ORIGIN_INIT";
+            case ZenModeConfig.ORIGIN_INIT_USER -> "ORIGIN_INIT_USER";
+            case ZenModeConfig.ORIGIN_USER_IN_SYSTEMUI -> "ORIGIN_USER_IN_SYSTEMUI";
+            case ZenModeConfig.ORIGIN_APP -> "ORIGIN_APP";
+            case ZenModeConfig.ORIGIN_SYSTEM -> "ORIGIN_SYSTEM";
+            case ZenModeConfig.ORIGIN_RESTORE_BACKUP -> "ORIGIN_RESTORE_BACKUP";
+            case ZenModeConfig.ORIGIN_USER_IN_APP -> "ORIGIN_USER_IN_APP";
+            default -> origin + "??";
+        };
+    }
+
+    @Nullable
+    private static String componentToString(@Nullable ComponentName component) {
         return component != null ? component.toShortString() : null;
     }
 
@@ -261,13 +295,18 @@ public class ZenLog {
     private static void append(int type, String msg) {
         if (type == TYPE_INTERCEPTED || type == TYPE_NOT_INTERCEPTED
                 || type == TYPE_CHECK_REPEAT_CALLER || type == TYPE_RECORD_CALLER
-                || type == TYPE_MATCHES_CALL_FILTER || type == TYPE_ALERT_ON_UPDATED_INTERCEPT) {
+                || type == TYPE_MATCHES_CALL_FILTER || type == TYPE_ALERT_ON_UPDATED_INTERCEPT
+                || type == TYPE_DISABLE_EFFECTS) {
             synchronized (INTERCEPTION_EVENTS) {
-                INTERCEPTION_EVENTS.log(typeToString(type) + ": " +msg);
+                INTERCEPTION_EVENTS.log(typeToString(type) + ": " + msg);
+            }
+        } else if (type == TYPE_SUPPRESSOR_CHANGED || type == TYPE_LISTENER_HINTS_CHANGED) {
+            synchronized (OTHER_EVENTS) {
+                OTHER_EVENTS.log(typeToString(type) + ": " + msg);
             }
         } else {
             synchronized (STATE_CHANGES) {
-                STATE_CHANGES.log(typeToString(type) + ": " +msg);
+                STATE_CHANGES.log(typeToString(type) + ": " + msg);
             }
         }
     }
@@ -281,15 +320,22 @@ public class ZenLog {
             pw.printf(prefix  + "State Changes:\n");
             STATE_CHANGES.dump(prefix, pw);
         }
+        synchronized (OTHER_EVENTS) {
+            pw.printf(prefix  + "Other Events:\n");
+            OTHER_EVENTS.dump(prefix, pw);
+        }
     }
 
-    @VisibleForTesting(/* otherwise = VisibleForTesting.NONE */)
+    @VisibleForTesting(otherwise = VisibleForTesting.NONE)
     public static void clear() {
         synchronized (INTERCEPTION_EVENTS) {
             INTERCEPTION_EVENTS.clear();
         }
         synchronized (STATE_CHANGES) {
             STATE_CHANGES.clear();
+        }
+        synchronized (OTHER_EVENTS) {
+            OTHER_EVENTS.clear();
         }
     }
 }

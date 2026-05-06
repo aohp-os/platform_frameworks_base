@@ -43,6 +43,7 @@
 #include <media/NdkImageReader.h>
 #include <nativehelper/JNIPlatformHelp.h>
 #ifdef __ANDROID__
+#include <pipeline/skia/PersistentGraphicsCache.h>
 #include <pipeline/skia/ShaderCache.h>
 #include <private/EGL/cache.h>
 #endif
@@ -52,6 +53,10 @@
 #include <renderthread/RenderThread.h>
 #include <src/image/SkImage_Base.h>
 #include <thread/CommonPool.h>
+#ifdef __ANDROID__
+#include <gui/SurfaceControl.h>
+#include <ui/GraphicBufferAllocator.h>
+#endif
 #include <utils/Color.h>
 #include <utils/RefBase.h>
 #include <utils/StrongPointer.h>
@@ -214,9 +219,11 @@ static void android_view_ThreadedRenderer_setSurface(JNIEnv* env, jobject clazz,
 
 static void android_view_ThreadedRenderer_setSurfaceControl(JNIEnv* env, jobject clazz,
         jlong proxyPtr, jlong surfaceControlPtr) {
+#ifdef __ANDROID__
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
-    ASurfaceControl* surfaceControl = reinterpret_cast<ASurfaceControl*>(surfaceControlPtr);
-    proxy->setSurfaceControl(surfaceControl);
+    SurfaceControl* surfaceControl = reinterpret_cast<SurfaceControl*>(surfaceControlPtr);
+    proxy->setSurfaceControl(sp<SurfaceControl>::fromExisting(surfaceControl));
+#endif
 }
 
 static jboolean android_view_ThreadedRenderer_pause(JNIEnv* env, jobject clazz,
@@ -681,7 +688,7 @@ static void android_view_ThreadedRenderer_setFrameCompleteCallback(JNIEnv* env,
 
 class CopyRequestAdapter : public CopyRequest {
 public:
-    CopyRequestAdapter(JavaVM* vm, jobject jCopyRequest, Rect srcRect)
+    CopyRequestAdapter(JavaVM* vm, jobject jCopyRequest, ::android::uirenderer::Rect srcRect)
             : CopyRequest(srcRect), mRefHolder(vm, jCopyRequest) {}
 
     virtual SkBitmap getDestinationBitmap(int srcWidth, int srcHeight) override {
@@ -707,8 +714,9 @@ static void android_view_ThreadedRenderer_copySurfaceInto(JNIEnv* env, jobject c
                                                           jobject jCopyRequest) {
     JavaVM* vm = nullptr;
     LOG_ALWAYS_FATAL_IF(env->GetJavaVM(&vm) != JNI_OK, "Unable to get Java VM");
-    auto copyRequest = std::make_shared<CopyRequestAdapter>(vm, env->NewGlobalRef(jCopyRequest),
-                                                            Rect(left, top, right, bottom));
+    auto copyRequest = std::make_shared<CopyRequestAdapter>(
+            vm, env->NewGlobalRef(jCopyRequest),
+            ::android::uirenderer::Rect(left, top, right, bottom));
     ANativeWindow* window = fromSurface(env, jsurface);
     RenderProxy::copySurfaceInto(window, std::move(copyRequest));
     ANativeWindow_release(window);
@@ -841,12 +849,25 @@ static void android_view_ThreadedRenderer_allocateBuffers(JNIEnv* env, jobject c
 
 static void android_view_ThreadedRenderer_setForceDark(JNIEnv* env, jobject clazz, jlong proxyPtr,
                                                        jint type) {
+    Properties::setIsForceInvertEnabled(static_cast<ForceDarkType>(type) ==
+                                        ForceDarkType::FORCE_INVERT_COLOR_DARK);
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
     proxy->setForceDark(static_cast<ForceDarkType>(type));
 }
 
-static void android_view_ThreadedRenderer_preload(JNIEnv*, jclass) {
-    RenderProxy::preload();
+static int android_view_ThreadedRenderer_preload(JNIEnv*, jclass) {
+    return RenderProxy::preload();
+}
+
+static void android_view_ThreadedRenderer_preInitBufferAllocator(JNIEnv*, jclass) {
+#ifdef __ANDROID__
+    CommonPool::async([] {
+        ATRACE_NAME("preInitBufferAllocator:GraphicBufferAllocator");
+        // This involves several binder calls which we do not want blocking
+        // critical path of the activity that is launching.
+        GraphicBufferAllocator::getInstance();
+    });
+#endif
 }
 
 static void android_view_ThreadedRenderer_setRtAnimationsEnabled(JNIEnv* env, jobject clazz,
@@ -862,6 +883,11 @@ static void android_view_ThreadedRenderer_notifyCallbackPending(JNIEnv*, jclass,
 static void android_view_ThreadedRenderer_notifyExpensiveFrame(JNIEnv*, jclass, jlong proxyPtr) {
     RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
     proxy->notifyExpensiveFrame();
+}
+
+static void android_view_ThreadedRenderer_notifyGpuLoadUp(JNIEnv*, jclass, jlong proxyPtr) {
+    RenderProxy* proxy = reinterpret_cast<RenderProxy*>(proxyPtr);
+    proxy->notifyGpuLoadUp();
 }
 
 // Plumbs the display density down to DeviceInfo.
@@ -901,36 +927,44 @@ static jboolean android_view_ThreadedRenderer_isDrawingEnabled(JNIEnv*, jclass) 
 
 static void android_view_ThreadedRenderer_addObserver(JNIEnv* env, jclass clazz,
         jlong proxyPtr, jlong observerPtr) {
-    HardwareRendererObserver* observer = reinterpret_cast<HardwareRendererObserver*>(observerPtr);
+    FrameMetricsObserver* rawObserver = reinterpret_cast<FrameMetricsObserver*>(observerPtr);
+    sp<FrameMetricsObserver> observer = sp<FrameMetricsObserver>::fromExisting(rawObserver);
     renderthread::RenderProxy* renderProxy =
             reinterpret_cast<renderthread::RenderProxy*>(proxyPtr);
 
-    renderProxy->addFrameMetricsObserver(observer);
+    renderProxy->addFrameMetricsObserver(std::move(observer));
 }
 
 static void android_view_ThreadedRenderer_removeObserver(JNIEnv* env, jclass clazz,
         jlong proxyPtr, jlong observerPtr) {
-    HardwareRendererObserver* observer = reinterpret_cast<HardwareRendererObserver*>(observerPtr);
+    FrameMetricsObserver* rawObserver = reinterpret_cast<FrameMetricsObserver*>(observerPtr);
+    sp<FrameMetricsObserver> observer = sp<FrameMetricsObserver>::fromExisting(rawObserver);
     renderthread::RenderProxy* renderProxy =
             reinterpret_cast<renderthread::RenderProxy*>(proxyPtr);
 
-    renderProxy->removeFrameMetricsObserver(observer);
+    renderProxy->removeFrameMetricsObserver(std::move(observer));
 }
 
 // ----------------------------------------------------------------------------
-// Shaders
+// Persistent graphics cache
 // ----------------------------------------------------------------------------
 
-static void android_view_ThreadedRenderer_setupShadersDiskCache(JNIEnv* env, jobject clazz,
-        jstring diskCachePath, jstring skiaDiskCachePath) {
+static void android_view_ThreadedRenderer_setupPersistentGraphicsCache(
+        JNIEnv* env, jobject clazz, jstring openglShaderCachePath, jstring skiaShaderCachePath,
+        jstring skiaPipelineCachePath) {
 #ifdef __ANDROID__
-    const char* cacheArray = env->GetStringUTFChars(diskCachePath, NULL);
-    android::egl_set_cache_filename(cacheArray);
-    env->ReleaseStringUTFChars(diskCachePath, cacheArray);
+    const char* openglShaderCachePathArray = env->GetStringUTFChars(openglShaderCachePath, NULL);
+    android::egl_set_cache_filename(openglShaderCachePathArray);
+    env->ReleaseStringUTFChars(openglShaderCachePath, openglShaderCachePathArray);
 
-    const char* skiaCacheArray = env->GetStringUTFChars(skiaDiskCachePath, NULL);
-    uirenderer::skiapipeline::ShaderCache::get().setFilename(skiaCacheArray);
-    env->ReleaseStringUTFChars(skiaDiskCachePath, skiaCacheArray);
+    const char* skiaShaderCachePathArray = env->GetStringUTFChars(skiaShaderCachePath, NULL);
+    uirenderer::skiapipeline::ShaderCache::get().setFilename(skiaShaderCachePathArray);
+    env->ReleaseStringUTFChars(skiaShaderCachePath, skiaShaderCachePathArray);
+
+    const char* skiaPipelineCachePathArray = env->GetStringUTFChars(skiaPipelineCachePath, NULL);
+    uirenderer::skiapipeline::PersistentGraphicsCache::get().initPipelineCache(
+            skiaPipelineCachePathArray);
+    env->ReleaseStringUTFChars(skiaPipelineCachePath, skiaPipelineCachePathArray);
 #endif
 }
 
@@ -998,8 +1032,9 @@ static const JNINativeMethod gMethods[] = {
          (void*)android_view_ThreadedRenderer_dumpProfileInfo},
         {"nDumpGlobalProfileInfo", "(Ljava/io/FileDescriptor;I)V",
          (void*)android_view_ThreadedRenderer_dumpGlobalProfileInfo},
-        {"setupShadersDiskCache", "(Ljava/lang/String;Ljava/lang/String;)V",
-         (void*)android_view_ThreadedRenderer_setupShadersDiskCache},
+        {"setupPersistentGraphicsCache",
+         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+         (void*)android_view_ThreadedRenderer_setupPersistentGraphicsCache},
         {"nAddRenderNode", "(JJZ)V", (void*)android_view_ThreadedRenderer_addRenderNode},
         {"nRemoveRenderNode", "(JJ)V", (void*)android_view_ThreadedRenderer_removeRenderNode},
         {"nDrawRenderNode", "(JJ)V", (void*)android_view_ThreadedRendererd_drawRenderNode},
@@ -1039,7 +1074,9 @@ static const JNINativeMethod gMethods[] = {
         {"nSetDisplayDensityDpi", "(I)V",
          (void*)android_view_ThreadedRenderer_setDisplayDensityDpi},
         {"nInitDisplayInfo", "(IIFIJJZZZ)V", (void*)android_view_ThreadedRenderer_initDisplayInfo},
-        {"preload", "()V", (void*)android_view_ThreadedRenderer_preload},
+        {"preload", "()I", (void*)android_view_ThreadedRenderer_preload},
+        {"preInitBufferAllocator", "()V",
+         (void*)android_view_ThreadedRenderer_preInitBufferAllocator},
         {"isWebViewOverlaysEnabled", "()Z",
          (void*)android_view_ThreadedRenderer_isWebViewOverlaysEnabled},
         {"nSetDrawingEnabled", "(Z)V", (void*)android_view_ThreadedRenderer_setDrawingEnabled},
@@ -1050,6 +1087,8 @@ static const JNINativeMethod gMethods[] = {
          (void*)android_view_ThreadedRenderer_notifyCallbackPending},
         {"nNotifyExpensiveFrame", "(J)V",
          (void*)android_view_ThreadedRenderer_notifyExpensiveFrame},
+        {"nNotifyGpuLoadUp", "(J)V",
+         (void*)android_view_ThreadedRenderer_notifyGpuLoadUp},
         {"nTrimCaches", "(I)V", (void*)android_view_ThreadedRenderer_trimCaches},
 };
 

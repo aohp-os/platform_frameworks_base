@@ -45,17 +45,7 @@ interface SceneDataSource {
      * Asks for an asynchronous scene switch to [toScene], which will use the corresponding
      * installed transition or the one specified by [transitionKey], if provided.
      */
-    fun changeScene(
-        toScene: SceneKey,
-        transitionKey: TransitionKey? = null,
-    )
-
-    /**
-     * Asks for an instant scene switch to [toScene], without an animated transition of any kind.
-     */
-    fun snapToScene(
-        toScene: SceneKey,
-    )
+    fun changeScene(toScene: SceneKey, transitionKey: TransitionKey? = null)
 
     /**
      * Request to show [overlay] so that it animates in from [currentScene] and ends up being
@@ -64,10 +54,7 @@ interface SceneDataSource {
      * After this returns, this overlay will be included in [currentOverlays]. This does nothing if
      * [overlay] is already shown.
      */
-    fun showOverlay(
-        overlay: OverlayKey,
-        transitionKey: TransitionKey? = null,
-    )
+    fun showOverlay(overlay: OverlayKey, transitionKey: TransitionKey? = null)
 
     /**
      * Request to hide [overlay] so that it animates out to [currentScene] and ends up *not* being
@@ -76,10 +63,7 @@ interface SceneDataSource {
      * After this returns, this overlay will not be included in [currentOverlays]. This does nothing
      * if [overlay] is already hidden.
      */
-    fun hideOverlay(
-        overlay: OverlayKey,
-        transitionKey: TransitionKey? = null,
-    )
+    fun hideOverlay(overlay: OverlayKey, transitionKey: TransitionKey? = null)
 
     /**
      * Replace [from] by [to] so that [from] ends up not being visible on screen and [to] ends up
@@ -87,9 +71,22 @@ interface SceneDataSource {
      *
      * This throws if [from] is not currently shown or if [to] is already shown.
      */
-    fun replaceOverlay(
-        from: OverlayKey,
-        to: OverlayKey,
-        transitionKey: TransitionKey? = null,
-    )
+    fun replaceOverlay(from: OverlayKey, to: OverlayKey, transitionKey: TransitionKey? = null)
+
+    /**
+     * If currently in a transition between contents, cancel that transition and go back to the
+     * pre-transition state.
+     */
+    fun freezeAndAnimateToCurrentState()
+
+    /**
+     * Asks for an instant switch to [scene] and [overlays].
+     *
+     * The change is instantaneous and not animated; it will be observable in the next frame and
+     * there will be no transition animation.
+     *
+     * When either one of [scene] or [overlays] is `null`, their current value in the scene
+     * transition layout state is used.
+     */
+    fun instantlyTransitionTo(scene: SceneKey? = null, overlays: Set<OverlayKey>? = null)
 }

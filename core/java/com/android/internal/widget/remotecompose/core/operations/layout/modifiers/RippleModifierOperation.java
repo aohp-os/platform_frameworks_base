@@ -33,6 +33,8 @@ import com.android.internal.widget.remotecompose.core.operations.utilities.Color
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
 import com.android.internal.widget.remotecompose.core.operations.utilities.easing.Easing;
 import com.android.internal.widget.remotecompose.core.operations.utilities.easing.FloatAnimation;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -48,7 +50,7 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
     float mWidth = 0;
     float mHeight = 0;
 
-    @NonNull public float[] locationInWindow = new float[2];
+    public @NonNull float [] locationInWindow = new float[2];
 
     @NonNull PaintBundle mPaint = new PaintBundle();
 
@@ -57,9 +59,10 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
      *
      * @param x
      * @param y
+     * @param timeStampMillis
      */
-    public void animateRipple(float x, float y) {
-        mAnimateRippleStart = System.currentTimeMillis();
+    public void animateRipple(float x, float y, long timeStampMillis) {
+        mAnimateRippleStart = timeStampMillis;
         mAnimateRippleX = x;
         mAnimateRippleY = y;
     }
@@ -96,7 +99,7 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
         }
         context.needsRepaint();
 
-        float progress = (System.currentTimeMillis() - mAnimateRippleStart);
+        float progress = (context.getClock().millis() - mAnimateRippleStart);
         progress /= (float) mAnimateRippleDuration;
         if (progress > 1f) {
             mAnimateRippleStart = 0;
@@ -124,7 +127,7 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
 
         float radius = Math.max(mWidth, mHeight) * tweenRadius;
         mPaint.setColor(paintedColor);
-        context.applyPaint(mPaint);
+        context.replacePaint(mPaint);
         context.clipRect(0f, 0f, mWidth, mHeight);
         context.drawCircle(mAnimateRippleX, mAnimateRippleY, radius);
         context.restorePaint();
@@ -133,7 +136,10 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
 
     @Override
     public void layout(
-            @NonNull RemoteContext context, Component component, float width, float height) {
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         mWidth = width;
         mHeight = height;
     }
@@ -143,19 +149,40 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
         serializer.append(indent, "RIPPLE_MODIFIER");
     }
 
+    /**
+     * The operation name
+     *
+     * @return operation name
+     */
     @NonNull
     public static String name() {
         return "RippleModifier";
     }
 
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     */
     public static void apply(@NonNull WireBuffer buffer) {
         buffer.start(OP_CODE);
     }
 
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations that will be added to
+     */
     public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         operations.add(new RippleModifierOperation());
     }
 
+    /**
+     * Populate the documentation with a description of this operation
+     *
+     * @param doc to append the description to.
+     */
     public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Layout Operations", OP_CODE, name())
                 .description(
@@ -164,19 +191,24 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
 
     @Override
     public void onTouchDown(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         locationInWindow[0] = 0f;
         locationInWindow[1] = 0f;
         component.getLocationInWindow(locationInWindow);
-        animateRipple(x - locationInWindow[0], y - locationInWindow[1]);
+        animateRipple(
+                x - locationInWindow[0], y - locationInWindow[1], context.getClock().millis());
         context.hapticEffect(3);
     }
 
     @Override
     public void onTouchUp(
-            RemoteContext context,
-            CoreDocument document,
-            Component component,
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
             float x,
             float y,
             float dx,
@@ -184,9 +216,30 @@ public class RippleModifierOperation extends DecoratorModifierOperation implemen
 
     @Override
     public void onTouchDrag(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {}
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {}
 
     @Override
     public void onTouchCancel(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {}
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {}
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("RippleModifierOperation")
+                .add("animateRippleStart", mAnimateRippleStart)
+                .add("animateRippleX", mAnimateRippleX)
+                .add("animateRippleY", mAnimateRippleY)
+                .add("animateRippleDuration", mAnimateRippleDuration)
+                .add("width", mWidth)
+                .add("height", mHeight);
+    }
 }

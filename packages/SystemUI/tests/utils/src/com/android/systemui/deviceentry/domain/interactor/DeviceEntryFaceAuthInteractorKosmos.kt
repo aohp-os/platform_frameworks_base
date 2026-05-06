@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.deviceentry.domain.interactor
 
 import android.content.applicationContext
@@ -24,6 +22,7 @@ import com.android.keyguard.trustManager
 import com.android.systemui.biometrics.data.repository.facePropertyRepository
 import com.android.systemui.bouncer.domain.interactor.alternateBouncerInteractor
 import com.android.systemui.bouncer.domain.interactor.mockPrimaryBouncerInteractor
+import com.android.systemui.camera.domain.interactor.cameraSensorPrivacyInteractor
 import com.android.systemui.deviceentry.data.repository.faceWakeUpTriggersConfig
 import com.android.systemui.keyguard.data.repository.biometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.deviceEntryFaceAuthRepository
@@ -34,9 +33,9 @@ import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.log.FaceAuthenticationLogger
 import com.android.systemui.power.domain.interactor.powerInteractor
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.statusbar.pipeline.mobile.data.repository.mobileConnectionsRepository
 import com.android.systemui.user.data.repository.userRepository
 import com.android.systemui.util.mockito.mock
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 val Kosmos.faceAuthLogger by Kosmos.Fixture { mock<FaceAuthenticationLogger>() }
 val Kosmos.deviceEntryFaceAuthInteractor by
@@ -60,5 +59,7 @@ val Kosmos.deviceEntryFaceAuthInteractor by
             trustManager = trustManager,
             sceneInteractor = { sceneInteractor },
             deviceEntryFaceAuthStatusInteractor = deviceEntryFaceAuthStatusInteractor,
+            cameraSensorPrivacyInteractor = cameraSensorPrivacyInteractor,
+            mobileConnectionsRepository = mobileConnectionsRepository,
         )
     }

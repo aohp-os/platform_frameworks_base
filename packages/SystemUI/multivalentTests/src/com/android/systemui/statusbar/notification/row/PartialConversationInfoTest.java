@@ -16,10 +16,13 @@
 
 package com.android.systemui.statusbar.notification.row;
 
+import static android.app.NotificationChannel.SOCIAL_MEDIA_ID;
 import static android.app.NotificationManager.IMPORTANCE_LOW;
 import static android.print.PrintManager.PRINT_SPOOLER_PACKAGE_NAME;
 import static android.view.View.GONE;
 import static android.view.View.VISIBLE;
+
+import static com.google.common.truth.Truth.assertThat;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertTrue;
@@ -31,15 +34,22 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import android.app.Flags;
 import android.app.INotificationManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.os.UserHandle;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.service.notification.StatusBarNotification;
 import android.testing.TestableLooper;
 import android.text.SpannableString;
@@ -55,6 +65,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.systemui.Dependency;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.res.R;
+import com.android.systemui.statusbar.RankingBuilder;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder;
 
@@ -66,6 +77,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 @SmallTest
@@ -81,7 +93,7 @@ public class PartialConversationInfoTest extends SysuiTestCase {
     private TestableLooper mTestableLooper;
     private PartialConversationInfo mInfo;
     private NotificationChannel mNotificationChannel;
-    private NotificationChannel mDefaultNotificationChannel;
+    private NotificationChannel mClassifiedNotificationChannel;
     private StatusBarNotification mSbn;
     private NotificationEntry mEntry;
 
@@ -109,12 +121,23 @@ public class PartialConversationInfoTest extends SysuiTestCase {
         mDependency.injectTestDependency(MetricsLogger.class, mMetricsLogger);
         // Inflate the layout
         final LayoutInflater layoutInflater = LayoutInflater.from(mContext);
-        mInfo = (PartialConversationInfo) layoutInflater.inflate(R.layout.partial_conversation_info,
+        int layoutId = Flags.notificationsRedesignTemplates()
+                ? R.layout.notification_2025_partial_conversation_info
+                : R.layout.partial_conversation_info;
+        mInfo = (PartialConversationInfo) layoutInflater.inflate(layoutId,
                 null);
         mInfo.setGutsParent(mock(NotificationGuts.class));
         // Our view is never attached to a window so the View#post methods in NotificationInfo never
         // get called. Setting this will skip the post and do the action immediately.
         mInfo.mSkipPost = true;
+
+        ComponentName assistant = new ComponentName("package", "service");
+        when(mMockINotificationManager.getAllowedNotificationAssistant()).thenReturn(assistant);
+        ResolveInfo ri = new ResolveInfo();
+        ri.activityInfo = new ActivityInfo();
+        ri.activityInfo.packageName = assistant.getPackageName();
+        ri.activityInfo.name = "activity";
+        when(mMockPackageManager.queryIntentActivities(any(), anyInt())).thenReturn(List.of(ri));
 
         // PackageManager must return a packageInfo and applicationInfo.
         final PackageInfo packageInfo = new PackageInfo();
@@ -139,17 +162,18 @@ public class PartialConversationInfoTest extends SysuiTestCase {
         when(mIcon.loadDrawable(any())).thenReturn(mDrawable);
 
         // Some test channels.
+        mClassifiedNotificationChannel =
+                new NotificationChannel(SOCIAL_MEDIA_ID, "social", IMPORTANCE_LOW);
         mNotificationChannel = new NotificationChannel(
                 TEST_CHANNEL, TEST_CHANNEL_NAME, IMPORTANCE_LOW);
-        mDefaultNotificationChannel = new NotificationChannel(
-                NotificationChannel.DEFAULT_CHANNEL_ID, TEST_CHANNEL_NAME,
-                IMPORTANCE_LOW);
         Notification n = new Notification.Builder(mContext, mNotificationChannel.getId())
                 .setContentTitle(new SpannableString("title"))
                 .build();
         mSbn = new StatusBarNotification(TEST_PACKAGE_NAME, TEST_PACKAGE_NAME, 0, null, TEST_UID, 0,
                 n, UserHandle.CURRENT, null, 0);
-        mEntry = new NotificationEntryBuilder().setSbn(mSbn).build();
+        mEntry = new NotificationEntryBuilder().setSbn(mSbn).updateRanking(rankingBuilder -> {
+            rankingBuilder.setChannel(mNotificationChannel);
+        }).build();
     }
 
     @Test
@@ -160,8 +184,9 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 false);
@@ -178,8 +203,9 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 false);
@@ -194,8 +220,9 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 false);
@@ -219,8 +246,9 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                entry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 false);
@@ -237,12 +265,13 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
                 (View v, NotificationChannel c, int appUid) -> {
                     assertEquals(mNotificationChannel, c);
                     latch.countDown();
                 },
+                null,
                 true,
                 false);
 
@@ -260,12 +289,13 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
                 (View v, NotificationChannel c, int appUid) -> {
                     assertEquals(mNotificationChannel, c);
                     latch.countDown();
                 },
+                null,
                 true,
                 false);
 
@@ -282,8 +312,9 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 false);
@@ -298,11 +329,12 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
                 (View v, NotificationChannel c, int appUid) -> {
                     assertEquals(mNotificationChannel, c);
                 },
+                null,
                 false,
                 false);
         final View settingsButton = mInfo.findViewById(R.id.info);
@@ -316,13 +348,92 @@ public class PartialConversationInfoTest extends SysuiTestCase {
                 mMockINotificationManager,
                 mChannelEditorDialogController,
                 TEST_PACKAGE_NAME,
-                mNotificationChannel,
-                mEntry,
+                mEntry.getRanking(),
+                mSbn,
+                null,
                 null,
                 true,
                 true);
 
         assertEquals(GONE,
                 mInfo.findViewById(R.id.turn_off_notifications).getVisibility());
+    }
+
+    @Test
+    @DisableFlags({Flags.FLAG_NOTIFICATION_CLASSIFICATION_UI, Flags.FLAG_NM_SUMMARIZATION,
+            Flags.FLAG_NM_SUMMARIZATION_UI})
+    public void testBindNotification_HidesFeedbackLink_flagOff() {
+        mInfo.bindNotification(
+                mMockPackageManager,
+                mMockINotificationManager,
+                mChannelEditorDialogController,
+                TEST_PACKAGE_NAME,
+                mEntry.getRanking(),
+                mSbn,
+                null,
+                null,
+                true,
+                true);
+        assertThat(mInfo.findViewById(R.id.feedback).getVisibility()).isEqualTo(GONE);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_NOTIFICATION_CLASSIFICATION_UI)
+    public void testBindNotification_SetsFeedbackLink_isReservedChannel() {
+        mEntry.setRanking(
+                new RankingBuilder(mEntry.getRanking())
+                        .setChannel(mClassifiedNotificationChannel)
+                        .build()
+        );
+        CountDownLatch latch = new CountDownLatch(1);
+        mInfo.bindNotification(
+                mMockPackageManager,
+                mMockINotificationManager,
+                mChannelEditorDialogController,
+                TEST_PACKAGE_NAME,
+                mEntry.getRanking(),
+                mSbn,
+                null,
+                (View v, Intent i) -> {
+                    latch.countDown();
+                },
+                true,
+                true);
+
+        View feedback = mInfo.findViewById(R.id.feedback);
+        assertThat(feedback.getVisibility()).isEqualTo(VISIBLE);
+        feedback.performClick();
+        // Verify that listener was triggered.
+        assertThat(latch.getCount()).isEqualTo(0);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_NM_SUMMARIZATION_UI)
+    public void testBindNotification_SetsFeedbackLink_hasSummarization() {
+        mEntry.setRanking(
+                new RankingBuilder(mEntry.getRanking())
+                        .setSummarization("something")
+                        .build()
+        );
+        CountDownLatch latch = new CountDownLatch(1);
+        mInfo.bindNotification(
+                mMockPackageManager,
+                mMockINotificationManager,
+                mChannelEditorDialogController,
+                TEST_PACKAGE_NAME,
+                mEntry.getRanking(),
+                mSbn,
+                null,
+                (View v, Intent i) -> {
+                    latch.countDown();
+                },
+                true,
+                true);
+
+        View feedback = mInfo.findViewById(R.id.feedback);
+        assertThat(feedback.getVisibility()).isEqualTo(VISIBLE);
+        feedback.performClick();
+        // Verify that listener was triggered.
+        assertThat(latch.getCount()).isEqualTo(0);
     }
 }

@@ -86,6 +86,7 @@ import java.lang.annotation.RetentionPolicy;
  * for these functions cancels out and does not affect the result, so other bases may be used
  * if preferred.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public final class Gainmap implements Parcelable {
 
     /** @hide */
@@ -154,9 +155,20 @@ public final class Gainmap implements Parcelable {
      * Creates a new gainmap using the provided gainmap as the metadata source and the provided
      * bitmap as the replacement for the gainmapContents
      */
-    @FlaggedApi(Flags.FLAG_GAINMAP_CONSTRUCTOR_WITH_METADATA)
     public Gainmap(@NonNull Gainmap gainmap, @NonNull Bitmap gainmapContents) {
         this(gainmapContents, nCreateCopy(gainmap.mNativePtr));
+    }
+
+    /**
+     * @hide
+     */
+    public Gainmap asShared() {
+        final Bitmap sharedContents = mGainmapContents.asShared();
+        if (sharedContents == mGainmapContents) {
+            return this;
+        } else {
+            return new Gainmap(sharedContents, nCreateCopy(mNativePtr));
+        }
     }
 
     /**

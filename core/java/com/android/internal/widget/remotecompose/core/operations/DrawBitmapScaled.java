@@ -28,6 +28,7 @@ import com.android.internal.widget.remotecompose.core.documentation.Documentatio
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
 import com.android.internal.widget.remotecompose.core.operations.utilities.ImageScaling;
 import com.android.internal.widget.remotecompose.core.semantics.AccessibleComponent;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.List;
 
@@ -48,7 +49,6 @@ public class DrawBitmapScaled extends PaintOperation
     int mContentDescId;
     float mScaleFactor, mOutScaleFactor;
     int mScaleType;
-    int mMode;
 
     @NonNull ImageScaling mScaling = new ImageScaling();
     public static final int SCALE_NONE = ImageScaling.SCALE_NONE;
@@ -83,7 +83,9 @@ public class DrawBitmapScaled extends PaintOperation
         mOutDstRight = mDstRight = dstRight;
         mOutDstBottom = mDstBottom = dstBottom;
         mScaleType = type & 0xFF;
-        mMode = type >> 8;
+        if (((type >> 8) & 0x1) != 0) {
+            mImageId |= PTR_DEREFERENCE;
+        }
         mOutScaleFactor = mScaleFactor = scale;
         this.mContentDescId = cdId;
     }
@@ -194,7 +196,7 @@ public class DrawBitmapScaled extends PaintOperation
     }
 
     @Override
-    public Integer getContentDescriptionId() {
+    public @NonNull Integer getContentDescriptionId() {
         return mContentDescId;
     }
 
@@ -217,6 +219,23 @@ public class DrawBitmapScaled extends PaintOperation
         return OP_CODE;
     }
 
+    /**
+     * Draw a bitmap using integer coordinates
+     *
+     * @param buffer the buffer to write to
+     * @param imageId the id of the image
+     * @param srcLeft the left most pixel in the image to draw
+     * @param srcTop the right most pixel in the image to draw
+     * @param srcRight the right most pixel in the image to draw
+     * @param srcBottom the bottom most pixel in the image to draw
+     * @param dstLeft the left most pixel in the destination
+     * @param dstTop the top most pixel in the destination
+     * @param dstRight the right most pixel in the destination
+     * @param dstBottom the bottom most pixel in the destination
+     * @param scaleType the type of scale operation
+     * @param scaleFactor the scalefactor to use with fixed scale
+     * @param cdId the content description id
+     */
     public static void apply(
             @NonNull WireBuffer buffer,
             int imageId,
@@ -339,13 +358,8 @@ public class DrawBitmapScaled extends PaintOperation
         context.save();
         context.clipRect(mOutDstLeft, mOutDstTop, mOutDstRight, mOutDstBottom);
 
-        int imageId = mImageId;
-        if ((mMode & 0x1) != 0) {
-            imageId = context.getContext().getInteger(imageId);
-        }
-
         context.drawBitmap(
-                imageId,
+                getId(mImageId, context),
                 (int) mOutSrcLeft,
                 (int) mOutSrcTop,
                 (int) mOutSrcRight,
@@ -356,5 +370,46 @@ public class DrawBitmapScaled extends PaintOperation
                 (int) mScaling.mFinalDstBottom,
                 mContentDescId);
         context.restore();
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addType(CLASS_NAME)
+                .add("imageId", mImageId)
+                .add("contentDescriptionId", mContentDescId)
+                .add("scaleType", getScaleTypeString())
+                .add("scaleFactor", mScaleFactor, mOutScaleFactor)
+                .add("srcLeft", mSrcLeft, mOutSrcLeft)
+                .add("srcTop", mSrcTop, mOutSrcTop)
+                .add("srcRight", mSrcRight, mOutSrcRight)
+                .add("srcBottom", mSrcBottom, mOutSrcBottom)
+                .add("dstLeft", mDstLeft, mOutDstLeft)
+                .add("dstTop", mDstTop, mOutDstTop)
+                .add("dstRight", mDstRight, mOutDstRight)
+                .add("dstBottom", mDstBottom, mOutDstBottom);
+    }
+
+    private String getScaleTypeString() {
+        switch (mScaleType) {
+            case SCALE_NONE:
+                return "SCALE_NONE";
+            case SCALE_INSIDE:
+                return "SCALE_INSIDE";
+            case SCALE_FILL_WIDTH:
+                return "SCALE_FILL_WIDTH";
+            case SCALE_FILL_HEIGHT:
+                return "SCALE_FILL_HEIGHT";
+            case SCALE_FIT:
+                return "SCALE_FIT";
+            case SCALE_CROP:
+                return "SCALE_CROP";
+            case SCALE_FILL_BOUNDS:
+                return "SCALE_FILL_BOUNDS";
+            case SCALE_FIXED_SCALE:
+                return "SCALE_FIXED_SCALE";
+            default:
+                return "INVALID_SCALE_TYPE";
+        }
     }
 }

@@ -21,6 +21,7 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.server.wm.AppCompatLetterboxUtils.calculateLetterboxInnerBounds;
 import static com.android.server.wm.AppCompatLetterboxUtils.calculateLetterboxOuterBounds;
 import static com.android.server.wm.AppCompatLetterboxUtils.calculateLetterboxPosition;
+import static com.android.server.wm.AppCompatLetterboxUtils.fullyContainsOrNotIntersects;
 
 import static org.mockito.Mockito.mock;
 
@@ -63,25 +64,10 @@ public class AppCompatLetterboxUtilsTest extends WindowTestsBase {
     }
 
     @Test
-    public void positionIsFromTaskWhenLetterboxAnimationIsRunning() {
+    public void positionIsFromActivity() {
         runTestScenario((robot) -> {
             robot.activity().createActivityWithComponent();
             robot.setTopActivityLetterboxPolicyRunning(true);
-            robot.activity().setIsInLetterboxAnimation(true);
-            robot.activity().configureTaskBounds(
-                    new Rect(/* left */ 100, /* top */ 200, /* right */ 300, /* bottom */ 400));
-            robot.getLetterboxPosition();
-
-            robot.assertPosition(/* x */ 100, /* y */ 200);
-        });
-    }
-
-    @Test
-    public void positionIsFromActivityWhenLetterboxAnimationIsNotRunning() {
-        runTestScenario((robot) -> {
-            robot.activity().createActivityWithComponent();
-            robot.setTopActivityLetterboxPolicyRunning(true);
-            robot.activity().setIsInLetterboxAnimation(false);
             robot.activity().configureTopActivityBounds(
                     new Rect(/* left */ 200, /* top */ 400, /* right */ 300, /* bottom */ 400));
             robot.getLetterboxPosition();
@@ -158,11 +144,128 @@ public class AppCompatLetterboxUtilsTest extends WindowTestsBase {
         });
     }
 
+    @Test
+    public void testNoBoundsToCheck() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck();
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testEmptyBoundsToCheck() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect(30, 30, 40, 40));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testContainsEmptyRect() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect());
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_NoIntersection() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_FullyContains() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(-5, -5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_PartiallyIntersects() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(5, 5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ false);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_MultipleBoundsNoIntersection() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect(-20, -20, -10, -10));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_MultipleBoundsWithOneContaining() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect(-5, -5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_MultipleBoundsWithOneIntersecting() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect(5, 5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ false);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_MultipleBoundsWithEmptyAndNoIntersection() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(), new Rect(10, 10, 20, 20));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_MultipleBoundsWithEmptyAndContaining() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(/* left */ 0, /* top */ 0, /* right */ 10, /* bottom */ 10);
+            robot.setBoundsToCheck(new Rect(), new Rect(-5, -5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_EmptyRectToCheck() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(new Rect());
+            robot.setBoundsToCheck(new Rect(10, 10, 20, 20), new Rect(-5, -5, 15, 15));
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
+    @Test
+    public void testCheckFullyContainsOrNotIntersects_EmptyRectToCheckAndEmptyBounds() {
+        runTestScenario((robot) -> {
+            robot.setWindowFrameArea(new Rect());
+            robot.setBoundsToCheck(new Rect());
+            robot.checkFullyContainsOrNotIntersects(/* expected */ true);
+        });
+    }
+
     /**
      * Runs a test scenario providing a Robot.
      */
     void runTestScenario(@NonNull Consumer<LetterboxUtilsRobotTest> consumer) {
-        final LetterboxUtilsRobotTest robot = new LetterboxUtilsRobotTest(mWm, mAtm, mSupervisor);
+        final LetterboxUtilsRobotTest robot = new LetterboxUtilsRobotTest(this);
         consumer.accept(robot);
     }
 
@@ -172,26 +275,28 @@ public class AppCompatLetterboxUtilsTest extends WindowTestsBase {
         private final Rect mInnerBound = new Rect();
         private final Rect mOuterBound = new Rect();
 
+        private final Rect mWindowFrameArea = new Rect();
+
+        private Rect[] mBoundsToCheck;
+
         @NonNull
         private final WindowState mWindowState;
 
-        LetterboxUtilsRobotTest(@NonNull WindowManagerService wm,
-                @NonNull ActivityTaskManagerService atm,
-                @NonNull ActivityTaskSupervisor supervisor) {
-            super(wm, atm, supervisor);
+        LetterboxUtilsRobotTest(@NonNull WindowTestsBase windowTestBase) {
+            super(windowTestBase);
             mWindowState = mock(WindowState.class);
         }
 
         @Override
         void onPostActivityCreation(@NonNull ActivityRecord activity) {
             super.onPostActivityCreation(activity);
-            spyOn(activity.mAppCompatController.getAppCompatLetterboxPolicy());
+            spyOn(activity.mAppCompatController.getLetterboxPolicy());
             spyOn(activity.mAppCompatController.getTransparentPolicy());
         }
 
         void setTopActivityLetterboxPolicyRunning(boolean running) {
             doReturn(running).when(activity().top().mAppCompatController
-                    .getAppCompatLetterboxPolicy()).isRunning();
+                    .getLetterboxPolicy()).isRunning();
         }
 
         void setTopActivityTransparentPolicyRunning(boolean running) {
@@ -201,6 +306,18 @@ public class AppCompatLetterboxUtilsTest extends WindowTestsBase {
 
         void setWindowFrame(@NonNull Rect frame) {
             doReturn(frame).when(mWindowState).getFrame();
+        }
+
+        void setWindowFrameArea(int left, int top, int right, int bottom) {
+            mWindowFrameArea.set(left, top, right, bottom);
+        }
+
+        void setWindowFrameArea(@NonNull Rect windowFrameArea) {
+            mWindowFrameArea.set(windowFrameArea);
+        }
+
+        void setBoundsToCheck(@NonNull Rect... boundsToCheck) {
+            mBoundsToCheck = boundsToCheck;
         }
 
         void getLetterboxPosition() {
@@ -248,6 +365,11 @@ public class AppCompatLetterboxUtilsTest extends WindowTestsBase {
 
         void checkInnerBoundsAreActivityBounds() {
             Assert.assertEquals(mInnerBound, activity().top().getBounds());
+        }
+
+        void checkFullyContainsOrNotIntersects(boolean expected) {
+            Assert.assertEquals(expected,
+                    fullyContainsOrNotIntersects(mWindowFrameArea, mBoundsToCheck));
         }
 
     }

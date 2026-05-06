@@ -14,19 +14,16 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.keyguard.ui
 
-import com.android.keyguard.logging.keyguardTransitionAnimationLogger
 import com.android.systemui.keyguard.domain.interactor.keyguardTransitionInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.android.systemui.shade.domain.interactor.shadeInteractor
 
 val Kosmos.keyguardTransitionAnimationFlow by Fixture {
     KeyguardTransitionAnimationFlow(
         transitionInteractor = keyguardTransitionInteractor,
-        logger = keyguardTransitionAnimationLogger,
+        shadeInteractor = { shadeInteractor },
     )
 }

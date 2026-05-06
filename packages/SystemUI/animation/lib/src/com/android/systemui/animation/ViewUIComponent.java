@@ -18,18 +18,23 @@ package com.android.systemui.animation;
 
 import android.annotation.Nullable;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Outline;
+import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver.OnDrawListener;
+import android.view.ViewRootImpl;
+import android.view.ViewTreeObserver;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -50,17 +55,21 @@ public class ViewUIComponent implements UIComponent {
     private final Path mClippingPath = new Path();
     private final Outline mClippingOutline = new Outline();
 
-    private final OnDrawListener mOnDrawListener = this::postDraw;
+    private final LifecycleListener mLifecycleListener = new LifecycleListener();
     private final View mView;
-
+    private final Handler mMainHandler;
     @Nullable private SurfaceControl mSurfaceControl;
     @Nullable private Surface mSurface;
-    @Nullable private Rect mViewBoundsOverride;
+    @Nullable private RectF mViewBoundsOverride;
     private boolean mVisibleOverride;
+    private final boolean mEnableBackgroundDimming;
+    private final Paint mPaint = new Paint();
     private boolean mDirty;
 
-    public ViewUIComponent(View view) {
+    public ViewUIComponent(View view, boolean enableBackgroundDimming) {
         mView = view;
+        mMainHandler = new Handler(Looper.getMainLooper());
+        mEnableBackgroundDimming = enableBackgroundDimming;
     }
 
     /**
@@ -82,7 +91,7 @@ public class ViewUIComponent implements UIComponent {
     }
 
     @Override
-    public Rect getBounds() {
+    public RectF getBounds() {
         if (isAttachedToLeash() && mViewBoundsOverride != null) {
             return mViewBoundsOverride;
         }
@@ -109,11 +118,11 @@ public class ViewUIComponent implements UIComponent {
         t.reparent(mSurfaceControl, transitionLeash).show(mSurfaceControl);
 
         // Make sure view draw triggers surface draw.
-        mView.getViewTreeObserver().addOnDrawListener(mOnDrawListener);
+        mLifecycleListener.register();
 
         // Make the view invisible AFTER the surface is shown.
         t.addTransactionCommittedListener(
-                        mView::post,
+                        this::post,
                         () -> {
                             logD("Surface attached!");
                             forceDraw();
@@ -128,22 +137,29 @@ public class ViewUIComponent implements UIComponent {
         SurfaceControl sc = mSurfaceControl;
         mSurface = null;
         mSurfaceControl = null;
-        mView.getViewTreeObserver().removeOnDrawListener(mOnDrawListener);
+        mLifecycleListener.unregister();
         // Restore view visibility
         mView.setVisibility(mVisibleOverride ? View.VISIBLE : View.INVISIBLE);
-        mView.invalidate();
         // Clean up surfaces.
         SurfaceControl.Transaction t = new SurfaceControl.Transaction();
         t.reparent(sc, null)
                 .addTransactionCommittedListener(
-                        mView::post,
+                        this::post,
                         () -> {
                             s.release();
                             sc.release();
                             executor.execute(onDone);
                         });
-        // Apply transaction AFTER the view is drawn.
-        mView.getRootSurfaceControl().applyTransactionOnDraw(t);
+        ViewRootImpl viewRoot = mView.getViewRootImpl();
+        if (viewRoot == null) {
+            t.apply();
+        } else {
+            // Apply transaction AFTER the view is drawn.
+            viewRoot.applyTransactionOnDraw(t);
+            // Request layout to force redrawing the entire view tree, so that the transaction is
+            // guaranteed to be applied.
+            viewRoot.requestLayout();
+        }
     }
 
     @Override
@@ -173,27 +189,52 @@ public class ViewUIComponent implements UIComponent {
             return;
         }
         ViewGroup.LayoutParams params = mView.getLayoutParams();
-        if (params == null || params.width == 0 || params.height == 0) {
+        if (params == null) {
             // layout pass didn't happen.
             logD("draw: skipped - no layout");
             return;
         }
+
+        final RectF realBounds = getRealBounds();
+        if (realBounds.width() == 0 || realBounds.height() == 0) {
+            // bad bounds.
+            logD("draw: skipped - zero bounds");
+            return;
+        }
+
+
         Canvas canvas = mSurface.lockHardwareCanvas();
         // Clear the canvas first.
         canvas.drawColor(0, PorterDuff.Mode.CLEAR);
         if (mVisibleOverride) {
-            Rect realBounds = getRealBounds();
-            Rect renderBounds = getBounds();
+            RectF renderBounds = getBounds();
             canvas.translate(renderBounds.left, renderBounds.top);
+
+            float cornerRadius = (float) Math.min(renderBounds.width(), renderBounds.height()) / 2;
+
+            if (mEnableBackgroundDimming) {
+                // draw backing layer for background dimming using bounds/radius
+                mPaint.setColor(Color.BLACK);
+                mPaint.setStyle(Paint.Style.FILL);
+                canvas.drawRoundRect(
+                        0,
+                        0,
+                        renderBounds.width(),
+                        renderBounds.height(),
+                        cornerRadius,
+                        cornerRadius,
+                        mPaint);
+            }
+
             canvas.scale(
-                    (float) renderBounds.width() / realBounds.width(),
-                    (float) renderBounds.height() / realBounds.height());
+                    renderBounds.width() / realBounds.width(),
+                    renderBounds.height() / realBounds.height());
 
             if (mView.getClipToOutline()) {
                 mView.getOutlineProvider().getOutline(mView, mClippingOutline);
                 mClippingPath.reset();
                 RectF rect = new RectF(0, 0, mView.getWidth(), mView.getHeight());
-                final float cornerRadius = mClippingOutline.getRadius();
+                cornerRadius = mClippingOutline.getRadius();
                 mClippingPath.addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CW);
                 mClippingPath.close();
                 canvas.clipPath(mClippingPath);
@@ -212,10 +253,10 @@ public class ViewUIComponent implements UIComponent {
         draw();
     }
 
-    private Rect getRealBounds() {
+    private RectF getRealBounds() {
         Rect output = new Rect();
         mView.getBoundsOnScreen(output);
-        return output;
+        return new RectF(output);
     }
 
     private boolean isAttachedToLeash() {
@@ -229,7 +270,7 @@ public class ViewUIComponent implements UIComponent {
     }
 
     private void setVisible(boolean visible) {
-        logD("setVisibility: " + visible);
+        logD("setVisibility: " + visible + " (attached: " + isAttachedToLeash() + ")");
         if (isAttachedToLeash()) {
             mVisibleOverride = visible;
             postDraw();
@@ -238,7 +279,7 @@ public class ViewUIComponent implements UIComponent {
         }
     }
 
-    private void setBounds(Rect bounds) {
+    private void setBounds(RectF bounds) {
         logD("setBounds: " + bounds);
         mViewBoundsOverride = bounds;
         if (isAttachedToLeash()) {
@@ -261,7 +302,66 @@ public class ViewUIComponent implements UIComponent {
             return;
         }
         mDirty = true;
-        mView.post(this::draw);
+        post(this::draw);
+    }
+
+    private void post(Runnable r) {
+        if (mView.isAttachedToWindow()) {
+            mView.post(r);
+        } else {
+            // If the view is detached from window, {@code View.post()} will postpone the action
+            // until the view is attached again. However, we don't know if the view will be attached
+            // again, so we post the action to the main thread in this case. This could lead to race
+            // condition if the attachment change caused a thread switching, and it's the caller's
+            // responsibility to ensure the window attachment state doesn't change unexpectedly.
+            if (DEBUG) {
+                Log.w(TAG, mView + " is not attached. Posting action to main thread!");
+            }
+            mMainHandler.post(r);
+        }
+    }
+
+    /** A listener for monitoring view life cycles. */
+    private class LifecycleListener
+            implements ViewTreeObserver.OnDrawListener, View.OnAttachStateChangeListener {
+        private boolean mRegistered;
+
+        @Override
+        public void onDraw() {
+            // View draw should trigger surface draw.
+            postDraw();
+        }
+
+        @Override
+        public void onViewAttachedToWindow(View v) {
+            // empty
+        }
+
+        @Override
+        public void onViewDetachedFromWindow(View v) {
+            Log.w(
+                    TAG,
+                    v + " is detached from the window. Unregistering the life cycle listener ...");
+            unregister();
+        }
+
+        public void register() {
+            if (mRegistered) {
+                return;
+            }
+            mRegistered = true;
+            mView.getViewTreeObserver().addOnDrawListener(this);
+            mView.addOnAttachStateChangeListener(this);
+        }
+
+        public void unregister() {
+            if (!mRegistered) {
+                return;
+            }
+            mRegistered = false;
+            mView.getViewTreeObserver().removeOnDrawListener(this);
+            mView.removeOnAttachStateChangeListener(this);
+        }
     }
 
     /** @hide */
@@ -270,34 +370,33 @@ public class ViewUIComponent implements UIComponent {
 
         @Override
         public Transaction setAlpha(ViewUIComponent ui, float alpha) {
-            mChanges.add(() -> ui.mView.post(() -> ui.setAlpha(alpha)));
+            mChanges.add(() -> ui.post(() -> ui.setAlpha(alpha)));
             return this;
         }
 
         @Override
         public Transaction setVisible(ViewUIComponent ui, boolean visible) {
-            mChanges.add(() -> ui.mView.post(() -> ui.setVisible(visible)));
+            mChanges.add(() -> ui.post(() -> ui.setVisible(visible)));
             return this;
         }
 
         @Override
-        public Transaction setBounds(ViewUIComponent ui, Rect bounds) {
-            mChanges.add(() -> ui.mView.post(() -> ui.setBounds(bounds)));
+        public Transaction setBounds(ViewUIComponent ui, RectF bounds) {
+            mChanges.add(() -> ui.post(() -> ui.setBounds(bounds)));
             return this;
         }
 
         @Override
         public Transaction attachToTransitionLeash(
                 ViewUIComponent ui, SurfaceControl transitionLeash, int w, int h) {
-            mChanges.add(
-                    () -> ui.mView.post(() -> ui.attachToTransitionLeash(transitionLeash, w, h)));
+            mChanges.add(() -> ui.post(() -> ui.attachToTransitionLeash(transitionLeash, w, h)));
             return this;
         }
 
         @Override
         public Transaction detachFromTransitionLeash(
                 ViewUIComponent ui, Executor executor, Runnable onDone) {
-            mChanges.add(() -> ui.mView.post(() -> ui.detachFromTransitionLeash(executor, onDone)));
+            mChanges.add(() -> ui.post(() -> ui.detachFromTransitionLeash(executor, onDone)));
             return this;
         }
 

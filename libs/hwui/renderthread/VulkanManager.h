@@ -25,19 +25,16 @@
 #include <include/gpu/ganesh/GrContextOptions.h>
 #include <utils/StrongPointer.h>
 #include <vk/VulkanExtensions.h>
+#include <vk/VulkanPreferredFeatures.h>
 #include <vulkan/vulkan.h>
 
 // VK_ANDROID_frame_boundary is a bespoke extension defined by AGI
 // (https://github.com/google/agi) to enable profiling of apps rendering via
 // HWUI. This extension is not defined in Khronos, hence the need to declare it
-// manually here. There's a superseding extension (VK_EXT_frame_boundary) being
-// discussed in Khronos, but in the meantime we use the bespoke
-// VK_ANDROID_frame_boundary. This is a device extension that is implemented by
+// manually here. There's an extension (VK_EXT_frame_boundary) which we will use
+// instead if available. This is a device extension that is implemented by
 // AGI's Vulkan capture layer, such that it is only supported by devices when
 // AGI is doing a capture of the app.
-//
-// TODO(b/182165045): use the Khronos blessed VK_EXT_frame_boudary once it has
-// landed in the spec.
 typedef void(VKAPI_PTR* PFN_vkFrameBoundaryANDROID)(VkDevice device, VkSemaphore semaphore,
                                                     VkImage image);
 #define VK_ANDROID_FRAME_BOUNDARY_EXTENSION_NAME "VK_ANDROID_frame_boundary"
@@ -124,9 +121,9 @@ private:
     explicit VulkanManager() {}
     ~VulkanManager();
 
-    // Sets up the VkInstance and VkDevice objects. Also fills out the passed in
-    // VkPhysicalDeviceFeatures struct.
-    void setupDevice(skgpu::VulkanExtensions&, VkPhysicalDeviceFeatures2&);
+    // Sets up the VkInstance and VkDevice objects. Fills out mPhysicalDeviceFeatures2 and
+    // other feature structs.
+    void setupDevice();
 
     // simple wrapper class that exists only to initialize a pointer to NULL
     template <typename FNPTR_TYPE>
@@ -193,12 +190,14 @@ private:
     VkQueue mAHBUploadQueue = VK_NULL_HANDLE;
 
     // Variables saved to populate VkFunctorInitParams.
-    static const uint32_t mAPIVersion = VK_MAKE_VERSION(1, 1, 0);
+    static const uint32_t mAPIVersion = VK_API_VERSION_1_1;
     std::vector<VkExtensionProperties> mInstanceExtensionsOwner;
     std::vector<const char*> mInstanceExtensions;
     std::vector<VkExtensionProperties> mDeviceExtensionsOwner;
     std::vector<const char*> mDeviceExtensions;
     VkPhysicalDeviceFeatures2 mPhysicalDeviceFeatures2{};
+    VkPhysicalDeviceFaultFeaturesEXT mDeviceFaultFeatures{};
+    VkPhysicalDeviceGlobalPriorityQueryFeatures mGlobalPriorityQueryFeatures{};
 
     enum class SwapBehavior {
         Discard,
@@ -206,6 +205,7 @@ private:
     };
     SwapBehavior mSwapBehavior = SwapBehavior::Discard;
     skgpu::VulkanExtensions mExtensions;
+    skgpu::VulkanPreferredFeatures mVulkanFeatures;
     uint32_t mDriverVersion = 0;
 
     std::once_flag mInitFlag;

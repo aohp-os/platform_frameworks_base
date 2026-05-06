@@ -17,15 +17,15 @@
 package com.android.wm.shell.flicker.splitscreen.benchmark
 
 import android.tools.NavBar
-import android.tools.Rotation
 import android.tools.flicker.junit.FlickerParametersRunnerFactory
-import android.tools.flicker.legacy.FlickerBuilder
-import android.tools.flicker.legacy.LegacyFlickerTest
-import android.tools.flicker.legacy.LegacyFlickerTestFactory
-import android.tools.helpers.WindowUtils
+import android.tools.flicker.FlickerBuilder
+import android.tools.flicker.FlickerTest
+import android.tools.flicker.FlickerTestFactory
 import android.tools.traces.parsers.WindowManagerStateHelper
 import androidx.test.filters.RequiresDevice
+import androidx.test.uiautomator.UiDevice
 import com.android.wm.shell.flicker.utils.SplitScreenUtils
+import com.android.wm.shell.flicker.utils.SplitScreenUtils.isLeftRightSplit
 import org.junit.FixMethodOrder
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
@@ -35,8 +35,10 @@ import org.junit.runners.Parameterized
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: LegacyFlickerTest) :
+abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: FlickerTest) :
     SplitScreenBase(flicker) {
+    private val device = UiDevice.getInstance(instrumentation)
+
     protected val thisTransition: FlickerBuilder.() -> Unit
         get() = {
             setup {
@@ -50,7 +52,7 @@ abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: Legacy
                 )
             }
             transitions {
-                SplitScreenUtils.doubleTapDividerToSwitch(device)
+                SplitScreenUtils.doubleTapDividerToSwitch(device, instrumentation.uiAutomation)
                 wmHelper.StateSyncBuilder().withAppTransitionIdle().waitForAndVerify()
 
                 waitForLayersToSwitch(wmHelper)
@@ -73,7 +75,8 @@ abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: Legacy
                     }
                         ?: return@add false
 
-                if (isLandscape(flicker.scenario.endRotation)) {
+                if (isLeftRightSplit(instrumentation.context, flicker.scenario.endRotation,
+                        device.displaySizeDp)) {
                     return@add if (flicker.scenario.isTablet) {
                         secondaryAppWindow.frame.right <= primaryAppWindow.frame.left
                     } else {
@@ -109,7 +112,8 @@ abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: Legacy
                 val secondaryVisibleRegion =
                     secondaryAppLayer.visibleRegion?.bounds ?: return@add false
 
-                if (isLandscape(flicker.scenario.endRotation)) {
+                if (isLeftRightSplit(instrumentation.context, flicker.scenario.endRotation,
+                        device.displaySizeDp)) {
                     return@add if (flicker.scenario.isTablet) {
                         secondaryVisibleRegion.right <= primaryVisibleRegion.left
                     } else {
@@ -126,16 +130,11 @@ abstract class SwitchAppByDoubleTapDividerBenchmark(override val flicker: Legacy
             .waitForAndVerify()
     }
 
-    private fun isLandscape(rotation: Rotation): Boolean {
-        val displayBounds = WindowUtils.getDisplayBounds(rotation)
-        return displayBounds.width() > displayBounds.height()
-    }
-
     companion object {
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
         fun getParams() =
-            LegacyFlickerTestFactory.nonRotationTests(
+            FlickerTestFactory.nonRotationTests(
                 // TODO(b/176061063):The 3 buttons of nav bar do not exist in the hierarchy.
                 supportedNavigationModes = listOf(NavBar.MODE_GESTURAL)
             )

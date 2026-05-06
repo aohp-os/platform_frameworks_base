@@ -16,6 +16,7 @@
 
 package com.android.server.accessibility;
 
+import static android.Manifest.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING;
 import static android.accessibilityservice.AccessibilityService.ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS;
 import static android.accessibilityservice.AccessibilityService.KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE;
 import static android.accessibilityservice.AccessibilityService.KEY_ACCESSIBILITY_SCREENSHOT_HARDWAREBUFFER;
@@ -35,6 +36,7 @@ import static android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK;
 import static android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK;
 
 import static com.android.server.pm.UserManagerService.enforceCurrentUserIfVisibleBackgroundEnabled;
+import static com.android.window.flags.Flags.scvhSurfaceControlLifetimeFix;
 
 import android.accessibilityservice.AccessibilityGestureEvent;
 import android.accessibilityservice.AccessibilityService;
@@ -86,14 +88,17 @@ import android.view.MagnificationSpec;
 import android.view.MotionEvent;
 import android.view.SurfaceControl;
 import android.view.View;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityCache;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.accessibility.IAccessibilityInteractionConnectionCallback;
+import android.view.accessibility.IWindowSurfaceInfoCallback;
 import android.view.inputmethod.EditorInfo;
-import android.window.ScreenCapture;
-import android.window.ScreenCapture.ScreenshotHardwareBuffer;
+import android.window.ScreenCapture.ScreenCaptureParams;
+import android.window.ScreenCaptureInternal;
+import android.window.ScreenCaptureInternal.ScreenshotHardwareBuffer;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.compat.IPlatformCompat;
@@ -343,6 +348,9 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 SurfaceControl sc,
                 IAccessibilityInteractionConnectionCallback callback);
 
+        int performScreenCapture(
+                ScreenCaptureInternal.LayerCaptureArgs captureArgs,
+                ScreenCaptureInternal.ScreenCaptureListener captureListener);
     }
 
     public AbstractAccessibilityServiceConnection(Context context, ComponentName componentName,
@@ -416,19 +424,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         mNotificationTimeout = info.notificationTimeout;
         mIsDefault = (info.flags & DEFAULT) != 0;
         mGenericMotionEventSources = info.getMotionEventSources();
-        if (android.view.accessibility.Flags.motionEventObserving()) {
-            if (mContext.checkCallingOrSelfPermission(
-                            android.Manifest.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING)
-                    == PackageManager.PERMISSION_GRANTED) {
-                mObservedMotionEventSources = info.getObservedMotionEventSources();
-            } else {
-                Slog.e(
-                        LOG_TAG,
-                        "Observing motion events requires"
-                            + " android.Manifest.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING.");
-                mObservedMotionEventSources = 0;
-            }
-        }
+        mObservedMotionEventSources = info.getObservedMotionEventSources();
 
         if (supportsFlagForNotImportantViews(info)) {
             if ((info.flags & AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS) != 0) {
@@ -526,6 +522,13 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         if (!info.isWithinParcelableSize()) {
             throw new IllegalStateException(
                     "Cannot update service info: size is larger than safe parcelable limits.");
+        }
+        if (info.getObservedMotionEventSources() != 0
+                && mContext.checkCallingPermission(ACCESSIBILITY_MOTION_EVENT_OBSERVING)
+                != PackageManager.PERMISSION_GRANTED) {
+            Slog.e(LOG_TAG, "Observing motion events requires permission "
+                    + ACCESSIBILITY_MOTION_EVENT_OBSERVING);
+            info.setObservedMotionEventSources(0);
         }
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -1111,14 +1114,12 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         if (svcConnTracingEnabled()) {
             logTraceSvcConn("performGlobalAction", "action=" + action);
         }
-        int currentUserId;
         synchronized (mLock) {
             if (!hasRightsToCurrentUserLocked()) {
                 return false;
             }
-            currentUserId = mSystemSupport.getCurrentUserIdLocked();
         }
-        enforceCurrentUserIfVisibleBackgroundEnabled(currentUserId);
+        enforceCurrentUserIfVisibleBackgroundEnabled();
         final long identity = Binder.clearCallingIdentity();
         try {
             return mSystemActionPerformer.performSystemAction(action);
@@ -1413,9 +1414,12 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
 
     @RequiresNoPermission
     @Override
-    public void takeScreenshotOfWindow(int accessibilityWindowId, int interactionId,
-            ScreenCapture.ScreenCaptureListener listener,
-            IAccessibilityInteractionConnectionCallback callback) throws RemoteException {
+    public void takeScreenshotOfWindow(
+            int accessibilityWindowId,
+            int interactionId,
+            ScreenCaptureInternal.ScreenCaptureListener listener,
+            IAccessibilityInteractionConnectionCallback callback)
+            throws RemoteException {
         final long currentTimestamp = SystemClock.uptimeMillis();
         if ((currentTimestamp
                 - mRequestTakeScreenshotOfWindowTimestampMs.get(accessibilityWindowId, 0L))
@@ -1456,7 +1460,56 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                         AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW, interactionId);
                 return;
             }
-            connection.getRemote().takeScreenshotOfWindow(interactionId, listener, callback);
+            IWindowSurfaceInfoCallback infoCallback =
+                    new IWindowSurfaceInfoCallback.Stub() {
+                        @Override
+                        public void provideWindowSurfaceInfo(
+                                int windowFlags,
+                                int processUid,
+                                SurfaceControl surfaceControl) {
+                            final boolean canCaptureSecureLayers = canCaptureSecureLayers();
+                            if (!canCaptureSecureLayers
+                                    && (windowFlags & WindowManager.LayoutParams.FLAG_SECURE)
+                                            != 0) {
+                                try {
+                                    callback.sendTakeScreenshotOfWindowError(
+                                            AccessibilityService
+                                                    .ERROR_TAKE_SCREENSHOT_SECURE_WINDOW,
+                                            interactionId);
+                                } catch (RemoteException e) {
+                                    // ignore - the other side will time out
+                                }
+                                return;
+                            }
+
+                            final int secureContentPolicy = canCaptureSecureLayers
+                                    ? ScreenCaptureParams.SECURE_CONTENT_POLICY_CAPTURE
+                                    : ScreenCaptureParams.SECURE_CONTENT_POLICY_REDACT;
+                            final ScreenCaptureInternal.LayerCaptureArgs captureArgs =
+                                    new ScreenCaptureInternal.LayerCaptureArgs.Builder(
+                                                    surfaceControl)
+                                            .setChildrenOnly(false)
+                                            .setUid(processUid)
+                                            .setSecureContentPolicy(secureContentPolicy)
+                                            .build();
+                            if (mSystemSupport.performScreenCapture(captureArgs, listener)
+                                    != 0) {
+                                try {
+                                    callback.sendTakeScreenshotOfWindowError(
+                                            AccessibilityService
+                                                    .ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR,
+                                            interactionId);
+                                } catch (RemoteException e) {
+                                    // ignore - the other side will time out
+                                }
+                            }
+                            if (android.view.accessibility.Flags
+                                    .copySurfaceControlForWindowScreenshots()) {
+                                surfaceControl.release();
+                            }
+                        }
+                    };
+            connection.getRemote().getWindowSurfaceInfo(infoCallback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -1511,19 +1564,27 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         }
         final long identity = Binder.clearCallingIdentity();
         try {
-            ScreenCapture.ScreenCaptureListener screenCaptureListener = new
-                    ScreenCapture.ScreenCaptureListener(
-                    (screenshotBuffer, result) -> {
-                        if (screenshotBuffer != null && result == 0) {
-                            sendScreenshotSuccess(screenshotBuffer, callback);
-                        } else {
-                            sendScreenshotFailure(
-                                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
-                                    callback);
-                        }
-                    }
-            );
-            mWindowManagerService.captureDisplay(displayId, null, screenCaptureListener);
+            ScreenCaptureInternal.ScreenCaptureListener screenCaptureListener =
+                    new ScreenCaptureInternal.ScreenCaptureListener(
+                            (screenshotBuffer, result) -> {
+                                if (screenshotBuffer != null && result == 0) {
+                                    sendScreenshotSuccess(screenshotBuffer, callback);
+                                } else {
+                                    sendScreenshotFailure(
+                                            AccessibilityService
+                                                    .ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
+                                            callback);
+                                }
+                            });
+            final int secureContentPolicy =
+                    canCaptureSecureLayers() ? ScreenCaptureParams.SECURE_CONTENT_POLICY_CAPTURE
+                            : ScreenCaptureParams.SECURE_CONTENT_POLICY_REDACT;
+            mWindowManagerService.captureDisplay(
+                    displayId,
+                    new ScreenCaptureInternal.CaptureArgs.Builder<>()
+                            .setSecureContentPolicy(secureContentPolicy)
+                            .build(),
+                    screenCaptureListener);
         } catch (Exception e) {
             sendScreenshotFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
                     callback);
@@ -1562,6 +1623,12 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             // Send back the result.
             callback.sendResult(payload);
         }, null).recycleOnUse());
+    }
+
+    private boolean canCaptureSecureLayers() {
+        return mAccessibilityServiceInfo.isAccessibilityTool()
+                && mAccessibilityServiceInfo.getResolveInfo().serviceInfo
+                .applicationInfo.isSystemApp();
     }
 
     @Override
@@ -1888,14 +1955,9 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
     }
 
     public void notifyGesture(AccessibilityGestureEvent gestureEvent) {
-        if (android.view.accessibility.Flags.copyEventsForGestureDetection()) {
-            // We will use this event async, so copy it because it contains MotionEvents.
-            mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
-                    gestureEvent.copyForAsync()).sendToTarget();
-        } else {
-            mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
-                    gestureEvent).sendToTarget();
-        }
+        // We will use this event async, so copy it because it contains MotionEvents.
+        mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
+                gestureEvent.copyForAsync()).sendToTarget();
     }
 
     public void notifySystemActionsChangedLocked() {
@@ -2372,9 +2434,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 case MSG_ON_GESTURE: {
                     if (message.obj instanceof AccessibilityGestureEvent gesture) {
                         notifyGestureInternal(gesture);
-                        if (android.view.accessibility.Flags.copyEventsForGestureDetection()) {
-                            gesture.recycle();
-                        }
+                        gesture.recycle();
                     }
                 } break;
                 case MSG_CLEAR_ACCESSIBILITY_CACHE: {
@@ -2735,11 +2795,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
     @RequiresNoPermission
     @Override
     public void setAnimationScale(float scale) {
-        int currentUserId;
-        synchronized (mLock) {
-            currentUserId = mSystemSupport.getCurrentUserIdLocked();
-        }
-        enforceCurrentUserIfVisibleBackgroundEnabled(currentUserId);
+        enforceCurrentUserIfVisibleBackgroundEnabled();
         final long identity = Binder.clearCallingIdentity();
         try {
             Settings.Global.putFloat(
@@ -2766,7 +2822,15 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         try {
             mSystemSupport.attachAccessibilityOverlayToDisplay(
                     interactionId, displayId, sc, callback);
-            mOverlays.add(sc);
+            if (scvhSurfaceControlLifetimeFix()) {
+                // AccessibilityManagerService#attachAccessibilityOverlayToDisplay releases the
+                // SurfaceControl supplied to it. In order to reparent any attached overlays when
+                // the session is removed, we need a not-released SurfaceControl. For this purpose,
+                // we store a copy of the provided SurfaceControl in mOverlays.
+                mOverlays.add(new SurfaceControl(sc, "attachAccessibilityOverlayToDisplay"));
+            } else {
+                mOverlays.add(sc);
+            }
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -2811,6 +2875,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         for (SurfaceControl sc : mOverlays) {
             if (sc.isValid()) {
                 t.reparent(sc, null);
+                sc.release();
             }
         }
         t.apply();

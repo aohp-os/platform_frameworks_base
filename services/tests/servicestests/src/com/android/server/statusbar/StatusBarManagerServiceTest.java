@@ -32,10 +32,12 @@ import static android.app.StatusBarManager.DISABLE_NONE;
 import static android.app.StatusBarManager.DISABLE_RECENT;
 import static android.app.StatusBarManager.DISABLE_SEARCH;
 import static android.app.StatusBarManager.DISABLE_SYSTEM_INFO;
+import static android.view.WindowManagerPolicyConstants.NAV_BAR_MODE_GESTURAL_OVERLAY;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.nullable;
@@ -69,16 +71,20 @@ import android.os.Binder;
 import android.os.Looper;
 import android.os.RemoteException;
 import android.os.UserHandle;
+import android.platform.test.annotations.EnableFlags;
 import android.service.quicksettings.TileService;
 import android.testing.TestableContext;
+import android.util.Pair;
 
 import androidx.test.InstrumentationRegistry;
 
+import com.android.internal.statusbar.DisableStates;
 import com.android.internal.statusbar.IAddTileResultCallback;
 import com.android.internal.statusbar.IStatusBar;
 import com.android.server.LocalServices;
 import com.android.server.policy.GlobalActionsProvider;
 import com.android.server.wm.ActivityTaskManagerInternal;
+import com.android.systemui.shared.Flags;
 
 import libcore.junit.util.compat.CoreCompatChangeRule;
 
@@ -105,6 +111,7 @@ public class StatusBarManagerServiceTest {
             TEST_SERVICE);
     private static final CharSequence APP_NAME = "AppName";
     private static final CharSequence TILE_LABEL = "Tile label";
+    private static final int SECONDARY_DISPLAY_ID = 2;
 
     @Rule
     public final TestableContext mContext =
@@ -706,13 +713,18 @@ public class StatusBarManagerServiceTest {
     }
 
     @Test
-    public void testSetNavBarMode_setsModeNone() throws RemoteException {
+    public void testSetNavBarMode_setsModeGestural() throws Exception {
+        when(mOverlayManager.getDefaultOverlayPackages())
+                .thenReturn(new String[] {NAV_BAR_MODE_GESTURAL_OVERLAY});
+        when(mPackageManager.getPackageInfo(eq(NAV_BAR_MODE_GESTURAL_OVERLAY),
+                any(PackageManager.PackageInfoFlags.class))).thenReturn(new PackageInfo());
         int navBarModeNone = StatusBarManager.NAV_BAR_MODE_DEFAULT;
 
         mStatusBarManagerService.setNavBarMode(navBarModeNone);
 
         assertEquals(navBarModeNone, mStatusBarManagerService.getNavBarMode());
-        verify(mOverlayManager, never()).setEnabledExclusiveInCategory(anyString(), anyInt());
+        verify(mOverlayManager)
+                .setEnabledExclusiveInCategory(eq(NAV_BAR_MODE_GESTURAL_OVERLAY), anyInt());
     }
 
     @Test
@@ -746,6 +758,29 @@ public class StatusBarManagerServiceTest {
         mStatusBarManagerService.disable(DISABLE_NONE, mMockStatusBar, packageName);
         assertEquals(DISABLE_NONE,
                 mStatusBarManagerService.getDisableFlags(mMockStatusBar, userId)[0]);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_STATUS_BAR_CONNECTED_DISPLAYS)
+    public void testDisableForAllDisplays() throws Exception {
+        int user1Id = 0;
+        mockUidCheck();
+        mockCurrentUserCheck(user1Id);
+
+        mStatusBarManagerService.onDisplayAdded(SECONDARY_DISPLAY_ID);
+
+        int expectedFlags = DISABLE_MASK & DISABLE_BACK;
+        String pkg = mContext.getPackageName();
+
+        // before disabling
+        assertEquals(DISABLE_NONE,
+                mStatusBarManagerService.getDisableFlags(mMockStatusBar, user1Id)[0]);
+
+        // disable
+        mStatusBarManagerService.disable(expectedFlags, mMockStatusBar, pkg);
+
+        verify(mMockStatusBar, never()).disableForAllDisplays(any());
+        verify(mMockStatusBar).disable(eq(0), eq(expectedFlags), eq(0));
     }
 
     @Test
@@ -848,6 +883,29 @@ public class StatusBarManagerServiceTest {
         // check that right flag is disabled
         assertEquals(expectedFlags,
                 mStatusBarManagerService.getDisableFlags(mMockStatusBar, userId)[0]);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_STATUS_BAR_CONNECTED_DISPLAYS)
+    public void testDisable2ForAllDisplays() throws Exception {
+        int user1Id = 0;
+        mockUidCheck();
+        mockCurrentUserCheck(user1Id);
+
+        mStatusBarManagerService.onDisplayAdded(SECONDARY_DISPLAY_ID);
+
+        int expectedFlags = DISABLE2_MASK & DISABLE2_NOTIFICATION_SHADE;
+        String pkg = mContext.getPackageName();
+
+        // before disabling
+        assertEquals(DISABLE_NONE,
+                mStatusBarManagerService.getDisableFlags(mMockStatusBar, user1Id)[0]);
+
+        // disable
+        mStatusBarManagerService.disable2(expectedFlags, mMockStatusBar, pkg);
+
+        verify(mMockStatusBar, never()).disableForAllDisplays(any());
+        verify(mMockStatusBar).disable(eq(0), eq(0), eq(expectedFlags));
     }
 
     @Test

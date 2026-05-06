@@ -21,9 +21,6 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertEquals;
 
 import android.app.Application;
-import android.platform.test.annotations.DisableFlags;
-import android.platform.test.annotations.EnableFlags;
-import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -33,10 +30,8 @@ import androidx.preference.PreferenceViewHolder;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.android.settingslib.widget.preference.selector.R;
-import com.android.settingslib.widget.selectorwithwidgetpreference.flags.Flags;
 
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -45,7 +40,6 @@ import org.robolectric.RobolectricTestRunner;
 @RunWith(RobolectricTestRunner.class)
 public class SelectorWithWidgetPreferenceTest {
 
-    @Rule public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
     private Application mContext;
     private SelectorWithWidgetPreference mPreference;
 
@@ -78,20 +72,20 @@ public class SelectorWithWidgetPreferenceTest {
     @Test
     public void shouldHaveRadioPreferenceLayout() {
         assertThat(mPreference.getLayoutResource()).isEqualTo(
-                R.layout.preference_selector_with_widget);
+                R.layout.settingslib_preference_selector_with_widget);
     }
 
     @Test
     public void shouldHaveRadioButtonWidgetLayoutByDefault() {
         assertThat(mPreference.getWidgetLayoutResource())
-                .isEqualTo(R.layout.preference_widget_radiobutton);
+                .isEqualTo(R.layout.settingslib_preference_widget_radiobutton);
     }
 
     @Test
     public void shouldHaveCheckBoxWidgetLayoutIfSet() {
         mPreference = new SelectorWithWidgetPreference(mContext, true);
         assertThat(mPreference.getWidgetLayoutResource())
-                .isEqualTo(R.layout.preference_widget_checkbox);
+                .isEqualTo(R.layout.settingslib_preference_widget_checkbox);
     }
 
     @Test
@@ -128,26 +122,6 @@ public class SelectorWithWidgetPreferenceTest {
     }
 
     @Test
-    @DisableFlags(Flags.FLAG_ALLOW_SET_TITLE_MAX_LINES)
-    public void onBindViewHolder_titleMaxLinesSet_flagOff_titleMaxLinesMatchesDefault() {
-        final int titleMaxLines = 5;
-        AttributeSet attributeSet = Robolectric.buildAttributeSet()
-                .addAttribute(R.attr.titleMaxLines, String.valueOf(titleMaxLines))
-                .build();
-        mPreference = new SelectorWithWidgetPreference(mContext, attributeSet);
-        View view = LayoutInflater.from(mContext)
-                .inflate(mPreference.getLayoutResource(), null /* root */);
-        PreferenceViewHolder preferenceViewHolder =
-                PreferenceViewHolder.createInstanceForTests(view);
-
-        mPreference.onBindViewHolder(preferenceViewHolder);
-
-        TextView title = (TextView) preferenceViewHolder.findViewById(android.R.id.title);
-        assertThat(title.getMaxLines()).isEqualTo(SelectorWithWidgetPreference.DEFAULT_MAX_LINES);
-    }
-
-    @Test
-    @EnableFlags(Flags.FLAG_ALLOW_SET_TITLE_MAX_LINES)
     public void onBindViewHolder_noTitleMaxLinesSet_titleMaxLinesMatchesDefault() {
         AttributeSet attributeSet = Robolectric.buildAttributeSet().build();
         mPreference = new SelectorWithWidgetPreference(mContext, attributeSet);
@@ -163,7 +137,6 @@ public class SelectorWithWidgetPreferenceTest {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_ALLOW_SET_TITLE_MAX_LINES)
     public void onBindViewHolder_titleMaxLinesSet_titleMaxLinesUpdated() {
         final int titleMaxLines = 5;
         AttributeSet attributeSet = Robolectric.buildAttributeSet()
@@ -179,6 +152,29 @@ public class SelectorWithWidgetPreferenceTest {
 
         TextView title = (TextView) preferenceViewHolder.findViewById(android.R.id.title);
         assertThat(title.getMaxLines()).isEqualTo(titleMaxLines);
+    }
+
+    @Test
+    public void setTitleMaxLines_updatesTitleViewMaxLines() {
+        final int newMaxLines = 5;
+        View view = LayoutInflater.from(mContext)
+                .inflate(mPreference.getLayoutResource(), null /* root */);
+        PreferenceViewHolder preferenceViewHolder =
+                PreferenceViewHolder.createInstanceForTests(view);
+        TextView title = (TextView) preferenceViewHolder.findViewById(android.R.id.title);
+
+        // Bind to set the initial state and verify it's the default.
+        mPreference.onBindViewHolder(preferenceViewHolder);
+        assertThat(title.getMaxLines()).isEqualTo(SelectorWithWidgetPreference.DEFAULT_MAX_LINES);
+
+        // Set a new max lines value programmatically.
+        mPreference.setTitleMaxLines(newMaxLines);
+
+        // Re-bind the view holder to apply the change.
+        mPreference.onBindViewHolder(preferenceViewHolder);
+
+        // Assert that the TextView's max lines property is updated.
+        assertThat(title.getMaxLines()).isEqualTo(newMaxLines);
     }
 
     @Test

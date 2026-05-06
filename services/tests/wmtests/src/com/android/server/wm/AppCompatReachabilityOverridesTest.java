@@ -23,13 +23,9 @@ import static org.mockito.Mockito.spy;
 
 import android.compat.testing.PlatformCompatChangeRule;
 import android.graphics.Rect;
-import android.platform.test.annotations.DisableFlags;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 
 import androidx.annotation.NonNull;
-
-import com.android.window.flags.Flags;
 
 import junit.framework.Assert;
 
@@ -125,8 +121,7 @@ public class AppCompatReachabilityOverridesTest extends WindowTestsBase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_DISABLE_THIN_LETTERBOXING_POLICY)
-    public void testAllowReachabilityForThinLetterboxWithFlagEnabled() {
+    public void testAllowReachabilityForThinLetterbox_disableForThinLetterboxing() {
         runTestScenario((robot) -> {
             robot.activity().createActivityWithComponent();
 
@@ -142,30 +137,11 @@ public class AppCompatReachabilityOverridesTest extends WindowTestsBase {
         });
     }
 
-    @Test
-    @DisableFlags(Flags.FLAG_DISABLE_THIN_LETTERBOXING_POLICY)
-    public void testAllowReachabilityForThinLetterboxWithFlagDisabled() {
-        runTestScenario((robot) -> {
-            robot.activity().createActivityWithComponent();
-
-            robot.configureIsVerticalThinLetterboxed(/* isThin */ true);
-            robot.checkAllowVerticalReachabilityForThinLetterbox(/* expected */ true);
-            robot.configureIsHorizontalThinLetterboxed(/* isThin */ true);
-            robot.checkAllowHorizontalReachabilityForThinLetterbox(/* expected */ true);
-
-            robot.configureIsVerticalThinLetterboxed(/* isThin */ false);
-            robot.checkAllowVerticalReachabilityForThinLetterbox(/* expected */ true);
-            robot.configureIsHorizontalThinLetterboxed(/* isThin */ false);
-            robot.checkAllowHorizontalReachabilityForThinLetterbox(/* expected */ true);
-        });
-    }
-
     /**
      * Runs a test scenario providing a Robot.
      */
     void runTestScenario(@NonNull Consumer<ReachabilityOverridesRobotTest> consumer) {
-        final ReachabilityOverridesRobotTest robot =
-                new ReachabilityOverridesRobotTest(mWm, mAtm, mSupervisor);
+        final ReachabilityOverridesRobotTest robot = new ReachabilityOverridesRobotTest(this);
         consumer.accept(robot);
     }
 
@@ -173,17 +149,15 @@ public class AppCompatReachabilityOverridesTest extends WindowTestsBase {
 
         private final Supplier<Rect> mLetterboxInnerBoundsSupplier = spy(Rect::new);
 
-        ReachabilityOverridesRobotTest(@NonNull WindowManagerService wm,
-                @NonNull ActivityTaskManagerService atm,
-                @NonNull ActivityTaskSupervisor supervisor) {
-            super(wm, atm, supervisor);
+        ReachabilityOverridesRobotTest(@NonNull WindowTestsBase windowTestBase) {
+            super(windowTestBase);
         }
 
         @Override
         void onPostActivityCreation(@NonNull ActivityRecord activity) {
             super.onPostActivityCreation(activity);
-            spyOn(activity.mAppCompatController.getAppCompatReachabilityOverrides());
-            activity.mAppCompatController.getAppCompatReachabilityPolicy()
+            spyOn(activity.mAppCompatController.getReachabilityOverrides());
+            activity.mAppCompatController.getReachabilityPolicy()
                     .setLetterboxInnerBoundsSupplier(mLetterboxInnerBoundsSupplier);
         }
 
@@ -219,7 +193,7 @@ public class AppCompatReachabilityOverridesTest extends WindowTestsBase {
 
         @NonNull
         private AppCompatReachabilityOverrides getAppCompatReachabilityOverrides() {
-            return activity().top().mAppCompatController.getAppCompatReachabilityOverrides();
+            return activity().top().mAppCompatController.getReachabilityOverrides();
         }
 
     }

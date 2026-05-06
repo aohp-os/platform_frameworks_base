@@ -35,12 +35,12 @@ import android.view.DisplayInfo;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 
+import com.android.systemui.LauncherProxyService;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.SysuiTestableContext;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.navigationbar.NavigationBarController;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
-import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.settings.FakeDisplayTracker;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
@@ -80,7 +80,7 @@ public class NavigationBarButtonTest extends SysuiTestCase {
                 .thenReturn(mEdgeBackGestureHandler);
 
         mDependency.injectMockDependency(AssistManager.class);
-        mDependency.injectMockDependency(OverviewProxyService.class);
+        mDependency.injectMockDependency(LauncherProxyService.class);
         mDependency.injectMockDependency(KeyguardStateController.class);
         mDependency.injectMockDependency(NavigationBarController.class);
         mDependency.injectTestDependency(EdgeBackGestureHandler.Factory.class,

@@ -16,20 +16,20 @@
 
 package com.android.server.wm.flicker.notification
 
-import android.platform.systemui_tapl.controller.NotificationIdentity
-import android.platform.systemui_tapl.ui.Root
-import android.platform.test.annotations.Postsubmit
-import android.platform.test.annotations.Presubmit
+import androidx.test.filters.RequiresDevice
 import android.platform.test.rule.DisableNotificationCooldownSettingRule
 import android.tools.flicker.junit.FlickerParametersRunnerFactory
-import android.tools.flicker.legacy.FlickerBuilder
-import android.tools.flicker.legacy.FlickerTestData
-import android.tools.flicker.legacy.LegacyFlickerTest
-import android.tools.flicker.legacy.LegacyFlickerTestFactory
+import android.tools.flicker.FlickerBuilder
+import android.tools.flicker.FlickerTestData
+import android.tools.flicker.FlickerTest
+import android.tools.flicker.FlickerTestFactory
 import android.tools.helpers.wakeUpAndGoToHomeScreen
 import android.tools.traces.component.ComponentNameMatcher
 import android.view.WindowInsets
 import android.view.WindowManager
+import androidx.test.filters.FlakyTest
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import com.android.server.wm.flicker.helpers.NotificationAppHelper
 import com.android.server.wm.flicker.helpers.setRotation
 import com.android.server.wm.flicker.navBarLayerIsVisibleAtEnd
@@ -51,10 +51,12 @@ import org.junit.runners.Parameterized
  *
  * To run this test: `atest FlickerTestsNotification:OpenAppFromNotificationWarmTest`
  */
+@RequiresDevice
 @RunWith(Parameterized::class)
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
-open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
+@FlakyTest(bugId = 384046002)
+open class OpenAppFromNotificationWarmTest(flicker: FlickerTest) :
     OpenAppTransition(flicker) {
     override val testApp: NotificationAppHelper = NotificationAppHelper(instrumentation)
 
@@ -87,9 +89,8 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
             .withWindowSurfaceDisappeared(ComponentNameMatcher.NOTIFICATION_SHADE)
             .waitForAndVerify()
     }
-
     protected fun FlickerTestData.openAppFromNotification() {
-        doOpenAppAndWait()
+        doOpenAppAndWait(startY = 10, endY = 3 * device.displayHeight / 4, steps = 25)
     }
 
     protected fun FlickerTestData.openAppFromLockNotification() {
@@ -102,44 +103,39 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
                 WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()
             )
 
-        doOpenAppAndWait()
+        doOpenAppAndWait(startY = insets.top + 100, endY = device.displayHeight / 2, steps = 4)
     }
 
-    protected fun FlickerTestData.doOpenAppAndWait() {
-        val shade = Root.get().openNotificationShade()
+    protected fun FlickerTestData.doOpenAppAndWait(startY: Int, endY: Int, steps: Int) {
+        // Swipe down to show the notification shade
+        val x = device.displayWidth / 2
+        device.swipe(x, startY, x, endY, steps)
+        device.waitForIdle(2000)
+        instrumentation.uiAutomation.syncInputTransactions()
 
         // Launch the activity by clicking the notification
-        // Post notification and ensure that it's collapsed
         val notification =
-            shade.notificationStack.findNotification(
-                NotificationIdentity(
-                    type = NotificationIdentity.Type.BY_TEXT,
-                    text = "Flicker Test Notification",
-                )
-            )
+            device.wait(Until.findObject(By.text("Flicker Test Notification")), 2000L)
+        notification?.click() ?: error("Notification not found")
+        instrumentation.uiAutomation.syncInputTransactions()
 
-        notification.clickToApp()
         // Wait for the app to launch
         wmHelper.StateSyncBuilder().withFullScreenApp(testApp).waitForAndVerify()
     }
+    @Test override fun appWindowBecomesVisible() = appWindowBecomesVisible_warmStart()
 
-    @Presubmit @Test override fun appWindowBecomesVisible() = appWindowBecomesVisible_warmStart()
+    @Test override fun appLayerBecomesVisible() = appLayerBecomesVisible_warmStart()
 
-    @Presubmit @Test override fun appLayerBecomesVisible() = appLayerBecomesVisible_warmStart()
-
-    @Presubmit
     @Test
     open fun notificationAppWindowVisibleAtEnd() {
         flicker.assertWmEnd { this.isAppWindowVisible(testApp) }
     }
 
-    @Presubmit
     @Test
     open fun notificationAppWindowOnTopAtEnd() {
         flicker.assertWmEnd { this.isAppWindowOnTop(testApp) }
     }
 
-    @Presubmit
     @Test
     open fun notificationAppLayerVisibleAtEnd() {
         flicker.assertLayersEnd { this.isVisible(testApp) }
@@ -151,7 +147,6 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
      *
      * Note: Large screen only
      */
-    @Presubmit
     @Test
     open fun taskBarWindowIsVisibleAtEnd() {
         Assume.assumeTrue(usesTaskbar)
@@ -163,7 +158,6 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
      *
      * Note: Large screen only
      */
-    @Presubmit
     @Test
     open fun taskBarLayerIsVisibleAtEnd() {
         Assume.assumeTrue(usesTaskbar)
@@ -171,7 +165,6 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
     }
 
     /** Checks the position of the [ComponentNameMatcher.NAV_BAR] at the end of the transition */
-    @Presubmit
     @Test
     open fun navBarLayerPositionAtEnd() {
         Assume.assumeFalse(usesTaskbar)
@@ -179,14 +172,12 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
     }
 
     /** {@inheritDoc} */
-    @Presubmit
     @Test
     open fun navBarLayerIsVisibleAtEnd() {
         Assume.assumeFalse(usesTaskbar)
         flicker.navBarLayerIsVisibleAtEnd()
     }
 
-    @Presubmit
     @Test
     open fun navBarWindowIsVisibleAtEnd() {
         Assume.assumeFalse(usesTaskbar)
@@ -200,19 +191,18 @@ open class OpenAppFromNotificationWarmTest(flicker: LegacyFlickerTest) :
 
     /** {@inheritDoc} */
     @Test
-    @Postsubmit
     override fun taskBarWindowIsAlwaysVisible() = super.taskBarWindowIsAlwaysVisible()
 
     companion object {
         /**
          * Creates the test configurations.
          *
-         * See [LegacyFlickerTestFactory.nonRotationTests] for configuring screen orientation and
+         * See [FlickerTestFactory.nonRotationTests] for configuring screen orientation and
          * navigation modes.
          */
         @Parameterized.Parameters(name = "{0}")
         @JvmStatic
-        fun getParams() = LegacyFlickerTestFactory.nonRotationTests()
+        fun getParams() = FlickerTestFactory.nonRotationTests()
 
         /** Ensures that posted notifications will alert and HUN even just after boot. */
         @ClassRule

@@ -16,30 +16,22 @@
 
 package com.android.server.appfunctions;
 
-import static android.app.appfunctions.AppFunctionStaticMetadataHelper.APP_FUNCTION_STATIC_METADATA_DB;
-import static android.app.appfunctions.AppFunctionStaticMetadataHelper.APP_FUNCTION_STATIC_NAMESPACE;
-import static android.app.appfunctions.AppFunctionStaticMetadataHelper.STATIC_PROPERTY_RESTRICT_CALLERS_WITH_EXECUTE_APP_FUNCTIONS;
-import static android.app.appfunctions.AppFunctionStaticMetadataHelper.getDocumentIdForAppFunction;
-
-import static com.android.server.appfunctions.AppFunctionExecutors.THREAD_POOL_EXECUTOR;
-
 import android.Manifest;
 import android.annotation.BinderThread;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.DevicePolicyManager.AppFunctionsPolicy;
-import android.app.appsearch.AppSearchBatchResult;
-import android.app.appsearch.AppSearchManager;
-import android.app.appsearch.AppSearchManager.SearchContext;
-import android.app.appsearch.AppSearchResult;
-import android.app.appsearch.GenericDocument;
-import android.app.appsearch.GetByDocumentIdRequest;
+import android.app.appfunctions.AppFunctionAccessServiceInterface;
+import android.app.appfunctions.AppFunctionManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Process;
 import android.os.UserHandle;
+import android.os.UserManager;
+import android.permission.flags.Flags;
 
 import com.android.internal.infra.AndroidFuture;
 
@@ -48,9 +40,20 @@ import java.util.Objects;
 /* Validates that caller has the correct privilege to call an AppFunctionManager Api. */
 class CallerValidatorImpl implements CallerValidator {
     private final Context mContext;
+    private final AppFunctionAccessServiceInterface mAppFunctionAccessService;
 
-    CallerValidatorImpl(@NonNull Context context) {
+    private final DeviceSettingHelper mDeviceSettingHelper;
+
+    private final UserManager mUserManager;
+
+    CallerValidatorImpl(
+            @NonNull Context context,
+            @NonNull AppFunctionAccessServiceInterface appFunctionAccessService,
+            @NonNull UserManager userManager) {
         mContext = Objects.requireNonNull(context);
+        mAppFunctionAccessService = Objects.requireNonNull(appFunctionAccessService);
+        mDeviceSettingHelper = new DeviceSettingHelperImpl(context);
+        mUserManager = Objects.requireNonNull(userManager);
     }
 
     @Override
@@ -68,102 +71,101 @@ class CallerValidatorImpl implements CallerValidator {
     }
 
     @Override
-    @NonNull
     @BinderThread
-    public UserHandle verifyTargetUserHandle(
+    public void verifyTargetUserHandle(
             @NonNull UserHandle targetUserHandle, @NonNull String claimedCallingPackage) {
         int callingPid = Binder.getCallingPid();
         int callingUid = Binder.getCallingUid();
         final long callingIdentityToken = Binder.clearCallingIdentity();
         try {
-            return handleIncomingUser(
-                    claimedCallingPackage, targetUserHandle, callingPid, callingUid);
+            if (Flags.appFunctionAccessServiceEnabled()) {
+                enforceNoCrossUserOrSecondaryProfileInteraction(targetUserHandle, callingUid);
+            } else {
+                verifyUserInteraction(
+                        targetUserHandle.getIdentifier(),
+                        callingUid,
+                        callingPid,
+                        claimedCallingPackage);
+            }
         } finally {
             Binder.restoreCallingIdentity(callingIdentityToken);
         }
     }
 
-    @Override
-    @RequiresPermission(
-            anyOf = {
-                Manifest.permission.EXECUTE_APP_FUNCTIONS_TRUSTED,
-                Manifest.permission.EXECUTE_APP_FUNCTIONS
-            },
-            conditional = true)
-    public AndroidFuture<Boolean> verifyCallerCanExecuteAppFunction(
+    @RequiresPermission(Manifest.permission.EXECUTE_APP_FUNCTIONS)
+    @CanExecuteAppFunctionResult
+    private AndroidFuture<Integer> verifyCallerCanExecuteAppFunctionWithAccessService(
             int callingUid,
             int callingPid,
             @NonNull UserHandle targetUser,
             @NonNull String callerPackageName,
-            @NonNull String targetPackageName,
-            @NonNull String functionId) {
-        if (callerPackageName.equals(targetPackageName)) {
-            return AndroidFuture.completedFuture(true);
-        }
-
-        boolean hasTrustedExecutionPermission =
-                mContext.checkPermission(
-                                Manifest.permission.EXECUTE_APP_FUNCTIONS_TRUSTED,
-                                callingPid,
-                                callingUid)
-                        == PackageManager.PERMISSION_GRANTED;
-
-        if (hasTrustedExecutionPermission) {
-            return AndroidFuture.completedFuture(true);
-        }
+            @NonNull String targetPackageName) {
 
         boolean hasExecutionPermission =
                 mContext.checkPermission(
                                 Manifest.permission.EXECUTE_APP_FUNCTIONS, callingPid, callingUid)
                         == PackageManager.PERMISSION_GRANTED;
 
-        if (!hasExecutionPermission) {
-            return AndroidFuture.completedFuture(false);
+        boolean isSamePackage = callerPackageName.equals(targetPackageName);
+        int requestState =
+                mAppFunctionAccessService.getAccessRequestState(
+                        callerPackageName,
+                        UserHandle.getUserId(callingUid),
+                        mDeviceSettingHelper.getPermissionOwnerPackage(targetPackageName),
+                        targetUser.getIdentifier());
+        boolean hasAccessPermission =
+                requestState == AppFunctionManager.ACCESS_REQUEST_STATE_GRANTED;
+        if (hasExecutionPermission && hasAccessPermission) {
+            return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_HAS_PERMISSION);
         }
-
-        FutureAppSearchSession futureAppSearchSession =
-                new FutureAppSearchSessionImpl(
-                        Objects.requireNonNull(
-                                mContext.createContextAsUser(targetUser, 0)
-                                        .getSystemService(AppSearchManager.class)),
-                        THREAD_POOL_EXECUTOR,
-                        new SearchContext.Builder(APP_FUNCTION_STATIC_METADATA_DB).build());
-
-        String documentId = getDocumentIdForAppFunction(targetPackageName, functionId);
-
-        return futureAppSearchSession
-                .getByDocumentId(
-                        new GetByDocumentIdRequest.Builder(APP_FUNCTION_STATIC_NAMESPACE)
-                                .addIds(documentId)
-                                .build())
-                .thenApply(
-                        batchResult -> getGenericDocumentFromBatchResult(batchResult, documentId))
-                .thenApply(document -> !getRestrictCallersWithExecuteAppFunctionsProperty(document))
-                .whenComplete(
-                        (result, throwable) -> {
-                            futureAppSearchSession.close();
-                        });
+        if (isSamePackage) {
+            return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_SAME_PACKAGE);
+        }
+        return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_DENIED);
     }
 
-    private static GenericDocument getGenericDocumentFromBatchResult(
-            AppSearchBatchResult<String, GenericDocument> result, String documentId) {
-        if (result.isSuccess()) {
-            return result.getSuccesses().get(documentId);
+    @RequiresPermission(Manifest.permission.EXECUTE_APP_FUNCTIONS)
+    @CanExecuteAppFunctionResult
+    private AndroidFuture<Integer> verifyCallerCanExecuteAppFunctionHelper(
+            int callingUid,
+            int callingPid,
+            @NonNull String callerPackageName,
+            @NonNull String targetPackageName) {
+        boolean hasExecutionPermission =
+                mContext.checkPermission(
+                                Manifest.permission.EXECUTE_APP_FUNCTIONS, callingPid, callingUid)
+                        == PackageManager.PERMISSION_GRANTED;
+        if (hasExecutionPermission) {
+            return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_HAS_PERMISSION);
         }
-
-        AppSearchResult<GenericDocument> failedResult = result.getFailures().get(documentId);
-        throw new AppSearchException(
-                failedResult.getResultCode(),
-                "Unable to retrieve document with id: "
-                        + documentId
-                        + " due to "
-                        + failedResult.getErrorMessage());
+        if (callerPackageName.equals(targetPackageName)) {
+            return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_SAME_PACKAGE);
+        }
+        return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_DENIED);
     }
 
-    private static boolean getRestrictCallersWithExecuteAppFunctionsProperty(
-            GenericDocument genericDocument) {
-        return genericDocument.getPropertyBoolean(
-                STATIC_PROPERTY_RESTRICT_CALLERS_WITH_EXECUTE_APP_FUNCTIONS);
+    @Override
+    @RequiresPermission(Manifest.permission.EXECUTE_APP_FUNCTIONS)
+    @CanExecuteAppFunctionResult
+    public AndroidFuture<Integer> verifyCallerCanExecuteAppFunction(
+            int callingUid,
+            int callingPid,
+            @NonNull UserHandle targetUser,
+            @NonNull String callerPackageName,
+            @NonNull String targetPackageName,
+            @NonNull String functionId) {
+        if (callingUid == Process.ROOT_UID) {
+            // Bypass any validation if calling from ROOT_ID since it is not an actual package
+            // to verify.
+            return AndroidFuture.completedFuture(CAN_EXECUTE_APP_FUNCTIONS_ALLOWED_HAS_PERMISSION);
+        }
+
+        if (Flags.appFunctionAccessApiEnabled() && Flags.appFunctionAccessServiceEnabled()) {
+            return verifyCallerCanExecuteAppFunctionWithAccessService(
+                    callingUid, callingPid, targetUser, callerPackageName, targetPackageName);
+        }
+        return verifyCallerCanExecuteAppFunctionHelper(
+                callingUid, callingPid, callerPackageName, targetPackageName);
     }
 
     @Override
@@ -179,30 +181,18 @@ class CallerValidatorImpl implements CallerValidator {
                 && isAppFunctionPolicyAllowed(callingUserPolicy, isSameUser);
     }
 
-    /**
-     * Helper for dealing with incoming user arguments to system service calls.
-     *
-     * <p>Takes care of checking permissions and if the target is special user, this method will
-     * simply throw.
-     *
-     * @param callingPackageName The package name of the caller.
-     * @param targetUserHandle The user which the caller is requesting to execute as.
-     * @param callingPid The actual pid of the caller as determined by Binder.
-     * @param callingUid The actual uid of the caller as determined by Binder.
-     * @return the user handle that the call should run as. Will always be a concrete user.
-     * @throws IllegalArgumentException if the target user is a special user.
-     * @throws SecurityException if caller trying to interact across user without {@link
-     *     Manifest.permission#INTERACT_ACROSS_USERS_FULL}
-     */
-    @NonNull
-    private UserHandle handleIncomingUser(
-            @NonNull String callingPackageName,
-            @NonNull UserHandle targetUserHandle,
-            int callingPid,
-            int callingUid) {
+    @Override
+    public void verifyUserInteraction(int targetUserId, int callingUid, int callingPid) {
+        verifyUserInteraction(targetUserId, callingUid, callingPid, /* callingPackageName= */ null);
+    }
+
+    @Override
+    public void verifyUserInteraction(
+            int targetUserId, int callingUid, int callingPid, @Nullable String callingPackageName) {
+        UserHandle targetUserHandle = UserHandle.of(targetUserId);
         UserHandle callingUserHandle = UserHandle.getUserHandleForUid(callingUid);
         if (callingUserHandle.equals(targetUserHandle)) {
-            return targetUserHandle;
+            return;
         }
 
         // Duplicates UserController#ensureNotSpecialUser
@@ -214,6 +204,7 @@ class CallerValidatorImpl implements CallerValidator {
         if (mContext.checkPermission(
                         Manifest.permission.INTERACT_ACROSS_USERS_FULL, callingPid, callingUid)
                 == PackageManager.PERMISSION_GRANTED) {
+            if (callingPackageName == null) return;
             try {
                 mContext.createPackageContextAsUser(
                         callingPackageName, /* flags= */ 0, targetUserHandle);
@@ -224,7 +215,7 @@ class CallerValidatorImpl implements CallerValidator {
                                 + " haven't installed for user "
                                 + targetUserHandle.getIdentifier());
             }
-            return targetUserHandle;
+            return;
         }
         throw new SecurityException(
                 "Permission denied while calling from uid "
@@ -236,12 +227,41 @@ class CallerValidatorImpl implements CallerValidator {
     }
 
     /**
+     * Enforce that any cross profile interaction or calling from secondary profile are not allowed.
+     *
+     * @param targetUserHandle The user which the caller is requesting to execute as.
+     * @param callingUid The actual uid of the caller as determined by Binder.
+     * @throws SecurityException if caller trying to interact across user or within secondary
+     *     profile.
+     */
+    private void enforceNoCrossUserOrSecondaryProfileInteraction(
+            @NonNull UserHandle targetUserHandle, int callingUid) {
+        UserHandle callingUserHandle = UserHandle.getUserHandleForUid(callingUid);
+        if (!callingUserHandle.equals(targetUserHandle)) {
+            throw new SecurityException(
+                    "Permission denied while calling from uid "
+                            + callingUid
+                            + " with "
+                            + targetUserHandle
+                            + "; Cross user interaction is not allowed");
+        }
+
+        if (mUserManager.isProfile(targetUserHandle.getIdentifier())) {
+            throw new SecurityException("Permission denied while calling from secondary profile");
+        }
+    }
+
+    /**
      * Checks that the caller's supposed package name matches the uid making the call.
      *
      * @throws SecurityException if the package name and uid don't match.
      */
     private void validateCallingPackageInternal(
             int actualCallingUid, @NonNull String claimedCallingPackage) {
+        if (actualCallingUid == Process.ROOT_UID) {
+            // root does not have a package name
+            return;
+        }
         UserHandle callingUserHandle = UserHandle.getUserHandleForUid(actualCallingUid);
         Context actualCallingUserContext =
                 mContext.createContextAsUser(callingUserHandle, /* flags= */ 0);

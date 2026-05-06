@@ -16,8 +16,6 @@
 
 package com.android.systemui.keyguard.domain.interactor
 
-import android.app.ActivityManager
-import android.app.WindowConfiguration
 import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.EnableFlags
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,21 +23,21 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectValues
+import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
-import com.android.systemui.keyguard.data.repository.keyguardOcclusionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.StatusBarState
 import com.android.systemui.keyguard.shared.model.StatusBarState.KEYGUARD
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
+import com.android.systemui.keyguard.util.KeyguardTransitionRepositorySpySubject.Companion.assertThat as assertThatRepository
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.shade.data.repository.FlingInfo
 import com.android.systemui.shade.data.repository.fakeShadeRepository
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -47,21 +45,18 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.spy
-import com.android.systemui.keyguard.util.KeyguardTransitionRepositorySpySubject.Companion.assertThat as assertThatRepository
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
     private val kosmos =
         testKosmos().apply {
-            this.fakeKeyguardTransitionRepository = spy(FakeKeyguardTransitionRepository(
-                testScope = testScope,
-            ))
+            this.fakeKeyguardTransitionRepository =
+                spy(FakeKeyguardTransitionRepository(testScope = testScope))
         }
 
     private val testScope = kosmos.testScope
-    private val underTest = kosmos.fromLockscreenTransitionInteractor
+    private val underTest by lazy { kosmos.fromLockscreenTransitionInteractor }
     private lateinit var transitionRepository: FakeKeyguardTransitionRepository
     private val shadeRepository = kosmos.fakeShadeRepository
     private val keyguardRepository = kosmos.fakeKeyguardRepository
@@ -72,6 +67,39 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
     }
 
     @Test
+    @DisableSceneContainer
+    fun testOccludedFailsafe() =
+        testScope.runTest {
+            underTest.start()
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.OFF,
+                to = KeyguardState.AOD,
+                testScope,
+            )
+
+            // Simulate the device being put into OCCLUDED state, but was somehow missed by the
+            // FromAodTransitionInteractor
+            keyguardRepository.setKeyguardOccluded(true)
+            runCurrent()
+            reset(transitionRepository)
+
+            transitionRepository.sendTransitionStep(
+                TransitionStep(
+                    transitionState = TransitionState.STARTED,
+                    from = KeyguardState.AOD,
+                    to = KeyguardState.LOCKSCREEN,
+                )
+            )
+            runCurrent()
+
+            // After the above step was STARTED, the transition should be corrected to go to
+            // OCCLUDED
+            assertThatRepository(transitionRepository)
+                .startedTransition(from = KeyguardState.LOCKSCREEN, to = KeyguardState.OCCLUDED)
+        }
+
+    @Test
+    @DisableSceneContainer
     fun testSurfaceBehindVisibility() =
         testScope.runTest {
             val values by collectValues(underTest.surfaceBehindVisibility)
@@ -128,6 +156,7 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
         }
 
     @Test
+    @DisableSceneContainer
     fun draggingToPrimaryBouncerUpdateIsSent() =
         testScope.runTest {
             underTest.start()
@@ -176,10 +205,17 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
 
     @Test
     @EnableFlags(Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR)
+    @DisableSceneContainer
     fun testTransitionsToGone_whenDismissFlingWhileDismissable_flagEnabled() =
         testScope.runTest {
             underTest.start()
             assertThatRepository(transitionRepository).noTransitionsStarted()
+
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.DOZING,
+                to = KeyguardState.LOCKSCREEN,
+                testScope = testScope,
+            )
 
             keyguardRepository.setKeyguardDismissible(true)
             runCurrent()
@@ -194,6 +230,7 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
 
     @Test
     @DisableFlags(Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR)
+    @DisableSceneContainer
     fun testDoesNotTransitionToGone_whenDismissFlingWhileDismissable_flagDisabled() =
         testScope.runTest {
             underTest.start()
@@ -211,6 +248,7 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
 
     @Test
     @DisableFlags(Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR)
+    @DisableSceneContainer
     fun testDoesNotTransitionToGone_whenDismissFling_emitsNull() =
         testScope.runTest {
             underTest.start()
@@ -227,46 +265,8 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
             assertThatRepository(transitionRepository).noTransitionsStarted()
         }
 
-    @EnableFlags(Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR)
-    fun testTransitionsToOccluded_whenShowWhenLockedActivityOnTop() =
-        testScope.runTest {
-            underTest.start()
-            runCurrent()
-
-            reset(transitionRepository)
-            kosmos.keyguardOcclusionRepository.setShowWhenLockedActivityInfo(
-                true,
-                ActivityManager.RunningTaskInfo().apply {
-                    topActivityType = WindowConfiguration.ACTIVITY_TYPE_STANDARD
-                },
-            )
-            runCurrent()
-
-            assertThatRepository(transitionRepository)
-                .startedTransition(from = KeyguardState.LOCKSCREEN, to = KeyguardState.OCCLUDED)
-        }
-
     @Test
-    @EnableFlags(Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR)
-    fun testTransitionsToDream_whenDreamActivityOnTop() =
-        testScope.runTest {
-            underTest.start()
-            runCurrent()
-
-            reset(transitionRepository)
-            kosmos.keyguardOcclusionRepository.setShowWhenLockedActivityInfo(
-                true,
-                ActivityManager.RunningTaskInfo().apply {
-                    topActivityType = WindowConfiguration.ACTIVITY_TYPE_DREAM
-                },
-            )
-            runCurrent()
-
-            assertThatRepository(transitionRepository)
-                .startedTransition(from = KeyguardState.LOCKSCREEN, to = KeyguardState.DREAMING)
-        }
-
-    @Test
+    @DisableSceneContainer
     fun testTransitionsBackToOccluded_ifOccluded_andCanceledSwipe() =
         testScope.runTest {
             underTest.start()
@@ -311,6 +311,7 @@ class FromLockscreenTransitionInteractorTest : SysuiTestCase() {
      * ID to get stuck in this scenario, preventing subsequent transitions to PRIMARY_BOUNCER.
      */
     @Test
+    @DisableSceneContainer
     fun testExternalTransitionAwayFromBouncer_transitionIdNotStuck() =
         testScope.runTest {
             underTest.start()

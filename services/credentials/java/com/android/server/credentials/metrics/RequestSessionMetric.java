@@ -19,6 +19,7 @@ package com.android.server.credentials.metrics;
 import static com.android.server.credentials.MetricUtilities.DEFAULT_INT_32;
 import static com.android.server.credentials.MetricUtilities.DELTA_EXCEPTION_CUT;
 import static com.android.server.credentials.MetricUtilities.DELTA_RESPONSES_CUT;
+import static com.android.server.credentials.MetricUtilities.UNIT;
 import static com.android.server.credentials.MetricUtilities.generateMetricKey;
 import static com.android.server.credentials.MetricUtilities.logApiCalledAggregateCandidate;
 import static com.android.server.credentials.MetricUtilities.logApiCalledAuthenticationMetric;
@@ -225,6 +226,22 @@ public class RequestSessionMetric {
     }
 
     /**
+     * Collects initializations for Get flow metrics.
+     *
+     * @param request the get credential request containing information to parse for metrics
+     * @param isApiPrepared indicates this API flow utilized the 'prepare' flow
+     */
+    public void collectGetFlowInitialMetricInfo(GetCredentialRequest request,
+            boolean isApiPrepared) {
+        try {
+            collectGetFlowInitialMetricInfo(request);
+            mInitialPhaseMetric.setApiUsedPrepareFlow(isApiPrepared);
+        } catch (Exception e) {
+            Slog.i(TAG, "Unexpected error collecting get flow initial metric: " + e);
+        }
+    }
+
+    /**
      * During browsing, where multiple entries can be selected, this collects the browsing phase
      * metric information. This is emitted together with the final phase, and the recursive path
      * with authentication entries, which may occur in rare circumstances, are captured.
@@ -242,6 +259,21 @@ public class RequestSessionMetric {
             mCandidateBrowsingPhaseMetric.add(browsingPhaseMetric);
         } catch (Exception e) {
             Slog.i(TAG, "Unexpected error collecting browsing metric: " + e);
+        }
+    }
+
+    /**
+     * This collects the final chosen class type. While it is possible to collect this during
+     * browsing, note this only collects the final tapped bit.
+     *
+     * @param createOrCredentialType the string type to collect when an entry is tapped by the user
+     */
+    public void collectChosenClassType(String createOrCredentialType) {
+        String truncatedType = generateMetricKey(createOrCredentialType, DELTA_RESPONSES_CUT);
+        try {
+            mChosenProviderFinalPhaseMetric.setChosenClassType(truncatedType);
+        } catch (Exception e) {
+            Slog.i(TAG, "Unexpected error collecting chosen class type metadata: " + e);
         }
     }
 
@@ -303,6 +335,29 @@ public class RequestSessionMetric {
                     finalStatus.getMetricCode());
         } catch (Exception e) {
             Slog.i(TAG, "Unexpected error during final phase provider status metric logging: " + e);
+        }
+    }
+
+    /**
+     * In certain flows, such as exceptions where no provider is specified (e.g. user cancellations
+     * or client cancellations), this can be used at the very final point to collect missing meta
+     * data. Certain metadata, therefore, is undefined - specifically the provider. However, other
+     * metadata, such as latency figures, can now be properly seen.
+     */
+    public void captureMissingLogMetadata() {
+        try {
+            if (mChosenProviderFinalPhaseMetric.getChosenUid() == DEFAULT_INT_32
+                    && mChosenProviderFinalPhaseMetric.getQueryStartTimeNanoseconds() < UNIT) {
+                mChosenProviderFinalPhaseMetric.setServiceBeganTimeNanoseconds(
+                        mCandidateAggregateMetric.getServiceBeganTimeNanoseconds());
+                mChosenProviderFinalPhaseMetric.setQueryStartTimeNanoseconds(
+                        mCandidateAggregateMetric.getMinProviderTimestampNanoseconds());
+                mChosenProviderFinalPhaseMetric.setQueryEndTimeNanoseconds(
+                        mCandidateAggregateMetric.getMaxProviderTimestampNanoseconds());
+                mChosenProviderFinalPhaseMetric.setFinalFinishTimeNanoseconds(System.nanoTime());
+            }
+        } catch (Exception e) {
+            Slog.i(TAG, "Unexpected error during final phase missing metadata logging " + e);
         }
     }
 

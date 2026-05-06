@@ -163,7 +163,8 @@ public class SystemVibratorManager extends VibratorManager {
     }
 
     @Override
-    public void performHapticFeedback(int constant, String reason, int flags, int privFlags) {
+    public void performHapticFeedback(int constant, @VibrationAttributes.Usage int usage,
+            String reason, int flags, int privFlags) {
         if (mService == null) {
             Log.w(TAG, "Failed to perform haptic feedback; no vibrator manager service.");
             return;
@@ -171,7 +172,7 @@ public class SystemVibratorManager extends VibratorManager {
         Trace.traceBegin(TRACE_TAG_VIBRATOR, "performHapticFeedback");
         try {
             mService.performHapticFeedback(mUid, mContext.getDeviceId(), mPackageName, constant,
-                    reason, flags, privFlags);
+                    usage, reason, flags, privFlags);
         } catch (RemoteException e) {
             Log.w(TAG, "Failed to perform haptic feedback.", e);
         } finally {
@@ -217,7 +218,7 @@ public class SystemVibratorManager extends VibratorManager {
                 new VendorVibrationSessionCallbackDelegate(executor, callback);
         if (mService == null) {
             Log.w(TAG, "Failed to start vibration session; no vibrator manager service.");
-            callbackDelegate.onFinished(VendorVibrationSession.STATUS_UNKNOWN_ERROR);
+            callbackDelegate.onFinished(VendorVibrationSession.STATUS_UNSUPPORTED);
             return;
         }
         try {
@@ -364,8 +365,10 @@ public class SystemVibratorManager extends VibratorManager {
         }
 
         @Override
-        public void performHapticFeedback(int effectId, String reason, int flags, int privFlags) {
-            SystemVibratorManager.this.performHapticFeedback(effectId, reason, flags, privFlags);
+        public void performHapticFeedback(int effectId, @VibrationAttributes.Usage int usage,
+                String reason, int flags, int privFlags) {
+            SystemVibratorManager.this.performHapticFeedback(
+                    effectId, usage, reason, flags, privFlags);
         }
 
         @Override

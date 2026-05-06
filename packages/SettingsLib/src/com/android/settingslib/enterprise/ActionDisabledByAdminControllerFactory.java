@@ -16,19 +16,17 @@
 
 package com.android.settingslib.enterprise;
 
-import static android.app.admin.DevicePolicyManager.DEVICE_OWNER_TYPE_FINANCED;
-
 import static com.android.settingslib.enterprise.ActionDisabledLearnMoreButtonLauncher.DEFAULT_RESOLVE_ACTIVITY_CHECKER;
 import static com.android.settingslib.enterprise.ManagedDeviceActionDisabledByAdminController.DEFAULT_FOREGROUND_USER_CHECKER;
 
 import android.app.admin.DevicePolicyManager;
+import android.app.supervision.SupervisionManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.hardware.biometrics.BiometricAuthenticator;
 import android.hardware.biometrics.ParentalControlsUtilsInternal;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.provider.DeviceConfig;
 import android.text.TextUtils;
 
 /**
@@ -59,12 +57,18 @@ public final class ActionDisabledByAdminControllerFactory {
     }
 
     private static boolean isSupervisedDevice(Context context) {
-        DevicePolicyManager devicePolicyManager =
-                context.getSystemService(DevicePolicyManager.class);
-        ComponentName supervisionComponent =
-                devicePolicyManager.getProfileOwnerOrDeviceOwnerSupervisionComponent(
-                        new UserHandle(UserHandle.myUserId()));
-        return supervisionComponent != null;
+        if (android.app.supervision.flags.Flags.deprecateDpmSupervisionApis()) {
+            SupervisionManager supervisionManager =
+                    context.getSystemService(SupervisionManager.class);
+            return supervisionManager.isSupervisionEnabledForUser(UserHandle.myUserId());
+        } else {
+            DevicePolicyManager devicePolicyManager =
+                    context.getSystemService(DevicePolicyManager.class);
+            ComponentName supervisionComponent =
+                    devicePolicyManager.getProfileOwnerOrDeviceOwnerSupervisionComponent(
+                            new UserHandle(UserHandle.myUserId()));
+            return supervisionComponent != null;
+        }
     }
 
     /**
@@ -77,20 +81,17 @@ public final class ActionDisabledByAdminControllerFactory {
             return false;
         }
         DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
-        return ParentalControlsUtilsInternal.parentConsentRequired(context, dpm,
+        final SupervisionManager sm =
+                android.app.supervision.flags.Flags.deprecateDpmSupervisionApis()
+                        ? context.getSystemService(SupervisionManager.class)
+                        : null;
+        return ParentalControlsUtilsInternal.parentConsentRequired(context, dpm, sm,
                 BiometricAuthenticator.TYPE_ANY_BIOMETRIC, new UserHandle(UserHandle.myUserId()));
     }
 
     private static boolean isFinancedDevice(Context context) {
         DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
-        // TODO(b/259908270): remove
-        if (DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_DEVICE_POLICY_MANAGER,
-                DevicePolicyManager.ADD_ISFINANCED_DEVICE_FLAG,
-                DevicePolicyManager.ADD_ISFINANCED_FEVICE_DEFAULT)) {
-            return dpm.isFinancedDevice();
-        }
-        return dpm.isDeviceManaged() && dpm.getDeviceOwnerType(
-                dpm.getDeviceOwnerComponentOnAnyUser()) == DEVICE_OWNER_TYPE_FINANCED;
+        return dpm.isFinancedDevice();
     }
 
     private ActionDisabledByAdminControllerFactory() {

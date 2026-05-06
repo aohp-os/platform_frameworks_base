@@ -20,7 +20,11 @@ import android.content.applicationContext
 import com.android.systemui.classifier.domain.interactor.falsingInteractor
 import com.android.systemui.globalactions.globalActionsDialogLite
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.qs.footerActionsInteractor
+import com.android.systemui.qs.panels.ui.viewmodel.textFeedbackContentViewModelFactory
+import com.android.systemui.user.domain.interactor.fakeHeadlessSystemUserMode
+import com.android.systemui.user.domain.interactor.selectedUserInteractor
 
 val Kosmos.toolbarViewModelFactory by
     Kosmos.Fixture {
@@ -28,10 +32,14 @@ val Kosmos.toolbarViewModelFactory by
             override fun create(): ToolbarViewModel {
                 return ToolbarViewModel(
                     editModeButtonViewModelFactory,
+                    textFeedbackContentViewModelFactory,
                     footerActionsInteractor,
                     { globalActionsDialogLite },
                     falsingInteractor,
+                    selectedUserInteractor,
+                    fakeHeadlessSystemUserMode,
                     applicationContext,
+                    testDispatcher,
                 )
             }
         }

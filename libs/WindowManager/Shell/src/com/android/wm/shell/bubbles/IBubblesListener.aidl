@@ -33,4 +33,7 @@ oneway interface IBubblesListener {
      * Does not result in a state change.
      */
     void animateBubbleBarLocation(in BubbleBarLocation location);
+
+    /** Show bubble bar drop target at provided location or hide if location is null. */
+    void showBubbleBarDropTargetAt(in BubbleBarLocation location);
 }

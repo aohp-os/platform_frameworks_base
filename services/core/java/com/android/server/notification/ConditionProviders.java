@@ -174,10 +174,8 @@ public class ConditionProviders extends ManagedServices {
     @Override
     public void onUserSwitched(int user) {
         super.onUserSwitched(user);
-        if (android.app.Flags.modesHsum()) {
-            for (int i = 0; i < mSystemConditionProviders.size(); i++) {
-                mSystemConditionProviders.valueAt(i).onUserSwitched(UserHandle.of(user));
-            }
+        for (int i = 0; i < mSystemConditionProviders.size(); i++) {
+            mSystemConditionProviders.valueAt(i).onUserSwitched(UserHandle.of(user));
         }
     }
 
@@ -290,6 +288,13 @@ public class ConditionProviders extends ManagedServices {
         return rt;
     }
 
+    @VisibleForTesting
+    ConditionRecord getRecord(Uri id, ComponentName component) {
+        synchronized (mMutex) {
+            return getRecordLocked(id, component, false);
+        }
+    }
+
     private ConditionRecord getRecordLocked(Uri id, ComponentName component, boolean create) {
         if (id == null || component == null) return null;
         final int N = mRecords.size();
@@ -325,7 +330,7 @@ public class ConditionProviders extends ManagedServices {
         for (int i = 0; i < N; i++) {
             final Condition c = conditions[i];
             if (mCallback != null) {
-                mCallback.onConditionChanged(c.id, c);
+                mCallback.onConditionChanged(c.id, c, info.uid);
             }
         }
     }
@@ -492,7 +497,7 @@ public class ConditionProviders extends ManagedServices {
         return removed;
     }
 
-    private static class ConditionRecord {
+    static class ConditionRecord {
         public final Uri id;
         public final ComponentName component;
         public Condition condition;
@@ -515,7 +520,7 @@ public class ConditionProviders extends ManagedServices {
 
     public interface Callback {
         void onServiceAdded(ComponentName component);
-        void onConditionChanged(Uri id, Condition condition);
+        void onConditionChanged(Uri id, Condition condition, int callerUid);
     }
 
 }

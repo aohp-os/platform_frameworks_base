@@ -14,21 +14,59 @@
  * limitations under the License.
  */
 package com.android.internal.widget.remotecompose.core;
-
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 
 /** Services that are needed to be provided by the platform during encoding. */
 public interface Platform {
-    @Nullable
-    byte[] imageToByteArray(@NonNull Object image);
 
+    /**
+     * Converts a platform-specific image object into a platform-independent byte buffer
+     *
+     * @param image
+     * @return
+     */
+    @Nullable byte [] imageToByteArray(@NonNull Object image);
+
+    /**
+     * Returns the width of a platform-specific image object
+     *
+     * @param image platform-specific image object
+     * @return the width of the image in pixels
+     */
     int getImageWidth(@NonNull Object image);
 
+    /**
+     * Returns the height of a platform-specific image object
+     *
+     * @param image platform-specific image object
+     * @return the height of the image in pixels
+     */
     int getImageHeight(@NonNull Object image);
 
-    @Nullable
-    float[] pathToFloatArray(@NonNull Object path);
+    /**
+     * Returns true if the platform-specific image object has format ALPHA_8
+     *
+     * @param image platform-specific image object
+     * @return whether or not the platform-specific image object has format ALPHA_8
+     */
+    boolean isAlpha8Image(@NonNull Object image);
+
+    /**
+     * Converts a platform-specific path object into a platform-independent float buffer
+     *
+     * @param path path object
+     * @return float array of the path
+     */
+    @Nullable float [] pathToFloatArray(@NonNull Object path);
+
+    /**
+     * Parse a path represented as a string and returns a Path object
+     *
+     * @param pathData path data
+     * @return platform path
+     */
+    @NonNull Object parsePath(@NonNull String pathData);
 
     enum LogCategory {
         DEBUG,
@@ -38,7 +76,34 @@ public interface Platform {
         TODO,
     }
 
-    void log(LogCategory category, String message);
+    /**
+     * Log a message
+     *
+     * @param category
+     * @param message
+     */
+    void log(@NonNull LogCategory category, @NonNull String message);
+
+    /**
+     * Represents a precomputed text layout, for complex text painting / measuring / layout. Allows
+     * the implementation to return a cached / engine after a text measure to be used int the paint
+     * pass.
+     */
+    interface ComputedTextLayout {
+        /**
+         * Horizontal dimension of this text layout
+         *
+         * @return
+         */
+        float getWidth();
+
+        /**
+         * Vertical dimension of this text layout
+         *
+         * @return
+         */
+        float getHeight();
+    }
 
     Platform None =
             new Platform() {
@@ -58,11 +123,21 @@ public interface Platform {
                 }
 
                 @Override
+                public boolean isAlpha8Image(@NonNull Object image) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
                 public float[] pathToFloatArray(@NonNull Object path) {
                     throw new UnsupportedOperationException();
                 }
 
                 @Override
-                public void log(LogCategory category, String message) {}
+                public @NonNull Object parsePath(@NonNull String pathData) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public void log(@NonNull LogCategory category, @NonNull String message) {}
             };
 }

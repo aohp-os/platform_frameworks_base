@@ -31,15 +31,9 @@ import com.android.internal.os.IResultReceiver;
  * runner control certain aspects of the recents animation, and to notify window manager when the
  * animation has completed.
  *
- * {@hide}
+ * @hide
  */
 interface IRecentsAnimationController {
-
-    /**
-     * Takes a screenshot of the task associated with the given {@param taskId}. Only valid for the
-     * current set of task ids provided to the handler.
-     */
-    TaskSnapshot screenshotTask(int taskId);
 
     /**
      * Sets the final surface transaction on a Task. This is used by Launcher to notify the system

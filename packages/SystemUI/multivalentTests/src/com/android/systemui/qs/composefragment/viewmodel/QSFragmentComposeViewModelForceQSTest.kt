@@ -16,14 +16,16 @@
 
 package com.android.systemui.qs.composefragment.viewmodel
 
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.testing.TestableLooper.RunWithLooper
 import androidx.test.filters.SmallTest
-import com.android.systemui.deviceentry.data.repository.fakeDeviceEntryRepository
+import com.android.systemui.Flags
+import com.android.systemui.deviceentry.data.repository.fakeDeviceEntryBypassRepository
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.sysuiStatusBarStateController
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,10 +35,10 @@ import platform.test.runner.parameterized.Parameters
 @SmallTest
 @RunWith(ParameterizedAndroidJunit4::class)
 @RunWithLooper
-@OptIn(ExperimentalCoroutinesApi::class)
 class QSFragmentComposeViewModelForceQSTest(private val testData: TestData) :
     AbstractQSFragmentComposeViewModelTest() {
 
+    @DisableFlags(Flags.FLAG_NO_EXPANSION_ON_OVERSCROLL)
     @Test
     fun forceQs_orRealExpansion() =
         with(kosmos) {
@@ -45,7 +47,7 @@ class QSFragmentComposeViewModelForceQSTest(private val testData: TestData) :
                     sysuiStatusBarStateController.setState(statusBarState)
                     underTest.isQsExpanded = expanded
                     underTest.isStackScrollerOverscrolling = stackScrollerOverScrolling
-                    fakeDeviceEntryRepository.setBypassEnabled(bypassEnabled)
+                    fakeDeviceEntryBypassRepository.setBypassEnabled(bypassEnabled)
                     underTest.isTransitioningToFullShade = transitioningToFullShade
                     underTest.isInSplitShade = inSplitShade
 
@@ -54,6 +56,34 @@ class QSFragmentComposeViewModelForceQSTest(private val testData: TestData) :
                     runCurrent()
                     assertThat(underTest.expansionState.progress)
                         .isEqualTo(if (expectedForceQS) 1f else EXPANSION)
+                }
+            }
+        }
+
+    @EnableFlags(Flags.FLAG_NO_EXPANSION_ON_OVERSCROLL)
+    @Test
+    fun forceQs_orRealExpansion_withNoExpansionOnOverscroll() =
+        with(kosmos) {
+            testScope.testWithinLifecycle {
+                with(testData) {
+                    sysuiStatusBarStateController.setState(statusBarState)
+                    underTest.isQsExpanded = expanded
+                    underTest.isStackScrollerOverscrolling = stackScrollerOverScrolling
+                    fakeDeviceEntryBypassRepository.setBypassEnabled(bypassEnabled)
+                    underTest.isTransitioningToFullShade = transitioningToFullShade
+                    underTest.isInSplitShade = inSplitShade
+
+                    underTest.setQsExpansionValue(EXPANSION)
+
+                    runCurrent()
+                    assertThat(underTest.expansionState.progress)
+                        .isEqualTo(
+                            if (expectedForceQS) {
+                                1f
+                            } else {
+                                if (stackScrollerOverScrolling) 0 else EXPANSION
+                            }
+                        )
                 }
             }
         }

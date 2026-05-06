@@ -29,6 +29,8 @@ import com.android.internal.widget.remotecompose.core.operations.layout.Componen
 import com.android.internal.widget.remotecompose.core.operations.layout.LayoutComponent;
 import com.android.internal.widget.remotecompose.core.operations.layout.ScrollDelegate;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -93,13 +95,14 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
     }
 
     /** Reset the modifier */
+    @Override
     public void reset() {
         mLastTime = 0;
         mScrollX = 0f;
     }
 
     @Override
-    public void write(WireBuffer buffer) {
+    public void write(@NonNull WireBuffer buffer) {
         apply(
                 buffer,
                 mIterations,
@@ -110,15 +113,32 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
                 mVelocity);
     }
 
-    // @Override
-    public void serializeToString(int indent, StringSerializer serializer) {
-        serializer.append(indent, "MARQUEE = [" + mIterations + "]");
+    /**
+     * Serialize the string
+     *
+     * @param indent padding to display
+     * @param serializer append the string
+     */
+    @Override
+    public void serializeToString(int indent, @NonNull StringSerializer serializer) {
+        serializer.append(
+                indent,
+                "MARQUEE = ["
+                        + mIterations
+                        + "] "
+                        + mComponentWidth
+                        + " x "
+                        + mComponentHeight
+                        + " / "
+                        + mContentWidth
+                        + " x "
+                        + mContentHeight);
     }
 
     @NonNull
     @Override
     public String deepToString(@NonNull String indent) {
-        return (indent != null ? indent : "") + toString();
+        return indent + toString();
     }
 
     private long mLastTime = 0;
@@ -127,8 +147,8 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
     private float mScrollX = 0f;
 
     @Override
-    public void paint(PaintContext context) {
-        long currentTime = System.currentTimeMillis();
+    public void paint(@NonNull PaintContext context) {
+        long currentTime = context.getClock().millis();
         if (mLastTime == 0) {
             mLastTime = currentTime;
             mStartTime = mLastTime + (long) mInitialDelayMillis;
@@ -138,7 +158,7 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
             float density = context.getContext().getDensity(); // in dp
             float delta = mContentWidth - mComponentWidth;
             float duration = delta / (density * mVelocity);
-            float elapsed = ((System.currentTimeMillis() - mStartTime) / 1000f);
+            float elapsed = ((currentTime - mStartTime) / 1000f);
             elapsed = (elapsed % duration) / duration;
             float offset =
                     (1f + (float) Math.sin(elapsed * 2 * Math.PI - Math.PI / 2f)) / 2f * -delta;
@@ -153,16 +173,37 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
         return "MarqueeModifierOperation(" + mIterations + ")";
     }
 
-    public static String name() {
+    /**
+     * Name of the operation
+     *
+     * @return name
+     */
+    public static @NonNull String name() {
         return CLASS_NAME;
     }
 
+    /**
+     * id of the operation
+     *
+     * @return the operation id
+     */
     public static int id() {
         return OP_CODE;
     }
 
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     * @param iterations the number of iterations
+     * @param animationMode animation mode
+     * @param repeatDelayMillis repeat delay in ms
+     * @param initialDelayMillis initial delay before the marquee start in ms
+     * @param spacing the spacing between marquee
+     * @param velocity the velocity of the marquee animation
+     */
     public static void apply(
-            WireBuffer buffer,
+            @NonNull WireBuffer buffer,
             int iterations,
             int animationMode,
             float repeatDelayMillis,
@@ -178,7 +219,13 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
         buffer.writeFloat(velocity);
     }
 
-    public static void read(WireBuffer buffer, List<Operation> operations) {
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations that will be added to
+     */
+    public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         int iterations = buffer.readInt();
         int animationMode = buffer.readInt();
         float repeatDelayMillis = buffer.readFloat();
@@ -195,20 +242,42 @@ public class MarqueeModifierOperation extends DecoratorModifierOperation impleme
                         velocity));
     }
 
-    public static void documentation(DocumentationBuilder doc) {
+    /**
+     * Populate the documentation with a description of this operation
+     *
+     * @param doc to append the description to.
+     */
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Modifier Operations", OP_CODE, CLASS_NAME)
                 .description("specify a Marquee Modifier")
                 .field(FLOAT, "value", "");
     }
 
     @Override
-    public void layout(RemoteContext context, Component component, float width, float height) {
+    public void layout(
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         mComponentWidth = width;
         mComponentHeight = height;
         if (component instanceof LayoutComponent) {
             LayoutComponent layoutComponent = (LayoutComponent) component;
-            setContentWidth(layoutComponent.intrinsicWidth(context));
-            setContentHeight(layoutComponent.intrinsicHeight(context));
+            setContentWidth(layoutComponent.minIntrinsicWidth(context));
+            setContentHeight(layoutComponent.minIntrinsicHeight(context));
         }
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("MarqueeModifierOperation")
+                .add("iterations", mIterations)
+                .add("animationMode", mAnimationMode)
+                .add("repeatDelayMillis", mRepeatDelayMillis)
+                .add("initialDelayMillis", mInitialDelayMillis)
+                .add("spacing", mSpacing)
+                .add("velocity", mVelocity);
     }
 }

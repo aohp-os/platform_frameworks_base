@@ -23,13 +23,11 @@ import com.android.systemui.bouncer.domain.interactor.alternateBouncerInteractor
 import com.android.systemui.dump.dumpManager
 import com.android.systemui.keyguard.domain.interactor.keyguardBypassInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
+import com.android.systemui.keyguard.domain.interactor.keyguardOcclusionInteractor
 import com.android.systemui.kosmos.Kosmos
-import com.android.systemui.scene.domain.interactor.sceneContainerOcclusionInteractor
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.statusbar.phone.dozeScrimController
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 
-@ExperimentalCoroutinesApi
 val Kosmos.deviceEntrySourceInteractor by
     Kosmos.Fixture {
         DeviceEntrySourceInteractor(
@@ -42,7 +40,7 @@ val Kosmos.deviceEntrySourceInteractor by
             keyguardBypassInteractor = keyguardBypassInteractor,
             keyguardUpdateMonitor = keyguardUpdateMonitor,
             keyguardInteractor = keyguardInteractor,
-            sceneContainerOcclusionInteractor = sceneContainerOcclusionInteractor,
+            occlusionInteractor = keyguardOcclusionInteractor,
             sceneInteractor = sceneInteractor,
             dumpManager = dumpManager,
         )

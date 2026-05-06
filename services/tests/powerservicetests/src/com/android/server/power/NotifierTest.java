@@ -16,11 +16,14 @@
 
 package com.android.server.power;
 
+import static android.os.PowerManager.SCREEN_TIMEOUT_KEEP_DISPLAY_ON;
+import static android.os.PowerManager.SCREEN_TIMEOUT_ACTIVE;
 import static android.os.PowerManagerInternal.WAKEFULNESS_ASLEEP;
 import static android.os.PowerManagerInternal.WAKEFULNESS_AWAKE;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.mockito.ArgumentMatchers.any;
@@ -29,15 +32,17 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.ActivityManagerInternal;
 import android.app.AppOpsManager;
 import android.content.Context;
@@ -48,6 +53,8 @@ import android.hardware.display.DisplayManagerInternal;
 import android.os.BatteryStats;
 import android.os.BatteryStatsInternal;
 import android.os.Handler;
+import android.os.IBinder;
+import android.os.IScreenTimeoutPolicyListener;
 import android.os.IWakeLockCallback;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -83,6 +90,7 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
 import java.util.concurrent.Executor;
@@ -118,6 +126,7 @@ public class NotifierTest {
     @Mock private DisplayManagerInternal mDisplayManagerInternal;
     @Mock private ActivityManagerInternal mActivityManagerInternal;
     @Mock private WakeLockLog mWakeLockLog;
+    @Mock private WakelockTracer mWakelockTracer;
 
     @Mock private IBatteryStats mBatteryStats;
 
@@ -198,7 +207,7 @@ public class NotifierTest {
         mTestExecutor.simulateAsyncExecutionOfLastCommand();
 
         // THEN the device doesn't vibrate
-        verifyZeroInteractions(mVibrator);
+        verifyNoMoreInteractions(mVibrator);
     }
 
     @Test
@@ -231,7 +240,7 @@ public class NotifierTest {
         mTestExecutor.simulateAsyncExecutionOfLastCommand();
 
         // THEN the device doesn't vibrate
-        verifyZeroInteractions(mVibrator);
+        verifyNoMoreInteractions(mVibrator);
     }
 
     @Test
@@ -427,6 +436,42 @@ public class NotifierTest {
 
         // THEN native input manager is informed that displays in that group no longer exist
         verify(mInputManagerInternal).setDisplayInteractivities(new SparseBooleanArray());
+    }
+
+    @Test
+    public void testOnGroupChanged_perDisplayWakeByTouchEnabled() {
+        createNotifier();
+        // GIVEN per-display wake by touch is enabled and one display group has been defined with
+        // two displays
+        when(mPowerManagerFlags.isPerDisplayWakeByTouchEnabled()).thenReturn(true);
+        final int groupId = 121;
+        final int displayId1 = 1221;
+        final int displayId2 = 1222;
+        final int[] displays = new int[]{displayId1, displayId2};
+        when(mDisplayManagerInternal.getDisplayIds()).thenReturn(IntArray.wrap(displays));
+        when(mDisplayManagerInternal.getDisplayIdsForGroup(groupId)).thenReturn(displays);
+        SparseArray<int[]> displayIdsByGroupId = new SparseArray<>();
+        displayIdsByGroupId.put(groupId, displays);
+        when(mDisplayManagerInternal.getDisplayIdsByGroupsIds()).thenReturn(displayIdsByGroupId);
+        mNotifier.onGroupWakefulnessChangeStarted(
+                groupId, WAKEFULNESS_AWAKE, PowerManager.WAKE_REASON_TAP, /* eventTime= */ 1000);
+        final SparseBooleanArray expectedDisplayInteractivities = new SparseBooleanArray();
+        expectedDisplayInteractivities.put(displayId1, true);
+        expectedDisplayInteractivities.put(displayId2, true);
+        verify(mInputManagerInternal).setDisplayInteractivities(expectedDisplayInteractivities);
+
+        // WHEN display group is changed to only contain one display
+        SparseArray<int[]> newDisplayIdsByGroupId = new SparseArray<>();
+        newDisplayIdsByGroupId.put(groupId, new int[]{displayId1});
+        when(mDisplayManagerInternal.getDisplayIdsByGroupsIds()).thenReturn(newDisplayIdsByGroupId);
+        mNotifier.onGroupChanged();
+
+        // THEN native input manager is informed that the displays in the group have changed
+        final SparseBooleanArray expectedDisplayInteractivitiesAfterChange =
+            new SparseBooleanArray();
+        expectedDisplayInteractivitiesAfterChange.put(displayId1, true);
+        verify(mInputManagerInternal).setDisplayInteractivities(
+            expectedDisplayInteractivitiesAfterChange);
     }
 
     @Test
@@ -682,10 +727,11 @@ public class NotifierTest {
 
         final int uid = 1234;
         final int pid = 5678;
+
         mNotifier.onWakeLockReleased(PowerManager.PARTIAL_WAKE_LOCK, "wakelockTag",
                 "my.package.name", uid, pid, /* workSource= */ null, /* historyTag= */ null,
                 exceptingCallback);
-        verifyZeroInteractions(mWakeLockLog);
+        verifyNoMoreInteractions(mWakeLockLog);
         mTestLooper.dispatchAll();
         verify(mWakeLockLog).onWakeLockReleased("wakelockTag", uid, 1);
         clearInvocations(mBatteryStats);
@@ -747,6 +793,55 @@ public class NotifierTest {
     }
 
     @Test
+    public void test_wakeLockLogUsesWorkSource() {
+        createNotifier();
+        clearInvocations(mWakeLockLog);
+        IWakeLockCallback exceptingCallback = new IWakeLockCallback.Stub() {
+            @Override public void onStateChanged(boolean enabled) throws RemoteException {
+                throw new RemoteException("Just testing");
+            }
+        };
+
+        final int uid = 1234;
+        final int pid = 5678;
+        WorkSource worksource = new WorkSource(1212);
+        WorkSource worksource2 = new WorkSource(3131);
+
+        mNotifier.onWakeLockAcquired(PowerManager.PARTIAL_WAKE_LOCK, "wakelockTag",
+                "my.package.name", uid, pid, worksource, /* historyTag= */ null,
+                exceptingCallback);
+        verify(mWakeLockLog).onWakeLockAcquired("wakelockTag", 1212,
+                PowerManager.PARTIAL_WAKE_LOCK, -1);
+
+        // Release the wakelock
+        mNotifier.onWakeLockReleased(PowerManager.FULL_WAKE_LOCK, "wakelockTag2",
+                "my.package.name", uid, pid, worksource2, /* historyTag= */ null,
+                exceptingCallback);
+        verify(mWakeLockLog).onWakeLockReleased("wakelockTag2", 3131, -1);
+
+        // clear the handler
+        mTestLooper.dispatchAll();
+
+        // Now test with improveWakelockLatency flag true
+        clearInvocations(mWakeLockLog);
+        when(mPowerManagerFlags.improveWakelockLatency()).thenReturn(true);
+
+        mNotifier.onWakeLockAcquired(PowerManager.PARTIAL_WAKE_LOCK, "wakelockTag",
+                "my.package.name", uid, pid, worksource, /* historyTag= */ null,
+                exceptingCallback);
+        mTestLooper.dispatchAll();
+        verify(mWakeLockLog).onWakeLockAcquired("wakelockTag", 1212,
+                PowerManager.PARTIAL_WAKE_LOCK, 1);
+
+        // Release the wakelock
+        mNotifier.onWakeLockReleased(PowerManager.FULL_WAKE_LOCK, "wakelockTag2",
+                "my.package.name", uid, pid, worksource2, /* historyTag= */ null,
+                exceptingCallback);
+        mTestLooper.dispatchAll();
+        verify(mWakeLockLog).onWakeLockReleased("wakelockTag2", 3131, 1);
+    }
+
+    @Test
     public void
             test_notifierProcessesWorkSourceDeepCopy_OnWakelockChanging() throws RemoteException {
         when(mPowerManagerFlags.improveWakelockLatency()).thenReturn(true);
@@ -783,6 +878,7 @@ public class NotifierTest {
 
     @Test
     public void testOnWakeLockListener_FullWakeLock_ProcessesOnHandler() throws RemoteException {
+        when(mPowerManagerFlags.isAppWakelockDataSourceEnabled()).thenReturn(true);
         when(mPowerManagerFlags.improveWakelockLatency()).thenReturn(true);
         createNotifier();
 
@@ -791,7 +887,7 @@ public class NotifierTest {
                 throw new RemoteException("Just testing");
             }
         };
-        clearInvocations(mWakeLockLog, mBatteryStats, mAppOpsManager);
+        clearInvocations(mWakeLockLog, mBatteryStats, mAppOpsManager, mWakelockTracer);
 
         final int uid = 1234;
         final int pid = 5678;
@@ -801,8 +897,12 @@ public class NotifierTest {
                 "my.package.name", uid, pid, /* workSource= */ null, /* historyTag= */ null,
                 exceptingCallback);
 
+        // Tracing is done synchronously.
+        verify(mWakelockTracer).onWakelockEvent(false, "wakelockTag", uid, pid,
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK, null);
+
         // No interaction because we expect that to happen in async
-        verifyZeroInteractions(mWakeLockLog, mBatteryStats, mAppOpsManager);
+        verifyNoMoreInteractions(mWakeLockLog, mBatteryStats, mAppOpsManager);
 
         // Progressing the looper, and validating all the interactions
         mTestLooper.dispatchAll();
@@ -812,12 +912,16 @@ public class NotifierTest {
         verify(mAppOpsManager).finishOp(AppOpsManager.OP_WAKE_LOCK, uid,
                 "my.package.name", null);
 
-        clearInvocations(mWakeLockLog, mBatteryStats, mAppOpsManager);
+        clearInvocations(mWakeLockLog, mBatteryStats, mAppOpsManager, mWakelockTracer);
 
         // Acquire the wakelock
         mNotifier.onWakeLockAcquired(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "wakelockTag",
                 "my.package.name", uid, pid, /* workSource= */ null, /* historyTag= */ null,
                 exceptingCallback);
+
+        // Tracing is done synchronously.
+        verify(mWakelockTracer).onWakelockEvent(true, "wakelockTag", uid, pid,
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK, null);
 
         // No interaction because we expect that to happen in async
         verifyNoMoreInteractions(mWakeLockLog, mBatteryStats, mAppOpsManager);
@@ -846,6 +950,26 @@ public class NotifierTest {
                 "my.package.name", uid, pid, /* workSource= */ null, /* historyTag= */ null,
                 exceptingCallback);
         verify(mWakeLockLog).onWakeLockReleased("wakelockTag", uid, -1);
+    }
+
+    @Test
+    public void testOnWakeLockListener_TracingDisabled() throws RemoteException {
+        when(mPowerManagerFlags.isAppWakelockDataSourceEnabled()).thenReturn(false);
+        createNotifier();
+
+        clearInvocations(mWakelockTracer);
+
+        final int uid = 1234;
+        final int pid = 5678;
+
+        // Release the wakelock
+        mNotifier.onWakeLockReleased(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "wakelockTag",
+                "my.package.name", uid, pid, /* workSource= */ null, /* historyTag= */ null,
+                /* callback= */ null);
+
+        // No interaction because the flag is disabled.
+        mTestLooper.dispatchAll();
+        verifyNoMoreInteractions(mWakelockTracer);
     }
 
     @Test
@@ -887,6 +1011,235 @@ public class NotifierTest {
                 BatteryStats.WAKE_TYPE_FULL, false);
         verify(mAppOpsManager).startOpNoThrow(AppOpsManager.OP_WAKE_LOCK, uid,
                 "my.package.name", false, null, null);
+    }
+
+    @Test
+    public void getWakelockMonitorTypeForLogging_evaluatesWakelockLevel() {
+        createNotifier();
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(PowerManager.SCREEN_DIM_WAKE_LOCK),
+                PowerManager.FULL_WAKE_LOCK);
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK), PowerManager.FULL_WAKE_LOCK);
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(PowerManager.DRAW_WAKE_LOCK),
+                PowerManager.DRAW_WAKE_LOCK);
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(PowerManager.PARTIAL_WAKE_LOCK),
+                PowerManager.PARTIAL_WAKE_LOCK);
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(
+                        PowerManager.DOZE_WAKE_LOCK), -1);
+    }
+
+    @Test
+    public void getWakelockMonitorTypeForLogging_evaluateProximityLevel() {
+        // How proximity wakelock is evaluated depends on boolean configuration. Test both.
+        when(mResourcesSpy.getBoolean(
+                com.android.internal.R.bool.config_suspendWhenScreenOffDueToProximity))
+                .thenReturn(false);
+        createNotifier();
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(
+                        PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK),
+                PowerManager.PARTIAL_WAKE_LOCK);
+
+        when(mResourcesSpy.getBoolean(
+                com.android.internal.R.bool.config_suspendWhenScreenOffDueToProximity))
+                .thenReturn(true);
+        createNotifier();
+        assertEquals(mNotifier.getWakelockMonitorTypeForLogging(
+                        PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK), -1);
+    }
+
+    @Test
+    public void testScreenTimeoutListener_reportsScreenTimeoutPolicyChange() throws Exception {
+        createNotifier();
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(Display.DEFAULT_DISPLAY_GROUP,
+                /* hasScreenWakeLock= */ SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+
+        // Verify that the event is sent asynchronously on a handler
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+        mTestLooper.dispatchAll();
+        verify(listener).onScreenTimeoutPolicyChanged(SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+    }
+
+    @Test
+    public void testScreenTimeoutListener_addAndRemoveListener_doesNotInvokeListener()
+            throws Exception {
+        createNotifier();
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+        mNotifier.removeScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY, listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(Display.DEFAULT_DISPLAY_GROUP,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        // Callback should not be fired as listener is removed
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+    }
+
+    @Test
+    public void testScreenTimeoutListener_addAndClearListeners_doesNotInvokeListener()
+            throws Exception {
+        createNotifier();
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+        mNotifier.clearScreenTimeoutPolicyListeners(Display.DEFAULT_DISPLAY);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(Display.DEFAULT_DISPLAY_GROUP,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        // Callback should not be fired as listener is removed
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+    }
+
+    @Test
+    public void testScreenTimeoutListener_subscribedToAnotherDisplay_listenerNotFired()
+            throws Exception {
+        createNotifier();
+
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(/* displayGroupId= */ 123,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        // Callback should not be fired as we subscribed only to the DEFAULT_DISPLAY
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+    }
+
+    @Test
+    public void testScreenTimeoutListener_listenerDied_listenerNotFired()
+            throws Exception {
+        createNotifier();
+
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+
+        ArgumentCaptor<IBinder.DeathRecipient> captor =
+                ArgumentCaptor.forClass(IBinder.DeathRecipient.class);
+        verify(listenerBinder).linkToDeath(captor.capture(), anyInt());
+        mTestLooper.dispatchAll();
+        captor.getValue().binderDied();
+        clearInvocations(listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        // Callback should not be fired as binder died
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+    }
+
+    @Test
+    public void testScreenTimeoutListener_listenerThrowsException_listenerNotFiredSecondTime()
+            throws Exception {
+        createNotifier();
+
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        doThrow(RuntimeException.class).when(listener).onScreenTimeoutPolicyChanged(anyInt());
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY_GROUP,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        // Callback should not be fired as it has thrown an exception once
+        verify(listener, never()).onScreenTimeoutPolicyChanged(anyInt());
+    }
+
+    @Test
+    public void testScreenTimeoutListener_nonDefaultDisplay_stillReportsPolicyCorrectly()
+            throws Exception {
+        createNotifier();
+        final int otherDisplayId = 123;
+        final int otherDisplayGroupId = 123_00;
+        when(mDisplayManagerInternal.getGroupIdForDisplay(otherDisplayId)).thenReturn(
+                otherDisplayGroupId);
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+        mNotifier.addScreenTimeoutPolicyListener(otherDisplayId,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+        clearInvocations(listener);
+
+        mNotifier.notifyScreenTimeoutPolicyChanges(otherDisplayGroupId,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+        mTestLooper.dispatchAll();
+
+        verify(listener).onScreenTimeoutPolicyChanged(SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
+    }
+
+    @Test
+    public void testScreenTimeoutListener_timeoutPolicyTimeout_reportsTimeoutOnSubscription()
+            throws Exception {
+        createNotifier();
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_ACTIVE, listener);
+        mTestLooper.dispatchAll();
+
+        verify(listener).onScreenTimeoutPolicyChanged(SCREEN_TIMEOUT_ACTIVE);
+    }
+
+    @Test
+    public void testScreenTimeoutListener_policyHeld_reportsHeldOnSubscription()
+            throws Exception {
+        createNotifier();
+        final IScreenTimeoutPolicyListener listener = Mockito.mock(
+                IScreenTimeoutPolicyListener.class);
+        final IBinder listenerBinder = Mockito.mock(IBinder.class);
+        when(listener.asBinder()).thenReturn(listenerBinder);
+
+        mNotifier.addScreenTimeoutPolicyListener(Display.DEFAULT_DISPLAY,
+                SCREEN_TIMEOUT_KEEP_DISPLAY_ON, listener);
+        mTestLooper.dispatchAll();
+
+        verify(listener).onScreenTimeoutPolicyChanged(SCREEN_TIMEOUT_KEEP_DISPLAY_ON);
     }
 
     private final PowerManagerService.Injector mInjector = new PowerManagerService.Injector() {
@@ -975,8 +1328,13 @@ public class NotifierTest {
                     }
 
                     @Override
-                    public WakeLockLog getWakeLockLog(Context context) {
+                    public @NonNull WakeLockLog getWakeLockLog(Context context) {
                         return mWakeLockLog;
+                    }
+
+                    @Override
+                    public @Nullable WakelockTracer getWakelockTracer(Looper looper) {
+                        return mWakelockTracer;
                     }
 
                     @Override

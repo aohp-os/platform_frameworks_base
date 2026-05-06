@@ -23,6 +23,7 @@ import com.android.internal.widget.remotecompose.core.Operations;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.List;
 
@@ -36,7 +37,7 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
     }
 
     @Override
-    public void write(WireBuffer buffer) {
+    public void write(@NonNull WireBuffer buffer) {
         apply(buffer);
     }
 
@@ -46,7 +47,10 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
     }
 
     @Override
-    public void apply(RemoteContext context) {
+    public void apply(@NonNull RemoteContext context) {
+        if (context.getDocument() == null) {
+            return;
+        }
         RootLayoutComponent root = context.getDocument().getRootLayoutComponent();
         if (root != null) {
             root.setHasTouchListeners(true);
@@ -56,15 +60,19 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
 
     @Override
     public void onTouchDown(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         // nothing
     }
 
     @Override
     public void onTouchUp(
-            RemoteContext context,
-            CoreDocument document,
-            Component component,
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
             float x,
             float y,
             float dx,
@@ -74,13 +82,21 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
 
     @Override
     public void onTouchCancel(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         applyActions(context, document, component, x, y, true);
     }
 
     @Override
     public void onTouchDrag(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         // nothing
     }
 
@@ -94,7 +110,12 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
         return "TouchCancelModifier";
     }
 
-    public static void apply(WireBuffer buffer) {
+    /**
+     * Write the operation on the buffer
+     *
+     * @param buffer a WireBuffer
+     */
+    public static void apply(@NonNull WireBuffer buffer) {
         buffer.start(OP_CODE);
     }
 
@@ -104,14 +125,25 @@ public class TouchCancelModifierOperation extends ListActionsOperation implement
      * @param buffer the buffer to read
      * @param operations the list of operations that will be added to
      */
-    public static void read(WireBuffer buffer, List<Operation> operations) {
+    public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         operations.add(new TouchCancelModifierOperation());
     }
 
-    public static void documentation(DocumentationBuilder doc) {
+    /**
+     * Add documentation for this operation
+     *
+     * @param doc a DocumentationBuilder
+     */
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Modifier Operations", OP_CODE, name())
                 .description(
                         "Touch cancel modifier. This operation contains"
                                 + " a list of action executed on Touch cancel");
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        super.serialize(serializer);
+        serializer.addType("TouchCancelModifierOperation");
     }
 }

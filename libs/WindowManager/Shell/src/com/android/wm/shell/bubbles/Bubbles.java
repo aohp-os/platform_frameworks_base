@@ -32,8 +32,8 @@ import android.service.notification.NotificationListenerService;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.util.Pair;
 import android.util.SparseArray;
-import android.window.ScreenCapture.ScreenshotHardwareBuffer;
-import android.window.ScreenCapture.SynchronousScreenCaptureListener;
+import android.window.ScreenCaptureInternal.ScreenshotHardwareBuffer;
+import android.window.ScreenCaptureInternal.SynchronousScreenCaptureListener;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -86,6 +86,7 @@ public interface Bubbles {
     int DISMISS_USER_ACCOUNT_REMOVED = 16;
     int DISMISS_SWITCH_TO_STACK = 17;
     int DISMISS_USER_GESTURE_FROM_LAUNCHER = 18;
+    int DISMISS_JUMPCUT_BUBBLE_SWITCH = 19;
 
     /** Returns a binder that can be passed to an external process to manipulate Bubbles. */
     default IBubbles createExternalInterface() {
@@ -105,9 +106,6 @@ public interface Bubbles {
      * notification entry and the stack is currently expanded.
      */
     boolean isBubbleExpanded(String key);
-
-    /** Tell the stack of bubbles to collapse. */
-    void collapseStack();
 
     /**
      * Request the stack expand if needed, then select the specified Bubble as current.
@@ -134,33 +132,31 @@ public interface Bubbles {
 
     /**
      * This method has different behavior depending on:
-     * - if an app bubble exists
-     * - if an app bubble is expanded
+     *    - if a notes bubble exists
+     *    - if a notes bubble is expanded
      *
-     * If no app bubble exists, this will add and expand a bubble with the provided intent. The
+     * If no notes bubble exists, this will add and expand a bubble with the provided intent. The
      * intent must be explicit (i.e. include a package name or fully qualified component class name)
      * and the activity for it should be resizable.
      *
-     * If an app bubble exists, this will toggle the visibility of it, i.e. if the app bubble is
-     * expanded, calling this method will collapse it. If the app bubble is not expanded, calling
+     * If a notes bubble exists, this will toggle the visibility of it, i.e. if the notes bubble is
+     * expanded, calling this method will collapse it. If the notes bubble is not expanded, calling
      * this method will expand it.
      *
      * These bubbles are <b>not</b> backed by a notification and remain until the user dismisses
      * the bubble or bubble stack.
      *
-     * Some notes:
-     * - Only one app bubble is supported at a time, regardless of users. Multi-users support is
-     * tracked in b/273533235.
-     * - Calling this method with a different intent than the existing app bubble will do nothing
+     * Some details:
+     *    - Calling this method with a different intent than the existing bubble will do nothing
      *
      * @param intent the intent to display in the bubble expanded view.
-     * @param user   the {@link UserHandle} of the user to start this activity for.
-     * @param icon   the {@link Icon} to use for the bubble view.
+     * @param user the {@link UserHandle} of the user to start this activity for.
+     * @param icon the {@link Icon} to use for the bubble view.
      */
-    void showOrHideAppBubble(Intent intent, UserHandle user, @Nullable Icon icon);
+    void showOrHideNoteBubble(Intent intent, UserHandle user, @Nullable Icon icon);
 
     /** @return true if the specified {@code taskId} corresponds to app bubble's taskId. */
-    boolean isAppBubbleTaskId(int taskId);
+    boolean isNoteBubbleTaskId(int taskId);
 
     /**
 `    * @return a {@link SynchronousScreenCaptureListener} after performing a screenshot that may
@@ -215,7 +211,8 @@ public interface Bubbles {
      *
      * @param entry          the {@link BubbleEntry} by the notification.
      * @param shouldBubbleUp {@code true} if this notification should bubble up.
-     * @param fromSystem     {@code true} if this update is from NotificationManagerService.
+     * @param fromSystem     {@code true} if this update is from NotificationManagerService or App,
+     *                                   false means this update is from SystemUi
      */
     void onEntryUpdated(BubbleEntry entry, boolean shouldBubbleUp, boolean fromSystem);
 
@@ -316,6 +313,33 @@ public interface Bubbles {
     boolean canShowBubbleNotification();
 
     /**
+     * Returns the string representation of the given dismiss reason.
+     */
+    public static String dismissReasonToString(@DismissReason int dismissReason) {
+        switch (dismissReason) {
+            case DISMISS_USER_GESTURE: return "USER_GESTURE";
+            case DISMISS_AGED: return "AGED";
+            case DISMISS_TASK_FINISHED: return "TASK_FINISHED";
+            case DISMISS_BLOCKED: return "BLOCKED";
+            case DISMISS_NOTIF_CANCEL: return "NOTIF_CANCEL";
+            case DISMISS_ACCESSIBILITY_ACTION: return "ACCESSIBILITY_ACTION";
+            case DISMISS_NO_LONGER_BUBBLE: return "NO_LONGER_BUBBLE";
+            case DISMISS_USER_CHANGED: return "USER_CHANGED";
+            case DISMISS_GROUP_CANCELLED: return "GROUP_CANCELLED";
+            case DISMISS_INVALID_INTENT: return "INVALID_INTENT";
+            case DISMISS_OVERFLOW_MAX_REACHED: return "OVERFLOW_MAX_REACHED";
+            case DISMISS_SHORTCUT_REMOVED: return "SHORTCUT_REMOVED";
+            case DISMISS_PACKAGE_REMOVED: return "PACKAGE_REMOVED";
+            case DISMISS_NO_BUBBLE_UP: return "NO_BUBBLE_UP";
+            case DISMISS_RELOAD_FROM_DISK: return "RELOAD_FROM_DISK";
+            case DISMISS_USER_ACCOUNT_REMOVED: return "USER_ACCOUNT_REMOVED";
+            case DISMISS_SWITCH_TO_STACK: return "SWITCH_TO_STACK";
+            case DISMISS_USER_GESTURE_FROM_LAUNCHER: return "USER_GESTURE_FROM_LAUNCHER";
+            default: return "UNKNOWN";
+        }
+    }
+
+    /**
      * A listener to be notified of bubble state changes, used by launcher to render bubbles in
      * its process.
      */
@@ -330,6 +354,9 @@ public interface Bubbles {
          * Does not result in a state change.
          */
         void animateBubbleBarLocation(BubbleBarLocation location);
+
+        /** Show bubble bar drop target at provided location or hide if location is null. */
+        void showBubbleBarDropTargetAt(@Nullable BubbleBarLocation location);
     }
 
     /** Listener to find out about stack expansion / collapse events. */
@@ -373,7 +400,7 @@ public interface Bubbles {
 
         void setNotificationInterruption(String key);
 
-        void requestNotificationShadeTopUi(boolean requestTopUi, String componentTag);
+        void requestTopUi(boolean requestTopUi, String componentTag);
 
         void notifyRemoveNotification(String key, int reason);
 

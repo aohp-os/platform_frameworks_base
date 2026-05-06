@@ -21,7 +21,6 @@ import android.annotation.SuppressLint
 import android.app.DreamManager
 import com.android.app.animation.Interpolators
 import com.android.app.tracing.coroutines.launchTraced as launch
-import com.android.systemui.Flags.communalSceneKtfRefactor
 import com.android.systemui.communal.domain.interactor.CommunalInteractor
 import com.android.systemui.communal.domain.interactor.CommunalSceneInteractor
 import com.android.systemui.communal.domain.interactor.CommunalSettingsInteractor
@@ -31,7 +30,6 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
-import com.android.systemui.keyguard.KeyguardWmStateRefactor
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.BiometricUnlockMode
 import com.android.systemui.keyguard.shared.model.DozeStateModel
@@ -44,12 +42,10 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class FromDreamingTransitionInteractor
 @Inject
@@ -61,7 +57,6 @@ constructor(
     @Background bgDispatcher: CoroutineDispatcher,
     @Main mainDispatcher: CoroutineDispatcher,
     keyguardInteractor: KeyguardInteractor,
-    private val glanceableHubTransitions: GlanceableHubTransitions,
     private val communalInteractor: CommunalInteractor,
     private val communalSceneInteractor: CommunalSceneInteractor,
     private val communalSettingsInteractor: CommunalSettingsInteractor,
@@ -83,17 +78,11 @@ constructor(
     @SuppressLint("MissingPermission")
     override fun start() {
         listenForDreamingToAlternateBouncer()
-        listenForDreamingToOccluded()
-        listenForDreamingToGoneWhenDismissable()
+        listenForDreamingToOccludedOrGoneOrLockscreen()
         listenForDreamingToGoneFromBiometricUnlock()
-        listenForDreamingToLockscreenOrGone()
         listenForDreamingToAodOrDozing()
         listenForTransitionToCamera(scope, keyguardInteractor)
-        if (!communalSceneKtfRefactor()) {
-            listenForDreamingToGlanceableHub()
-        } else {
-            listenForDreamingToGlanceableHubFromPowerButton()
-        }
+        listenForDreamingToGlanceableHubFromPowerButton()
         listenForDreamingToPrimaryBouncer()
     }
 
@@ -107,26 +96,16 @@ constructor(
         }
     }
 
-    private fun listenForDreamingToGlanceableHub() {
-        if (!communalSettingsInteractor.isCommunalFlagEnabled()) return
-        if (SceneContainerFlag.isEnabled) return
-        scope.launch("$TAG#listenForDreamingToGlanceableHub", mainDispatcher) {
-            glanceableHubTransitions.listenForGlanceableHubTransition(
-                transitionOwnerName = TAG,
-                fromState = KeyguardState.DREAMING,
-                toState = KeyguardState.GLANCEABLE_HUB,
-            )
-        }
-    }
-
     /**
      * Normally when pressing power button from the dream, the devices goes from DREAMING to DOZING,
      * then [FromDozingTransitionInteractor] handles the transition to GLANCEABLE_HUB. However if
      * the power button is pressed quickly, we may need to go directly from DREAMING to
      * GLANCEABLE_HUB as the transition to DOZING has not occurred yet.
      */
+    @OptIn(FlowPreview::class)
     @SuppressLint("MissingPermission")
     private fun listenForDreamingToGlanceableHubFromPowerButton() {
+        if (communalSettingsInteractor.isV2FlagEnabled()) return
         if (!communalSettingsInteractor.isCommunalFlagEnabled()) return
         if (SceneContainerFlag.isEnabled) return
         scope.launch {
@@ -151,16 +130,13 @@ constructor(
         // TODO(b/336576536): Check if adaptation for scene framework is needed
         if (SceneContainerFlag.isEnabled) return
         scope.launch {
-            keyguardInteractor.primaryBouncerShowing
-                .sample(transitionInteractor.startedKeyguardTransitionStep, ::Pair)
-                .collect { pair ->
-                    val (isBouncerShowing, lastStartedTransitionStep) = pair
-                    if (
-                        isBouncerShowing && lastStartedTransitionStep.to == KeyguardState.DREAMING
-                    ) {
-                        startTransitionTo(KeyguardState.PRIMARY_BOUNCER)
-                    }
+            keyguardInteractor.primaryBouncerShowing.collect { isBouncerShowing ->
+                val lastStartedTransitionStep =
+                    transitionInteractor.startedKeyguardTransitionStep.value
+                if (isBouncerShowing && lastStartedTransitionStep.to == KeyguardState.DREAMING) {
+                    startTransitionTo(KeyguardState.PRIMARY_BOUNCER)
                 }
+            }
         }
     }
 
@@ -177,7 +153,7 @@ constructor(
                             loggingReason = "FromDreamingTransitionInteractor",
                             transitionKey =
                                 if (communalSettingsInteractor.isV2FlagEnabled())
-                                    CommunalTransitionKeys.SimpleFade
+                                    CommunalTransitionKeys.FromOccluded
                                 else null,
                         )
                     } else {
@@ -192,83 +168,36 @@ constructor(
     }
 
     @OptIn(FlowPreview::class)
-    private fun listenForDreamingToOccluded() {
-        if (!KeyguardWmStateRefactor.isEnabled) {
-            scope.launch {
-                combine(
-                        keyguardInteractor.isKeyguardOccluded,
-                        keyguardInteractor.isDreaming,
-                        ::Pair,
-                    )
-                    // Debounce signals since there is a race condition between the occluded and
-                    // dreaming signals when starting or stopping dreaming. We therefore add a small
-                    // delay to give enough time for occluded to flip to false when the dream
-                    // ends, to avoid transitioning to OCCLUDED erroneously when exiting the dream.
-                    .debounce(100.milliseconds)
-                    .filterRelevantKeyguardStateAnd { (isOccluded, isDreaming) ->
-                        isOccluded && !isDreaming
-                    }
-                    .collect {
-                        startTransitionTo(
-                            toState = KeyguardState.OCCLUDED,
-                            ownerReason = "Occluded but no longer dreaming",
-                        )
-                    }
-            }
-        }
-    }
-
-    private fun listenForDreamingToLockscreenOrGone() {
-        if (!KeyguardWmStateRefactor.isEnabled) {
-            return
-        }
-
+    private fun listenForDreamingToOccludedOrGoneOrLockscreen() {
+        if (SceneContainerFlag.isEnabled) return
         scope.launch {
-            keyguardInteractor.isAbleToDream
-                .filterRelevantKeyguardStateAnd { !it }
-                .sample(
-                    if (SceneContainerFlag.isEnabled) {
-                        deviceEntryInteractor.isUnlocked
-                    } else {
-                        keyguardInteractor.isKeyguardDismissible
-                    },
-                    ::Pair,
-                )
-                .collect { (_, dismissable) ->
-                    // TODO(b/349837588): Add check for -> OCCLUDED.
-                    if (dismissable) {
+            combine(keyguardInteractor.isKeyguardOccluded, keyguardInteractor.isAbleToDream, ::Pair)
+                // Debounce signals since there is a race condition between the occluded and
+                // dreaming signals when starting or stopping dreaming. We therefore add a small
+                // delay to give enough time for occluded to flip to false when the dream
+                // ends, to avoid transitioning to OCCLUDED erroneously when exiting the dream.
+                .debounce(100.milliseconds)
+                .filterRelevantKeyguardStateAnd { (isOccluded, isDreaming) -> !isDreaming }
+                .collect { (isOccluded, isDreaming) ->
+                    val isDismissible =
+                        keyguardInteractor.isKeyguardDismissible.value &&
+                            !keyguardInteractor.isKeyguardShowing.value
+
+                    if (isDismissible) {
                         startTransitionTo(
                             KeyguardState.GONE,
                             ownerReason = "No longer dreaming; dismissable",
+                        )
+                    } else if (isOccluded) {
+                        startTransitionTo(
+                            toState = KeyguardState.OCCLUDED,
+                            ownerReason = "Occluded but no longer dreaming",
                         )
                     } else {
                         startTransitionTo(
                             KeyguardState.LOCKSCREEN,
                             ownerReason = "No longer dreaming",
                         )
-                    }
-                }
-        }
-    }
-
-    private fun listenForDreamingToGoneWhenDismissable() {
-        if (SceneContainerFlag.isEnabled) {
-            return
-        }
-
-        if (KeyguardWmStateRefactor.isEnabled) {
-            return
-        }
-
-        scope.launch {
-            keyguardInteractor.isAbleToDream
-                .filterRelevantKeyguardStateAnd { isDreaming -> !isDreaming }
-                .collect {
-                    if (
-                        keyguardInteractor.isKeyguardDismissible.value &&
-                            !keyguardInteractor.isKeyguardShowing.value
-                    ) {
-                        startTransitionTo(KeyguardState.GONE)
                     }
                 }
         }
@@ -318,5 +247,6 @@ constructor(
         val TO_LOCKSCREEN_DURATION = 1167.milliseconds
         val TO_AOD_DURATION = 300.milliseconds
         val TO_GONE_DURATION = DEFAULT_DURATION
+        val TO_PRIMARY_BOUNCER_DURATION = DEFAULT_DURATION
     }
 }

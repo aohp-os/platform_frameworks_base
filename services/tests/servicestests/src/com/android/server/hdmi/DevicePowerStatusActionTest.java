@@ -16,12 +16,15 @@
 
 package com.android.server.hdmi;
 
+import static android.content.pm.PackageManager.FEATURE_HDMI_CEC;
+
 import static com.android.server.SystemService.PHASE_SYSTEM_SERVICES_READY;
 import static com.android.server.hdmi.Constants.ADDR_BROADCAST;
 import static com.android.server.hdmi.Constants.ADDR_TV;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -56,6 +59,7 @@ import java.util.Collections;
 public class DevicePowerStatusActionTest {
 
     private static final int TIMEOUT_MS = HdmiConfig.TIMEOUT_MS + 1;
+    private static final int RETRY_ON_TIMEOUT = 3;
 
     private Context mContextSpy;
     private HdmiControlService mHdmiControlService;
@@ -73,6 +77,9 @@ public class DevicePowerStatusActionTest {
 
     @Before
     public void setUp() throws Exception {
+        assumeTrue("Test requires FEATURE_HDMI_CEC",
+                InstrumentationRegistry.getTargetContext().getPackageManager()
+                        .hasSystemFeature(FEATURE_HDMI_CEC));
         MockitoAnnotations.initMocks(this);
 
         mContextSpy = spy(new ContextWrapper(InstrumentationRegistry.getTargetContext()));
@@ -194,10 +201,12 @@ public class DevicePowerStatusActionTest {
         mTestLooper.moveTimeForward(TIMEOUT_MS);
         mTestLooper.dispatchAll();
 
-        assertThat(mNativeWrapper.getResultMessages()).contains(expected);
-        mNativeWrapper.clearResultMessages();
-        mTestLooper.moveTimeForward(TIMEOUT_MS);
-        mTestLooper.dispatchAll();
+        for (int i = 0; i < RETRY_ON_TIMEOUT; i++) {
+            assertThat(mNativeWrapper.getResultMessages()).contains(expected);
+            mNativeWrapper.clearResultMessages();
+            mTestLooper.moveTimeForward(TIMEOUT_MS);
+            mTestLooper.dispatchAll();
+        }
 
         verify(mCallbackMock).onComplete(HdmiControlManager.POWER_STATUS_UNKNOWN);
     }

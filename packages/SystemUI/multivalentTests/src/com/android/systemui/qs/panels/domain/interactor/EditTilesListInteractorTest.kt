@@ -32,12 +32,12 @@ import com.android.systemui.qs.pipeline.data.repository.FakeInstalledTilesCompon
 import com.android.systemui.qs.pipeline.data.repository.fakeInstalledTilesRepository
 import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.qs.shared.model.TileCategory
+import com.android.systemui.qs.tiles.base.shared.model.QSTileConfig
+import com.android.systemui.qs.tiles.base.shared.model.fakeQSTileConfigProvider
+import com.android.systemui.qs.tiles.base.shared.model.qSTileConfigProvider
 import com.android.systemui.qs.tiles.impl.battery.qsBatterySaverTileConfig
 import com.android.systemui.qs.tiles.impl.flashlight.qsFlashlightTileConfig
 import com.android.systemui.qs.tiles.impl.internet.qsInternetTileConfig
-import com.android.systemui.qs.tiles.viewmodel.QSTileConfig
-import com.android.systemui.qs.tiles.viewmodel.fakeQSTileConfigProvider
-import com.android.systemui.qs.tiles.viewmodel.qSTileConfigProvider
 import com.android.systemui.settings.userTracker
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
@@ -58,12 +58,7 @@ class EditTilesListInteractorTest : SysuiTestCase() {
     private val batteryTileConfig = kosmos.qsBatterySaverTileConfig
 
     private val serviceInfo =
-        FakeInstalledTilesComponentRepository.ServiceInfo(
-            component,
-            tileName,
-            icon,
-            appName,
-        )
+        FakeInstalledTilesComponentRepository.ServiceInfo(component, tileName, icon, appName)
 
     private val underTest =
         with(kosmos) {
@@ -79,7 +74,7 @@ class EditTilesListInteractorTest : SysuiTestCase() {
         with(kosmos) {
             fakeInstalledTilesRepository.setInstalledServicesForUser(
                 userTracker.userId,
-                listOf(serviceInfo)
+                listOf(serviceInfo),
             )
 
             with(fakeQSTileConfigProvider) {
@@ -134,6 +129,7 @@ class EditTilesListInteractorTest : SysuiTestCase() {
                         label = Text.Loaded(tileName),
                         appName = Text.Loaded(appName),
                         category = TileCategory.PROVIDED_BY_APP,
+                        appIcon = null,
                     )
 
                 assertThat(editTiles.customTiles).hasSize(1)
@@ -185,6 +181,7 @@ class EditTilesListInteractorTest : SysuiTestCase() {
                 label = Text.Loaded(spec),
                 appName = null,
                 category = TileCategory.UNKNOWN,
+                appIcon = null,
             )
         }
 
@@ -196,6 +193,7 @@ class EditTilesListInteractorTest : SysuiTestCase() {
                 label = Text.Resource(uiConfig.labelRes),
                 appName = null,
                 category = category,
+                appIcon = null,
             )
         }
     }

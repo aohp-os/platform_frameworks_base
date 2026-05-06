@@ -51,7 +51,7 @@ import java.util.function.Consumer;
 /**
  * Singleton source of truth for the current state of PIP bounds.
  */
-public class PipBoundsState {
+public class PipBoundsState implements PipDisplayLayoutState.DisplayIdListener {
     public static final int STASH_TYPE_NONE = 0;
     public static final int STASH_TYPE_LEFT = 1;
     public static final int STASH_TYPE_RIGHT = 2;
@@ -90,7 +90,7 @@ public class PipBoundsState {
     @NonNull private final PipDisplayLayoutState mPipDisplayLayoutState;
     private final Point mMaxSize = new Point();
     private final Point mMinSize = new Point();
-    @NonNull private final Context mContext;
+    @NonNull private Context mContext;
     private float mAspectRatio;
     private int mStashedState = STASH_TYPE_NONE;
     private int mStashOffset;
@@ -143,6 +143,9 @@ public class PipBoundsState {
      */
     public final Rect mCachedLauncherShelfHeightKeepClearArea = new Rect();
 
+    private final List<OnPipComponentChangedListener> mOnPipComponentChangedListeners =
+            new ArrayList<>();
+
     // the size of the current bounds relative to the max size spec
     private float mBoundsScale;
 
@@ -152,13 +155,12 @@ public class PipBoundsState {
         reloadResources();
         mSizeSpecSource = sizeSpecSource;
         mPipDisplayLayoutState = pipDisplayLayoutState;
+        mPipDisplayLayoutState.addDisplayIdListener(this);
 
         // Update the relative proportion of the bounds compared to max possible size. Max size
         // spec takes the aspect ratio of the bounds into account, so both width and height
         // scale by the same factor.
-        addPipExclusionBoundsChangeCallback((bounds) -> {
-            updateBoundsScale();
-        });
+        addPipExclusionBoundsChangeCallback((bounds) -> updateBoundsScale());
     }
 
     /** Reloads the resources. */
@@ -167,6 +169,12 @@ public class PipBoundsState {
 
         // update the size spec resources upon config change too
         mSizeSpecSource.onConfigurationChanged();
+    }
+
+    @Override
+    public void onDisplayIdChanged(@NonNull Context context) {
+        mContext = context;
+        reloadResources();
     }
 
     /** Update the bounds scale percentage value. */
@@ -181,6 +189,8 @@ public class PipBoundsState {
     /** Set the current PIP bounds. */
     public void setBounds(@NonNull Rect bounds) {
         mBounds.set(bounds);
+        ProtoLog.d(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                "Update exclusion bounds to %s", bounds);
         for (Consumer<Rect> callback : mOnPipExclusionBoundsChangeCallbacks) {
             callback.accept(bounds);
         }
@@ -341,11 +351,14 @@ public class PipBoundsState {
     /** Set the last {@link ComponentName} to enter PIP mode. */
     public void setLastPipComponentName(@Nullable ComponentName lastPipComponentName) {
         final boolean changed = !Objects.equals(mLastPipComponentName, lastPipComponentName);
+        if (!changed) return;
+        clearReentryState();
+        setHasUserResizedPip(false);
+        setHasUserMovedPip(false);
+        final ComponentName oldComponentName = mLastPipComponentName;
         mLastPipComponentName = lastPipComponentName;
-        if (changed) {
-            clearReentryState();
-            setHasUserResizedPip(false);
-            setHasUserMovedPip(false);
+        for (OnPipComponentChangedListener listener : mOnPipComponentChangedListeners) {
+            listener.onPipComponentChanged(oldComponentName, mLastPipComponentName);
         }
     }
 
@@ -377,6 +390,16 @@ public class PipBoundsState {
 
     /** Sets the preferred size of PIP as specified by the activity in PIP mode. */
     public void setOverrideMinSize(@Nullable Size overrideMinSize) {
+        if (overrideMinSize != null) {
+            final Size defaultSize = mSizeSpecSource.getDefaultSize(getAspectRatio());
+            if (overrideMinSize.getWidth() > defaultSize.getWidth()
+                    || overrideMinSize.getHeight() > defaultSize.getHeight()) {
+                ProtoLog.w(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                        "Ignore override min size(%s): larger than default size (%s)",
+                        overrideMinSize, defaultSize);
+                return;
+            }
+        }
         final boolean changed = !Objects.equals(overrideMinSize, getOverrideMinSize());
         mSizeSpecSource.setOverrideMinSize(overrideMinSize);
         if (changed && mOnMinimalSizeChangeCallback != null) {
@@ -574,10 +597,10 @@ public class PipBoundsState {
      * Back-gesture handler, to avoid conflicting with PiP when it's stashed.
      */
     public void addPipExclusionBoundsChangeCallback(
-            @Nullable Consumer<Rect> onPipExclusionBoundsChangeCallback) {
-        mOnPipExclusionBoundsChangeCallbacks.add(onPipExclusionBoundsChangeCallback);
-        for (Consumer<Rect> callback : mOnPipExclusionBoundsChangeCallbacks) {
-            callback.accept(getBounds());
+            @NonNull Consumer<Rect> onPipExclusionBoundsChangeCallback) {
+        if (onPipExclusionBoundsChangeCallback != null) {
+            mOnPipExclusionBoundsChangeCallbacks.add(onPipExclusionBoundsChangeCallback);
+            onPipExclusionBoundsChangeCallback.accept(getBounds());
         }
     }
 
@@ -585,8 +608,10 @@ public class PipBoundsState {
      * Remove a callback that was previously added.
      */
     public void removePipExclusionBoundsChangeCallback(
-            @Nullable Consumer<Rect> onPipExclusionBoundsChangeCallback) {
-        mOnPipExclusionBoundsChangeCallbacks.remove(onPipExclusionBoundsChangeCallback);
+            @NonNull Consumer<Rect> onPipExclusionBoundsChangeCallback) {
+        if (onPipExclusionBoundsChangeCallback != null) {
+            mOnPipExclusionBoundsChangeCallbacks.remove(onPipExclusionBoundsChangeCallback);
+        }
     }
 
     /** Adds callback to listen on aspect ratio change. */
@@ -603,6 +628,21 @@ public class PipBoundsState {
             @NonNull Consumer<Float> onAspectRatioChangedCallback) {
         if (mOnAspectRatioChangedCallbacks.contains(onAspectRatioChangedCallback)) {
             mOnAspectRatioChangedCallbacks.remove(onAspectRatioChangedCallback);
+        }
+    }
+
+    /** Adds callback to listen on component change. */
+    public void addOnPipComponentChangedListener(@NonNull OnPipComponentChangedListener listener) {
+        if (!mOnPipComponentChangedListeners.contains(listener)) {
+            mOnPipComponentChangedListeners.add(listener);
+        }
+    }
+
+    /** Removes callback to listen on component change. */
+    public void removeOnPipComponentChangedListener(
+            @NonNull OnPipComponentChangedListener listener) {
+        if (mOnPipComponentChangedListeners.contains(listener)) {
+            mOnPipComponentChangedListeners.remove(listener);
         }
     }
 
@@ -685,7 +725,7 @@ public class PipBoundsState {
      * Represents the state of pip to potentially restore upon reentry.
      */
     @VisibleForTesting
-    public static final class PipReentryState {
+    static final class PipReentryState {
         private static final String TAG = PipReentryState.class.getSimpleName();
 
         private final float mSnapFraction;
@@ -710,6 +750,22 @@ public class PipBoundsState {
             pw.println(innerPrefix + "mBoundsScale=" + mBoundsScale);
             pw.println(innerPrefix + "mSnapFraction=" + mSnapFraction);
         }
+    }
+
+    /**
+     * Listener interface for PiP component change, i.e. the app in pip mode changes
+     * TODO: Move this out of PipBoundsState once pip1 is deprecated.
+     */
+    public interface OnPipComponentChangedListener {
+        /**
+         * Callback when the component in pip mode changes.
+         * @param oldPipComponent previous component in pip mode,
+         *                        {@code null} if this is the very first time PiP appears.
+         * @param newPipComponent new component that enters pip mode.
+         */
+        void onPipComponentChanged(
+                @Nullable ComponentName oldPipComponent,
+                @NonNull ComponentName newPipComponent);
     }
 
     /** Dumps internal state. */

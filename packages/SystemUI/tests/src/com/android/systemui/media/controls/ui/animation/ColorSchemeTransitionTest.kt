@@ -33,6 +33,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
@@ -49,7 +50,9 @@ private const val TARGET_COLOR = Color.BLUE
 class ColorSchemeTransitionTest : SysuiTestCase() {
 
     private interface ExtractCB : (ColorScheme) -> Int
+
     private interface ApplyCB : (Int) -> Unit
+
     private lateinit var colorTransition: AnimatingColorTransition
     private lateinit var colorSchemeTransition: ColorSchemeTransition
 
@@ -79,7 +82,7 @@ class ColorSchemeTransitionTest : SysuiTestCase() {
                 mediaViewHolder,
                 multiRippleController,
                 turbulenceNoiseController,
-                animatingColorTransitionFactory
+                animatingColorTransitionFactory,
             )
 
         colorTransition =
@@ -157,7 +160,9 @@ class ColorSchemeTransitionTest : SysuiTestCase() {
     @Test
     fun testColorSchemeTransition_update() {
         colorSchemeTransition.updateColorScheme(colorScheme)
-        verify(mockAnimatingTransition, times(8)).updateColorScheme(colorScheme)
-        verify(gutsViewHolder).colorScheme = colorScheme
+        verify(mockAnimatingTransition, times(4)).updateColorScheme(colorScheme)
+        verify(gutsViewHolder).setColors(colorScheme)
+        verify(multiRippleController).updateColor(anyInt())
+        verify(turbulenceNoiseController).updateNoiseColor(anyInt())
     }
 }

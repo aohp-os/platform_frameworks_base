@@ -17,11 +17,13 @@
 package com.android.server.wm;
 
 import static android.view.WindowManager.TRANSIT_CHANGE;
+import static android.view.WindowManager.TRANSIT_FLAG_DISPLAY_LEVEL_TRANSITION;
 
-import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WINDOW_TRANSITIONS;
+import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WINDOW_TRANSITIONS_MIN;
 import static com.android.server.wm.ActivityTaskManagerService.POWER_MODE_REASON_CHANGE_DISPLAY;
 import static com.android.server.wm.utils.DisplayInfoOverrides.WM_OVERRIDE_FIELDS;
 import static com.android.server.wm.utils.DisplayInfoOverrides.copyDisplayInfoFields;
+import static com.android.window.flags.Flags.ensureWallpaperDrawnOnDisplaySwitch;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -37,10 +39,12 @@ import android.window.WindowContainerTransaction;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.display.BrightnessSynchronizer;
 import com.android.internal.protolog.ProtoLog;
+import com.android.server.wm.Transition.ReadyCondition;
 import com.android.server.wm.utils.DisplayInfoOverrides.DisplayInfoFieldsUpdater;
-import com.android.window.flags.Flags;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -60,10 +64,11 @@ class DeferredDisplayUpdater {
      */
     @VisibleForTesting
     static final DisplayInfoFieldsUpdater DEFERRABLE_FIELDS = (out, override) -> {
-        // Treat unique id and address change as WM-specific display change as we re-query display
-        // settings and parameters based on it which could cause window changes
+        // Treat unique id, address, and canHostTasks change as WM-specific display change as we
+        // re-query display settings and parameters based on it which could cause window changes.
         out.uniqueId = override.uniqueId;
         out.address = override.address;
+        out.canHostTasks = override.canHostTasks;
 
         // Also apply WM-override fields, since they might produce differences in window hierarchy
         WM_OVERRIDE_FIELDS.setFields(out, override);
@@ -74,6 +79,8 @@ class DeferredDisplayUpdater {
     private static final String TRACE_TAG_WAIT_FOR_TRANSITION =
             "Screen unblock: wait for transition";
     private static final int WAIT_FOR_TRANSITION_TIMEOUT = 1000;
+
+    private static final String READY_CONDITION_KEYGUARD_DRAWN = "keyguard_drawn";
 
     private final DisplayContent mDisplayContent;
 
@@ -100,6 +107,14 @@ class DeferredDisplayUpdater {
 
     /** Whether {@link #mScreenUnblocker} should wait for transition to be ready. */
     private boolean mShouldWaitForTransitionWhenScreenOn;
+
+    private boolean mInPhysicalDisplayChangeTransition;
+
+    /** True if we are waiting for the IKeyguardDrawnCallback which will eventually invoke
+     *  {@link DeferredDisplayUpdater#waitForTransition(Message)}}
+     */
+    private boolean mPendingKeyguardDrawing;
+    private final List<ReadyCondition> mWaitingForKeyguardDrawnConditions = new ArrayList<>();
 
     /** The message to notify PhoneWindowManager#finishWindowsDrawn. */
     @Nullable
@@ -139,8 +154,9 @@ class DeferredDisplayUpdater {
         if (displayInfoDiff == DIFF_EVERYTHING
                 || !mDisplayContent.getLastHasContent()
                 || !mDisplayContent.mTransitionController.isShellTransitionsEnabled()) {
-            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS,
-                    "DeferredDisplayUpdater: applying DisplayInfo immediately");
+            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS_MIN,
+                    "DeferredDisplayUpdater: applying DisplayInfo(%d x %d) immediately",
+                    displayInfo.logicalWidth, displayInfo.logicalHeight);
 
             mLastWmDisplayInfo = displayInfo;
             applyLatestDisplayInfo();
@@ -150,17 +166,23 @@ class DeferredDisplayUpdater {
 
         // If there are non WM-specific display info changes, apply only these fields immediately
         if ((displayInfoDiff & DIFF_NOT_WM_DEFERRABLE) > 0) {
-            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS,
-                    "DeferredDisplayUpdater: partially applying DisplayInfo immediately");
+            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS_MIN,
+                    "DeferredDisplayUpdater: partially applying DisplayInfo(%d x %d) immediately",
+                    displayInfo.logicalWidth, displayInfo.logicalHeight);
             applyLatestDisplayInfo();
         }
 
         // If there are WM-specific display info changes, apply them through a Shell transition
         if ((displayInfoDiff & DIFF_WM_DEFERRABLE) > 0) {
-            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS,
-                    "DeferredDisplayUpdater: deferring DisplayInfo update");
+            ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS_MIN,
+                    "DeferredDisplayUpdater: deferring DisplayInfo(%d x %d) update",
+                    displayInfo.logicalWidth, displayInfo.logicalHeight);
 
             requestDisplayChangeTransition(physicalDisplayUpdated, () -> {
+                ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS_MIN,
+                        "DeferredDisplayUpdater: applying DisplayInfo(%d x %d) after deferring",
+                        displayInfo.logicalWidth, displayInfo.logicalHeight);
+
                 // Apply deferrable fields to DisplayContent only when the transition
                 // starts collecting, non-deferrable fields are ignored in mLastWmDisplayInfo
                 mLastWmDisplayInfo = displayInfo;
@@ -183,33 +205,37 @@ class DeferredDisplayUpdater {
     private void requestDisplayChangeTransition(boolean physicalDisplayUpdated,
             @NonNull Runnable onStartCollect) {
 
-        final Transition transition = new Transition(TRANSIT_CHANGE, /* flags= */ 0,
+        final Transition transition = new Transition(TRANSIT_CHANGE,
+                /* flags= */ TRANSIT_FLAG_DISPLAY_LEVEL_TRANSITION,
                 mDisplayContent.mTransitionController,
                 mDisplayContent.mTransitionController.mSyncEngine);
 
         mDisplayContent.mAtmService.startPowerMode(POWER_MODE_REASON_CHANGE_DISPLAY);
 
+        if (physicalDisplayUpdated) {
+            mInPhysicalDisplayChangeTransition = true;
+        }
+
         mDisplayContent.mTransitionController.startCollectOrQueue(transition, deferred -> {
             final Rect startBounds = new Rect(0, 0, mDisplayContent.mInitialDisplayWidth,
                     mDisplayContent.mInitialDisplayHeight);
             final int fromRotation = mDisplayContent.getRotation();
-            if (Flags.blastSyncNotificationShadeOnDisplaySwitch() && physicalDisplayUpdated) {
+            if (physicalDisplayUpdated) {
                 final WindowState notificationShade =
                         mDisplayContent.getDisplayPolicy().getNotificationShade();
                 if (notificationShade != null && notificationShade.isVisible()
                         && mDisplayContent.mAtmService.mKeyguardController.isKeyguardOrAodShowing(
-                                mDisplayContent.mDisplayId)) {
+                        mDisplayContent.mDisplayId)) {
                     Slog.i(TAG, notificationShade + " uses blast for display switch");
-                    notificationShade.mSyncMethodOverride = BLASTSyncEngine.METHOD_BLAST;
+                    notificationShade.useBlastForNextSync();
                 }
             }
 
+            final ActionChain chain = mDisplayContent.mAtmService.mChainTracker.start(
+                    "dispChg", transition);
             mDisplayContent.mAtmService.deferWindowLayout();
             try {
                 onStartCollect.run();
-
-                ProtoLog.d(WM_DEBUG_WINDOW_TRANSITIONS,
-                        "DeferredDisplayUpdater: applied DisplayInfo after deferring");
 
                 if (physicalDisplayUpdated) {
                     onDisplayUpdated(transition, fromRotation, startBounds);
@@ -223,6 +249,7 @@ class DeferredDisplayUpdater {
                 // Run surface placement after requestStartTransition, so shell side can receive
                 // the transition request before handling task info changes.
                 mDisplayContent.mAtmService.continueWindowLayout();
+                mDisplayContent.mAtmService.mChainTracker.end();
             }
         });
     }
@@ -279,9 +306,17 @@ class DeferredDisplayUpdater {
                 getCurrentDisplayChange(fromRotation, startBounds);
         displayChange.setPhysicalDisplayChanged(true);
 
-        transition.addTransactionCompletedListener(this::continueScreenUnblocking);
+        transition.addTransactionPresentedListener(this::continueScreenUnblocking);
         mDisplayContent.mTransitionController.requestStartTransition(transition,
                 /* startTask= */ null, /* remoteTransition= */ null, displayChange);
+
+        if (mPendingKeyguardDrawing && ensureWallpaperDrawnOnDisplaySwitch()) {
+            // Keyguard hasn't reported that it has drawn yet, defer readiness until it draws
+            final ReadyCondition condition = new ReadyCondition(READY_CONDITION_KEYGUARD_DRAWN,
+                    /* newTrackerOnly= */ false);
+            transition.mReadyTracker.add(condition);
+            mWaitingForKeyguardDrawnConditions.add(condition);
+        }
 
         final DisplayAreaInfo newDisplayAreaInfo = mDisplayContent.getDisplayAreaInfo();
 
@@ -300,7 +335,11 @@ class DeferredDisplayUpdater {
             mDisplayContent.mAtmService.mWindowOrganizerController.applyTransaction(
                     wct);
         }
-        transition.setAllReady();
+        if (ensureWallpaperDrawnOnDisplaySwitch()) {
+            transition.setReady(mDisplayContent, /* ready= */ true);
+        } else {
+            transition.setAllReady();
+        }
     }
 
     private boolean isPhysicalDisplayUpdated(@Nullable DisplayInfo first,
@@ -314,11 +353,15 @@ class DeferredDisplayUpdater {
      * properties.
      */
     void onDisplayContentDisplayPropertiesPostChanged() {
+        if (mInPhysicalDisplayChangeTransition) {
+            return;
+        }
         // Unblock immediately in case there is no transition. This is unlikely to happen.
-        if (mScreenUnblocker != null && !mDisplayContent.mTransitionController.inTransition()) {
+        if (mScreenUnblocker != null) {
             mScreenUnblocker.sendToTarget();
             mScreenUnblocker = null;
         }
+        mShouldWaitForTransitionWhenScreenOn = false;
     }
 
     /**
@@ -327,11 +370,30 @@ class DeferredDisplayUpdater {
      */
     void onDisplaySwitching(boolean switching) {
         mShouldWaitForTransitionWhenScreenOn = switching;
+        mPendingKeyguardDrawing = switching;
+
+        if (!switching) {
+            // Reset keyguard drawn in case for some reason we haven't received the callback
+            // and the screen is already fully switched on here
+            onKeyguardDrawn();
+        }
+    }
+
+    /**
+     * Returns 'true' if the physical display is currently in the process of switching, for example
+     * on foldable devices when folding or unfolding. The value becomes 'false' when the switching
+     * has been finished (the new display is fully turned on).
+     */
+    boolean isDisplaySwitching() {
+        return mShouldWaitForTransitionWhenScreenOn;
     }
 
     /** Returns {@code true} if the transition will control when to turn on the screen. */
     boolean waitForTransition(@NonNull Message screenUnblocker) {
-        if (!Flags.waitForTransitionOnDisplaySwitch()) return false;
+        // waitForTransition() is called by PhoneWindowManager after receiving keyguard
+        // drawn callback, so mark keyguard as drawn
+        onKeyguardDrawn();
+
         if (!mShouldWaitForTransitionWhenScreenOn) {
             return false;
         }
@@ -346,13 +408,22 @@ class DeferredDisplayUpdater {
         return true;
     }
 
+    private void onKeyguardDrawn() {
+        mPendingKeyguardDrawing = false;
+        for (int i = 0; i < mWaitingForKeyguardDrawnConditions.size(); i++) {
+            mWaitingForKeyguardDrawnConditions.get(i).meet();
+        }
+        mWaitingForKeyguardDrawnConditions.clear();
+    }
+
     /**
      * Continues the screen unblocking flow, could be called either on a binder thread as
-     * a result of surface transaction completed listener or from {@link WindowManagerService#mH}
+     * a result of surface transaction presented listener or from {@link WindowManagerService#mH}
      * handler in case of timeout
      */
     private void continueScreenUnblocking() {
         synchronized (mDisplayContent.mWmService.mGlobalLock) {
+            mInPhysicalDisplayChangeTransition = false;
             mShouldWaitForTransitionWhenScreenOn = false;
             mDisplayContent.mWmService.mH.removeCallbacks(mScreenUnblockTimeoutRunnable);
             if (mScreenUnblocker == null) {
@@ -432,7 +503,8 @@ class DeferredDisplayUpdater {
                 || !first.thermalRefreshRateThrottling.contentEquals(
                 second.thermalRefreshRateThrottling)
                 || !Objects.equals(first.thermalBrightnessThrottlingDataId,
-                second.thermalBrightnessThrottlingDataId)) {
+                second.thermalBrightnessThrottlingDataId)
+        ) {
             diff |= DIFF_NOT_WM_DEFERRABLE;
         }
 
@@ -453,6 +525,7 @@ class DeferredDisplayUpdater {
                 || !Objects.equals(first.displayShape, second.displayShape)
                 || !Objects.equals(first.uniqueId, second.uniqueId)
                 || !Objects.equals(first.address, second.address)
+                || first.canHostTasks != second.canHostTasks
         ) {
             diff |= DIFF_WM_DEFERRABLE;
         }

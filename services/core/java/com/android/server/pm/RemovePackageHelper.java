@@ -17,6 +17,7 @@
 package com.android.server.pm;
 
 import static android.content.pm.PackageManager.UNINSTALL_REASON_UNKNOWN;
+import static android.os.Process.SYSTEM_UID;
 import static android.os.Trace.TRACE_TAG_PACKAGE_MANAGER;
 import static android.os.incremental.IncrementalManager.isIncrementalPath;
 import static android.os.storage.StorageManager.FLAG_STORAGE_CE;
@@ -30,7 +31,10 @@ import static com.android.server.pm.PackageManagerService.TAG;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SpecialUsers.CanBeALL;
+import android.annotation.UserIdInt;
 import android.content.pm.PackageManager;
+import android.content.pm.UserInfo;
 import android.content.pm.parsing.ApkLiteParseUtils;
 import android.content.pm.parsing.PackageLite;
 import android.content.pm.parsing.result.ParseResult;
@@ -256,7 +260,8 @@ final class RemovePackageHelper {
      * Make sure this flag is set for partially installed apps. If not it's meaningless to
      * delete a partially installed application.
      */
-    public void clearPackageStateForUserLIF(PackageSetting ps, int userId, int flags) {
+    public void clearPackageStateForUserLIF(PackageSetting ps, @CanBeALL @UserIdInt int userId,
+            int flags) {
         final String packageName = ps.getPackageName();
         // Step 1: always destroy app profiles except when explicitly preserved
         if ((flags & Installer.FLAG_CLEAR_APP_DATA_KEEP_ART_PROFILES) == 0) {
@@ -346,7 +351,10 @@ final class RemovePackageHelper {
                     sharedUserPkgs, userId);
         }
 
-        // Step 6: detroy keystore data.
+        // Step 6: destroy keystore data except for an app that shares SYSTEM_UID.
+        if (ps.getAppId() == SYSTEM_UID) {
+            return;
+        }
         mPm.mInjector.getBackgroundHandler().post(() -> {
             try {
                 Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,
@@ -370,13 +378,13 @@ final class RemovePackageHelper {
      * This method deletes the package from internal data structures such as mPackages / mSettings.
      *
      * @param targetUserId indicates the target user of the deletion. It equals to
-     *                     {@link UserHandle.USER_ALL} if the deletion was initiated for all users,
+     *                     {@link UserHandle#USER_ALL} if the deletion was initiated for all users,
      *                     otherwise it equals to the specific user id that the deletion was meant
      *                     for.
      */
     @GuardedBy("mPm.mInstallLock")
-    public void removePackageDataLIF(final PackageSetting deletedPs, int targetUserId,
-            @NonNull int[] allUserHandles,
+    public void removePackageDataLIF(final PackageSetting deletedPs,
+            @CanBeALL @UserIdInt int targetUserId, @NonNull int[] allUserHandles,
             @NonNull PackageRemovedInfo outInfo, int flags, boolean writeSettings) {
         String packageName = deletedPs.getPackageName();
         if (DEBUG_REMOVE) Slog.d(TAG, "removePackageDataLI: " + deletedPs);
@@ -470,11 +478,12 @@ final class RemovePackageHelper {
                 }
             }
         }
+        final List<UserInfo> activeUsers = Settings.getActiveUsers(mPm.mUserManager);
         synchronized (mPm.mLock) {
             // can downgrade to reader
             if (writeSettings) {
                 // Save settings now
-                mPm.writeSettingsLPrTEMP();
+                mPm.writeSettingsLPrTEMP(activeUsers);
             }
             if (installedStateChanged) {
                 mPm.mSettings.writeKernelMappingLPr(deletedPs);
@@ -482,7 +491,8 @@ final class RemovePackageHelper {
         }
     }
 
-    private static boolean shouldDeletePackageSetting(PackageSetting deletedPs, int userId,
+    private static boolean shouldDeletePackageSetting(PackageSetting deletedPs,
+                                                      @CanBeALL @UserIdInt int userId,
                                                       int[] allUserHandles, int flags) {
         if ((flags & PackageManager.DELETE_KEEP_DATA) != 0) {
             return false;
@@ -501,10 +511,9 @@ final class RemovePackageHelper {
         return true;
     }
 
-    void cleanUpResources(@Nullable String packageName, @Nullable File codeFile,
-                          @Nullable String[] instructionSets) {
+    void cleanUpResources(@Nullable String packageName, @Nullable File codeFile) {
         try (PackageManagerTracedLock installLock = mPm.mInstallLock.acquireLock()) {
-            cleanUpResourcesLI(codeFile, instructionSets);
+            cleanUpResourcesLI(codeFile);
         }
         if (packageName == null) {
             return;
@@ -519,7 +528,7 @@ final class RemovePackageHelper {
 
     // Need installer lock especially for dex file removal.
     @GuardedBy("mPm.mInstallLock")
-    private void cleanUpResourcesLI(@Nullable File codeFile, @Nullable String[] instructionSets) {
+    private void cleanUpResourcesLI(@Nullable File codeFile) {
         // Try enumerating all code paths before deleting
         List<String> allCodePaths = Collections.EMPTY_LIST;
         if (codeFile != null && codeFile.exists()) {

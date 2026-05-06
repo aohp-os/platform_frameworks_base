@@ -16,6 +16,8 @@
 
 package com.android.internal.widget;
 
+import static android.app.Flags.notificationsRedesignTemplates;
+
 import static com.android.internal.widget.MessagingGroup.IMAGE_DISPLAY_LOCATION_EXTERNAL;
 import static com.android.internal.widget.MessagingGroup.IMAGE_DISPLAY_LOCATION_INLINE;
 
@@ -35,6 +37,8 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
+import android.util.Log;
+import android.view.NotificationTopLineView;
 import android.view.RemotableViewMethod;
 import android.view.View;
 import android.view.ViewGroup;
@@ -43,10 +47,10 @@ import android.view.animation.Interpolator;
 import android.view.animation.PathInterpolator;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.RemoteViews;
 
 import com.android.internal.R;
-import com.android.internal.util.ContrastColorUtil;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -60,10 +64,11 @@ import java.util.Map;
 public class MessagingLayout extends FrameLayout
         implements ImageMessageConsumer, IMessagingLayout {
 
-    private static final float COLOR_SHIFT_AMOUNT = 60;
     public static final Interpolator LINEAR_OUT_SLOW_IN = new PathInterpolator(0f, 0f, 0.2f, 1f);
     public static final Interpolator FAST_OUT_LINEAR_IN = new PathInterpolator(0.4f, 0f, 1f, 1f);
     public static final Interpolator FAST_OUT_SLOW_IN = new PathInterpolator(0.4f, 0f, 0.2f, 1f);
+    private static final String TAG = "MessagingLayout";
+    private static final int MAX_SUMMARIZATION_LINES = 3;
     public static final OnLayoutChangeListener MESSAGING_PROPERTY_ANIMATOR
             = new MessagingPropertyAnimator();
     private final PeopleHelper mPeopleHelper = new PeopleHelper();
@@ -71,23 +76,30 @@ public class MessagingLayout extends FrameLayout
     private List<MessagingMessage> mHistoricMessages = new ArrayList<>();
     private MessagingLinearLayout mMessagingLinearLayout;
     private boolean mShowHistoricMessages;
-    private ArrayList<MessagingGroup> mGroups = new ArrayList<>();
+    private final ArrayList<MessagingGroup> mGroups = new ArrayList<>();
     private MessagingLinearLayout mImageMessageContainer;
     private ImageView mRightIconView;
+    private NotificationTopLineView mTopLine;
     private Rect mMessagingClipRect;
     private int mLayoutColor;
     private int mSenderTextColor;
     private int mMessageTextColor;
     private Icon mAvatarReplacement;
     private boolean mIsOneToOne;
-    private ArrayList<MessagingGroup> mAddedGroups = new ArrayList<>();
+    private final ArrayList<MessagingGroup> mAddedGroups = new ArrayList<>();
     private Person mUser;
     private CharSequence mNameReplacement;
     private boolean mIsCollapsed;
     private ImageResolver mImageResolver;
     private CharSequence mConversationTitle;
-    private ArrayList<MessagingLinearLayout.MessagingChild> mToRecycle = new ArrayList<>();
+    private final ArrayList<MessagingLinearLayout.MessagingChild> mToRecycle = new ArrayList<>();
     private boolean mPrecomputedTextEnabled = false;
+    private CharSequence mSummarizedContent;
+    private int mSpacingForExpander;
+    private int mSpacingForImage;
+    private LinearLayout mMessageContentView;
+    private int mSummarizationStartMargin;
+
     public MessagingLayout(@NonNull Context context) {
         super(context);
     }
@@ -113,22 +125,69 @@ public class MessagingLayout extends FrameLayout
         mMessagingLinearLayout = findViewById(R.id.notification_messaging);
         mImageMessageContainer = findViewById(R.id.conversation_image_message_container);
         mRightIconView = findViewById(R.id.right_icon);
+        mTopLine = findViewById(R.id.notification_top_line);
+
+        // Calculate the amount of space necessary for the expander (adjusted with the font size).
+        int iconMarginEnd = getResources().getDimensionPixelSize(
+                R.dimen.notification_2025_right_icon_margin_end);
+        int extraSpaceForExpander = getResources().getDimensionPixelSize(
+                R.dimen.notification_2025_extra_space_for_expander);
+        mSpacingForExpander = iconMarginEnd + extraSpaceForExpander;
+
+        // Unlike large icons which can be wider than tall, isolated image messages can only
+        // be square, so we can use the fixed width directly to calculate the amount of space
+        // necessary for the image.
+        int imageWidth = getResources().getDimensionPixelSize(
+                R.dimen.notification_right_icon_size);
+        int iconMarginStart = getResources().getDimensionPixelSize(
+                R.dimen.notification_2025_right_icon_content_margin);
+        mSpacingForImage = iconMarginStart + imageWidth;
+
+        if (notificationsRedesignTemplates()) {
+            // The left_icon in the header has the default rounded square background. Make sure
+            // we're using the circular background instead.
+            ImageView leftIcon = findViewById(R.id.left_icon);
+            if (leftIcon != null) {
+                leftIcon.setBackgroundResource(
+                        R.drawable.notification_2025_conversation_icon_background);
+            }
+        }
         // We still want to clip, but only on the top, since views can temporarily out of bounds
         // during transitions.
         DisplayMetrics displayMetrics = getResources().getDisplayMetrics();
         int size = Math.max(displayMetrics.widthPixels, displayMetrics.heightPixels);
         mMessagingClipRect = new Rect(0, 0, size, size);
         setMessagingClippingDisabled(false);
+
+        mMessageContentView = findViewById(R.id.notification_main_column);
+        mSummarizationStartMargin = getResources().getDimensionPixelSize(
+                R.dimen.notification_2025_content_margin_start_summarization);
     }
 
-    @RemotableViewMethod
+    @RemotableViewMethod(asyncImpl = "setAvatarReplacementAsync")
     public void setAvatarReplacement(Icon icon) {
         mAvatarReplacement = icon;
     }
 
-    @RemotableViewMethod
+    /**
+     * @hide
+     */
+    public Runnable setAvatarReplacementAsync(Icon icon) {
+        mAvatarReplacement = icon;
+        return () -> {};
+    }
+
+    @RemotableViewMethod(asyncImpl = "setNameReplacementAsync")
     public void setNameReplacement(CharSequence nameReplacement) {
         mNameReplacement = nameReplacement;
+    }
+
+    /**
+     * @hide
+     */
+    public Runnable setNameReplacementAsync(CharSequence nameReplacement) {
+        mNameReplacement = nameReplacement;
+        return () -> {};
     }
 
     /**
@@ -136,9 +195,18 @@ public class MessagingLayout extends FrameLayout
      *
      * @param isCollapsed is it collapsed
      */
-    @RemotableViewMethod
+    @RemotableViewMethod(asyncImpl = "setIsCollapsedAsync")
     public void setIsCollapsed(boolean isCollapsed) {
         mIsCollapsed = isCollapsed;
+    }
+
+    /**
+     * setDataAsync needs to do different stuff for the collapsed vs expanded view, so store the
+     * collapsed state early.
+     */
+    public Runnable setIsCollapsedAsync(boolean isCollapsed) {
+        mIsCollapsed = isCollapsed;
+        return () -> {};
     }
 
     @RemotableViewMethod
@@ -151,13 +219,22 @@ public class MessagingLayout extends FrameLayout
      *
      * @param conversationTitle the conversation title
      */
-    @RemotableViewMethod
+    @RemotableViewMethod(asyncImpl = "setConversationTitleAsync")
     public void setConversationTitle(CharSequence conversationTitle) {
         mConversationTitle = conversationTitle;
     }
 
     /**
+     * @hide
+     */
+    public Runnable setConversationTitleAsync(CharSequence conversationTitle) {
+        mConversationTitle = conversationTitle;
+        return () -> {};
+    }
+
+    /**
      * Set Messaging data
+     *
      * @param extras Bundle contains messaging data
      */
     @RemotableViewMethod(asyncImpl = "setDataAsync")
@@ -175,20 +252,29 @@ public class MessagingLayout extends FrameLayout
                 Notification.MessagingStyle.Message.getMessagesFromBundleArray(histMessages);
         setUser(extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON,
                 Person.class));
-        RemoteInputHistoryItem[] history =
-                (RemoteInputHistoryItem[]) extras.getParcelableArray(
-                        Notification.EXTRA_REMOTE_INPUT_HISTORY_ITEMS,
-                        RemoteInputHistoryItem.class);
+        RemoteInputHistoryItem[] history = extras.getParcelableArray(
+                Notification.EXTRA_REMOTE_INPUT_HISTORY_ITEMS, RemoteInputHistoryItem.class);
         addRemoteInputHistoryToMessages(newMessages, history);
 
         final Person user = extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON, Person.class);
         boolean showSpinner =
                 extras.getBoolean(Notification.EXTRA_SHOW_REMOTE_INPUT_SPINNER, false);
 
+
         final List<MessagingMessage> historicMessagingMessages = createMessages(newHistoricMessages,
-                /* isHistoric= */true, usePrecomputedText);
-        final List<MessagingMessage> newMessagingMessages =
-                createMessages(newMessages, /* isHistoric */false, usePrecomputedText);
+                /* isHistoric= */true, usePrecomputedText, false);
+        List<MessagingMessage> newMessagingMessages;
+        mSummarizedContent = extras.getCharSequence(Notification.EXTRA_SUMMARIZED_CONTENT);
+        if (isShowingSummarization()) {
+            Notification.MessagingStyle.Message summary =
+                    new Notification.MessagingStyle.Message(mSummarizedContent, 0, "");
+            newMessagingMessages =
+                    createMessages(List.of(summary), false, usePrecomputedText, true);
+        } else {
+            newMessagingMessages =
+                    createMessages(newMessages, /* isHistoric= */false, usePrecomputedText, false);
+        }
+
         // Let's first find our groups!
         List<List<MessagingMessage>> groups = new ArrayList<>();
         List<Person> senders = new ArrayList<>();
@@ -196,14 +282,15 @@ public class MessagingLayout extends FrameLayout
         // Lets first find the groups
         findGroups(historicMessagingMessages, newMessagingMessages, groups, senders);
 
-        return new MessagingData(user, showSpinner,
-                historicMessagingMessages, newMessagingMessages, groups, senders);
+        return new MessagingData(user, showSpinner, historicMessagingMessages, newMessagingMessages,
+                groups, senders, mSummarizedContent);
     }
 
     /**
      * RemotableViewMethod's asyncImpl of {@link #setData(Bundle)}.
      * This should be called on a background thread, and returns a Runnable which is then must be
      * called on the main thread to complete the operation and set text.
+     *
      * @param extras Bundle contains messaging data
      * @hide
      */
@@ -225,6 +312,7 @@ public class MessagingLayout extends FrameLayout
 
     /**
      * enable/disable precomputed text usage
+     *
      * @hide
      */
     public void setPrecomputedTextEnabled(boolean precomputedTextEnabled) {
@@ -232,7 +320,7 @@ public class MessagingLayout extends FrameLayout
     }
 
     private void finalizeInflate(List<MessagingMessage> historicMessagingMessages) {
-        for (MessagingMessage messagingMessage: historicMessagingMessages) {
+        for (MessagingMessage messagingMessage : historicMessagingMessages) {
             messagingMessage.finalizeInflate();
         }
     }
@@ -251,7 +339,7 @@ public class MessagingLayout extends FrameLayout
         for (int i = remoteInputHistory.length - 1; i >= 0; i--) {
             RemoteInputHistoryItem historyMessage = remoteInputHistory[i];
             Notification.MessagingStyle.Message message = new Notification.MessagingStyle.Message(
-                    historyMessage.getText(), 0, (Person) null, true /* remoteHistory */);
+                    historyMessage.getText(), 0, null, true /* remoteHistory */);
             if (historyMessage.getUri() != null) {
                 message.setData(historyMessage.getMimeType(), historyMessage.getUri());
             }
@@ -259,8 +347,36 @@ public class MessagingLayout extends FrameLayout
         }
     }
 
+    private void updateViewsForSummarization() {
+        int maxLines = Integer.MAX_VALUE;
+        if (isShowingSummarization()) {
+            maxLines = MAX_SUMMARIZATION_LINES;
+        } else if (mIsCollapsed) {
+            if (android.app.Flags.nmCollapsedLines()) {
+                maxLines = 2;
+            } else {
+                maxLines = 1;
+            }
+        }
+        mMessagingLinearLayout.setMaxDisplayedLines(maxLines);
+        if (isShowingSummarization()) {
+            ViewGroup.LayoutParams lp = mMessageContentView.getLayoutParams();
+            if (lp != null && lp instanceof MarginLayoutParams) {
+                final MarginLayoutParams mlp = (MarginLayoutParams) lp;
+                mlp.setMarginStart(mSummarizationStartMargin);
+                // this happens before layout, so we don't need to explicitly ask for one
+            }
+        }
+    }
+
+    private boolean isShowingSummarization() {
+        return !TextUtils.isEmpty(mSummarizedContent) && mIsCollapsed;
+    }
+
     private void bind(MessagingData messagingData) {
         setUser(messagingData.getUser());
+
+        updateViewsForSummarization();
 
         // Let's now create the views and reorder them accordingly
         ArrayList<MessagingGroup> oldGroups = new ArrayList<>(mGroups);
@@ -295,35 +411,88 @@ public class MessagingLayout extends FrameLayout
     }
 
     private void updateImageMessages() {
-        View newMessage = null;
         if (mImageMessageContainer == null) {
             return;
         }
-        if (mIsCollapsed && !mGroups.isEmpty()) {
-            // When collapsed, we're displaying the image message in a dedicated container
-            // on the right of the layout instead of inline. Let's add the isolated image there
-            MessagingGroup messagingGroup = mGroups.get(mGroups.size() - 1);
-            MessagingImageMessage isolatedMessage = messagingGroup.getIsolatedMessage();
-            if (isolatedMessage != null) {
-                newMessage = isolatedMessage.getView();
-            }
-        }
+        View newMessage = getNewImageMessage();
         // Remove all messages that don't belong into the image layout
         View previousMessage = mImageMessageContainer.getChildAt(0);
+        boolean isShowingImage = newMessage != null;
         if (previousMessage != newMessage) {
             mImageMessageContainer.removeView(previousMessage);
-            if (newMessage != null) {
+            if (isShowingImage) {
                 mImageMessageContainer.addView(newMessage);
             }
         }
-        mImageMessageContainer.setVisibility(newMessage != null ? VISIBLE : GONE);
+        mImageMessageContainer.setVisibility(isShowingImage ? VISIBLE : GONE);
 
-        // When showing an image message, do not show the large icon.  Removing the drawable
-        // prevents it from being shown in the left_icon view (by the grouping util).
-        if (newMessage != null && mRightIconView != null && mRightIconView.getDrawable() != null) {
-            mRightIconView.setImageDrawable(null);
-            mRightIconView.setVisibility(GONE);
+        if (mRightIconView != null && mRightIconView.getDrawable() != null) {
+            // When showing an image message, do not show the large icon.  Removing the drawable
+            // prevents it from being shown in the left_icon view (by the grouping util).
+            if (isShowingImage) {
+                mRightIconView.setImageDrawable(null);
+                mRightIconView.setVisibility(GONE);
+            }
         }
+        if (isShowingImage) {
+            adjustSpacingForImage();
+        }
+    }
+
+    /**
+     * When showing an isolated image message similar to the large icon, adjust the margin of the
+     * text in the same way we do for large icons, to leave space for the image.
+     */
+    private void adjustSpacingForImage() {
+        if (notificationsRedesignTemplates()) {
+            updateMarginEnd(mImageMessageContainer, mSpacingForExpander);
+
+            int spacingForImage = getSpacingForImage();
+            int textMargin = spacingForImage + mSpacingForExpander;
+            updateMarginEnd(mTopLine, textMargin);
+            // Only apply spacing to second line if there's an image - otherwise the text should
+            // flow under the expander.
+            if (spacingForImage > 0) {
+                updateMarginEnd(mMessagingLinearLayout, textMargin);
+            }
+        }
+    }
+
+    /**
+     * Calculate the amount of space necessary for the image if present.
+     */
+    private int getSpacingForImage() {
+        if (mImageMessageContainer != null && mImageMessageContainer.getVisibility() == VISIBLE) {
+            return mSpacingForImage;
+        }
+        return 0;
+    }
+
+    private void updateMarginEnd(ViewGroup view, int marginEnd) {
+        if (view == null) {
+            Log.wtf(TAG, "The view passed to updateMarginEnd should not be null");
+            return;
+        }
+
+        MarginLayoutParams lp = (MarginLayoutParams) view.getLayoutParams();
+        if (lp.getMarginEnd() != marginEnd) {
+            lp.setMarginEnd(marginEnd);
+            view.setLayoutParams(lp);
+        }
+    }
+
+    @Nullable
+    private View getNewImageMessage() {
+        if (mIsCollapsed && !mGroups.isEmpty()) {
+            // When collapsed, we're displaying the image message in a dedicated container
+            // on the right of the layout instead of inline. Let's add the isolated image there
+            MessagingGroup messagingGroup = mGroups.getLast();
+            MessagingImageMessage isolatedMessage = messagingGroup.getIsolatedMessage();
+            if (isolatedMessage != null) {
+                return isolatedMessage.getView();
+            }
+        }
+        return null;
     }
 
     private void removeGroups(ArrayList<MessagingGroup> oldGroups) {
@@ -398,41 +567,44 @@ public class MessagingLayout extends FrameLayout
         return mPeopleHelper.createAvatarSymbol(senderName, symbol, layoutColor);
     }
 
-    private int findColor(CharSequence senderName, int layoutColor) {
-        double luminance = ContrastColorUtil.calculateLuminance(layoutColor);
-        float shift = Math.abs(senderName.hashCode()) % 5 / 4.0f - 0.5f;
-
-        // we need to offset the range if the luminance is too close to the borders
-        shift += Math.max(COLOR_SHIFT_AMOUNT / 2.0f / 100 - luminance, 0);
-        shift -= Math.max(COLOR_SHIFT_AMOUNT / 2.0f / 100 - (1.0f - luminance), 0);
-        return ContrastColorUtil.getShiftedColor(layoutColor,
-                (int) (shift * COLOR_SHIFT_AMOUNT));
-    }
-
-    private String findNameSplit(String existingName) {
-        String[] split = existingName.split(" ");
-        if (split.length > 1) {
-            return Character.toString(split[0].charAt(0))
-                    + Character.toString(split[1].charAt(0));
-        }
-        return existingName.substring(0, 1);
-    }
-
-    @RemotableViewMethod
+    @RemotableViewMethod(asyncImpl = "setLayoutColorAsync")
     public void setLayoutColor(int color) {
         mLayoutColor = color;
     }
 
-    @RemotableViewMethod
+    /**
+     * @hide
+     */
+    public Runnable setLayoutColorAsync(int color) {
+        mLayoutColor = color;
+        return () -> {};
+    }
+
+    @RemotableViewMethod(asyncImpl = "setIsOneToOneAsync")
     public void setIsOneToOne(boolean oneToOne) {
         mIsOneToOne = oneToOne;
     }
 
-    @RemotableViewMethod
+    /**
+     * @hide
+     */
+    public Runnable setIsOneToOneAsync(boolean oneToOne) {
+        mIsOneToOne = oneToOne;
+        return () -> {};
+    }
+
+    @RemotableViewMethod(asyncImpl = "setSenderTextColorAsync")
     public void setSenderTextColor(int color) {
         mSenderTextColor = color;
     }
 
+    /**
+     * @hide
+     */
+    public Runnable setSenderTextColorAsync(int color) {
+        mSenderTextColor = color;
+        return () -> {};
+    }
 
     /**
      * @param color the color of the notification background
@@ -442,9 +614,17 @@ public class MessagingLayout extends FrameLayout
         // Nothing to do with this
     }
 
-    @RemotableViewMethod
+    @RemotableViewMethod(asyncImpl = "setMessageTextColorAsync")
     public void setMessageTextColor(int color) {
         mMessageTextColor = color;
+    }
+
+    /**
+     * @hide
+     */
+    public Runnable setMessageTextColorAsync(int color) {
+        mMessageTextColor = color;
+        return () -> {};
     }
 
     public void setUser(Person user) {
@@ -490,8 +670,11 @@ public class MessagingLayout extends FrameLayout
             if (sender != mUser && mNameReplacement != null) {
                 nameOverride = mNameReplacement;
             }
-            newGroup.setSingleLine(mIsCollapsed);
+            newGroup.setSingleLine(mIsCollapsed
+                    ? !android.app.Flags.nmCollapsedLines() && TextUtils.isEmpty(mSummarizedContent)
+                    : false);
             newGroup.setShowingAvatar(!mIsCollapsed);
+            newGroup.setIsCollapsed(mIsCollapsed);
             newGroup.setSender(sender, nameOverride);
             newGroup.setSending(groupIndex == (groups.size() - 1) && showSpinner);
             mGroups.add(newGroup);
@@ -500,8 +683,11 @@ public class MessagingLayout extends FrameLayout
                 mMessagingLinearLayout.removeView(newGroup);
                 mMessagingLinearLayout.addView(newGroup, groupIndex);
             }
-            newGroup.setMessages(group);
+            newGroup.setMessages(group, isShowingSummarization());
         }
+
+        // remove groups from mAddedGroups when they are no longer in mGroups.
+        mAddedGroups.removeIf(messagingGroup -> !mGroups.contains(messagingGroup));
     }
 
     private void findGroups(List<MessagingMessage> historicMessages,
@@ -543,14 +729,14 @@ public class MessagingLayout extends FrameLayout
      */
     private List<MessagingMessage> createMessages(
             List<Notification.MessagingStyle.Message> newMessages, boolean isHistoric,
-            boolean usePrecomputedText) {
+            boolean usePrecomputedText, boolean useItalics) {
         List<MessagingMessage> result = new ArrayList<>();
         for (int i = 0; i < newMessages.size(); i++) {
             Notification.MessagingStyle.Message m = newMessages.get(i);
             MessagingMessage message = findAndRemoveMatchingMessage(m);
             if (message == null) {
                 message = MessagingMessage.createMessage(this, m,
-                        mImageResolver, usePrecomputedText);
+                        mImageResolver, usePrecomputedText, useItalics);
             }
             message.setIsHistoric(isHistoric);
             result.add(message);
@@ -601,7 +787,7 @@ public class MessagingLayout extends FrameLayout
             }
             if (visibleChildren > 0 && group.getVisibility() == GONE) {
                 group.setVisibility(VISIBLE);
-            } else if (visibleChildren == 0 && group.getVisibility() != GONE)   {
+            } else if (visibleChildren == 0 && group.getVisibility() != GONE) {
                 group.setVisibility(GONE);
             }
         }

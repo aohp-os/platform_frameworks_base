@@ -38,6 +38,7 @@ import com.android.internal.util.UserIcons
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.systemui.Flags.switchUserOnBg
+import com.android.systemui.Flags.userSwitcherAddSignOutOption
 import com.android.systemui.SystemUISecondaryUserService
 import com.android.systemui.animation.Expandable
 import com.android.systemui.broadcast.BroadcastDispatcher
@@ -110,6 +111,7 @@ constructor(
     private val uiEventLogger: UiEventLogger,
     private val userRestrictionChecker: UserRestrictionChecker,
     private val processWrapper: ProcessWrapper,
+    private val userLogoutInteractor: UserLogoutInteractor,
 ) {
     /**
      * Defines interface for classes that can be notified when the state of users on the device is
@@ -242,6 +244,12 @@ constructor(
                         ) {
                             add(UserActionModel.NAVIGATE_TO_USER_MANAGEMENT)
                         }
+                        if (
+                            userSwitcherAddSignOutOption() &&
+                                userLogoutInteractor.isLogoutEnabled.value
+                        ) {
+                            add(UserActionModel.SIGN_OUT)
+                        }
                     }
                 }
                 .flowOn(backgroundDispatcher)
@@ -261,7 +269,8 @@ constructor(
                                 action = it,
                                 selectedUserId = selectedUserInfo.id,
                                 isRestricted =
-                                    it != UserActionModel.ENTER_GUEST_MODE &&
+                                    it != UserActionModel.SIGN_OUT &&
+                                        it != UserActionModel.ENTER_GUEST_MODE &&
                                         it != UserActionModel.NAVIGATE_TO_USER_MANAGEMENT &&
                                         !settings.isAddUsersFromLockscreen,
                             )
@@ -427,7 +436,7 @@ constructor(
                     guestUserId = currentlySelectedUserInfo.id,
                     targetUserId = repository.lastSelectedNonGuestUserId,
                     isGuestEphemeral = currentlySelectedUserInfo.isEphemeral,
-                    isKeyguardShowing = keyguardInteractor.isKeyguardShowing(),
+                    isKeyguardShowing = keyguardInteractor.isKeyguardCurrentlyShowing(),
                     onExitGuestUser = this::exitGuestUser,
                     dialogShower = dialogShower,
                 )
@@ -442,7 +451,7 @@ constructor(
                     guestUserId = currentlySelectedUserInfo.id,
                     targetUserId = newlySelectedUserId,
                     isGuestEphemeral = currentlySelectedUserInfo.isEphemeral,
-                    isKeyguardShowing = keyguardInteractor.isKeyguardShowing(),
+                    isKeyguardShowing = keyguardInteractor.isKeyguardCurrentlyShowing(),
                     onExitGuestUser = this::exitGuestUser,
                     dialogShower = dialogShower,
                 )
@@ -475,7 +484,7 @@ constructor(
                 activityStarter.startActivity(
                     CreateUserActivity.createIntentForStart(
                         applicationContext,
-                        keyguardInteractor.isKeyguardShowing(),
+                        keyguardInteractor.isKeyguardCurrentlyShowing(),
                     ),
                     /* dismissShade= */ true,
                     /* animationController */ null,
@@ -499,6 +508,10 @@ constructor(
                     Intent(Settings.ACTION_USER_SETTINGS),
                     /* dismissShade= */ true,
                 )
+            UserActionModel.SIGN_OUT -> {
+                dismissDialog()
+                applicationScope.launch { userLogoutInteractor.logOut() }
+            }
         }
     }
 
@@ -529,11 +542,17 @@ constructor(
         }
     }
 
-    fun showUserSwitcher(expandable: Expandable) {
+    /**
+     * Shows the user switcher dialog.
+     *
+     * If [context] is provided, the dialog will be created from that context. If not provided, the
+     * shade context will be used.
+     */
+    fun showUserSwitcher(expandable: Expandable?, context: Context? = null) {
         if (featureFlags.isEnabled(Flags.FULL_SCREEN_USER_SWITCHER)) {
-            showDialog(ShowDialogRequestModel.ShowUserSwitcherFullscreenDialog(expandable))
+            showDialog(ShowDialogRequestModel.ShowUserSwitcherFullscreenDialog(expandable, context))
         } else {
-            showDialog(ShowDialogRequestModel.ShowUserSwitcherDialog(expandable))
+            showDialog(ShowDialogRequestModel.ShowUserSwitcherDialog(expandable, context))
         }
     }
 
@@ -583,9 +602,10 @@ constructor(
             actionType = action,
             isRestricted = isRestricted,
             isSwitchToEnabled =
-                canSwitchUsers(selectedUserId = selectedUserId, isAction = true) &&
-                    // If the user is auto-created is must not be currently resetting.
-                    !(isGuestUserAutoCreated && isGuestUserResetting),
+                action == UserActionModel.SIGN_OUT ||
+                    (canSwitchUsers(selectedUserId = selectedUserId, isAction = true) &&
+                        // If the user is auto-created is must not be currently resetting.
+                        !(isGuestUserAutoCreated && isGuestUserResetting)),
             userRestrictionChecker = userRestrictionChecker,
         )
     }
@@ -639,8 +659,8 @@ constructor(
     }
 
     private fun restartSecondaryService(@UserIdInt userId: Int) {
-        // Do not start service for user that is marked for deletion.
-        if (!manager.aliveUsers.map { it.id }.contains(userId)) {
+        // Do not start service for user that isn't running
+        if (!manager.isUserRunning(userId)) {
             return
         }
 
@@ -691,8 +711,8 @@ constructor(
         isUserSwitcherEnabled: Boolean,
     ): UserModel? {
         return when {
-            // When the user switcher is not enabled in settings, we only show the primary user.
-            !isUserSwitcherEnabled && !userInfo.isPrimary -> null
+            // When the user switcher is not enabled in settings, we only show the current user.
+            !isUserSwitcherEnabled && userInfo.id != selectedUserId -> null
             // We avoid showing disabled users.
             !userInfo.isEnabled -> null
             // We meet the conditions to return the UserModel.
@@ -744,16 +764,10 @@ constructor(
     }
 
     private suspend fun isAnyUserUnlocked(): Boolean {
-        return manager
-            .getUsers(
-                /* excludePartial= */ true,
-                /* excludeDying= */ true,
-                /* excludePreCreated= */ true,
-            )
-            .any { user ->
-                user.id != UserHandle.USER_SYSTEM &&
-                    withContext(backgroundDispatcher) { manager.isUserUnlocked(user.userHandle) }
-            }
+        return manager.getAliveUsers().any { user ->
+            user.id != UserHandle.USER_SYSTEM &&
+                withContext(backgroundDispatcher) { manager.isUserUnlocked(user.userHandle) }
+        }
     }
 
     @SuppressLint("UseCompatLoadingForDrawables")

@@ -22,22 +22,28 @@ import static com.android.server.om.OverlayManagerService.TAG;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.UserIdInt;
+import android.content.om.OverlayConstraint;
 import android.content.om.OverlayInfo;
 import android.content.om.OverlayableInfo;
 import android.os.Build.VERSION_CODES;
 import android.os.FabricatedOverlayInfo;
 import android.os.FabricatedOverlayInternal;
+import android.os.IBinder;
+import android.os.IdmapParams;
 import android.os.OverlayablePolicy;
+import android.os.Parcel;
 import android.os.SystemProperties;
 import android.text.TextUtils;
 import android.util.Slog;
 
+import com.android.server.Watchdog;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageState;
 
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -102,7 +108,8 @@ final class IdmapManager {
      */
     @IdmapStatus int createIdmap(@NonNull final AndroidPackage targetPackage,
             @NonNull PackageState overlayPackageState, @NonNull final AndroidPackage overlayPackage,
-            String overlayBasePath, String overlayName, @UserIdInt int userId) {
+            String overlayBasePath, String overlayName, @UserIdInt int userId,
+            @NonNull final List<OverlayConstraint> constraints) {
         if (DEBUG) {
             Slog.d(TAG, "create idmap for " + targetPackage.getPackageName() + " and "
                     + overlayPackage.getPackageName());
@@ -112,18 +119,87 @@ final class IdmapManager {
             int policies = calculateFulfilledPolicies(targetPackage, overlayPackageState,
                     overlayPackage, userId);
             boolean enforce = enforceOverlayable(overlayPackageState, overlayPackage);
+            android.os.OverlayConstraint[] idmapConstraints = toIdmapConstraints(constraints);
             if (mIdmapDaemon.verifyIdmap(targetPath, overlayBasePath, overlayName, policies,
-                    enforce, userId)) {
+                    enforce, userId, idmapConstraints)) {
                 return IDMAP_IS_VERIFIED;
             }
             final boolean idmapCreated = mIdmapDaemon.createIdmap(targetPath, overlayBasePath,
-                    overlayName, policies, enforce, userId) != null;
+                    overlayName, policies, enforce, userId, idmapConstraints) != null;
             return (idmapCreated) ? IDMAP_IS_MODIFIED | IDMAP_IS_VERIFIED : IDMAP_NOT_EXIST;
         } catch (Exception e) {
             Slog.w(TAG, "failed to generate idmap for " + targetPath + " and "
                     + overlayBasePath, e);
             return IDMAP_NOT_EXIST;
         }
+    }
+
+    @IdmapStatus int[] createIdmaps(final List<IdmapParams> idmapParams) {
+        List<List<IdmapParams>> splitParams = splitIdmapParams(idmapParams);
+
+        int[] idmapStatus = new int[idmapParams.size()];
+        try {
+            Watchdog.getInstance().pauseWatchingCurrentThread("idmap creation may be slow");
+            int startIndex = 0;
+            for (List<IdmapParams> params : splitParams) {
+                String[] idmapPaths = mIdmapDaemon.verifyOrCreateIdmaps(
+                        params.toArray(new IdmapParams[0]));
+                // If the idmap2d service isn't ready, idmapPaths will be null and idmapStatus for
+                // the corresponding indices will be IDMAP_NOT_EXIST.
+                if (idmapPaths != null) {
+                    for (int i = 0; i < idmapPaths.length; i++) {
+                        // An empty String indicates a verified pre-existing idmap. Otherwise, there
+                        // should be a non-empty path or "INVALID" (see Idmap2Service.cpp).
+                        idmapStatus[startIndex + i] = idmapPaths[i].isEmpty()
+                                ? IDMAP_IS_VERIFIED
+                                : idmapPaths[i].equals("INVALID")
+                                    ? IDMAP_NOT_EXIST
+                                    : IDMAP_IS_MODIFIED | IDMAP_IS_VERIFIED;
+                    }
+                }
+                startIndex += params.size();
+            }
+        } catch (Exception e) {
+            Slog.w(TAG, "failed to generate idmaps", e);
+        } finally {
+            Watchdog.getInstance().resumeWatchingCurrentThread("idmap creation may be slow");
+        }
+        return idmapStatus;
+    }
+
+    private static final int MAX_IPC_SIZE = IBinder.getSuggestedMaxIpcSizeBytes();
+
+    // Split the input list of IdmapParams so we don't exceed the max IPC size.
+    private static List<List<IdmapParams>> splitIdmapParams(final List<IdmapParams> idmapParams) {
+        Slog.d(TAG, "splitting " + idmapParams.size()
+                + " IdmapParams using max size of " + MAX_IPC_SIZE);
+        List<List<IdmapParams>> split = new ArrayList<>();
+        final int N = idmapParams.size();
+
+        int startIndex = 0;
+        int i = 0;
+
+        Parcel p = Parcel.obtain();
+        while (i < N) {
+            p.writeInt(1);
+            p.writeTypedObject(idmapParams.get(i), 0);
+            if (p.dataSize() > MAX_IPC_SIZE) {
+                // Don't write the item that caused us to pass the size threshold.
+                split.add(idmapParams.subList(startIndex, i));
+                Slog.d(TAG, split.size() + ": " + (i - startIndex) + " IdmapParams");
+                startIndex = i;
+                p.recycle();
+                p = Parcel.obtain();
+            }
+            i++;
+        }
+        if (startIndex != i) {
+            Slog.d(TAG, split.size() + ": " + (i - startIndex) + " IdmapParams");
+            split.add(idmapParams.subList(startIndex, i));
+        }
+        p.recycle();
+
+        return split;
     }
 
     boolean removeIdmap(@NonNull final OverlayInfo oi, final int userId) {
@@ -177,7 +253,7 @@ final class IdmapManager {
      * Checks if overlayable and policies should be enforced on the specified overlay for backwards
      * compatibility with pre-Q overlays.
      */
-    private boolean enforceOverlayable(@NonNull PackageState overlayPackageState,
+    boolean enforceOverlayable(@NonNull PackageState overlayPackageState,
             @NonNull final AndroidPackage overlayPackage) {
         if (overlayPackage.getTargetSdkVersion() >= VERSION_CODES.Q) {
             // Always enforce policies for overlays targeting Q+.
@@ -199,7 +275,7 @@ final class IdmapManager {
     /**
      * Retrieves a bitmask for idmap2 that represents the policies the overlay fulfills.
      */
-    private int calculateFulfilledPolicies(@NonNull final AndroidPackage targetPackage,
+    int calculateFulfilledPolicies(@NonNull final AndroidPackage targetPackage,
             @NonNull PackageState overlayPackageState, @NonNull final AndroidPackage overlayPackage,
             @UserIdInt int userId)  {
         int fulfilledPolicies = OverlayablePolicy.PUBLIC;
@@ -274,5 +350,20 @@ final class IdmapManager {
         }
 
         return false;
+    }
+
+    @NonNull
+    static android.os.OverlayConstraint[] toIdmapConstraints(
+            @NonNull final List<OverlayConstraint> constraints) {
+        android.os.OverlayConstraint[] idmapConstraints =
+                new android.os.OverlayConstraint[constraints.size()];
+        int index = 0;
+        for (OverlayConstraint constraint : constraints) {
+            android.os.OverlayConstraint idmapConstraint = new android.os.OverlayConstraint();
+            idmapConstraint.type = constraint.getType();
+            idmapConstraint.value = constraint.getValue();
+            idmapConstraints[index++] = idmapConstraint;
+        }
+        return idmapConstraints;
     }
 }

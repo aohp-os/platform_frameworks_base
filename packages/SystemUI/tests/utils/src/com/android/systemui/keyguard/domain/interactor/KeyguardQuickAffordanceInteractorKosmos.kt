@@ -20,9 +20,11 @@ import android.app.admin.devicePolicyManager
 import android.content.applicationContext
 import com.android.internal.widget.lockPatternUtils
 import com.android.keyguard.logging.KeyguardQuickAffordancesLogger
+import com.android.systemui.accessibility.domain.interactor.accessibilityInteractor
 import com.android.systemui.animation.dialogTransitionAnimator
 import com.android.systemui.dock.dockManager
 import com.android.systemui.flags.featureFlagsClassic
+import com.android.systemui.haptics.msdl.msdlPlayer
 import com.android.systemui.keyguard.data.repository.biometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.keyguardQuickAffordanceRepository
 import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLogger
@@ -31,6 +33,7 @@ import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.plugins.activityStarter
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.securelockdevice.domain.interactor.secureLockDeviceInteractor
 import com.android.systemui.settings.userTracker
 import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.statusbar.policy.keyguardStateController
@@ -49,11 +52,14 @@ var Kosmos.keyguardQuickAffordanceInteractor by Fixture {
         launchAnimator = dialogTransitionAnimator,
         logger = mock<KeyguardQuickAffordancesLogger>(),
         metricsLogger = mock<KeyguardQuickAffordancesMetricsLogger>(),
+        secureLockDeviceInteractor = { secureLockDeviceInteractor },
         devicePolicyManager = devicePolicyManager,
         dockManager = dockManager,
         biometricSettingsRepository = biometricSettingsRepository,
+        accessibilityInteractor = accessibilityInteractor,
         backgroundDispatcher = testDispatcher,
         appContext = applicationContext,
         sceneInteractor = { sceneInteractor },
+        msdlPlayer = msdlPlayer,
     )
 }

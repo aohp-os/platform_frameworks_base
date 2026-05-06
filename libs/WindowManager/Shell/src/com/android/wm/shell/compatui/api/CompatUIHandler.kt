@@ -22,13 +22,12 @@ import java.util.function.Consumer
  * communication with the server.
  */
 interface CompatUIHandler {
-    /**
-     * Invoked when a new model is coming from the server.
-     */
+    /** Invoked when a new model is coming from the server. */
     fun onCompatInfoChanged(compatUIInfo: CompatUIInfo)
 
-    /**
-     * Optional reference to the object responsible to send {@link CompatUIEvent}
-     */
+    /** Invoked when another component in Shell requests a CompatUI state change. */
+    fun sendCompatUIRequest(compatUIRequest: CompatUIRequest)
+
+    /** Optional reference to the object responsible to send {@link CompatUIEvent} */
     fun setCallback(compatUIEventSender: Consumer<CompatUIEvent>?)
 }

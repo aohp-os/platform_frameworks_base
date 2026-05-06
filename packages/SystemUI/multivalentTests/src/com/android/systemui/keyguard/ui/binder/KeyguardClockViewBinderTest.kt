@@ -21,15 +21,13 @@ import androidx.constraintlayout.helper.widget.Layer
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
-import com.android.keyguard.KeyguardClockSwitch.LARGE
-import com.android.keyguard.KeyguardClockSwitch.SMALL
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.keyguard.shared.model.ClockSize
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
-import com.android.systemui.plugins.clocks.ClockConfig
-import com.android.systemui.plugins.clocks.ClockController
-import com.android.systemui.plugins.clocks.ClockFaceController
-import com.android.systemui.plugins.clocks.ClockFaceLayout
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockConfig
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockController
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceController
+import com.android.systemui.plugins.keyguard.ui.clocks.ClockFaceLayout
 import com.android.systemui.util.mockito.whenever
 import kotlin.test.Test
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +40,6 @@ import org.mockito.MockitoAnnotations
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@kotlinx.coroutines.ExperimentalCoroutinesApi
 class KeyguardClockViewBinderTest : SysuiTestCase() {
     @Mock private lateinit var rootView: ConstraintLayout
     @Mock private lateinit var burnInLayer: Layer
@@ -80,6 +77,7 @@ class KeyguardClockViewBinderTest : SysuiTestCase() {
         verify(rootView).addView(smallClockView)
         verify(rootView).addView(largeClockView)
     }
+
     @Test
     fun addClockViewsToBurnInLayer_LargeWeatherClock() {
         setupWeatherClock()
@@ -110,7 +108,7 @@ class KeyguardClockViewBinderTest : SysuiTestCase() {
                 name = "",
                 description = "",
                 useAlternateSmartspaceAODTransition = true,
-                useCustomClockScene = true
+                useCustomClockScene = true,
             )
         whenever(clock.config).thenReturn(clockConfig)
     }

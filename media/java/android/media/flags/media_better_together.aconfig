@@ -4,10 +4,23 @@ container: "system"
 # Flags are ordered alphabetically by name.
 
 flag {
-    name: "adjust_volume_for_foreground_app_playing_audio_without_media_session"
-    namespace: "media_solutions"
-    description: "Gates whether to adjust local stream volume when the app in the foreground is the last app to play audio or adjust the volume of the last active media session that the user interacted with."
-    bug: "275185436"
+    name: "clean_up_dead_router_records_after_unbinding"
+    namespace: "media_better_together"
+    description: "Fixes a bug of notifying unbound router records that causes DeadObjectException."
+    bug: "414836668"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "disable_set_bluetooth_ad2p_on_calls"
+    namespace: "media_better_together"
+    description: "Prevents calls to AudioService.setBluetoothA2dpOn(), known to cause incorrect audio routing to the built-in speakers."
+    bug: "294968421"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -15,6 +28,13 @@ flag {
     namespace: "media_better_together"
     description: "Allows audio input devices routing and volume control via system settings."
     bug: "355684672"
+}
+
+flag {
+    name: "enable_device_address_as_identifier_in_media_router_2"
+    namespace: "media_better_together"
+    description: "Allows audio devices to retain address in identifier and selection in MR2."
+    bug: "384408833"
 }
 
 flag {
@@ -42,6 +62,14 @@ flag {
 }
 
 flag {
+    name: "enable_suggested_device_api"
+    is_exported: true
+    namespace: "media_better_together"
+    description: "Enables the API allowing proxy routers to suggest routes."
+    bug: "393216553"
+}
+
+flag {
     name: "enable_full_scan_with_media_content_control"
     namespace: "media_better_together"
     description: "Allows holders of the MEDIA_CONTENT_CONTROL permission to scan for routes while not in the foreground."
@@ -57,6 +85,13 @@ flag {
     namespace: "media_solutions"
     description: "Exposes RoutingController#getTransferableRoutes() (previously hidden) to the public API."
     bug: "323154573"
+}
+
+flag {
+    name: "enable_media_route_2_info_provider_package_name"
+    namespace: "media_better_together"
+    description: "Enables a new API to obtain the provider package name from MediaRoute2Info."
+    bug: "378788958"
 }
 
 flag {
@@ -101,10 +136,40 @@ flag {
 }
 
 flag {
-    name: "enable_null_session_in_media_browser_service"
-    namespace: "media_solutions"
-    description: "Enables apps owning a MediaBrowserService to disconnect all connected browsers."
-    bug: "185136506"
+    name: "enable_output_switcher_session_grouping"
+    namespace: "media_better_together"
+    description: "Enables selected items in Output Switcher to be grouped together."
+    bug: "388347018"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+  name: "enable_output_switcher_redesign"
+  namespace: "media_better_together"
+  description: "Enables visual update for the Media Output Switcher"
+  bug: "388296370"
+}
+
+flag {
+    name: "allow_output_switcher_list_rearrangement_within_timeout"
+    namespace: "media_better_together"
+    description: "Allows Output Switcher device list to rearrange items within a short time after opening."
+    bug: "425986844"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "use_suggested_device_connection_manager"
+    namespace: "media_better_together"
+    description: "Use a separate class to manage the Suggested Device connection in Media Controls."
+    bug: "442856281"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -112,16 +177,6 @@ flag {
     namespace: "media_solutions"
     description: "Enables mechanisms to prevent route providers from keeping malicious apps alive."
     bug: "263520343"
-}
-
-flag {
-    name: "enable_prevention_of_manager_scans_when_no_apps_scan"
-    namespace: "media_solutions"
-    description: "Prevents waking up route providers when no apps are scanning, even if SysUI or Settings are scanning."
-    bug: "319604673"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
 }
 
 flag {
@@ -149,11 +204,32 @@ flag {
 }
 
 flag {
+    name: "enable_route_visibility_control_compat_fixes"
+    namespace: "media_better_together"
+    description: "App compatability fixes for the route visibility control API"
+    bug: "433312596"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
     name: "enable_screen_off_scanning"
     is_exported: true
     namespace: "media_solutions"
     description: "Enable new MediaRouter2 API to enable watch companion apps to scan while the phone screen is off."
     bug: "281072508"
+}
+
+flag {
+    name: "enable_use_of_singleton_audio_manager_route_controller"
+    is_exported: true
+    namespace: "media_better_together"
+    description: "Use singleton AudioManagerRouteController shared across all users."
+    bug: "372868909"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -171,8 +247,25 @@ flag {
 }
 
 flag {
-    name: "fallback_to_default_handling_when_media_session_has_fixed_volume_handling"
-    namespace: "media_solutions"
-    description: "Fallbacks to the default handling for volume adjustment when media session has fixed volume handling and its app is in the foreground and setting a media controller."
-    bug: "293743975"
+    name: "enable_output_switcher_personal_audio_sharing"
+    namespace: "cross_device_experiences"
+    description: "Enables personal audio sharing in the output switcher."
+    bug: "338479898"
+}
+
+flag {
+    name: "hide_bt_address_from_apps_without_bt_permission"
+    namespace: "media_better_together"
+    description: "Hides the BT address of media routes to apps without BT permission."
+    bug: "410871506"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+flag {
+    name: "enable_device_suggestions_preference"
+    namespace: "media_better_together"
+    description: "Add a preference for device suggestions in the media settings page"
+    bug: "415096359"
 }

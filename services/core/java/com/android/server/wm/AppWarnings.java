@@ -41,8 +41,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemProperties;
 import android.os.UserHandle;
-import android.system.Os;
-import android.system.OsConstants;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.AtomicFile;
@@ -51,6 +49,7 @@ import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.Xml;
+import android.view.ContextThemeWrapper;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.ArrayUtils;
@@ -257,15 +256,13 @@ class AppWarnings {
 
     public void showPageSizeMismatchDialogIfNeeded(ActivityRecord r) {
         // Don't show dialog if the app compat is enabled using property
-        final boolean appCompatEnabled = SystemProperties.getBoolean(
-                "bionic.linker.16kb.app_compat.enabled", false);
-        if (appCompatEnabled) {
+        final String appCompatEnabled = SystemProperties.get(
+                "bionic.linker.16kb.app_compat.enabled", "false");
+        if (appCompatEnabled.equals("true")) {
             return;
         }
-        boolean is16KbDevice = Os.sysconf(OsConstants._SC_PAGESIZE) == 16384;
-        if (is16KbDevice) {
-            mUiHandler.showPageSizeMismatchDialog(r);
-        }
+
+        mUiHandler.showPageSizeMismatchDialog(r);
     }
 
     /**
@@ -498,10 +495,25 @@ class AppWarnings {
             }
         }
         if (!hasPackageFlag(userId, ar.packageName, FLAG_HIDE_PAGE_SIZE_MISMATCH)) {
+            Context context =  getUiContextForActivity(ar);
+            // PageSizeMismatchDialog has link in message which should open in browser.
+            // Starting activity from non-activity context is not allowed and flag
+            // FLAG_ACTIVITY_NEW_TASK is needed to start activity.
+            context =  new ContextThemeWrapper(context, context.getThemeResId()) {
+                @Override
+                public void startActivity(Intent intent) {
+                    // PageSizeMismatch dialog stays on top of the browser even after opening link
+                    // set broadcast to close the dialog when link has been clicked.
+                    sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    super.startActivity(intent);
+                }
+            };
             pageSizeMismatchDialog =
                     new PageSizeMismatchDialog(
                             AppWarnings.this,
-                            getUiContextForActivity(ar),
+                            context,
                             ar.info.applicationInfo,
                             userId,
                             warning);

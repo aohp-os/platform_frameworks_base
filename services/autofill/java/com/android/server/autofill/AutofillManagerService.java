@@ -1921,7 +1921,7 @@ public final class AutofillManagerService
             try {
                 synchronized (mLock) {
                     final AutofillManagerServiceImpl service =
-                            peekServiceForUserWithLocalBinderIdentityLocked(userId);
+                            getServiceForUserWithLocalBinderIdentityLocked(userId);
                     if (service != null) {
                         componentName = service.getServiceComponentName();
                     } else if (sVerbose) {
@@ -2160,6 +2160,25 @@ public final class AutofillManagerService
                     service.notifyImeAnimationEnd(sessionId, endTimeMs, getCallingUid());
                 } else if (sVerbose) {
                     Slog.v(TAG, "notifyImeAnimationEnd(): no service for " + userId);
+                }
+            }
+        }
+
+        @Override
+        public void autofillRemoteApp(
+                @NonNull IBinder shareableActivityToken,
+                int taskId,
+                @NonNull AutofillId autofillId,
+                @NonNull AutofillValue autofillValue,
+                int userId) {
+            synchronized (mLock) {
+                final AutofillManagerServiceImpl service =
+                        peekServiceForUserWithLocalBinderIdentityLocked(userId);
+                if (service != null) {
+                    service.autofillRemoteAppLocked(
+                            shareableActivityToken, taskId, autofillId, autofillValue);
+                } else if (sVerbose) {
+                    Slog.v(TAG, "autofillRemoteApp(): no service for " + userId);
                 }
             }
         }

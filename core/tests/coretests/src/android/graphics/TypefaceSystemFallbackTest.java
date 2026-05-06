@@ -30,14 +30,17 @@ import android.graphics.fonts.FontFamily;
 import android.graphics.fonts.SystemFonts;
 import android.graphics.text.PositionedGlyphs;
 import android.graphics.text.TextRunShaper;
+import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.text.FontConfig;
 import android.util.ArrayMap;
 
-import androidx.test.InstrumentationRegistry;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import com.android.text.flags.Flags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -61,9 +64,6 @@ import java.util.Map;
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 public class TypefaceSystemFallbackTest {
-    private static final String SYSTEM_FONT_DIR = "/system/fonts/";
-    private static final String SYSTEM_FONTS_XML = "/system/etc/fonts.xml";
-
     private static final String[] TEST_FONT_FILES = {
         "a3em.ttf",  // Supports "a","b","c". The width of "a" is 3em,  others are 1em.
         "b3em.ttf",  // Supports "a","b","c". The width of "b" is 3em,  others are 1em.
@@ -116,8 +116,6 @@ public class TypefaceSystemFallbackTest {
 
     @Before
     public void setUp() {
-        final AssetManager am =
-                InstrumentationRegistry.getInstrumentation().getContext().getAssets();
         for (final String fontFile : TEST_FONT_FILES) {
             final String sourceInAsset = "fonts/" + fontFile;
             copyAssetToFile(sourceInAsset, new File(TEST_FONT_DIR, fontFile));
@@ -214,7 +212,8 @@ public class TypefaceSystemFallbackTest {
         FontConfig fontConfig;
         try {
             fontConfig = FontListParser.parse(
-                    SYSTEM_FONTS_XML, SYSTEM_FONT_DIR, null, TEST_OEM_DIR, null, 0, 0);
+                    SystemFonts.LEGACY_FONTS_XML, SystemFonts.SYSTEM_FONT_DIR,
+                    null, TEST_OEM_DIR, null, 0, 0);
         } catch (IOException | XmlPullParserException e) {
             throw new RuntimeException(e);
         }
@@ -514,9 +513,14 @@ public class TypefaceSystemFallbackTest {
         assertEquals(GLYPH_1EM_WIDTH, paint.measureText("c"), 0.0f);
 
         paint.setElegantTextHeight(false);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
-        assertEquals(GLYPH_3EM_WIDTH, paint.measureText("b"), 0.0f);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("c"), 0.0f);
+        if (Flags.deprecateElegantTextHeightApi()) {
+            // Calling setElegantTextHeight is no-op.
+            assertTrue(paint.isElegantTextHeight());
+        } else {
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
+            assertEquals(GLYPH_3EM_WIDTH, paint.measureText("b"), 0.0f);
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("c"), 0.0f);
+        }
     }
 
     @Test
@@ -553,9 +557,14 @@ public class TypefaceSystemFallbackTest {
         assertEquals(GLYPH_1EM_WIDTH, paint.measureText("c"), 0.0f);
 
         paint.setElegantTextHeight(false);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("b"), 0.0f);
-        assertEquals(GLYPH_3EM_WIDTH, paint.measureText("c"), 0.0f);
+        if (Flags.deprecateElegantTextHeightApi()) {
+            // Calling setElegantTextHeight is no-op.
+            assertTrue(paint.isElegantTextHeight());
+        } else {
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("b"), 0.0f);
+            assertEquals(GLYPH_3EM_WIDTH, paint.measureText("c"), 0.0f);
+        }
 
         testTypeface = fontMap.get("sans-serif");
         assertNotNull(testTypeface);
@@ -566,9 +575,14 @@ public class TypefaceSystemFallbackTest {
         assertEquals(GLYPH_1EM_WIDTH, paint.measureText("c"), 0.0f);
 
         paint.setElegantTextHeight(false);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
-        assertEquals(GLYPH_1EM_WIDTH, paint.measureText("b"), 0.0f);
-        assertEquals(GLYPH_3EM_WIDTH, paint.measureText("c"), 0.0f);
+        if (Flags.deprecateElegantTextHeightApi()) {
+            // Calling setElegantTextHeight is no-op.
+            assertTrue(paint.isElegantTextHeight());
+        } else {
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("a"), 0.0f);
+            assertEquals(GLYPH_1EM_WIDTH, paint.measureText("b"), 0.0f);
+            assertEquals(GLYPH_3EM_WIDTH, paint.measureText("c"), 0.0f);
+        }
     }
 
     @Test
@@ -1051,5 +1065,43 @@ public class TypefaceSystemFallbackTest {
         assertEquals(GLYPH_2EM_WIDTH, paint.measureText("a"), 0.0f);
         assertEquals(GLYPH_2EM_WIDTH, paint.measureText("b"), 0.0f);
         assertEquals(GLYPH_2EM_WIDTH, paint.measureText("c"), 0.0f);
+    }
+
+    @RequiresFlagsEnabled(Flags.FLAG_CUSTOM_FALLBACK_FOR_CUSTOMIZATION)
+    @Test
+    public void testBuildSystemFallback_fallbackAttribute() {
+        final String xml = "<?xml version='1.0' encoding='UTF-8'?>"
+                + "<familyset>"
+                + "  <family name='sans-serif'>"
+                + "    <font weight='400' style='normal'>fallback_capital.ttf</font>"
+                + "  </family>"
+                + "</familyset>";
+        final String oemXml = "<?xml version='1.0' encoding='UTF-8'?>"
+                + "<fonts-modification version='1'>"
+                + "  <family-list customizationType='new-named-family' name='custom-family' "
+                + "     fallback='fallback-family'>"
+                + "    <family>"
+                + "      <font weight='400' style='normal'>a3em.ttf</font>"
+                + "    </family>"
+                + "  </family-list>"
+                + "  <family-list customizationType='new-named-family' name='fallback-family'>"
+                + "    <family>"
+                + "      <font weight='400' style='normal'>fallback.ttf</font>"
+                + "    </family>"
+                + "  </family-list>"
+                + "</fonts-modification>";
+        final ArrayMap<String, Typeface> fontMap = new ArrayMap<>();
+        final ArrayMap<String, FontFamily[]> fallbackMap = new ArrayMap<>();
+
+        buildSystemFallback(xml, oemXml, fontMap, fallbackMap);
+
+        final Paint paint = new Paint();
+
+        Typeface testTypeface = fontMap.get("custom-family");
+        assertNotNull(testTypeface);
+        paint.setTypeface(testTypeface);
+        assertEquals("a3em.ttf", getFontName(paint, "a"));
+        assertEquals("fallback.ttf", getFontName(paint, "x"));
+        assertEquals("fallback_capital.ttf", getFontName(paint, "A"));
     }
 }

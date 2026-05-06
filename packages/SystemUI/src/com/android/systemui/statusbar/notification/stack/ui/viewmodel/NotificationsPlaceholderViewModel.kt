@@ -16,14 +16,23 @@
 
 package com.android.systemui.statusbar.notification.stack.ui.viewmodel
 
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import com.android.app.tracing.coroutines.launchTraced as launch
+import com.android.compose.animation.scene.ContentKey
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.flags.FeatureFlagsClassic
 import com.android.systemui.flags.Flags
 import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Overlays
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
+import com.android.systemui.shade.shared.model.ShadeMode
 import com.android.systemui.statusbar.domain.interactor.RemoteInputInteractor
 import com.android.systemui.statusbar.notification.domain.interactor.HeadsUpNotificationInteractor
 import com.android.systemui.statusbar.notification.stack.domain.interactor.NotificationStackAppearanceInteractor
@@ -33,6 +42,7 @@ import com.android.systemui.statusbar.notification.stack.shared.model.ShadeScrim
 import com.android.systemui.statusbar.notification.stack.shared.model.ShadeScrollState
 import com.android.systemui.util.kotlin.ActivatableFlowDumper
 import com.android.systemui.util.kotlin.ActivatableFlowDumperImpl
+import com.android.systemui.wallpapers.domain.interactor.WallpaperFocalAreaInteractor
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import java.util.function.Consumer
@@ -40,7 +50,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
-import com.android.app.tracing.coroutines.launchTraced as launch
 
 /**
  * ViewModel used by the Notification placeholders inside the scene container to update the
@@ -51,17 +60,55 @@ class NotificationsPlaceholderViewModel
 constructor(
     private val interactor: NotificationStackAppearanceInteractor,
     private val sceneInteractor: SceneInteractor,
-    private val shadeInteractor: ShadeInteractor,
+    shadeInteractor: ShadeInteractor,
+    shadeModeInteractor: ShadeModeInteractor,
     private val headsUpNotificationInteractor: HeadsUpNotificationInteractor,
     remoteInputInteractor: RemoteInputInteractor,
     featureFlags: FeatureFlagsClassic,
     dumpManager: DumpManager,
+    private val wallpaperFocalAreaInteractor: WallpaperFocalAreaInteractor,
 ) :
     ExclusiveActivatable(),
     ActivatableFlowDumper by ActivatableFlowDumperImpl(
         dumpManager = dumpManager,
         tag = "NotificationsPlaceholderViewModel",
     ) {
+
+    private val hydrator = Hydrator("NotificationsPlaceholderViewModel")
+
+    /** The content key to use for the notification shade. */
+    val notificationsShadeContentKey: ContentKey by
+        hydrator.hydratedStateOf(
+            traceName = "notificationsShadeContentKey",
+            initialValue = getNotificationsShadeContentKey(shadeModeInteractor.shadeMode.value),
+            source = shadeModeInteractor.shadeMode.map { getNotificationsShadeContentKey(it) },
+        )
+
+    /** The content key to use for the quick settings shade. */
+    val quickSettingsShadeContentKey: ContentKey by
+        hydrator.hydratedStateOf(
+            traceName = "quickSettingsShadeContentKey",
+            initialValue = getQuickSettingsShadeContentKey(shadeModeInteractor.shadeMode.value),
+            source = shadeModeInteractor.shadeMode.map { getQuickSettingsShadeContentKey(it) },
+        )
+
+    /** @see NotificationStackAppearanceInteractor.notificationStackHorizontalAlignment */
+    val horizontalAlignment: Alignment.Horizontal by
+        hydrator.hydratedStateOf(
+            traceName = "horizontalAlignment",
+            source = interactor.notificationStackHorizontalAlignment,
+        )
+
+    /**
+     * Whether the current gesture is expanding a Notification. If true, the NSSL has already
+     * consumed the swipe amount to increase the Notification's size.
+     */
+    val isCurrentGestureExpandingNotification: Boolean by
+        hydrator.hydratedStateOf(
+            traceName = "isCurrentGestureExpandingNotif",
+            initialValue = false,
+            source = interactor.isCurrentGestureExpandingNotif,
+        )
 
     /** DEBUG: whether the placeholder should be made slightly visible for positional debugging. */
     val isVisualDebuggingEnabled: Boolean = featureFlags.isEnabled(Flags.NSSL_DEBUG_LINES)
@@ -71,16 +118,11 @@ constructor(
 
     override suspend fun onActivated(): Nothing {
         coroutineScope {
-            launch {
-                shadeInteractor.isAnyExpanded
-                    .filter { it }
-                    .collect { headsUpNotificationInteractor.unpinAll(true) }
-            }
+            launch { hydrator.activate() }
 
             launch {
                 sceneInteractor.transitionState
-                    .map { state -> state is ObservableTransitionState.Idle }
-                    .filter { it }
+                    .filter { it is ObservableTransitionState.Idle }
                     .collect { headsUpNotificationInteractor.onTransitionIdle() }
             }
         }
@@ -89,7 +131,7 @@ constructor(
 
     /** Notifies that the bounds of the notification scrim have changed. */
     fun onScrimBoundsChanged(bounds: ShadeScrimBounds?) {
-        interactor.setShadeScrimBounds(bounds)
+        interactor.setNotificationShadeScrimBounds(bounds)
     }
 
     /** Sets the available space */
@@ -130,13 +172,6 @@ constructor(
     val syntheticScroll: Flow<Float> =
         interactor.syntheticScroll.dumpWhileCollecting("syntheticScroll")
 
-    /**
-     * Whether the current touch gesture is overscroll. If true, it means the NSSL has already
-     * consumed part of the gesture.
-     */
-    val isCurrentGestureOverscroll: Flow<Boolean> =
-        interactor.isCurrentGestureOverscroll.dumpWhileCollecting("isCurrentGestureOverScroll")
-
     /** Whether remote input is currently active for any notification. */
     val isRemoteInputActive = remoteInputInteractor.isRemoteInputActive
 
@@ -161,6 +196,22 @@ constructor(
     /** Set a consumer for accessibility events to be handled by the placeholder. */
     fun setAccessibilityScrollEventConsumer(consumer: Consumer<AccessibilityScrollEvent>?) {
         interactor.setAccessibilityScrollEventConsumer(consumer)
+    }
+
+    fun onLockScreenStackBottomChanged(bottom: Float) {
+        wallpaperFocalAreaInteractor.setNotificationStackAbsoluteBottom(bottom)
+    }
+
+    private fun getNotificationsShadeContentKey(shadeMode: ShadeMode): ContentKey {
+        return if (shadeMode is ShadeMode.Dual) Overlays.NotificationsShade else Scenes.Shade
+    }
+
+    private fun getQuickSettingsShadeContentKey(shadeMode: ShadeMode): ContentKey {
+        return when (shadeMode) {
+            is ShadeMode.Single -> Scenes.QuickSettings
+            is ShadeMode.Split -> Scenes.Shade
+            is ShadeMode.Dual -> Overlays.QuickSettingsShade
+        }
     }
 
     @AssistedFactory

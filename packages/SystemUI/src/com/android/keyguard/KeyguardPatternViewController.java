@@ -24,6 +24,7 @@ import android.content.res.ColorStateList;
 import android.os.AsyncTask;
 import android.os.CountDownTimer;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.PluralsMessageFormatter;
 import android.view.MotionEvent;
 import android.view.View;
@@ -36,6 +37,7 @@ import com.android.internal.widget.LockPatternView.Cell;
 import com.android.internal.widget.LockscreenCredential;
 import com.android.keyguard.EmergencyButtonController.EmergencyButtonCallback;
 import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
+import com.android.systemui.Flags;
 import com.android.systemui.bouncer.ui.helper.BouncerHapticPlayer;
 import com.android.systemui.classifier.FalsingClassifier;
 import com.android.systemui.classifier.FalsingCollector;
@@ -68,6 +70,7 @@ public class KeyguardPatternViewController
     private LockPatternView mLockPatternView;
     private CountDownTimer mCountdownTimer;
     private AsyncTask<?, ?, ?> mPendingLockCheck;
+    private static final String TAG = "KeyguardPatternViewController";
 
     private EmergencyButtonCallback mEmergencyButtonCallback = new EmergencyButtonCallback() {
         @Override
@@ -178,6 +181,11 @@ public class KeyguardPatternViewController
                 if (dismissKeyguard) {
                     mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Correct);
                     mLatencyTracker.onActionStart(LatencyTracker.ACTION_LOCKSCREEN_UNLOCK);
+                    Log.i(TAG,
+                            "StartUnlock. "
+                            + "User: " + userId
+                            + " TS: " + SystemClock.uptimeMillis()
+                    );
                     getKeyguardSecurityCallback().dismiss(true, userId, SecurityMode.Pattern);
                 }
             } else {
@@ -237,8 +245,12 @@ public class KeyguardPatternViewController
         super.onViewAttached();
         mLockPatternView.setOnPatternListener(new UnlockPatternListener());
         mLockPatternView.setSaveEnabled(false);
-        mLockPatternView.setInStealthMode(!mLockPatternUtils.isVisiblePatternEnabled(
-                mSelectedUserInteractor.getSelectedUserId()));
+        boolean visiblePatternEnabled = mLockPatternUtils.isVisiblePatternEnabled(
+                mSelectedUserInteractor.getSelectedUserId());
+        mLockPatternView.setInStealthMode(!visiblePatternEnabled);
+        if (Flags.bouncerUiRevamp2()) {
+            mLockPatternView.setKeepDotActivated(visiblePatternEnabled);
+        }
         mLockPatternView.setOnTouchListener((v, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                 mFalsingCollector.avoidGesture();

@@ -23,7 +23,7 @@ import static com.google.common.truth.Truth.assertThat;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.platform.test.annotations.IgnoreUnderRavenwood;
+import android.platform.test.annotations.DisabledOnRavenwood;
 import android.platform.test.ravenwood.RavenwoodRule;
 import android.text.Spannable;
 import android.text.SpannableString;
@@ -37,13 +37,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.R;
+import com.android.internal.graphics.ColorUtils;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
-@IgnoreUnderRavenwood(blockedBy = Color.class)
+@DisabledOnRavenwood(blockedBy = Color.class)
 public class ContrastColorUtilTest {
     @Rule
     public final RavenwoodRule mRavenwood = new RavenwoodRule();
@@ -182,6 +183,20 @@ public class ContrastColorUtilTest {
         int newGreen = ((ForegroundColorSpan) spans[2]).getForegroundColor();
         assertThat(newGreen).isNotEqualTo(Color.GREEN);
         assertContrastIsWithinRange(newGreen, Color.GRAY, 3, 3.2);
+    }
+
+    @Test
+    public void invertColorLightness_colorLight_isInvertedToDarkLab() {
+        // Selected LAB for colorLight {L=75, A=36, B=17};
+        int colorLight = ColorUtils.LABToColor(75, 36, 17);
+        int invertedColor = ContrastColorUtil.invertColorLightness(colorLight);
+
+        final double[] invertedColorLab = new double[3];
+        ColorUtils.colorToLAB(invertedColor, invertedColorLab);
+        assertThat(ContrastColorUtil.isColorDarkLab(invertedColor)).isTrue();
+        assertThat(invertedColorLab[0]).isWithin(2).of(25);
+        assertThat(invertedColorLab[1]).isWithin(2).of(36);
+        assertThat(invertedColorLab[2]).isWithin(2).of(17);
     }
 
     public static void assertContrastIsWithinRange(int foreground, int background,

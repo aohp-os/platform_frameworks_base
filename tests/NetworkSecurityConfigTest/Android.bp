@@ -11,11 +11,17 @@ android_test {
     name: "NetworkSecurityConfigTests",
     certificate: "platform",
     libs: [
-        "android.test.runner.stubs.system",
         "android.test.base.stubs.system",
     ],
-    static_libs: ["junit"],
+    static_libs: [
+        "androidx.test.ext.junit",
+        "androidx.test.runner",
+        "flag-junit",
+        "junit",
+        "platform-compat-test-rules",
+    ],
     // Include all test java files.
     srcs: ["src/**/*.java"],
     platform_apis: true,
+    test_suites: ["general-tests"],
 }

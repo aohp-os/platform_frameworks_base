@@ -1,27 +1,22 @@
 {
-  // Curious where your @Scenario tests are running?
-  //
-  // @Ignore: Will not run in any configuration
-  //
-  // @FlakyTest: Tests that don't block pre/postsubmit but are staged to run known failures.
-  //             Tests will run in postsubmit on sysui-e2e-staged suite.
-  //
-  //
-  // @PlatinumTest: Marking your test with this annotation will put your tests in presubmit.
-  //                Please DO NOT annotate new or old tests with @PlatinumTest annotation
-  //                without discussing with mdb:android-platinum
-  //
-  // @Postsubmit: Do not use this annotation for e2e tests. This won't have any affect.
-
-  // For all other e2e tests which are not platinum, they run in sysui-silver suite,that
-  // primarily runs in postsubmit with an exception to e2e test related changes.
-  // If you want to see one shot place to monitor all e2e tests, look for
-  // sysui-e2e-staged suite.
+  // Test mappings for SystemUI unit tests.
+  // For e2e mappings, see go/sysui-e2e-test-mapping
 
   // v2/android-virtual-infra/test_mapping/presubmit-avd
   "presubmit": [
     {
       "name": "SystemUIGoogleTests"
+    },
+    {
+      "name": "SystemUIClocksTests",
+      "options": [
+        {
+          "exclude-annotation": "org.junit.Ignore"
+        },
+        {
+          "exclude-annotation": "androidx.test.filters.FlakyTest"
+        }
+      ]
     },
     {
       // Permission indicators
@@ -39,15 +34,32 @@
       ]
     },
     {
+      "name": "SystemUIComposeGalleryTests",
+      "options": [
+        {
+          "exclude-annotation": "org.junit.Ignore"
+        },
+        {
+          "exclude-annotation": "androidx.test.filters.FlakyTest"
+        }
+      ]
+    },
+    {
       // Permission indicators
       "name": "CtsVoiceRecognitionTestCases"
+    },
+    {
+      "name": "CtsInputTestCases"
+    },
+    {
+      "name": "InputTests"
     }
   ],
 
   "auto-end-to-end-postsubmit": [
     {
       "name": "AndroidAutomotiveHomeTests",
-      "options" : [
+      "options": [
         {
           "include-filter": "android.platform.tests.HomeTest"
         },
@@ -139,6 +151,9 @@
     },
     {
       "name": "SystemUIGoogleRobo2RNGTests"
+    },
+    {
+      "name": "SystemUIGoogleRoboRNGKeyguardTests"
     }
   ],
   "imports": [
@@ -150,6 +165,21 @@
   "sysui-e2e-presubmit": [
     {
       "name": "PlatformScenarioTests_SysUI_Presubmit"
+    }
+  ],
+
+  "desktop-presubmit": [
+    {
+      "name": "SystemUIGoogleScreenshotTests_desktop"
+    },
+    {
+      "name": "SystemUITests_desktop"
+    }
+  ],
+
+  "sysui-unit-test": [
+    {
+      "name": "SystemUITests_presubmit"
     }
   ]
 }

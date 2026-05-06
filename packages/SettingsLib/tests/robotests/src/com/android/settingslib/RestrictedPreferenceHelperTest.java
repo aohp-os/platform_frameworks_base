@@ -23,6 +23,7 @@ import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.atMostOnce;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -31,21 +32,29 @@ import static org.mockito.Mockito.when;
 
 import android.app.admin.Authority;
 import android.app.admin.DeviceAdminAuthority;
+import android.app.admin.DevicePolicyIdentifiers;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.DevicePolicyResourcesManager;
 import android.app.admin.DpcAuthority;
 import android.app.admin.EnforcingAdmin;
+import android.app.admin.PolicyEnforcementInfo;
 import android.app.admin.RoleAuthority;
+import android.app.admin.SystemAuthority;
 import android.app.admin.UnknownAuthority;
+import android.app.admin.flags.Flags;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.RequiresFlagsDisabled;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
+import android.platform.test.flag.junit.FlagsParameterization;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.view.View;
 import android.widget.TextView;
 
@@ -58,14 +67,24 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.robolectric.RobolectricTestRunner;
+import org.robolectric.ParameterizedRobolectricTestRunner;
 
 import java.util.Collections;
+import java.util.List;
 
-@RunWith(RobolectricTestRunner.class)
+@RunWith(ParameterizedRobolectricTestRunner.class)
 public class RestrictedPreferenceHelperTest {
+    @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
+    public static List<FlagsParameterization> getParams() {
+        return FlagsParameterization.allCombinationsOf(
+                Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED);
+    }
+
     @Rule
     public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Mock
     private Context mContext;
@@ -80,11 +99,15 @@ public class RestrictedPreferenceHelperTest {
 
     private final String mPackage = "test.pkg";
     private final ComponentName mAdmin = new ComponentName("admin", "adminclass");
-    private final Authority mAdvancedProtectionAuthority = new UnknownAuthority(
+    private final Authority mAdvancedProtectionAuthority = new SystemAuthority(
             ADVANCED_PROTECTION_SYSTEM_ENTITY);
 
     private PreferenceViewHolder mViewHolder;
     private RestrictedPreferenceHelper mHelper;
+
+    public RestrictedPreferenceHelperTest(FlagsParameterization flagsParameterization) {
+        mSetFlagsRule.setFlagsParameterization(flagsParameterization);
+    }
 
     @Before
     public void setUp() {
@@ -130,7 +153,7 @@ public class RestrictedPreferenceHelperTest {
 
     @RequiresFlagsEnabled(android.security.Flags.FLAG_AAPM_API)
     @Test
-    public void bindPreference_disabled_byAdvancedProtection_shouldDisplayDisabledSummary() {
+    public void bindPreference_disabled_byAdvancedProtection_shouldKeepExistingSummary() {
         final TextView summaryView = mock(TextView.class, RETURNS_DEEP_STUBS);
         final String userRestriction = UserManager.DISALLOW_UNINSTALL_APPS;
         final RestrictedLockUtils.EnforcedAdmin enforcedAdmin = new RestrictedLockUtils
@@ -143,16 +166,14 @@ public class RestrictedPreferenceHelperTest {
                 .thenReturn(summaryView);
         when(mDevicePolicyManager.getEnforcingAdmin(UserHandle.myUserId(), userRestriction))
                 .thenReturn(advancedProtectionEnforcingAdmin);
-        when(mContext.getString(
-                com.android.settingslib.widget.restricted.R.string.disabled_by_advanced_protection))
-                .thenReturn("advanced_protection");
 
+        summaryView.setText("existing summary");
         mHelper.useAdminDisabledSummary(true);
         mHelper.setDisabledByAdmin(enforcedAdmin);
         mHelper.onBindViewHolder(mViewHolder);
 
-        verify(summaryView).setText("advanced_protection");
-        verify(summaryView, never()).setVisibility(View.GONE);
+        verify(summaryView, atMostOnce()).setText(any()); // To set it to existing summary
+        verify(summaryView, never()).setVisibility(View.VISIBLE);
     }
 
     @RequiresFlagsEnabled(android.security.Flags.FLAG_AAPM_API)
@@ -219,6 +240,7 @@ public class RestrictedPreferenceHelperTest {
      * {@link RestrictedPreferenceHelper#setDisabledByAdmin(RestrictedLockUtils.EnforcedAdmin)} as a
      * copy or as a reference.
      */
+    @DisableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
     @Test
     public void setDisabledByAdmin_disablePreference_receivedEnforcedAdminIsNotAReference() {
         RestrictedLockUtils.EnforcedAdmin enforcedAdmin =
@@ -232,7 +254,6 @@ public class RestrictedPreferenceHelperTest {
         // assignment would be propagated.
         enforcedAdmin.enforcedRestriction = null;
         assertThat(mHelper.mEnforcedAdmin.enforcedRestriction).isEqualTo("some_restriction");
-
         assertThat(mHelper.isDisabledByAdmin()).isTrue();
     }
 
@@ -261,6 +282,17 @@ public class RestrictedPreferenceHelperTest {
         mHelper.setDisabledByAdmin(enforcedAdmin1);
 
         assertThat(mHelper.setDisabledByAdmin(enforcedAdmin2)).isTrue();
+    }
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void setDisabledByEnforcingAdmin_disablePreference() {
+        EnforcingAdmin enforcingAdmin = new EnforcingAdmin("package.name",
+                DpcAuthority.DPC_AUTHORITY, UserHandle.of(UserHandle.myUserId()), mAdmin);
+
+        mHelper.setDisabledByEnforcingAdmin(enforcingAdmin);
+
+        verify(mPreference).setEnabled(false);
     }
 
     @RequiresFlagsEnabled(android.security.Flags.FLAG_AAPM_API)
@@ -304,5 +336,113 @@ public class RestrictedPreferenceHelperTest {
                 userRestriction, UserHandle.of(UserHandle.myUserId())));
 
         assertThat(mHelper.isRestrictionEnforcedByAdvancedProtection()).isTrue();
+    }
+
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkRestrictionAndSetDisabled_policyTransparencyRefactorEnabled_disabledByAdmin() {
+        final String restriction = "restriction";
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                        UserHandle.SYSTEM)));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(
+                DevicePolicyIdentifiers.getIdentifierForUserRestriction(restriction),
+                UserHandle.myUserId())).thenReturn(
+                policyEnforcementInfo);
+
+        mHelper.checkRestrictionAndSetDisabled(restriction, UserHandle.myUserId());
+
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
+    }
+
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkAdminRestrictionEnforced_userRestriction_disabledByAdmin() {
+        final String restriction = "restriction";
+        final EnforcingAdmin admin = new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                UserHandle.SYSTEM);
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(admin));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(
+                DevicePolicyIdentifiers.getIdentifierForUserRestriction(restriction),
+                UserHandle.myUserId())).thenReturn(
+                policyEnforcementInfo);
+        mHelper.setUserRestriction(restriction);
+
+        assertThat(mHelper.checkAdminRestrictionEnforced()).isEqualTo(admin);
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
+    }
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkAdminRestrictionEnforced_adminPolicy_disabledByAdmin() {
+        final String restriction = "restriction";
+        final EnforcingAdmin admin = new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                UserHandle.SYSTEM);
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(admin));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(restriction,
+                UserHandle.myUserId())).thenReturn(policyEnforcementInfo);
+        mHelper.setAdminPolicyRestriction(restriction);
+
+        assertThat(mHelper.checkAdminRestrictionEnforced()).isEqualTo(admin);
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
+    }
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkRestrictionEnforced_userRestriction_disabledByAdmin() {
+        final String restriction = "restriction";
+        final EnforcingAdmin admin = new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                UserHandle.SYSTEM, mAdmin);
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(admin));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(
+                DevicePolicyIdentifiers.getIdentifierForUserRestriction(restriction),
+                UserHandle.myUserId())).thenReturn(
+                policyEnforcementInfo);
+
+        mHelper.setUserRestriction(restriction);
+        RestrictedLockUtils.EnforcedAdmin expectedAdmin = new RestrictedLockUtils.EnforcedAdmin(
+                mAdmin, restriction, UserHandle.of(UserHandle.myUserId()));
+        assertThat(mHelper.checkRestrictionEnforced()).isEqualTo(expectedAdmin);
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
+    }
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkRestrictionEnforced_adminPolicy_disabledByAdmin() {
+        final String restriction = "restriction";
+        final EnforcingAdmin admin = new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                UserHandle.SYSTEM, mAdmin);
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(admin));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(
+                restriction,
+                UserHandle.myUserId())).thenReturn(
+                policyEnforcementInfo);
+
+        mHelper.setAdminPolicyRestriction(restriction);
+        RestrictedLockUtils.EnforcedAdmin expectedAdmin = new RestrictedLockUtils.EnforcedAdmin(
+                mAdmin, restriction, UserHandle.of(UserHandle.myUserId()));
+        assertThat(mHelper.checkRestrictionEnforced()).isEqualTo(expectedAdmin);
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
+    }
+
+    @EnableFlags(Flags.FLAG_POLICY_TRANSPARENCY_REFACTOR_ENABLED)
+    @Test
+    public void checkPolicyAndSetDisabled_disabledByAdmin() {
+        final String restriction = "restriction";
+        final PolicyEnforcementInfo policyEnforcementInfo = new PolicyEnforcementInfo(
+                List.of(new EnforcingAdmin(mPackage, DpcAuthority.DPC_AUTHORITY,
+                        UserHandle.SYSTEM)));
+        when(mDevicePolicyManager.getEnforcingAdminsForPolicy(restriction,
+                UserHandle.myUserId())).thenReturn(policyEnforcementInfo);
+
+        mHelper.checkPolicyAndSetDisabled(restriction, UserHandle.myUserId());
+
+        assertThat(mHelper.isDisabledByAdmin()).isTrue();
     }
 }

@@ -24,13 +24,14 @@ import com.android.internal.widget.remotecompose.core.PaintOperation;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentedOperation;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.List;
 
-public class DrawPath extends PaintOperation {
+public class DrawPath extends PaintOperation implements Serializable {
     private static final int OP_CODE = Operations.DRAW_PATH;
     private static final String CLASS_NAME = "DrawPath";
-
     int mId;
     float mStart = 0;
     float mEnd = 1;
@@ -81,6 +82,12 @@ public class DrawPath extends PaintOperation {
         return Operations.DRAW_PATH;
     }
 
+    /**
+     * Draw a path
+     *
+     * @param buffer the buffer to write to
+     * @param id the id of the path
+     */
     public static void apply(@NonNull WireBuffer buffer, int id) {
         buffer.start(Operations.DRAW_PATH);
         buffer.writeInt(id);
@@ -94,11 +101,16 @@ public class DrawPath extends PaintOperation {
     public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Draw Operations", OP_CODE, CLASS_NAME)
                 .description("Draw a bitmap using integer coordinates")
-                .field(DocumentedOperation.INT, "id", "id of path");
+                .field(DocumentedOperation.INT, "id", "id of path high short is flags");
     }
 
     @Override
     public void paint(@NonNull PaintContext context) {
-        context.drawPath(mId, mStart, mEnd);
+        context.drawPath(getId(mId, context), mStart, mEnd);
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer.addType(CLASS_NAME).add("id", mId).add("start", mStart).add("end", mEnd);
     }
 }

@@ -103,6 +103,7 @@ import android.util.Log;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.DumpUtils;
+import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.Preconditions;
 import com.android.server.FgThread;
 import com.android.server.LocalServices;
@@ -474,7 +475,8 @@ public class LocationManagerService extends ILocationManager.Stub implements
                 FUSED_PROVIDER,
                 ACTION_FUSED_PROVIDER,
                 com.android.internal.R.bool.config_enableFusedLocationOverlay,
-                com.android.internal.R.string.config_fusedLocationProviderPackageName);
+                com.android.internal.R.string.config_fusedLocationProviderPackageName,
+                com.android.internal.R.bool.config_fusedLocationOverlayUnstableFallback);
         if (fusedProvider != null) {
             LocationProviderManager fusedManager = new LocationProviderManager(mContext, mInjector,
                     FUSED_PROVIDER, mPassiveManager);
@@ -497,14 +499,13 @@ public class LocationManagerService extends ILocationManager.Stub implements
                     com.android.internal.R.bool.config_useGnssHardwareProvider);
             AbstractLocationProvider gnssProvider = null;
             if (!useGnssHardwareProvider) {
-                // TODO: Create a separate config_enableGnssLocationOverlay config resource
-                // if we want to selectively enable a GNSS overlay but disable a fused overlay.
                 gnssProvider = ProxyLocationProvider.create(
                         mContext,
                         GPS_PROVIDER,
                         ACTION_GNSS_PROVIDER,
-                        com.android.internal.R.bool.config_enableFusedLocationOverlay,
-                        com.android.internal.R.string.config_gnssLocationProviderPackageName);
+                        com.android.internal.R.bool.config_enableGnssLocationOverlay,
+                        com.android.internal.R.string.config_gnssLocationProviderPackageName,
+                        com.android.internal.R.bool.config_gnssLocationOverlayUnstableFallback);
             }
             if (gnssProvider == null) {
                 gnssProvider = mGnssManagerService.getGnssLocationProvider();
@@ -537,21 +538,28 @@ public class LocationManagerService extends ILocationManager.Stub implements
         }
 
         if (Flags.populationDensityProvider()) {
+            long startTime = System.currentTimeMillis();
             setProxyPopulationDensityProvider(
                     ProxyPopulationDensityProvider.createAndRegister(mContext));
+            int duration = (int) (System.currentTimeMillis() - startTime);
             if (mPopulationDensityProvider == null) {
                 Log.e(TAG, "no population density provider found");
             }
+            FrameworkStatsLog.write(FrameworkStatsLog.POPULATION_DENSITY_PROVIDER_LOADING_REPORTED,
+                /* provider_null= */ (mPopulationDensityProvider == null),
+                /* provider_start_time_millis= */ duration);
         }
         if (mPopulationDensityProvider != null && Flags.densityBasedCoarseLocations()) {
             setLocationFudgerCache(new LocationFudgerCache(mPopulationDensityProvider));
         }
 
-        // bind to hardware activity recognition
-        HardwareActivityRecognitionProxy hardwareActivityRecognitionProxy =
-                HardwareActivityRecognitionProxy.createAndRegister(mContext);
-        if (hardwareActivityRecognitionProxy == null) {
-            Log.e(TAG, "unable to bind ActivityRecognitionProxy");
+        if (!Flags.disableHardwareAr()) {
+            // bind to hardware activity recognition
+            HardwareActivityRecognitionProxy hardwareActivityRecognitionProxy =
+                    HardwareActivityRecognitionProxy.createAndRegister(mContext);
+            if (hardwareActivityRecognitionProxy == null) {
+                Log.e(TAG, "unable to bind ActivityRecognitionProxy");
+            }
         }
 
         // bind to gnss geofence proxy
@@ -809,6 +817,9 @@ public class LocationManagerService extends ILocationManager.Stub implements
 
     @Override
     public PackageTagsList getAdasAllowlist() {
+        if (Flags.changeGetAdasAllowlistFromHiddenToSystem()) {
+            LocationPermissions.enforceCallingOrSelfAccessBypassAllowlistPermission(mContext);
+        }
         return mInjector.getSettingsHelper().getAdasAllowlist();
     }
 
@@ -841,8 +852,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
         request = validateLocationRequest(provider, request, identity);
 
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
 
         return manager.getCurrentLocation(request, identity, permissionLevel, consumer);
     }
@@ -884,8 +894,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
         request = validateLocationRequest(provider, request, identity);
 
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
 
         manager.registerLocationRequest(request, identity, permissionLevel, listener);
     }
@@ -933,8 +942,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
         request = validateLocationRequest(provider, request, identity);
 
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
 
         manager.registerLocationRequest(request, identity, permissionLevel, pendingIntent);
     }
@@ -1018,8 +1026,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
     @Override
     public void requestListenerFlush(String provider, ILocationListener listener, int requestCode) {
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
 
         manager.flush(Objects.requireNonNull(listener), requestCode);
     }
@@ -1028,8 +1035,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
     public void requestPendingIntentFlush(String provider, PendingIntent pendingIntent,
             int requestCode) {
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
 
         manager.flush(Objects.requireNonNull(pendingIntent), requestCode);
     }
@@ -1303,8 +1309,7 @@ public class LocationManagerService extends ILocationManager.Stub implements
     @Override
     public ProviderProperties getProviderProperties(String provider) {
         LocationProviderManager manager = getLocationProviderManager(provider);
-        Preconditions.checkArgument(manager != null,
-                "provider \"" + provider + "\" does not exist");
+        Preconditions.checkArgument(manager != null, "provider \"%s\" does not exist", provider);
         return manager.getProperties();
     }
 
@@ -1750,8 +1755,8 @@ public class LocationManagerService extends ILocationManager.Stub implements
                     builder.add(identity.getPackageName(), identity.getAttributionTag());
                 }
             }
-            builder.add(mInjector.getSettingsHelper().getIgnoreSettingsAllowlist());
-            builder.add(mInjector.getSettingsHelper().getAdasAllowlist());
+            builder.addAll(mInjector.getSettingsHelper().getIgnoreSettingsAllowlist());
+            builder.addAll(mInjector.getSettingsHelper().getAdasAllowlist());
             allowedPackages = builder.build();
         }
 

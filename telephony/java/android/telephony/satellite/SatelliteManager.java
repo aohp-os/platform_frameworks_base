@@ -43,6 +43,7 @@ import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyRegistryManager;
 
+import com.android.internal.telephony.IBooleanConsumer;
 import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.ITelephony;
 import com.android.internal.telephony.IVoidConsumer;
@@ -75,7 +76,6 @@ import java.util.stream.Collectors;
  * is not reliable.
  */
 @SystemService(Context.SATELLITE_SERVICE)
-@FlaggedApi(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
 @RequiresFeature(PackageManager.FEATURE_TELEPHONY_SATELLITE)
 public final class SatelliteManager {
     private static final String TAG = "SatelliteManager";
@@ -96,12 +96,12 @@ public final class SatelliteManager {
     private static final ConcurrentHashMap<SatelliteCapabilitiesCallback,
             ISatelliteCapabilitiesCallback>
             sSatelliteCapabilitiesCallbackMap = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<SatelliteSupportedStateCallback,
-            ISatelliteSupportedStateCallback> sSatelliteSupportedStateCallbackMap =
+    private static final ConcurrentHashMap<Consumer<Boolean>,
+            IBooleanConsumer> sSatelliteSupportedStateCallbackMap =
             new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<SatelliteCommunicationAllowedStateCallback,
-            ISatelliteCommunicationAllowedStateCallback>
-            sSatelliteCommunicationAllowedStateCallbackMap =
+    private static final ConcurrentHashMap<SatelliteCommunicationAccessStateCallback,
+            ISatelliteCommunicationAccessStateCallback>
+            sSatelliteCommunicationAccessStateCallbackMap =
             new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<SatelliteDisallowedReasonsCallback,
             ISatelliteDisallowedReasonsCallback>
@@ -147,7 +147,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static class SatelliteException extends Exception {
         @SatelliteResult private final int mErrorCode;
 
@@ -156,7 +155,6 @@ public final class SatelliteManager {
          *
          * @param errorCode The {@link SatelliteResult}.
          */
-        @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
         public SatelliteException(@SatelliteResult int errorCode) {
             mErrorCode = errorCode;
         }
@@ -166,7 +164,6 @@ public final class SatelliteManager {
          *
          * @return The {@link SatelliteResult}.
          */
-        @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
         @SatelliteResult public int getErrorCode() {
             return mErrorCode;
         }
@@ -310,7 +307,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_SUCCESS = 0;
 
     /**
@@ -318,7 +314,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_ERROR = 1;
 
     /**
@@ -326,7 +321,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_SERVER_ERROR = 2;
 
     /**
@@ -335,7 +329,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_SERVICE_ERROR = 3;
 
     /**
@@ -344,7 +337,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_MODEM_ERROR = 4;
 
     /**
@@ -353,7 +345,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NETWORK_ERROR = 5;
 
     /**
@@ -361,7 +352,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_INVALID_TELEPHONY_STATE = 6;
 
     /**
@@ -369,7 +359,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_INVALID_MODEM_STATE = 7;
 
     /**
@@ -378,7 +367,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_INVALID_ARGUMENTS = 8;
 
     /**
@@ -387,7 +375,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_REQUEST_FAILED = 9;
 
     /**
@@ -395,7 +382,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_RADIO_NOT_AVAILABLE = 10;
 
     /**
@@ -403,7 +389,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_REQUEST_NOT_SUPPORTED = 11;
 
     /**
@@ -411,7 +396,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NO_RESOURCES = 12;
 
     /**
@@ -419,7 +403,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_SERVICE_NOT_PROVISIONED = 13;
 
     /**
@@ -427,7 +410,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_SERVICE_PROVISION_IN_PROGRESS = 14;
 
     /**
@@ -437,7 +419,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_REQUEST_ABORTED = 15;
 
     /**
@@ -445,7 +426,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_ACCESS_BARRED = 16;
 
     /**
@@ -454,7 +434,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NETWORK_TIMEOUT = 17;
 
     /**
@@ -462,7 +441,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NOT_REACHABLE = 18;
 
     /**
@@ -470,7 +448,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NOT_AUTHORIZED = 19;
 
     /**
@@ -478,7 +455,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_NOT_SUPPORTED = 20;
 
     /**
@@ -486,7 +462,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_REQUEST_IN_PROGRESS = 21;
 
     /**
@@ -494,7 +469,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_MODEM_BUSY = 22;
 
     /**
@@ -502,7 +476,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_ILLEGAL_STATE = 23;
 
     /**
@@ -511,7 +484,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_RESULT_MODEM_TIMEOUT = 24;
 
     /**
@@ -607,7 +579,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int NT_RADIO_TECHNOLOGY_UNKNOWN = 0;
 
     /**
@@ -615,7 +586,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int NT_RADIO_TECHNOLOGY_NB_IOT_NTN = 1;
 
     /**
@@ -623,7 +593,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int NT_RADIO_TECHNOLOGY_NR_NTN = 2;
 
     /**
@@ -631,7 +600,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int NT_RADIO_TECHNOLOGY_EMTC_NTN = 3;
 
     /**
@@ -639,7 +607,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int NT_RADIO_TECHNOLOGY_PROPRIETARY = 4;
 
     /** @hide */
@@ -658,7 +625,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DEVICE_HOLD_POSITION_UNKNOWN = 0;
 
     /**
@@ -666,7 +632,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DEVICE_HOLD_POSITION_PORTRAIT = 1;
 
     /**
@@ -674,7 +639,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DEVICE_HOLD_POSITION_LANDSCAPE_LEFT = 2;
 
     /**
@@ -682,7 +646,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DEVICE_HOLD_POSITION_LANDSCAPE_RIGHT = 3;
 
     /** @hide */
@@ -700,7 +663,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DISPLAY_MODE_UNKNOWN = 0;
 
     /**
@@ -708,7 +670,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DISPLAY_MODE_FIXED = 1;
 
     /**
@@ -717,7 +678,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DISPLAY_MODE_OPENED = 2;
 
     /**
@@ -726,7 +686,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DISPLAY_MODE_CLOSED = 3;
 
     /** @hide */
@@ -740,12 +699,61 @@ public final class SatelliteManager {
     public @interface DisplayMode {}
 
     /**
+     * Unknown or unsupported value for data mode on satellite.
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public static final int SATELLITE_DATA_SUPPORT_UNKNOWN = -1;
+
+    /**
+     * Support only restricted data usecases like carrier messaging using RCS.
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public static final int SATELLITE_DATA_SUPPORT_RESTRICTED = 0;
+
+    /**
+     * Support constrained internet which would enable internet only for applications that are
+     * modified.
+     *
+     * <p>
+     * To get internet access, applications need to be modified to use the satellite data
+     * optimized network. This can be done by setting the {@link #PROPERTY_SATELLITE_DATA_OPTIMIZED}
+     * meta-data to <package-name> of the application in the manifest.
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public static final int SATELLITE_DATA_SUPPORT_CONSTRAINED = 1;
+
+    /**
+     * Support default internet on satellite without any restrictions on any apps.
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public static final int SATELLITE_DATA_SUPPORT_UNCONSTRAINED = 2;
+
+    /** @hide */
+    @IntDef(prefix = {"SATELLITE_DATA_SUPPORT_"}, value = {
+        SATELLITE_DATA_SUPPORT_UNKNOWN,
+        SATELLITE_DATA_SUPPORT_RESTRICTED,
+        SATELLITE_DATA_SUPPORT_CONSTRAINED,
+        SATELLITE_DATA_SUPPORT_UNCONSTRAINED,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface SatelliteDataSupportMode {}
+
+    /**
      * The emergency call is handed over to oem-enabled satellite SOS messaging. SOS messages are
      * sent to SOS providers, which will then forward the messages to emergency providers.
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS = 1;
 
     /**
@@ -754,7 +762,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final int EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911 = 2;
 
     /**
@@ -781,6 +788,28 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     public static final String ACTION_SATELLITE_START_NON_EMERGENCY_SESSION =
             "android.telephony.satellite.action.SATELLITE_START_NON_EMERGENCY_SESSION";
+
+    /**
+     * Application level {@link android.content.pm.PackageManager.Property} tag that represents
+     * whether the application supports P2P SMS over carrier roaming satellite which needs manual
+     * trigger to connect to satellite. The messaging applications that supports P2P SMS over
+     * carrier roaming satellite should set value of this property to {@code true}.
+     *
+     * <p><b>Syntax:</b>
+     * <pre>
+     * &lt;application&gt;
+     *   &lt;property
+     *     android:name="android.telephony.satellite.PROPERTY_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT"
+     *     android:value="true"/&gt;
+     * &lt;/application&gt;
+     * </pre>
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
+    public static final String PROPERTY_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT =
+            "android.telephony.satellite.PROPERTY_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT";
+
     /**
      * Meta-data represents whether the application supports P2P SMS over carrier roaming satellite
      * which needs manual trigger to connect to satellite. The messaging applications that supports
@@ -794,10 +823,27 @@ public final class SatelliteManager {
      * }
      * @hide
      */
-    @SystemApi
-    @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     public static final String METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT =
             "android.telephony.METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT";
+
+    /**
+     * The applications that are optimized for low bandwidth satellite data should set this
+     * property to package name of the application in the manifest to indicate to platform
+     * about the same.
+     * {@code
+     * <application>
+     *   <meta-data
+     *     android:name="android.telephony.PROPERTY_SATELLITE_DATA_OPTIMIZED"
+     *     android:value=<package-name>/>
+     * </application>
+     * }
+     * <p>
+     * When this meta-data is set in application's manifest,
+     * satellite data optimized network is available for application to use.
+     */
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public static final String PROPERTY_SATELLITE_DATA_OPTIMIZED =
+            "android.telephony.PROPERTY_SATELLITE_DATA_OPTIMIZED";
 
     /**
      * Registers a {@link SatelliteStateChangeListener} to receive callbacks when the satellite
@@ -812,7 +858,6 @@ public final class SatelliteManager {
      * @see SatelliteStateChangeListener
      * @see TelephonyManager#hasCarrierPrivileges()
      */
-    @FlaggedApi(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
     @RequiresPermission(anyOf = {android.Manifest.permission.READ_BASIC_PHONE_STATE,
             android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
             android.Manifest.permission.READ_PHONE_STATE,
@@ -841,7 +886,6 @@ public final class SatelliteManager {
      * @see SatelliteStateChangeListener
      * @see TelephonyManager#hasCarrierPrivileges()
      */
-    @FlaggedApi(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
     @RequiresPermission(anyOf = {android.Manifest.permission.READ_BASIC_PHONE_STATE,
             android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
             android.Manifest.permission.READ_PHONE_STATE,
@@ -880,7 +924,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestEnabled(@NonNull EnableRequestAttributes attributes,
             @NonNull @CallbackExecutor Executor executor,
             @SatelliteResult @NonNull Consumer<Integer> resultListener) {
@@ -929,7 +972,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsEnabled(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -989,7 +1031,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsDemoModeEnabled(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -1049,7 +1090,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsEmergencyModeEnabled(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -1109,7 +1149,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsSupported(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -1168,7 +1207,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestCapabilities(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<SatelliteCapabilities, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -1218,7 +1256,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE = 0;
 
     /**
@@ -1226,7 +1263,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_SENDING = 1;
 
     /**
@@ -1236,7 +1272,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS = 2;
 
     /**
@@ -1247,7 +1282,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED = 3;
 
     /**
@@ -1255,7 +1289,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING = 4;
 
     /**
@@ -1265,7 +1298,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS = 5;
 
     /**
@@ -1276,7 +1308,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_NONE = 6;
 
     /**
@@ -1286,7 +1317,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED = 7;
 
     /**
@@ -1300,7 +1330,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT = 8;
 
     /**
@@ -1310,7 +1339,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_DATAGRAM_TRANSFER_STATE_UNKNOWN = -1;
 
     /** @hide */
@@ -1335,7 +1363,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_IDLE = 0;
 
     /**
@@ -1343,7 +1370,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_LISTENING = 1;
 
     /**
@@ -1351,7 +1377,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_DATAGRAM_TRANSFERRING = 2;
 
     /**
@@ -1359,7 +1384,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_DATAGRAM_RETRYING = 3;
 
     /**
@@ -1367,7 +1391,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_OFF = 4;
 
     /**
@@ -1375,7 +1398,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_UNAVAILABLE = 5;
 
     /**
@@ -1383,7 +1405,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_NOT_CONNECTED = 6;
 
     /**
@@ -1391,7 +1412,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_CONNECTED = 7;
 
     /**
@@ -1416,7 +1436,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_MODEM_STATE_UNKNOWN = -1;
 
     /** @hide */
@@ -1442,7 +1461,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DATAGRAM_TYPE_UNKNOWN = 0;
 
     /**
@@ -1450,7 +1468,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DATAGRAM_TYPE_SOS_MESSAGE = 1;
 
     /**
@@ -1459,7 +1476,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public static final int DATAGRAM_TYPE_LOCATION_SHARING = 2;
 
     /**
@@ -1534,7 +1550,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_COMMUNICATION_RESTRICTION_REASON_GEOLOCATION = 1;
 
     /**
@@ -1544,7 +1559,6 @@ public final class SatelliteManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_COMMUNICATION_RESTRICTION_REASON_ENTITLEMENT = 2;
 
     /** @hide */
@@ -1616,7 +1630,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SuppressWarnings("SamShouldBeLast")
     public void startTransmissionUpdates(@NonNull @CallbackExecutor Executor executor,
             @SatelliteResult @NonNull Consumer<Integer> resultListener,
@@ -1702,7 +1715,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void stopTransmissionUpdates(@NonNull SatelliteTransmissionUpdateCallback callback,
             @SuppressWarnings("ListenerLast") @NonNull @CallbackExecutor Executor executor,
             @SuppressWarnings("ListenerLast") @SatelliteResult @NonNull
@@ -1763,7 +1775,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void provisionService(@NonNull String token, @NonNull byte[] provisionData,
             @Nullable CancellationSignal cancellationSignal,
             @NonNull @CallbackExecutor Executor executor,
@@ -1821,7 +1832,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void deprovisionService(@NonNull String token,
             @NonNull @CallbackExecutor Executor executor,
             @SatelliteResult @NonNull Consumer<Integer> resultListener) {
@@ -1867,7 +1877,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SatelliteResult public int registerForProvisionStateChanged(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull SatelliteProvisionStateCallback callback) {
@@ -1886,7 +1895,6 @@ public final class SatelliteManager {
                                                 provisioned)));
                             }
 
-                            @FlaggedApi(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN)
                             @Override
                             public void onSatelliteSubscriptionProvisionStateChanged(
                                     @NonNull List<SatelliteSubscriberProvisionStatus>
@@ -1922,7 +1930,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void unregisterForProvisionStateChanged(
             @NonNull SatelliteProvisionStateCallback callback) {
         Objects.requireNonNull(callback);
@@ -1963,7 +1970,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsProvisioned(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -2021,7 +2027,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SatelliteResult public int registerForModemStateChanged(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull SatelliteModemStateCallback callback) {
@@ -2084,7 +2089,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void unregisterForModemStateChanged(
             @NonNull SatelliteModemStateCallback callback) {
         Objects.requireNonNull(callback);
@@ -2127,7 +2131,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SatelliteResult public int registerForIncomingDatagram(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull SatelliteDatagramCallback callback) {
@@ -2186,7 +2189,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void unregisterForIncomingDatagram(@NonNull SatelliteDatagramCallback callback) {
         Objects.requireNonNull(callback);
         ISatelliteDatagramCallback internalCallback =
@@ -2227,7 +2229,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void pollPendingDatagrams(@NonNull @CallbackExecutor Executor executor,
             @SatelliteResult @NonNull Consumer<Integer> resultListener) {
         Objects.requireNonNull(executor);
@@ -2285,7 +2286,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void sendDatagram(@DatagramType int datagramType,
             @NonNull SatelliteDatagram datagram, boolean needFullScreenPointingUI,
             @NonNull @CallbackExecutor Executor executor,
@@ -2336,7 +2336,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestIsCommunicationAllowedForCurrentLocation(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
@@ -2460,7 +2459,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestTimeForNextSatelliteVisibility(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Duration, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -2574,6 +2572,8 @@ public final class SatelliteManager {
      * @param executor The executor on which the callback will be called.
      * @param callback The callback to handle the selected satellite subscription changed event.
      *
+     * @return The {@link SatelliteResult} result of the operation.
+     *
      * @throws SecurityException if the caller doesn't have required permission.
      * @throws IllegalStateException if the Telephony process is not currently available.
      *
@@ -2672,7 +2672,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void setDeviceAlignedWithSatellite(boolean isAligned) {
         try {
             ITelephony telephony = getITelephony();
@@ -2715,7 +2714,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public void requestAttachEnabledForCarrier(int subId, boolean enableSatellite,
             @NonNull @CallbackExecutor Executor executor,
             @SatelliteResult @NonNull Consumer<Integer> resultListener) {
@@ -2752,7 +2750,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public void requestIsAttachEnabledForCarrier(int subId,
             @NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
@@ -2780,7 +2777,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public void addAttachRestrictionForCarrier(int subId,
             @SatelliteCommunicationRestrictionReason int reason,
             @NonNull @CallbackExecutor Executor executor,
@@ -2828,7 +2824,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public void removeAttachRestrictionForCarrier(int subId,
             @SatelliteCommunicationRestrictionReason int reason,
             @NonNull @CallbackExecutor Executor executor,
@@ -2876,7 +2871,6 @@ public final class SatelliteManager {
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @SatelliteCommunicationRestrictionReason
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     @NonNull public Set<Integer> getAttachRestrictionReasonsForCarrier(int subId) {
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             throw new IllegalArgumentException("Invalid subscription ID");
@@ -3038,7 +3032,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void requestNtnSignalStrength(@NonNull @CallbackExecutor Executor executor,
             @NonNull OutcomeReceiver<NtnSignalStrength, SatelliteException> callback) {
         Objects.requireNonNull(executor);
@@ -3104,7 +3097,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void registerForNtnSignalStrengthChanged(@NonNull @CallbackExecutor Executor executor,
             @NonNull NtnSignalStrengthCallback callback) {
         Objects.requireNonNull(executor);
@@ -3128,8 +3120,12 @@ public final class SatelliteManager {
             } else {
                 throw new IllegalStateException("Telephony service is null.");
             }
+        } catch (IllegalStateException ex) {
+            loge("registerForNtnSignalStrengthChanged() IllegalStateException: " + ex);
+            throw ex;
         } catch (RemoteException ex) {
             loge("registerForNtnSignalStrengthChanged() RemoteException: " + ex);
+            // Treat other remote exceptions as fatal system errors.
             ex.rethrowAsRuntimeException();
         }
     }
@@ -3156,7 +3152,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void unregisterForNtnSignalStrengthChanged(@NonNull NtnSignalStrengthCallback callback) {
         Objects.requireNonNull(callback);
         INtnSignalStrengthCallback internalCallback =
@@ -3193,7 +3188,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SatelliteResult public int registerForCapabilitiesChanged(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull SatelliteCapabilitiesCallback callback) {
@@ -3239,7 +3233,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     public void unregisterForCapabilitiesChanged(
             @NonNull SatelliteCapabilitiesCallback callback) {
         Objects.requireNonNull(callback);
@@ -3275,7 +3268,6 @@ public final class SatelliteManager {
      */
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     @NonNull public List<String> getSatellitePlmnsForCarrier(int subId) {
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             throw new IllegalArgumentException("Invalid subscription ID");
@@ -3311,23 +3303,20 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @SatelliteResult public int registerForSupportedStateChanged(
-            @NonNull @CallbackExecutor Executor executor,
-            @NonNull SatelliteSupportedStateCallback callback) {
+            @NonNull @CallbackExecutor Executor executor, @NonNull Consumer<Boolean> callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
 
         try {
             ITelephony telephony = getITelephony();
             if (telephony != null) {
-                ISatelliteSupportedStateCallback internalCallback =
-                        new ISatelliteSupportedStateCallback.Stub() {
-                            @Override
-                            public void onSatelliteSupportedStateChanged(boolean supported) {
-                                executor.execute(() -> Binder.withCleanCallingIdentity(
-                                        () -> callback.onSatelliteSupportedStateChanged(
-                                                supported)));
-                            }
-                        };
+                IBooleanConsumer internalCallback = new IBooleanConsumer.Stub() {
+                    @Override
+                    public void accept(boolean supported) {
+                        executor.execute(() -> Binder.withCleanCallingIdentity(
+                                () -> callback.accept(supported)));
+                    }
+                };
                 sSatelliteSupportedStateCallbackMap.put(callback, internalCallback);
                 return telephony.registerForSatelliteSupportedStateChanged(
                         internalCallback);
@@ -3346,7 +3335,7 @@ public final class SatelliteManager {
      * If callback was not registered before, the request will be ignored.
      *
      * @param callback The callback that was passed to
-     * {@link #registerForSupportedStateChanged(Executor, SatelliteSupportedStateCallback)}
+     * {@link #registerForSupportedStateChanged(Executor, Consumer)}
      *
      * @throws SecurityException if the caller doesn't have required permission.
      * @throws IllegalStateException if the Telephony process is not currently available.
@@ -3355,10 +3344,9 @@ public final class SatelliteManager {
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
-    public void unregisterForSupportedStateChanged(
-            @NonNull SatelliteSupportedStateCallback callback) {
+    public void unregisterForSupportedStateChanged(@NonNull Consumer<Boolean> callback) {
         Objects.requireNonNull(callback);
-        ISatelliteSupportedStateCallback internalCallback =
+        IBooleanConsumer internalCallback =
                 sSatelliteSupportedStateCallbackMap.remove(callback);
 
         try {
@@ -3379,11 +3367,11 @@ public final class SatelliteManager {
     }
 
     /**
-     * Registers for the satellite communication allowed state changed.
+     * Registers for the satellite communication access state changed event.
      *
      * @param executor The executor on which the callback will be called.
-     * @param callback The callback to handle satellite communication allowed state changed event.
-     * @return The result of the operation.
+     * @param callback The callback to handle satellite communication access state changed event.
+     * @return The {@link SatelliteResult} result of the operation.
      * @throws SecurityException     if the caller doesn't have required permission.
      * @throws IllegalStateException if the Telephony process is not currently available.
      * @hide
@@ -3392,54 +3380,54 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @SatelliteResult
-    public int registerForCommunicationAllowedStateChanged(
+    public int registerForCommunicationAccessStateChanged(
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull SatelliteCommunicationAllowedStateCallback callback) {
+            @NonNull SatelliteCommunicationAccessStateCallback callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
 
         try {
             ITelephony telephony = getITelephony();
             if (telephony != null) {
-                ISatelliteCommunicationAllowedStateCallback internalCallback =
-                        new ISatelliteCommunicationAllowedStateCallback.Stub() {
+                ISatelliteCommunicationAccessStateCallback internalCallback =
+                        new ISatelliteCommunicationAccessStateCallback.Stub() {
                             @Override
-                            public void onSatelliteCommunicationAllowedStateChanged(
+                            public void onAccessAllowedStateChanged(
                                     boolean isAllowed) {
                                 executor.execute(() -> Binder.withCleanCallingIdentity(
-                                        () -> callback.onSatelliteCommunicationAllowedStateChanged(
+                                        () -> callback.onAccessAllowedStateChanged(
                                                 isAllowed)));
                             }
 
                             @Override
-                            public void onSatelliteAccessConfigurationChanged(
+                            public void onAccessConfigurationChanged(
                                     @Nullable SatelliteAccessConfiguration
                                             satelliteAccessConfiguration) {
                                 executor.execute(() -> Binder.withCleanCallingIdentity(
-                                        () -> callback.onSatelliteAccessConfigurationChanged(
+                                        () -> callback.onAccessConfigurationChanged(
                                                 satelliteAccessConfiguration)));
                             }
                         };
-                sSatelliteCommunicationAllowedStateCallbackMap.put(callback, internalCallback);
-                return telephony.registerForCommunicationAllowedStateChanged(
+                sSatelliteCommunicationAccessStateCallbackMap.put(callback, internalCallback);
+                return telephony.registerForCommunicationAccessStateChanged(
                         mSubId, internalCallback);
             } else {
                 throw new IllegalStateException("telephony service is null.");
             }
         } catch (RemoteException ex) {
-            loge("registerForCommunicationAllowedStateChanged() RemoteException: " + ex);
+            loge("registerForCommunicationAccessStateChanged() RemoteException: " + ex);
             ex.rethrowAsRuntimeException();
         }
         return SATELLITE_RESULT_REQUEST_FAILED;
     }
 
     /**
-     * Unregisters for the satellite communication allowed state changed.
+     * Unregisters for the satellite communication access state changed event.
      * If callback was not registered before, the request will be ignored.
      *
      * @param callback The callback that was passed to
-     *                 {@link #registerForCommunicationAllowedStateChanged(Executor,
-     *                 SatelliteCommunicationAllowedStateCallback)}
+     *                 {@link #registerForCommunicationAccessStateChanged(Executor,
+     *                 SatelliteCommunicationAccessStateCallback)}
      * @throws SecurityException     if the caller doesn't have required permission.
      * @throws IllegalStateException if the Telephony process is not currently available.
      * @hide
@@ -3447,26 +3435,26 @@ public final class SatelliteManager {
     @SystemApi
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
-    public void unregisterForCommunicationAllowedStateChanged(
-            @NonNull SatelliteCommunicationAllowedStateCallback callback) {
+    public void unregisterForCommunicationAccessStateChanged(
+            @NonNull SatelliteCommunicationAccessStateCallback callback) {
         Objects.requireNonNull(callback);
-        ISatelliteCommunicationAllowedStateCallback internalCallback =
-                sSatelliteCommunicationAllowedStateCallbackMap.remove(callback);
+        ISatelliteCommunicationAccessStateCallback internalCallback =
+                sSatelliteCommunicationAccessStateCallbackMap.remove(callback);
 
         try {
             ITelephony telephony = getITelephony();
             if (telephony != null) {
                 if (internalCallback != null) {
-                    telephony.unregisterForCommunicationAllowedStateChanged(mSubId,
+                    telephony.unregisterForCommunicationAccessStateChanged(mSubId,
                             internalCallback);
                 } else {
-                    loge("unregisterForCommunicationAllowedStateChanged: No internal callback.");
+                    loge("unregisterForCommunicationAccessStateChanged: No internal callback.");
                 }
             } else {
                 throw new IllegalStateException("telephony service is null.");
             }
         } catch (RemoteException ex) {
-            loge("unregisterForCommunicationAllowedStateChanged() RemoteException: " + ex);
+            loge("unregisterForCommunicationAccessStateChanged() RemoteException: " + ex);
             ex.rethrowAsRuntimeException();
         }
     }
@@ -3621,8 +3609,6 @@ public final class SatelliteManager {
      * @throws IllegalStateException if the Telephony process is not currently available.
      * @hide
      */
-    @SystemApi
-    @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     public void requestSatelliteDisplayName(
             @NonNull @CallbackExecutor Executor executor,
@@ -3673,6 +3659,11 @@ public final class SatelliteManager {
      * @param list The list of provisioned satellite subscriber infos.
      * @param executor The executor on which the callback will be called.
      * @param callback The callback object to which the result will be delivered.
+     *                 If the request is successful, {@link OutcomeReceiver#onResult}
+     *                 will be called.
+     *                 If the request is not successful,
+     *                 {@link OutcomeReceiver#onError(Throwable)} will return an error with
+     *                 a SatelliteException.
      *
      * @throws SecurityException if the caller doesn't have required permission.
      * @hide
@@ -3682,7 +3673,7 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     public void provisionSatellite(@NonNull List<SatelliteSubscriberInfo> list,
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
+            @NonNull OutcomeReceiver<Void, SatelliteException> callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
 
@@ -3696,8 +3687,8 @@ public final class SatelliteManager {
                             if (resultData.containsKey(KEY_PROVISION_SATELLITE_TOKENS)) {
                                 boolean isUpdated =
                                         resultData.getBoolean(KEY_PROVISION_SATELLITE_TOKENS);
-                                executor.execute(() -> Binder.withCleanCallingIdentity(() ->
-                                        callback.onResult(isUpdated)));
+                                executor.execute(() -> Binder.withCleanCallingIdentity(
+                                        () -> callback.onResult(null)));
                             } else {
                                 loge("KEY_REQUEST_PROVISION_TOKENS does not exist.");
                                 executor.execute(() -> Binder.withCleanCallingIdentity(() ->
@@ -3729,6 +3720,11 @@ public final class SatelliteManager {
      * @param list The list of deprovisioned satellite subscriber infos.
      * @param executor The executor on which the callback will be called.
      * @param callback The callback object to which the result will be delivered.
+     *                 If the request is successful, {@link OutcomeReceiver#onResult}
+     *                 will be called.
+     *                 If the request is not successful,
+     *                 {@link OutcomeReceiver#onError(Throwable)} will return an error with
+     *                 a SatelliteException.
      *
      * @throws SecurityException if the caller doesn't have required permission.
      * @hide
@@ -3738,7 +3734,7 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_SATELLITE_SYSTEM_APIS)
     public void deprovisionSatellite(@NonNull List<SatelliteSubscriberInfo> list,
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull OutcomeReceiver<Boolean, SatelliteException> callback) {
+            @NonNull OutcomeReceiver<Void, SatelliteException> callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
 
@@ -3753,7 +3749,7 @@ public final class SatelliteManager {
                                 boolean isUpdated =
                                         resultData.getBoolean(KEY_DEPROVISION_SATELLITE_TOKENS);
                                 executor.execute(() -> Binder.withCleanCallingIdentity(() ->
-                                        callback.onResult(isUpdated)));
+                                        callback.onResult(null)));
                             } else {
                                 loge("KEY_DEPROVISION_SATELLITE_TOKENS does not exist.");
                                 executor.execute(() -> Binder.withCleanCallingIdentity(() ->
@@ -3811,6 +3807,68 @@ public final class SatelliteManager {
             loge("setNtnSmsSupported() RemoteException:" + ex);
             ex.rethrowAsRuntimeException();
         }
+    }
+
+    /**
+     * Get list of application packages name that are optimized for low bandwidth satellite data.
+     *
+     * @return List of application packages name with data optimized network property.
+     *
+     * {@link #PROPERTY_SATELLITE_DATA_OPTIMIZED}
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    public @NonNull List<String> getSatelliteDataOptimizedApps() {
+        List<String> appsNames = new ArrayList<>();
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                appsNames = telephony.getSatelliteDataOptimizedApps();
+            } else {
+                throw new IllegalStateException("telephony service is null.");
+            }
+        } catch (RemoteException ex) {
+            loge("getSatelliteDataOptimizedApps() RemoteException:" + ex);
+            ex.rethrowAsRuntimeException();
+        }
+
+        return appsNames;
+    }
+
+    /**
+     * Method to return the current satellite data service policy supported mode for the
+     * subscriptionId based on carrier config.
+     *
+     * @param subId current subscription id.
+     *
+     * @return Supported modes {@link SatelliteDataSupportMode}
+     * @throws IllegalArgumentException if the subscription is invalid.
+     *
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
+    @FlaggedApi(Flags.FLAG_SATELLITE_25Q4_APIS)
+    @SatelliteDataSupportMode
+    public int getSatelliteDataSupportMode(int subId) {
+        int satelliteMode = SATELLITE_DATA_SUPPORT_UNKNOWN;
+
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                satelliteMode = telephony.getSatelliteDataSupportMode(subId);
+            } else {
+                throw new IllegalStateException("telephony service is null.");
+            }
+        } catch (RemoteException ex) {
+            loge("getSatelliteDataSupportMode() RemoteException:" + ex);
+            ex.rethrowAsRuntimeException();
+        }
+
+        return satelliteMode;
     }
 
     @Nullable

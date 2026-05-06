@@ -22,6 +22,7 @@ import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -85,8 +86,37 @@ public final class RoutingSessionInfo implements Parcelable {
     @Retention(RetentionPolicy.SOURCE)
     public @interface TransferReason {}
 
-    @NonNull
-    final String mId;
+    /**
+     * Indicates release is unsupported on the session.
+     *
+     * @hide
+     */
+    public static final int RELEASE_UNSUPPORTED = 0;
+
+    /**
+     * Indicates the release type of the session is to stop casting.
+     *
+     * @hide
+     */
+    public static final int RELEASE_TYPE_CASTING = 1;
+
+    /**
+     * Indicates the release type of the session is to stop audio sharing.
+     *
+     * @hide
+     */
+    public static final int RELEASE_TYPE_SHARING = 2;
+
+    /**
+     * Indicates the release type of the session.
+     *
+     * @hide
+     */
+    @IntDef({RELEASE_UNSUPPORTED, RELEASE_TYPE_CASTING, RELEASE_TYPE_SHARING})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ReleaseType {}
+
+    @NonNull final String mOriginalId;
     @Nullable
     final CharSequence mName;
     @Nullable
@@ -117,10 +147,12 @@ public final class RoutingSessionInfo implements Parcelable {
     @Nullable final UserHandle mTransferInitiatorUserHandle;
     @Nullable final String mTransferInitiatorPackageName;
 
+    @ReleaseType private final int mReleaseType;
+
     RoutingSessionInfo(@NonNull Builder builder) {
         Objects.requireNonNull(builder, "builder must not be null.");
 
-        mId = builder.mId;
+        mOriginalId = builder.mOriginalId;
         mName = builder.mName;
         mOwnerPackageName = builder.mOwnerPackageName;
         mClientPackageName = builder.mClientPackageName;
@@ -145,11 +177,12 @@ public final class RoutingSessionInfo implements Parcelable {
         mTransferReason = builder.mTransferReason;
         mTransferInitiatorUserHandle = builder.mTransferInitiatorUserHandle;
         mTransferInitiatorPackageName = builder.mTransferInitiatorPackageName;
+        mReleaseType = builder.mReleaseType;
     }
 
     RoutingSessionInfo(@NonNull Parcel src) {
-        mId = src.readString();
-        Preconditions.checkArgument(!TextUtils.isEmpty(mId));
+        mOriginalId = src.readString();
+        Preconditions.checkArgument(!TextUtils.isEmpty(mOriginalId));
 
         mName = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(src);
         mOwnerPackageName = src.readString();
@@ -172,6 +205,7 @@ public final class RoutingSessionInfo implements Parcelable {
         mTransferReason = src.readInt();
         mTransferInitiatorUserHandle = UserHandle.readFromParcel(src);
         mTransferInitiatorPackageName = src.readString();
+        mReleaseType = src.readInt();
     }
 
     @Nullable
@@ -221,9 +255,9 @@ public final class RoutingSessionInfo implements Parcelable {
     @NonNull
     public String getId() {
         if (!TextUtils.isEmpty(mProviderId)) {
-            return MediaRouter2Utils.toUniqueId(mProviderId, mId);
+            return MediaRouter2Utils.toUniqueId(mProviderId, mOriginalId);
         } else {
-            return mId;
+            return mOriginalId;
         }
     }
 
@@ -236,12 +270,16 @@ public final class RoutingSessionInfo implements Parcelable {
     }
 
     /**
-     * Gets the original id set by {@link Builder#Builder(String, String)}.
+     * Gets the original id as assigned by the {@link MediaRoute2ProviderService route provider}.
+     *
+     * <p>This may be different from {@link #getId()}, which may convert this original id into a
+     * unique one by adding information about the provider that created this session info.
+     *
      * @hide
      */
     @NonNull
     public String getOriginalId() {
-        return mId;
+        return mOriginalId;
     }
 
     /**
@@ -416,6 +454,16 @@ public final class RoutingSessionInfo implements Parcelable {
         return mTransferInitiatorPackageName;
     }
 
+    /**
+     * Returns the release type of the session.
+     *
+     * @hide
+     */
+    @ReleaseType
+    public int getReleaseType() {
+        return mReleaseType;
+    }
+
     @Override
     public int describeContents() {
         return 0;
@@ -423,7 +471,7 @@ public final class RoutingSessionInfo implements Parcelable {
 
     @Override
     public void writeToParcel(@NonNull Parcel dest, int flags) {
-        dest.writeString(mId);
+        dest.writeString(mOriginalId);
         dest.writeCharSequence(mName);
         dest.writeString(mOwnerPackageName);
         dest.writeString(mClientPackageName);
@@ -440,12 +488,13 @@ public final class RoutingSessionInfo implements Parcelable {
         dest.writeInt(mTransferReason);
         UserHandle.writeToParcel(mTransferInitiatorUserHandle, dest);
         dest.writeString(mTransferInitiatorPackageName);
+        dest.writeInt(mReleaseType);
     }
 
     /**
      * Dumps current state of the instance. Use with {@code dumpsys}.
      *
-     * See {@link android.os.Binder#dump(FileDescriptor, PrintWriter, String[])}.
+     * <p>See {@link Binder#dump(FileDescriptor, PrintWriter, String[])}.
      *
      * @hide
      */
@@ -454,7 +503,7 @@ public final class RoutingSessionInfo implements Parcelable {
 
         String indent = prefix + "  ";
 
-        pw.println(indent + "mId=" + mId);
+        pw.println(indent + "mOriginalId=" + mOriginalId);
         pw.println(indent + "mName=" + mName);
         pw.println(indent + "mOwnerPackageName=" + mOwnerPackageName);
         pw.println(indent + "mClientPackageName=" + mClientPackageName);
@@ -469,6 +518,7 @@ public final class RoutingSessionInfo implements Parcelable {
         pw.println(indent + "mTransferReason=" + mTransferReason);
         pw.println(indent + "mtransferInitiatorUserHandle=" + mTransferInitiatorUserHandle);
         pw.println(indent + "mtransferInitiatorPackageName=" + mTransferInitiatorPackageName);
+        pw.println(indent + "mReleaseType=" + getHumanReadableReleaseType(mReleaseType));
     }
 
     @Override
@@ -485,7 +535,7 @@ public final class RoutingSessionInfo implements Parcelable {
         }
 
         RoutingSessionInfo other = (RoutingSessionInfo) obj;
-        return Objects.equals(mId, other.mId)
+        return Objects.equals(mOriginalId, other.mOriginalId)
                 && Objects.equals(mName, other.mName)
                 && Objects.equals(mOwnerPackageName, other.mOwnerPackageName)
                 && Objects.equals(mClientPackageName, other.mClientPackageName)
@@ -500,13 +550,14 @@ public final class RoutingSessionInfo implements Parcelable {
                 && (mTransferReason == other.mTransferReason)
                 && Objects.equals(mTransferInitiatorUserHandle, other.mTransferInitiatorUserHandle)
                 && Objects.equals(
-                mTransferInitiatorPackageName, other.mTransferInitiatorPackageName);
+                        mTransferInitiatorPackageName, other.mTransferInitiatorPackageName)
+                && mReleaseType == other.mReleaseType;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(
-                mId,
+                mOriginalId,
                 mName,
                 mOwnerPackageName,
                 mClientPackageName,
@@ -520,7 +571,8 @@ public final class RoutingSessionInfo implements Parcelable {
                 mVolume,
                 mTransferReason,
                 mTransferInitiatorUserHandle,
-                mTransferInitiatorPackageName);
+                mTransferInitiatorPackageName,
+                mReleaseType);
     }
 
     @Override
@@ -553,8 +605,20 @@ public final class RoutingSessionInfo implements Parcelable {
                 .append(getTransferInitiatorUserHandle())
                 .append(", transferInitiatorPackageName=")
                 .append(getTransferInitiatorPackageName())
+                .append(", releaseType=")
+                .append(getHumanReadableReleaseType(getReleaseType()))
                 .append(" }")
                 .toString();
+    }
+
+    @NonNull
+    private static String getHumanReadableReleaseType(@ReleaseType int releaseType) {
+        return switch (releaseType) {
+            case RELEASE_TYPE_SHARING -> "RELEASE_TYPE_SHARING";
+            case RELEASE_TYPE_CASTING -> "RELEASE_TYPE_CASTING";
+            case RELEASE_UNSUPPORTED -> "RELEASE_UNSUPPORTED";
+            default -> "";
+        };
     }
 
     /**
@@ -585,8 +649,7 @@ public final class RoutingSessionInfo implements Parcelable {
      * Builder class for {@link RoutingSessionInfo}.
      */
     public static final class Builder {
-        @NonNull
-        private final String mId;
+        @NonNull private final String mOriginalId;
         @Nullable
         private CharSequence mName;
         @Nullable
@@ -613,26 +676,26 @@ public final class RoutingSessionInfo implements Parcelable {
         @TransferReason private int mTransferReason = TRANSFER_REASON_FALLBACK;
         @Nullable private UserHandle mTransferInitiatorUserHandle;
         @Nullable private String mTransferInitiatorPackageName;
+        @ReleaseType private int mReleaseType = RELEASE_TYPE_CASTING;
 
         /**
          * Constructor for builder to create {@link RoutingSessionInfo}.
-         * <p>
-         * In order to ensure ID uniqueness in {@link MediaRouter2} side, the value of
-         * {@link RoutingSessionInfo#getId()} can be different from what was set in
-         * {@link MediaRoute2ProviderService}.
-         * </p>
          *
-         * @param id ID of the session. Must not be empty.
-         * @param clientPackageName package name of the client app which uses this session.
-         *                          If is is unknown, then just use an empty string.
+         * <p>In order to ensure ID uniqueness in {@link MediaRouter2} side, the value of {@link
+         * RoutingSessionInfo#getId()} can be different from what was set in {@link
+         * MediaRoute2ProviderService}.
+         *
+         * @param originalId ID of the session. Must not be empty.
+         * @param clientPackageName package name of the client app which uses this session. If is is
+         *     unknown, then just use an empty string.
          * @see MediaRoute2Info#getId()
          */
-        public Builder(@NonNull String id, @NonNull String clientPackageName) {
-            if (TextUtils.isEmpty(id)) {
+        public Builder(@NonNull String originalId, @NonNull String clientPackageName) {
+            if (TextUtils.isEmpty(originalId)) {
                 throw new IllegalArgumentException("id must not be empty");
             }
 
-            mId = id;
+            mOriginalId = originalId;
             mClientPackageName =
                     Objects.requireNonNull(clientPackageName, "clientPackageName must not be null");
             mSelectedRoutes = new ArrayList<>();
@@ -648,9 +711,19 @@ public final class RoutingSessionInfo implements Parcelable {
          * @param sessionInfo the existing instance to copy data from.
          */
         public Builder(@NonNull RoutingSessionInfo sessionInfo) {
+            this(sessionInfo, sessionInfo.getOriginalId());
+        }
+
+        /**
+         * Builds upon the given {@code sessionInfo}, using the given {@link #getOriginalId()} for
+         * the id.
+         *
+         * @hide
+         */
+        public Builder(@NonNull RoutingSessionInfo sessionInfo, String originalId) {
             Objects.requireNonNull(sessionInfo, "sessionInfo must not be null");
 
-            mId = sessionInfo.mId;
+            mOriginalId = originalId;
             mName = sessionInfo.mName;
             mClientPackageName = sessionInfo.mClientPackageName;
             mProviderId = sessionInfo.mProviderId;
@@ -677,6 +750,7 @@ public final class RoutingSessionInfo implements Parcelable {
             mTransferReason = sessionInfo.mTransferReason;
             mTransferInitiatorUserHandle = sessionInfo.mTransferInitiatorUserHandle;
             mTransferInitiatorPackageName = sessionInfo.mTransferInitiatorPackageName;
+            mReleaseType = sessionInfo.mReleaseType;
         }
 
         /**
@@ -857,31 +931,25 @@ public final class RoutingSessionInfo implements Parcelable {
         }
 
         /**
-         * Sets the session's volume handling.
-         * {@link MediaRoute2Info#PLAYBACK_VOLUME_FIXED} or
+         * Sets the session's volume handling. {@link MediaRoute2Info#PLAYBACK_VOLUME_FIXED} or
          * {@link MediaRoute2Info#PLAYBACK_VOLUME_VARIABLE}.
          */
         @NonNull
-        public RoutingSessionInfo.Builder setVolumeHandling(
-                @MediaRoute2Info.PlaybackVolume int volumeHandling) {
+        public Builder setVolumeHandling(@MediaRoute2Info.PlaybackVolume int volumeHandling) {
             mVolumeHandling = volumeHandling;
             return this;
         }
 
-        /**
-         * Sets the session's maximum volume, or 0 if unknown.
-         */
+        /** Sets the session's maximum volume, or 0 if unknown. */
         @NonNull
-        public RoutingSessionInfo.Builder setVolumeMax(int volumeMax) {
+        public Builder setVolumeMax(int volumeMax) {
             mVolumeMax = volumeMax;
             return this;
         }
 
-        /**
-         * Sets the session's current volume, or 0 if unknown.
-         */
+        /** Sets the session's current volume, or 0 if unknown. */
         @NonNull
-        public RoutingSessionInfo.Builder setVolume(int volume) {
+        public Builder setVolume(int volume) {
             mVolume = volume;
             return this;
         }
@@ -915,6 +983,19 @@ public final class RoutingSessionInfo implements Parcelable {
         @FlaggedApi(FLAG_ENABLE_BUILT_IN_SPEAKER_ROUTE_SUITABILITY_STATUSES)
         public Builder setTransferReason(@TransferReason int transferReason) {
             mTransferReason = transferReason;
+            return this;
+        }
+
+        /**
+         * Gets the release type of the current session.
+         *
+         * <p>By default the release type is set to {@link RoutingSessionInfo#RELEASE_TYPE_CASTING}.
+         *
+         * @hide
+         */
+        @NonNull
+        public Builder setReleaseType(@ReleaseType int releaseType) {
+            mReleaseType = releaseType;
             return this;
         }
 

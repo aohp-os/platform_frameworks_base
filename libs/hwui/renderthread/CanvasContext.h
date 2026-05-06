@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "ColorArea.h"
 #include "ColorMode.h"
 #include "DamageAccumulator.h"
 #include "FrameInfo.h"
@@ -50,6 +51,9 @@
 #include "utils/RingBuffer.h"
 
 namespace android {
+
+class SurfaceStats;
+
 namespace uirenderer {
 
 class AnimationContext;
@@ -121,7 +125,9 @@ public:
      */
     GrDirectContext* getGrContext() const { return mRenderThread.getGrContext(); }
 
-    ASurfaceControl* getSurfaceControl() const { return mSurfaceControl; }
+#ifdef __ANDROID__
+    sp<SurfaceControl> getSurfaceControl() const;
+#endif
     int32_t getSurfaceControlGenerationId() const { return mSurfaceControlGenerationId; }
 
     // Won't take effect until next EGLSurface creation
@@ -129,7 +135,7 @@ public:
 
     void setHardwareBuffer(AHardwareBuffer* buffer);
     void setSurface(ANativeWindow* window, bool enableTimeout = true);
-    void setSurfaceControl(ASurfaceControl* surfaceControl);
+    void setSurfaceControl(sp<SurfaceControl> surfaceControl);
     bool pauseSurface();
     void setStopped(bool stopped);
     bool isStopped() { return mStopped || !hasOutputTarget(); }
@@ -176,8 +182,8 @@ public:
 
     void setContentDrawBounds(const Rect& bounds) { mContentDrawBounds = bounds; }
 
-    void addFrameMetricsObserver(FrameMetricsObserver* observer);
-    void removeFrameMetricsObserver(FrameMetricsObserver* observer);
+    void addFrameMetricsObserver(sp<FrameMetricsObserver>&& observer);
+    void removeFrameMetricsObserver(const sp<FrameMetricsObserver>& observer);
 
     // Used to queue up work that needs to be completed before this frame completes
     void enqueueFrameWork(std::function<void()>&& func);
@@ -202,12 +208,14 @@ public:
 
     SkISize getNextFrameSize() const;
 
+    const ColorArea& getColorArea() const { return mColorArea; }
+
     // Returns the matrix to use to nudge non-AA'd points/lines towards the fragment center
     const SkM44& getPixelSnapMatrix() const;
 
     // Called when SurfaceStats are available.
     static void onSurfaceStatsAvailable(void* context, int32_t surfaceControlId,
-                                        ASurfaceControlStats* stats);
+                                        const SurfaceStats& stats);
 
     void setASurfaceTransactionCallback(
             const std::function<bool(int64_t, int64_t, int64_t)>& callback) {
@@ -218,7 +226,7 @@ public:
         mBufferParams = params;
     }
 
-    bool mergeTransaction(ASurfaceTransaction* transaction, ASurfaceControl* control);
+    bool mergeTransaction(ASurfaceTransaction* transaction, const sp<SurfaceControl>& control);
 
     void setPrepareSurfaceControlForWebviewCallback(const std::function<void()>& callback) {
         mPrepareSurfaceControlForWebviewCallback = callback;
@@ -228,9 +236,11 @@ public:
 
     static CanvasContext* getActiveContext();
 
-    void sendLoadResetHint();
+    void sendCpuLoadResetHint();
 
-    void sendLoadIncreaseHint();
+    void sendCpuLoadIncreaseHint();
+
+    void sendGpuLoadIncreaseHint();
 
     void setSyncDelayDuration(nsecs_t duration);
 
@@ -286,7 +296,9 @@ private:
     std::unique_ptr<ReliableSurface> mNativeSurface;
     // The SurfaceControl reference is passed from ViewRootImpl, can be set to
     // NULL to remove the reference
-    ASurfaceControl* mSurfaceControl = nullptr;
+#ifdef __ANDROID__
+    sp<SurfaceControl> mSurfaceControl = nullptr;
+#endif
     // id to track surface control changes and WebViewFunctor uses it to determine
     // whether reparenting is needed also used by FrameMetricsReporter to determine
     // if a frame is from an "old" surface (i.e. one that existed before the
@@ -327,6 +339,7 @@ private:
 
     bool mHaveNewSurface = false;
     DamageAccumulator mDamageAccumulator;
+    ColorArea mColorArea;
     LayerUpdateQueue mLayerUpdateQueue;
     std::unique_ptr<AnimationContext> mAnimationContext;
 
@@ -375,6 +388,15 @@ private:
         int64_t startTime;
     };
     std::optional<SkippedFrameInfo> mSkippedFrameInfo;
+
+    /**
+     * Does a pre-pass on all the nodes and populates mColorArea with color information. Used by
+     * force invert to determine if the app is light theme.
+     *
+     * @param target the target node to run in MODE_FULL. For this node, the staging displaylist is
+     *    used. All other nodes are treated in MODE_RT, using their main displaylists.
+     */
+    void determineColors(const RenderNode* target);
 };
 
 } /* namespace renderthread */

@@ -18,7 +18,6 @@ package com.android.systemui.statusbar.notification.stack.ui.viewbinder
 
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.systemui.Flags
 import com.android.systemui.common.ui.view.onLayoutChanged
 import com.android.systemui.communal.domain.interactor.CommunalSettingsInteractor
@@ -28,7 +27,7 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.ui.viewmodel.ViewStateAccessor
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
-import com.android.systemui.statusbar.notification.footer.shared.FooterViewRefactor
+import com.android.systemui.shared.Flags.extendedWallpaperEffects
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController
 import com.android.systemui.statusbar.notification.stack.NotificationStackSizeCalculator
 import com.android.systemui.statusbar.notification.stack.ui.view.SharedNotificationContainer
@@ -37,6 +36,9 @@ import com.android.systemui.util.kotlin.DisposableHandles
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /** Binds the shared notification container to its view-model. */
 @SysUISingleton
@@ -77,13 +79,11 @@ constructor(
                                 marginTop = it.marginTop,
                                 marginEnd = it.marginEnd,
                                 marginBottom = it.marginBottom,
+                                nsslAlpha = controller.alpha,
                             )
 
                             controller.setOverExpansion(0f)
                             controller.setOverScrollAmount(0)
-                            if (!FooterViewRefactor.isEnabled) {
-                                controller.updateFooter()
-                            }
                         }
                     }
                 }
@@ -117,13 +117,11 @@ constructor(
                         }
                     }
 
-                    launch {
-                        viewModel.getLockscreenDisplayConfig(calculateMaxNotifications).collect {
-                            (isOnLockscreen, maxNotifications) ->
-                            if (SceneContainerFlag.isEnabled) {
-                                controller.setOnLockscreen(isOnLockscreen)
+                    if (!SceneContainerFlag.isEnabled) {
+                        launch {
+                            viewModel.getMaxNotifications(calculateMaxNotifications).collect {
+                                controller.setMaxDisplayedNotifications(it)
                             }
-                            controller.setMaxDisplayedNotifications(maxNotifications)
                         }
                     }
 
@@ -144,23 +142,27 @@ constructor(
                     }
 
                     if (!SceneContainerFlag.isEnabled) {
-                        if (Flags.magicPortraitWallpapers()) {
+                        if (extendedWallpaperEffects()) {
                             launch {
-                                viewModel
-                                    .getNotificationStackAbsoluteBottom(
-                                        calculateMaxNotifications = calculateMaxNotifications,
-                                        calculateHeight = { maxNotifications ->
-                                            notificationStackSizeCalculator.computeHeight(
-                                                maxNotifs = maxNotifications,
-                                                shelfHeight = controller.getShelfHeight().toFloat(),
-                                                stack = controller.view,
-                                            )
-                                        },
-                                        controller.getShelfHeight().toFloat(),
+                                combine(
+                                        viewModel.getNotificationStackAbsoluteBottomOnLockscreen(
+                                            calculateMaxNotifications = calculateMaxNotifications,
+                                            calculateHeight = { maxNotifications ->
+                                                notificationStackSizeCalculator.computeHeight(
+                                                    maxNotifs = maxNotifications,
+                                                    shelfHeight =
+                                                        controller.getShelfHeight().toFloat(),
+                                                    stack = controller.view,
+                                                    reason = "getStackAbsoluteBottomOnLockscreen",
+                                                )
+                                            },
+                                        ),
+                                        viewModel.configurationBasedDimensions.map { it.marginTop },
+                                        ::Pair,
                                     )
-                                    .collect { bottom ->
+                                    .collect { (bottom: Float, marginTop: Int) ->
                                         keyguardInteractor.setNotificationStackAbsoluteBottom(
-                                            bottom
+                                            marginTop + bottom
                                         )
                                     }
                             }
@@ -183,10 +185,23 @@ constructor(
                         }
                     }
 
+                    if (Flags.bouncerUiRevamp()) {
+                        launch { viewModel.blurRadius.collect { controller.setBlurRadius(it) } }
+                    }
+
                     if (communalSettingsInteractor.isCommunalFlagEnabled()) {
                         launch {
                             viewModel.glanceableHubAlpha.collect {
                                 controller.setMaxAlphaForGlanceableHub(it)
+                            }
+                        }
+
+                        if (Flags.gestureBetweenHubAndLockscreenMotion()) {
+                            launch {
+                                viewModel.viewScale.collect {
+                                    view.scaleX = it
+                                    view.scaleY = it
+                                }
                             }
                         }
                     }
@@ -199,6 +214,14 @@ constructor(
 
         controller.setOnHeightChangedRunnable { viewModel.notificationStackChanged() }
         disposables += DisposableHandle { controller.setOnHeightChangedRunnable(null) }
+
+        controller.setOnKeyguardTopLevelNotificationRemovedRunnable {
+            viewModel.notificationStackChangedInstant()
+        }
+        disposables += DisposableHandle {
+            controller.setOnKeyguardTopLevelNotificationRemovedRunnable(null)
+        }
+
         disposables += view.onLayoutChanged { viewModel.notificationStackChanged() }
 
         return disposables

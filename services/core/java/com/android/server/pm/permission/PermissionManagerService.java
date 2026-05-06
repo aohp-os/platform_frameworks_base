@@ -26,9 +26,9 @@ import static android.app.AppOpsManager.ATTRIBUTION_FLAGS_NONE;
 import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.app.AppOpsManager.MODE_ERRORED;
 import static android.app.AppOpsManager.MODE_IGNORED;
+import static android.app.AppOpsManager.OP_BLUETOOTH_CONNECT;
 import static android.content.pm.ApplicationInfo.AUTO_REVOKE_DISALLOWED;
 import static android.content.pm.ApplicationInfo.AUTO_REVOKE_DISCOURAGED;
-import static android.permission.flags.Flags.serverSideAttributionRegistration;
 
 import static com.android.server.pm.PackageManagerService.PLATFORM_PACKAGE_NAME;
 
@@ -36,6 +36,7 @@ import android.Manifest;
 import android.annotation.AppIdInt;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SpecialUsers.CanBeALL;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
@@ -77,6 +78,8 @@ import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.Preconditions;
 import com.android.server.LocalServices;
 import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
+import com.android.server.pm.PackageManagerService;
+import com.android.server.pm.PackageMetrics;
 import com.android.server.pm.UserManagerService;
 import com.android.server.pm.permission.PermissionManagerServiceInternal.CheckPermissionDelegate;
 import com.android.server.pm.permission.PermissionManagerServiceInternal.HotwordDetectionServiceProvider;
@@ -142,7 +145,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         // The package info cache is the cache for package and permission information.
         // Disable the package info and package permission caches locally but leave the
         // checkPermission cache active.
-        PackageManager.invalidatePackageInfoCache();
+        PackageManagerService.invalidatePackageInfoCache(
+                PackageMetrics.INVALIDATION_REASON_PERMISSION_MANAGER_SERVICE_INIT);
         PermissionManager.disablePackageNamePermissionCache();
 
         mContext = context;
@@ -158,13 +162,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         LocalServices.addService(PermissionManagerServiceInternal.class, localService);
         LocalServices.addService(PermissionManagerInternal.class, localService);
 
-        if (PermissionManager.USE_ACCESS_CHECKING_SERVICE) {
-            mPermissionManagerServiceImpl = LocalServices.getService(
-                    PermissionManagerServiceInterface.class);
-        } else {
-            mPermissionManagerServiceImpl = new PermissionManagerServiceImpl(context,
-                    availableFeatures);
-        }
+        mPermissionManagerServiceImpl = LocalServices.getService(
+                PermissionManagerServiceInterface.class);
     }
 
     /**
@@ -262,6 +261,17 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         }
         return checkPermissionDelegate.checkUidPermission(uid, permissionName,
                 persistentDeviceId, mPermissionManagerServiceImpl::checkUidPermission);
+    }
+
+    @Override
+    @Context.PermissionRequestState
+    public int getPermissionRequestState(@NonNull String packageName,
+            @NonNull String permissionName, int deviceId) {
+        Objects.requireNonNull(permissionName, "permission can't be null.");
+        Objects.requireNonNull(packageName, "package name can't be null.");
+
+        return mPermissionManagerServiceImpl.getPermissionRequestState(packageName, permissionName,
+                deviceId, getPersistentDeviceId(deviceId));
     }
 
     private String getPersistentDeviceId(int deviceId) {
@@ -444,16 +454,10 @@ public class PermissionManagerService extends IPermissionManager.Stub {
      */
     @Override
     public IBinder registerAttributionSource(@NonNull AttributionSourceState source) {
-        if (serverSideAttributionRegistration()) {
-            Binder token = new Binder();
-            mAttributionSourceRegistry
-                    .registerAttributionSource(new AttributionSource(source).withToken(token));
-            return token;
-        } else {
-            mAttributionSourceRegistry
-                    .registerAttributionSource(new AttributionSource(source));
-            return source.token;
-        }
+        Binder token = new Binder();
+        mAttributionSourceRegistry
+                .registerAttributionSource(new AttributionSource(source).withToken(token));
+        return token;
     }
 
     @Override
@@ -753,7 +757,7 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         @Override
         public void onPackageUninstalled(@NonNull String packageName, int appId,
                 @NonNull PackageState packageState, @Nullable AndroidPackage pkg,
-                @NonNull List<AndroidPackage> sharedUserPkgs, @UserIdInt int userId) {
+                @NonNull List<AndroidPackage> sharedUserPkgs, @CanBeALL @UserIdInt int userId) {
             if (userId != UserHandle.USER_ALL) {
                 final int[] userIds = getAllUserIds();
                 if (!ArrayUtils.contains(userIds, userId)) {
@@ -1528,8 +1532,19 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                 }
                 final AttributionSource resolvedAttributionSource =
                         accessorSource.withPackageName(resolvedAccessorPackageName);
-                final int opMode = appOpsManager.unsafeCheckOpRawNoThrow(op,
-                        resolvedAttributionSource);
+                // Avoid checking the first attr in the chain in some cases for consistency with
+                // checks for data delivery.
+                // In particular, for chains of 2 or more, when skipProxyOperation is true, the
+                // for data delivery implementation does not actually check the first link in the
+                // chain. If the attribution is just a singleReceiverFromDatasource, this
+                // exemption does not apply, since it does not go through proxyOp flow, and the top
+                // of the chain is actually removed above.
+                // Skipping the check avoids situations where preflight checks fail since the data
+                // source itself does not have the op (e.g. audioserver).
+                final int opMode = (skipProxyOperation && !singleReceiverFromDatasource) ?
+                        AppOpsManager.MODE_ALLOWED :
+                        appOpsManager.unsafeCheckOpRawNoThrow(op, resolvedAttributionSource);
+
                 final AttributionSource next = accessorSource.getNext();
                 if (!selfAccess && opMode == AppOpsManager.MODE_ALLOWED && next != null) {
                     final String resolvedNextPackageName = resolvePackageName(context, next);
@@ -1658,7 +1673,22 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                         throw new SecurityException(msg + ":" + e.getMessage());
                     }
                 }
-                return Math.max(checkedOpResult, notedOpResult);
+                int result = Math.max(checkedOpResult, notedOpResult);
+                // TODO(b/333931259): Remove extra logging after this issue is diagnosed.
+                if (op == OP_BLUETOOTH_CONNECT && result == MODE_ERRORED) {
+                    if (result == checkedOpResult) {
+                        Slog.e(LOG_TAG, "BLUETOOTH_CONNECT permission hard denied as"
+                                + " checkOp for resolvedAttributionSource "
+                                + resolvedAttributionSource + " and op " + op
+                                + " returned MODE_ERRORED");
+                    } else {
+                        Slog.e(LOG_TAG, "BLUETOOTH_CONNECT permission hard denied as"
+                                + " noteOp for resolvedAttributionSource "
+                                + resolvedAttributionSource + " and op " + notedOp
+                                + " returned MODE_ERRORED");
+                    }
+                }
+                return result;
             }
         }
 
@@ -1671,8 +1701,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
             // handle overflow
             if (attributionChainId < 0) {
-                attributionChainId = 0;
                 sAttributionChainIds.set(0);
+                attributionChainId = sAttributionChainIds.incrementAndGet();
             }
             return attributionChainId;
         }

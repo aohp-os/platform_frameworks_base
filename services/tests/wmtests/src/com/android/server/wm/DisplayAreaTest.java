@@ -56,7 +56,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import android.content.pm.ActivityInfo;
@@ -145,8 +145,9 @@ public class DisplayAreaTest extends WindowTestsBase {
     public void testAsDisplayArea() {
         final WindowContainer windowContainer = new WindowContainer(mWm);
         final DisplayArea<WindowContainer> displayArea = new DisplayArea<>(mWm, ANY, "DA");
-        final TaskDisplayArea taskDisplayArea = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA", FEATURE_DEFAULT_TASK_CONTAINER);
+        final TaskDisplayArea taskDisplayArea = new TaskDisplayArea(mWm, "TDA",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
 
         assertThat(windowContainer.asDisplayArea()).isNull();
         assertThat(displayArea.asDisplayArea()).isEqualTo(displayArea);
@@ -174,7 +175,7 @@ public class DisplayAreaTest extends WindowTestsBase {
         da1.reduceOnAllTaskDisplayAreas(callback2, 0);
         da1.getItemFromTaskDisplayAreas(callback3);
 
-        verifyZeroInteractions(da2);
+        verifyNoMoreInteractions(da2);
 
         // Traverse the child if the current DA has type ANY
         final DisplayArea<WindowContainer> da3 = new DisplayArea<>(mWm, ANY, "DA3");
@@ -207,7 +208,7 @@ public class DisplayAreaTest extends WindowTestsBase {
         da5.reduceOnAllTaskDisplayAreas(callback2, 0);
         da5.getItemFromTaskDisplayAreas(callback3);
 
-        verifyZeroInteractions(da6);
+        verifyNoMoreInteractions(da6);
     }
 
     @Test
@@ -218,12 +219,13 @@ public class DisplayAreaTest extends WindowTestsBase {
                 new DisplayArea<>(mWm, ANY, "DA1");
         final DisplayArea<DisplayArea> da2 =
                 new DisplayArea<>(mWm, ANY, "DA2");
-        final TaskDisplayArea tda1 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA1", FEATURE_DEFAULT_TASK_CONTAINER);
-        final TaskDisplayArea tda2 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA2", FEATURE_VENDOR_FIRST);
-        final TaskDisplayArea tda3 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA3", FEATURE_VENDOR_FIRST + 1);
+        final TaskDisplayArea tda1 = new TaskDisplayArea(mWm, "TDA1",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
+        final TaskDisplayArea tda2 = new TaskDisplayArea(mWm, "TDA2", FEATURE_VENDOR_FIRST,
+                false /* createdByOrganizer */, true /* canHostHomeTask */);
+        final TaskDisplayArea tda3 = new TaskDisplayArea(mWm, "TDA3", FEATURE_VENDOR_FIRST + 1,
+                false /* createdByOrganizer */, true /* canHostHomeTask */);
         root.addChild(da1, POSITION_TOP);
         root.addChild(da2, POSITION_TOP);
         da1.addChild(tda1, POSITION_TOP);
@@ -314,10 +316,11 @@ public class DisplayAreaTest extends WindowTestsBase {
     public void testForAllTaskDisplayAreas_returnsWhenCallbackReturnTrue() {
         final RootDisplayArea root =
                 new DisplayAreaPolicyBuilderTest.SurfacelessDisplayAreaRoot(mWm);
-        final TaskDisplayArea tda1 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA1", FEATURE_DEFAULT_TASK_CONTAINER);
-        final TaskDisplayArea tda2 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA2", FEATURE_VENDOR_FIRST);
+        final TaskDisplayArea tda1 = new TaskDisplayArea(mWm, "TDA1",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
+        final TaskDisplayArea tda2 = new TaskDisplayArea(mWm, "TDA2", FEATURE_VENDOR_FIRST,
+                false /* createdByOrganizer */, true /* canHostHomeTask */);
         root.addChild(tda1, POSITION_TOP);
         root.addChild(tda2, POSITION_TOP);
 
@@ -342,10 +345,11 @@ public class DisplayAreaTest extends WindowTestsBase {
     public void testReduceOnAllTaskDisplayAreas_returnsTheAccumulativeResult() {
         final RootDisplayArea root =
                 new DisplayAreaPolicyBuilderTest.SurfacelessDisplayAreaRoot(mWm);
-        final TaskDisplayArea tda1 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA1", FEATURE_DEFAULT_TASK_CONTAINER);
-        final TaskDisplayArea tda2 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA2", FEATURE_VENDOR_FIRST);
+        final TaskDisplayArea tda1 = new TaskDisplayArea(mWm, "TDA1",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
+        final TaskDisplayArea tda2 = new TaskDisplayArea(mWm, "TDA2", FEATURE_VENDOR_FIRST,
+                false /* createdByOrganizer */, true /* canHostHomeTask */);
         root.addChild(tda1, POSITION_TOP);
         root.addChild(tda2, POSITION_TOP);
 
@@ -368,10 +372,11 @@ public class DisplayAreaTest extends WindowTestsBase {
     public void testGetItemFromTaskDisplayAreas_returnsWhenCallbackReturnNotNull() {
         final RootDisplayArea root =
                 new DisplayAreaPolicyBuilderTest.SurfacelessDisplayAreaRoot(mWm);
-        final TaskDisplayArea tda1 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA1", FEATURE_DEFAULT_TASK_CONTAINER);
-        final TaskDisplayArea tda2 = new TaskDisplayArea(null /* displayContent */,
-                mWm, "TDA2", FEATURE_VENDOR_FIRST);
+        final TaskDisplayArea tda1 = new TaskDisplayArea(mWm, "TDA1",
+                FEATURE_DEFAULT_TASK_CONTAINER, false /* createdByOrganizer */,
+                true /* canHostHomeTask */);
+        final TaskDisplayArea tda2 = new TaskDisplayArea(mWm, "TDA2", FEATURE_VENDOR_FIRST,
+                false /* createdByOrganizer */, true /* canHostHomeTask */);
         root.addChild(tda1, POSITION_TOP);
         root.addChild(tda2, POSITION_TOP);
 
@@ -450,7 +455,7 @@ public class DisplayAreaTest extends WindowTestsBase {
     public void testGetOrientation() {
         final DisplayArea.Tokens area = new DisplayArea.Tokens(mWm, ABOVE_TASKS, "test");
         mDisplayContent.addChild(area, POSITION_TOP);
-        final WindowState win = createWindow(null, TYPE_APPLICATION_OVERLAY, "overlay");
+        final WindowState win = newWindowBuilder("overlay", TYPE_APPLICATION_OVERLAY).build();
         win.mAttrs.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
         win.mToken.reparent(area, POSITION_TOP);
         spyOn(win);
@@ -491,6 +496,7 @@ public class DisplayAreaTest extends WindowTestsBase {
     @Test
     public void testSetIgnoreOrientationRequest_callSuperOnDescendantOrientationChangedNoSensor() {
         final TaskDisplayArea tda = mDisplayContent.getDefaultTaskDisplayArea();
+        mDisplayContent.setIgnoreOrientationRequest(false);
         final Task stack =
                 new TaskBuilder(mSupervisor).setOnTop(!ON_TOP).setCreateActivity(true).build();
         final ActivityRecord activity = stack.getTopNonFinishingActivity();

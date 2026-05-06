@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,6 +28,8 @@ import static org.mockito.Mockito.when;
 
 import android.app.KeyguardManager;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.media.session.MediaController;
@@ -38,6 +41,7 @@ import android.testing.TestableLooper;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.core.graphics.drawable.IconCompat;
@@ -49,17 +53,19 @@ import com.android.settingslib.bluetooth.LocalBluetoothLeBroadcast;
 import com.android.settingslib.bluetooth.LocalBluetoothManager;
 import com.android.settingslib.bluetooth.LocalBluetoothProfileManager;
 import com.android.settingslib.media.LocalMediaManager;
+import com.android.settingslib.volume.data.repository.AudioSharingRepository;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.SysuiTestCaseExtKt;
 import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.broadcast.BroadcastSender;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.kosmos.Kosmos;
 import com.android.systemui.media.nearby.NearbyMediaDevicesManager;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
+import com.android.systemui.util.kotlin.JavaAdapter;
+import com.android.systemui.util.time.FakeSystemClock;
 import com.android.systemui.volume.panel.domain.interactor.VolumePanelGlobalStateInteractor;
 import com.android.systemui.volume.panel.domain.interactor.VolumePanelGlobalStateInteractorKosmosKt;
 
@@ -80,7 +86,7 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
     private final Kosmos mKosmos = SysuiTestCaseExtKt.testKosmos(this);
 
     // Mock
-    private MediaOutputBaseAdapter mMediaOutputBaseAdapter = mock(MediaOutputBaseAdapter.class);
+    private MediaOutputAdapterBase mMediaOutputBaseAdapter = mock(MediaOutputAdapterBase.class);
     private MediaController mMediaController = mock(MediaController.class);
     private PlaybackState mPlaybackState = mock(PlaybackState.class);
     private MediaSessionManager mMediaSessionManager = mock(MediaSessionManager.class);
@@ -99,8 +105,9 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
     private final AudioManager mAudioManager = mock(AudioManager.class);
     private PowerExemptionManager mPowerExemptionManager = mock(PowerExemptionManager.class);
     private KeyguardManager mKeyguardManager = mock(KeyguardManager.class);
-    private FeatureFlags mFlags = mock(FeatureFlags.class);
     private UserTracker mUserTracker = mock(UserTracker.class);
+    private JavaAdapter mJavaAdapter = mock(JavaAdapter.class);
+    private AudioSharingRepository mAudioSharingRepository = mock(AudioSharingRepository.class);
 
     private List<MediaController> mMediaControllers = new ArrayList<>();
     private MediaOutputBaseDialogImpl mMediaOutputBaseDialogImpl;
@@ -110,9 +117,6 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
     private CharSequence mHeaderTitle;
     private CharSequence mHeaderSubtitle;
     private String mStopText;
-    private boolean mIsBroadcasting;
-    private boolean mIsBroadcastIconVisibility;
-
 
     @Before
     public void setUp() {
@@ -128,28 +132,7 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
         when(mMediaController.getPackageName()).thenReturn(TEST_PACKAGE);
         mMediaControllers.add(mMediaController);
         when(mMediaSessionManager.getActiveSessions(any())).thenReturn(mMediaControllers);
-        VolumePanelGlobalStateInteractor volumePanelGlobalStateInteractor =
-                VolumePanelGlobalStateInteractorKosmosKt.getVolumePanelGlobalStateInteractor(
-                        mKosmos);
-
-        mMediaSwitchingController =
-                new MediaSwitchingController(
-                        mContext,
-                        TEST_PACKAGE,
-                        mContext.getUser(),
-                        /* token */ null,
-                        mMediaSessionManager,
-                        mLocalBluetoothManager,
-                        mStarter,
-                        mNotifCollection,
-                        mDialogTransitionAnimator,
-                        mNearbyMediaDevicesManager,
-                        mAudioManager,
-                        mPowerExemptionManager,
-                        mKeyguardManager,
-                        mFlags,
-                        volumePanelGlobalStateInteractor,
-                        mUserTracker);
+        createMediaSwitchingController(TEST_PACKAGE);
 
         // Using a fake package will cause routing operations to fail, so we intercept
         // scanning-related operations.
@@ -161,6 +144,67 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
                 new MediaOutputBaseDialogImpl(
                         mContext, mBroadcastSender, mMediaSwitchingController);
         mMediaOutputBaseDialogImpl.onCreate(new Bundle());
+    }
+
+    private void createMediaSwitchingController(String testPackage) {
+        VolumePanelGlobalStateInteractor volumePanelGlobalStateInteractor =
+                VolumePanelGlobalStateInteractorKosmosKt.getVolumePanelGlobalStateInteractor(
+                        mKosmos);
+
+        mMediaSwitchingController =
+                new MediaSwitchingController(
+                        mContext,
+                        testPackage,
+                        mContext.getUser(),
+                        /* token */ null,
+                        mMediaSessionManager,
+                        mLocalBluetoothManager,
+                        mStarter,
+                        mNotifCollection,
+                        mDialogTransitionAnimator,
+                        mNearbyMediaDevicesManager,
+                        mAudioManager,
+                        mPowerExemptionManager,
+                        mKeyguardManager,
+                        new FakeSystemClock(),
+                        volumePanelGlobalStateInteractor,
+                        mUserTracker,
+                        mJavaAdapter,
+                        mAudioSharingRepository);
+    }
+
+    @Test
+    public void onCreate_noAppOpenIntent_metadataSectionNonClickable() {
+        createMediaSwitchingController(null);
+
+        mMediaOutputBaseDialogImpl =
+                new MediaOutputBaseDialogImpl(
+                        mContext, mBroadcastSender, mMediaSwitchingController);
+        mMediaOutputBaseDialogImpl.onCreate(new Bundle());
+        final LinearLayout mediaMetadataSectionLayout =
+                mMediaOutputBaseDialogImpl.mDialogView.requireViewById(
+                        R.id.media_metadata_section);
+
+        assertThat(mediaMetadataSectionLayout.isClickable()).isFalse();
+    }
+
+    @Test
+    public void onCreate_appOpenIntentAvailable_metadataSectionClickable() {
+        final PackageManager packageManager = mock(PackageManager.class);
+        mContext.setMockPackageManager(packageManager);
+        Intent intent = new Intent(TEST_PACKAGE);
+        doReturn(intent).when(packageManager).getLaunchIntentForPackage(TEST_PACKAGE);
+        createMediaSwitchingController(TEST_PACKAGE);
+
+        mMediaOutputBaseDialogImpl =
+                new MediaOutputBaseDialogImpl(
+                        mContext, mBroadcastSender, mMediaSwitchingController);
+        mMediaOutputBaseDialogImpl.onCreate(new Bundle());
+        final LinearLayout mediaMetadataSectionLayout =
+                mMediaOutputBaseDialogImpl.mDialogView.requireViewById(
+                        R.id.media_metadata_section);
+
+        assertThat(mediaMetadataSectionLayout.isClickable()).isTrue();
     }
 
     @Test
@@ -177,7 +221,6 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
     public void refresh_withIconCompat_iconIsVisible() {
         mIconCompat = IconCompat.createWithBitmap(
                 Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888));
-        when(mMediaOutputBaseAdapter.getController()).thenReturn(mMediaSwitchingController);
 
         mMediaOutputBaseDialogImpl.refresh();
         final ImageView view = mMediaOutputBaseDialogImpl.mDialogView.requireViewById(
@@ -195,27 +238,6 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
                 R.id.header_icon);
 
         assertThat(view.getVisibility()).isEqualTo(View.GONE);
-    }
-
-    @Test
-    public void refresh_broadcastIconVisibilityOff_broadcastIconLayoutNotVisible() {
-        mIsBroadcastIconVisibility = false;
-
-        mMediaOutputBaseDialogImpl.refresh();
-        final ImageView view = mMediaOutputBaseDialogImpl.mDialogView.requireViewById(
-                R.id.broadcast_icon);
-
-        assertThat(view.getVisibility()).isEqualTo(View.GONE);
-    }
-    @Test
-    public void refresh_broadcastIconVisibilityOn_broadcastIconLayoutVisible() {
-        mIsBroadcastIconVisibility = true;
-
-        mMediaOutputBaseDialogImpl.refresh();
-        final ImageView view = mMediaOutputBaseDialogImpl.mDialogView.requireViewById(
-                R.id.broadcast_icon);
-
-        assertThat(view.getVisibility()).isEqualTo(View.VISIBLE);
     }
 
     @Test
@@ -284,48 +306,6 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
     }
 
     @Test
-    public void whenBroadcasting_verifyLeBroadcastServiceCallBackIsRegisteredAndUnregistered() {
-        when(mLocalBluetoothProfileManager.getLeAudioBroadcastProfile()).thenReturn(
-                mLocalBluetoothLeBroadcast);
-        mIsBroadcasting = true;
-
-        mMediaOutputBaseDialogImpl.start();
-        verify(mLocalBluetoothLeBroadcast).registerServiceCallBack(any(), any());
-
-        mMediaOutputBaseDialogImpl.stop();
-        verify(mLocalBluetoothLeBroadcast).unregisterServiceCallBack(any());
-    }
-
-    @Test
-    public void
-            whenNotBroadcasting_verifyLeBroadcastServiceCallBackIsNotRegisteredOrUnregistered() {
-        when(mLocalBluetoothProfileManager.getLeAudioBroadcastProfile()).thenReturn(
-                mLocalBluetoothLeBroadcast);
-        mIsBroadcasting = false;
-
-        mMediaOutputBaseDialogImpl.start();
-        mMediaOutputBaseDialogImpl.stop();
-
-        verify(mLocalBluetoothLeBroadcast, never()).registerServiceCallBack(any(), any());
-        verify(mLocalBluetoothLeBroadcast, never()).unregisterServiceCallBack(any());
-    }
-
-    @Test
-    public void
-            whenNotBroadcasting_verifyLeBroadcastServiceCallBackIsUnregisteredIfProfileEnabled() {
-        when(mLocalBluetoothProfileManager.getLeAudioBroadcastProfile()).thenReturn(
-                mLocalBluetoothLeBroadcast);
-        mIsBroadcasting = true;
-
-        mMediaOutputBaseDialogImpl.start();
-        verify(mLocalBluetoothLeBroadcast).registerServiceCallBack(any(), any());
-
-        mIsBroadcasting = false;
-        mMediaOutputBaseDialogImpl.stop();
-        verify(mLocalBluetoothLeBroadcast).unregisterServiceCallBack(any());
-    }
-
-    @Test
     public void refresh_checkStopText() {
         mStopText = "test_string";
         mMediaOutputBaseDialogImpl.refresh();
@@ -365,11 +345,6 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
         }
 
         @Override
-        int getHeaderIconSize() {
-            return 10;
-        }
-
-        @Override
         CharSequence getHeaderText() {
             return mHeaderTitle;
         }
@@ -385,18 +360,8 @@ public class MediaOutputBaseDialogTest extends SysuiTestCase {
         }
 
         @Override
-        public boolean isBroadcastSupported() {
-            return mIsBroadcasting;
-        }
-
-        @Override
         public CharSequence getStopButtonText() {
             return mStopText;
-        }
-
-        @Override
-        public int getBroadcastIconVisibility() {
-            return mIsBroadcastIconVisibility ? View.VISIBLE : View.GONE;
         }
     }
 }

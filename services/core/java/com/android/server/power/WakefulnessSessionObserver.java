@@ -22,10 +22,10 @@ import static android.os.PowerManager.USER_ACTIVITY_EVENT_OTHER;
 import static android.os.PowerManagerInternal.isInteractive;
 import static android.view.Display.DEFAULT_DISPLAY;
 
-import static com.android.server.power.PowerManagerService.DEFAULT_SCREEN_OFF_TIMEOUT;
+import static com.android.server.power.ScreenTimeoutConstants.DEFAULT_SCREEN_OFF_TIMEOUT;
 import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_NON_INTERACTIVE;
 import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_SCREEN_LOCK;
-import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_UNKNOWN;
+import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_NOT_ACQUIRED;
 import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_USER_ACTIVITY_ACCESSIBILITY;
 import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_USER_ACTIVITY_ATTENTION;
 import static com.android.server.power.ScreenTimeoutOverridePolicy.RELEASE_REASON_USER_ACTIVITY_BUTTON;
@@ -205,6 +205,13 @@ public class WakefulnessSessionObserver {
                         UserHandle.USER_ALL);
 
         mPhysicalDisplayPortIdForDefaultDisplay = getPhysicalDisplayPortId(DEFAULT_DISPLAY);
+        registerDisplayListener();
+        mPowerGroups.append(
+                Display.DEFAULT_DISPLAY_GROUP,
+                new WakefulnessSessionPowerGroup(Display.DEFAULT_DISPLAY_GROUP));
+    }
+
+    private void registerDisplayListener() {
         DisplayManager displayManager = mContext.getSystemService(DisplayManager.class);
         if (displayManager != null) {
             displayManager.registerDisplayListener(
@@ -226,12 +233,8 @@ public class WakefulnessSessionObserver {
                         }
                     },
                     mHandler,
-                    DisplayManager.EVENT_FLAG_DISPLAY_CHANGED);
+                    DisplayManager.EVENT_TYPE_DISPLAY_CHANGED);
         }
-
-        mPowerGroups.append(
-                Display.DEFAULT_DISPLAY_GROUP,
-                new WakefulnessSessionPowerGroup(Display.DEFAULT_DISPLAY_GROUP));
     }
 
     /**
@@ -489,7 +492,8 @@ public class WakefulnessSessionObserver {
                                 mOverrideTimeoutMs,
                                 screenOffTimeoutMs);
                         mSendOverrideTimeoutLogTimestamp = eventTime;
-                        mTimeoutOverrideReleaseReason = RELEASE_REASON_UNKNOWN; // reset the reason
+                        // Reset the reason after applied.
+                        mTimeoutOverrideReleaseReason = RELEASE_REASON_NOT_ACQUIRED;
                     }
 
                     checkAndLogDimIfQualified(POLICY_REASON_OFF_POWER_BUTTON, eventTime);

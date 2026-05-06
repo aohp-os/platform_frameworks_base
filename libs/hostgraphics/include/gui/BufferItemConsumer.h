@@ -17,20 +17,50 @@
 #ifndef ANDROID_GUI_BUFFERITEMCONSUMER_H
 #define ANDROID_GUI_BUFFERITEMCONSUMER_H
 
+#include <com_android_graphics_libgui_flags.h>
+#include <gui/BufferQueue.h>
 #include <gui/ConsumerBase.h>
 #include <gui/IGraphicBufferConsumer.h>
+#include <gui/Surface.h>
+#include <ui/GraphicBuffer.h>
 #include <utils/RefBase.h>
 
 namespace android {
 
 class BufferItemConsumer : public ConsumerBase {
 public:
+    enum { DEFAULT_MAX_BUFFERS = -1 };
+
+    static std::tuple<sp<BufferItemConsumer>, sp<Surface>> create(
+            uint64_t consumerUsage, int bufferCount = DEFAULT_MAX_BUFFERS,
+            bool controlledByApp = false, bool isConsumerSurfaceFlinger = false) {
+        sp<BufferItemConsumer> bufferItemConsumer =
+                sp<BufferItemConsumer>::make(consumerUsage, bufferCount, controlledByApp,
+                                             isConsumerSurfaceFlinger);
+        return {bufferItemConsumer, bufferItemConsumer->getSurface()};
+    }
+
     BufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
-                       int bufferCount, bool controlledByApp)
+                       int bufferCount = -1, bool controlledByApp = false)
           : mConsumer(consumer) {}
+
+    BufferItemConsumer(uint64_t consumerUsage, int bufferCount = -1,
+                       bool controlledByApp = false, bool isConsumerSurfaceFlinger = false) {
+        sp<IGraphicBufferProducer> producer;
+        BufferQueue::createBufferQueue(&producer, &mConsumer);
+        mSurface = sp<Surface>::make(producer, controlledByApp);
+    }
+
+    status_t setConsumerIsProtected(bool isProtected) {
+        return OK;
+    }
 
     status_t acquireBuffer(BufferItem* item, nsecs_t presentWhen, bool waitForFence = true) {
         return mConsumer->acquireBuffer(item, presentWhen, 0);
+    }
+
+    status_t attachBuffer(BufferItem*, const sp<GraphicBuffer>&) {
+        return INVALID_OPERATION;
     }
 
     status_t releaseBuffer(const BufferItem& item,
@@ -60,6 +90,10 @@ public:
         return OK;
     }
 
+    status_t detachBuffer(const sp<GraphicBuffer>& buffer) {
+        return OK;
+    }
+
     status_t discardFreeBuffers() {
         return OK;
     }
@@ -71,8 +105,16 @@ public:
         return OK;
     }
 
+    // Returns a Surface that can be used as the producer for this consumer.
+    sp<Surface> getSurface() const {
+        return mSurface;
+    }
+
 private:
     sp<IGraphicBufferConsumer> mConsumer;
+    // This Surface wraps the IGraphicBufferConsumer created for this
+    // ConsumerBase.
+    sp<Surface> mSurface;
 };
 
 } // namespace android

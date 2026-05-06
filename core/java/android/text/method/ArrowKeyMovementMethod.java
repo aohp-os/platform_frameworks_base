@@ -30,6 +30,7 @@ import android.widget.TextView;
  * A movement method that provides cursor movement and selection.
  * Supports displaying the context menu on DPad Center.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class ArrowKeyMovementMethod extends BaseMovementMethod implements MovementMethod {
     private static boolean isSelecting(Spannable buffer) {
         return ((MetaKeyKeyListener.getMetaState(buffer, MetaKeyKeyListener.META_SHIFT_ON) == 1) ||
@@ -218,7 +219,7 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     @Override
     protected boolean leftWord(TextView widget, Spannable buffer) {
         final int selectionEnd = widget.getSelectionEnd();
@@ -227,7 +228,7 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
         return Selection.moveToPreceding(buffer, wordIterator, isSelecting(buffer));
     }
 
-    /** {@hide} */
+    /** @hide */
     @Override
     protected boolean rightWord(TextView widget, Spannable buffer) {
         final int selectionEnd = widget.getSelectionEnd();

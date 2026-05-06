@@ -16,8 +16,10 @@
 
 package android.companion.virtual;
 
+import static android.annotation.RestrictedForEnvironment.ENVIRONMENT_SDK_RUNTIME;
 import static android.media.AudioManager.AUDIO_SESSION_ID_GENERATE;
 
+import android.Manifest;
 import android.annotation.CallbackExecutor;
 import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
@@ -25,26 +27,36 @@ import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
-import android.annotation.SdkConstant;
+import android.annotation.RestrictedForEnvironment;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.annotation.UserIdInt;
 import android.app.PendingIntent;
+import android.app.role.RoleManager;
 import android.companion.AssociationInfo;
 import android.companion.virtual.audio.VirtualAudioDevice;
 import android.companion.virtual.audio.VirtualAudioDevice.AudioConfigurationChangeCallback;
 import android.companion.virtual.camera.VirtualCamera;
 import android.companion.virtual.camera.VirtualCameraConfig;
-import android.companion.virtual.flags.Flags;
+import android.companion.virtual.computercontrol.AutomatedPackageListener;
+import android.companion.virtual.computercontrol.ComputerControlSession;
+import android.companion.virtual.computercontrol.ComputerControlSessionParams;
+import android.companion.virtual.computercontrol.IAutomatedPackageListener;
+import android.companion.virtual.computercontrol.IComputerControlSessionCallback;
 import android.companion.virtual.sensor.VirtualSensor;
+import android.companion.virtualdevice.flags.Flags;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
+import android.content.res.Configuration;
 import android.graphics.Point;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CameraMetadata;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManager.VirtualDisplayFlag;
 import android.hardware.display.VirtualDisplay;
@@ -65,6 +77,7 @@ import android.hardware.input.VirtualTouchscreen;
 import android.hardware.input.VirtualTouchscreenConfig;
 import android.media.AudioManager;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Looper;
 import android.os.RemoteException;
 import android.os.UserHandle;
@@ -98,30 +111,12 @@ import java.util.function.IntConsumer;
  * <p class="note">Not to be confused with the Android Studio's Virtual Device Manager, which allows
  * for device emulation.
  */
+@RestrictedForEnvironment(
+        environments = ENVIRONMENT_SDK_RUNTIME, from = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @SystemService(Context.VIRTUAL_DEVICE_SERVICE)
 public final class VirtualDeviceManager {
 
     private static final String TAG = "VirtualDeviceManager";
-
-    /**
-     * Broadcast Action: A Virtual Device was removed.
-     *
-     * <p class="note">This is a protected intent that can only be sent by the system.</p>
-     *
-     * @hide
-     */
-    @SdkConstant(SdkConstant.SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_VIRTUAL_DEVICE_REMOVED =
-            "android.companion.virtual.action.VIRTUAL_DEVICE_REMOVED";
-
-    /**
-     * Int intent extra to be used with {@link #ACTION_VIRTUAL_DEVICE_REMOVED}.
-     * Contains the identifier of the virtual device, which was removed.
-     *
-     * @hide
-     */
-    public static final String EXTRA_VIRTUAL_DEVICE_ID =
-            "android.companion.virtual.extra.VIRTUAL_DEVICE_ID";
 
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
@@ -133,6 +128,21 @@ public final class VirtualDeviceManager {
                     LAUNCH_FAILURE_NO_ACTIVITY})
     @Target({ElementType.TYPE_PARAMETER, ElementType.TYPE_USE})
     public @interface PendingIntentLaunchStatus {}
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(flag = true, prefix = "UI_MODE_", value = {
+            Configuration.UI_MODE_TYPE_NORMAL,
+            Configuration.UI_MODE_TYPE_DESK,
+            Configuration.UI_MODE_TYPE_CAR,
+            Configuration.UI_MODE_TYPE_TELEVISION,
+            Configuration.UI_MODE_TYPE_APPLIANCE,
+            Configuration.UI_MODE_TYPE_WATCH,
+            Configuration.UI_MODE_TYPE_VR_HEADSET,
+            Configuration.UI_MODE_NIGHT_NO,
+            Configuration.UI_MODE_NIGHT_YES})
+    @Target({ElementType.TYPE_PARAMETER, ElementType.TYPE_USE})
+    public @interface DisplayUiMode {}
 
     /**
      * Status for {@link VirtualDevice#launchPendingIntent}, indicating that the launch was
@@ -170,7 +180,6 @@ public final class VirtualDeviceManager {
      * @hide
      */
     @SystemApi
-    @FlaggedApi(Flags.FLAG_PERSISTENT_DEVICE_ID_API)
     public static final String PERSISTENT_DEVICE_ID_DEFAULT =
             "default:" + Context.DEVICE_ID_DEFAULT;
 
@@ -179,6 +188,10 @@ public final class VirtualDeviceManager {
 
     @GuardedBy("mVirtualDeviceListeners")
     private final List<VirtualDeviceListenerDelegate> mVirtualDeviceListeners = new ArrayList<>();
+
+    @GuardedBy("mAutomatedPackageListeners")
+    private final List<AutomatedPackageListenerDelegate> mAutomatedPackageListeners =
+            new ArrayList<>();
 
     /** @hide */
     public VirtualDeviceManager(
@@ -218,16 +231,48 @@ public final class VirtualDeviceManager {
     }
 
     /**
+     * Requests the creation of a new {@link ComputerControlSession}.
+     *
+     * @param params The configuration of the session.
+     * @param executor An executor to run the callback on.
+     * @param callback A callback to get notified about the result of this operation.
+     *
+     * @throws IllegalArgumentException when the given params contain invalid information.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.ACCESS_COMPUTER_CONTROL)
+    public void requestComputerControlSession(
+            @NonNull ComputerControlSessionParams params,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull ComputerControlSession.Callback callback) {
+        if (mService == null) {
+            Log.w(TAG, "Failed to request a new session; no virtual device manager service.");
+            return;
+        }
+        Objects.requireNonNull(params, "params must not be null");
+        Objects.requireNonNull(executor, "executor must not be null");
+        Objects.requireNonNull(callback, "callback must not be null");
+        try {
+            IComputerControlSessionCallback callbackProxy =
+                    new ComputerControlSession.CallbackProxy(executor, callback);
+            mService.requestComputerControlSession(
+                    mContext.getAttributionSource(), params, callbackProxy);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Returns the details of all available virtual devices.
      *
      * <p>The returned objects are read-only representations that expose the properties of all
      * existing virtual devices.</p>
      *
      * <p>Note that if a virtual device is closed and becomes invalid, the returned objects will
-     * not be updated and may contain stale values.</p>
+     * not be updated and may contain stale values. Use a {@link VirtualDeviceListener} for real
+     * time updates of the availability  of virtual devices.</p>
      */
-    // TODO(b/310912420): Add "Use a VirtualDeviceListener for real time updates of the
-    // availability  of virtual devices." in the note paragraph above with a link annotation.
     @NonNull
     public List<android.companion.virtual.VirtualDevice> getVirtualDevices() {
         if (mService == null) {
@@ -254,7 +299,6 @@ public final class VirtualDeviceManager {
      * @return the virtual device with the requested ID, or {@code null} if no such device exists or
      *   it has already been closed.
      */
-    @FlaggedApi(Flags.FLAG_VDM_PUBLIC_APIS)
     @Nullable
     public android.companion.virtual.VirtualDevice getVirtualDevice(int deviceId) {
         if (mService == null) {
@@ -279,7 +323,6 @@ public final class VirtualDeviceManager {
      * @param listener The listener to add.
      * @see #unregisterVirtualDeviceListener
      */
-    @FlaggedApi(Flags.FLAG_VDM_PUBLIC_APIS)
     public void registerVirtualDeviceListener(
             @NonNull @CallbackExecutor Executor executor,
             @NonNull VirtualDeviceListener listener) {
@@ -307,7 +350,6 @@ public final class VirtualDeviceManager {
      * @param listener The listener to unregister.
      * @see #registerVirtualDeviceListener
      */
-    @FlaggedApi(Flags.FLAG_VDM_PUBLIC_APIS)
     public void unregisterVirtualDeviceListener(@NonNull VirtualDeviceListener listener) {
         if (mService == null) {
             Log.w(TAG, "Failed to unregister listener; no virtual device manager service.");
@@ -331,10 +373,71 @@ public final class VirtualDeviceManager {
     }
 
     /**
+     * Registers a listener to receive notifications when the set of automated apps changes.
+     *
+     * @param executor The executor where the listener is executed on.
+     * @param listener The listener to add.
+     * @throws SecurityException if the caller does not hold the {@link RoleManager#ROLE_HOME} role.
+     * @see #unregisterAutomatedPackageListener
+     * @hide
+     */
+    public void registerAutomatedPackageListener(
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull AutomatedPackageListener listener) {
+        if (mService == null) {
+            Log.w(TAG, "Failed to register listener; no virtual device manager service.");
+            return;
+        }
+        final AutomatedPackageListenerDelegate delegate =
+                new AutomatedPackageListenerDelegate(Objects.requireNonNull(executor),
+                        Objects.requireNonNull(listener));
+        synchronized (mAutomatedPackageListeners) {
+            try {
+                mService.registerAutomatedPackageListener(delegate);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+            mAutomatedPackageListeners.add(delegate);
+        }
+    }
+
+    /**
+     * Unregisters a listener previously registered with {@link #registerAutomatedPackageListener}.
+     *
+     * @param listener The listener to unregister.
+     * @throws SecurityException if the caller does not hold the {@link RoleManager#ROLE_HOME} role.
+     * @see #registerAutomatedPackageListener
+     * @hide
+     */
+    public void unregisterAutomatedPackageListener(@NonNull AutomatedPackageListener listener) {
+        if (mService == null) {
+            Log.w(TAG, "Failed to unregister listener; no virtual device manager service.");
+            return;
+        }
+        Objects.requireNonNull(listener);
+        synchronized (mAutomatedPackageListeners) {
+            final Iterator<AutomatedPackageListenerDelegate> it =
+                    mAutomatedPackageListeners.iterator();
+            while (it.hasNext()) {
+                final AutomatedPackageListenerDelegate delegate = it.next();
+                if (delegate.mListener == listener) {
+                    try {
+                        mService.unregisterAutomatedPackageListener(delegate);
+                    } catch (RemoteException e) {
+                        throw e.rethrowFromSystemServer();
+                    }
+                    it.remove();
+                }
+            }
+        }
+    }
+
+    /**
      * Returns the device policy for the given virtual device and policy type.
      *
-     * <p>In case the virtual device identifier is not valid, or there's no explicitly specified
-     * policy for that device and policy type, then
+     * <p>In case the virtual device identifier is not valid,
+     * {@link VirtualDeviceParams#DEVICE_POLICY_INVALID} is returned. If there's no explicitly
+     * specified policy for that device and policy type, then
      * {@link VirtualDeviceParams#DEVICE_POLICY_DEFAULT} is returned.
      *
      * @hide
@@ -353,6 +456,31 @@ public final class VirtualDeviceManager {
         }
         try {
             return mService.getDevicePolicy(deviceId, policyType);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the device policy for the display with the given ID and the given policy type.
+     *
+     * <p>In case the display does not exist or is not owned by a virtual device,
+     * {@link VirtualDeviceParams#DEVICE_POLICY_DEFAULT} is returned.
+     *
+     * @hide
+     */
+    public @VirtualDeviceParams.DevicePolicy int getDevicePolicyForDisplayId(
+            int displayId, @VirtualDeviceParams.PolicyType int policyType) {
+        if (displayId == Context.DEVICE_ID_DEFAULT) {
+            // Avoid unnecessary binder call, for default display, policy will be always default.
+            return VirtualDeviceParams.DEVICE_POLICY_DEFAULT;
+        }
+        if (mService == null) {
+            Log.w(TAG, "Failed to retrieve device policy; no virtual device manager service.");
+            return VirtualDeviceParams.DEVICE_POLICY_DEFAULT;
+        }
+        try {
+            return mService.getDevicePolicyForDisplayId(displayId, policyType);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -390,10 +518,9 @@ public final class VirtualDeviceManager {
      * @return the display name associated with the given persistent device ID, or {@code null} if
      *     the persistent ID is invalid or does not correspond to a virtual device.
      *
+     * @see VirtualDevice#getPersistentDeviceId()
      * @hide
      */
-    // TODO(b/315481938): Link @see VirtualDevice#getPersistentDeviceId()
-    @FlaggedApi(Flags.FLAG_PERSISTENT_DEVICE_ID_API)
     @SystemApi
     @Nullable
     public CharSequence getDisplayNameForPersistentDeviceId(@NonNull String persistentDeviceId) {
@@ -413,10 +540,9 @@ public final class VirtualDeviceManager {
      * Returns all current persistent device IDs, including the ones for which no virtual device
      * exists, as long as one may have existed or can be created.
      *
+     * @see VirtualDevice#getPersistentDeviceId()
      * @hide
      */
-    // TODO(b/315481938): Link @see VirtualDevice#getPersistentDeviceId()
-    @FlaggedApi(Flags.FLAG_PERSISTENT_DEVICE_ID_API)
     @SystemApi
     @NonNull
     public Set<String> getAllPersistentDeviceIds() {
@@ -577,9 +703,8 @@ public final class VirtualDeviceManager {
         }
 
         /** @hide */
-        public VirtualDevice(IVirtualDeviceManager service, Context context,
-                IVirtualDevice virtualDevice) {
-            mVirtualDeviceInternal = new VirtualDeviceInternal(service, context, virtualDevice);
+        public VirtualDevice(Context context, IVirtualDevice virtualDevice) {
+            mVirtualDeviceInternal = new VirtualDeviceInternal(context, virtualDevice);
         }
 
         /**
@@ -592,7 +717,6 @@ public final class VirtualDeviceManager {
         /**
          * Returns the persistent ID of this virtual device.
          */
-        @FlaggedApi(Flags.FLAG_VDM_PUBLIC_APIS)
         public @Nullable String getPersistentDeviceId() {
             return mVirtualDeviceInternal.getPersistentDeviceId();
         }
@@ -633,7 +757,7 @@ public final class VirtualDeviceManager {
          * @see DisplayManager#VIRTUAL_DISPLAY_FLAG_TRUSTED
          * @see DisplayManager#VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_DEVICE_AWARE_DISPLAY_POWER)
+        @FlaggedApi(Flags.FLAG_DEVICE_AWARE_DISPLAY_POWER)
         public void goToSleep() {
             mVirtualDeviceInternal.goToSleep();
         }
@@ -651,7 +775,7 @@ public final class VirtualDeviceManager {
          * @see DisplayManager#VIRTUAL_DISPLAY_FLAG_TRUSTED
          * @see DisplayManager#VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_DEVICE_AWARE_DISPLAY_POWER)
+        @FlaggedApi(Flags.FLAG_DEVICE_AWARE_DISPLAY_POWER)
         public void wakeUp() {
             mVirtualDeviceInternal.wakeUp();
         }
@@ -781,7 +905,6 @@ public final class VirtualDeviceManager {
          * @see VirtualDeviceParams#POLICY_TYPE_RECENTS
          * @see VirtualDeviceParams#POLICY_TYPE_ACTIVITY
          */
-        @FlaggedApi(Flags.FLAG_DYNAMIC_POLICY)
         public void setDevicePolicy(@VirtualDeviceParams.DynamicPolicyType int policyType,
                 @VirtualDeviceParams.DevicePolicy int devicePolicy) {
             mVirtualDeviceInternal.setDevicePolicy(policyType, devicePolicy);
@@ -803,7 +926,6 @@ public final class VirtualDeviceManager {
          * @see #removeActivityPolicyExemption(ComponentName)
          * @see #setDevicePolicy
          */
-        @FlaggedApi(Flags.FLAG_DYNAMIC_POLICY)
         public void addActivityPolicyExemption(@NonNull ComponentName componentName) {
             addActivityPolicyExemption(new ActivityPolicyExemption.Builder()
                     .setComponentName(componentName)
@@ -826,7 +948,6 @@ public final class VirtualDeviceManager {
          * @see #addActivityPolicyExemption(ComponentName)
          * @see #setDevicePolicy
          */
-        @FlaggedApi(Flags.FLAG_DYNAMIC_POLICY)
         public void removeActivityPolicyExemption(@NonNull ComponentName componentName) {
             removeActivityPolicyExemption(new ActivityPolicyExemption.Builder()
                     .setComponentName(componentName)
@@ -850,7 +971,7 @@ public final class VirtualDeviceManager {
          * @see #removeActivityPolicyExemption(ActivityPolicyExemption)
          * @see #setDevicePolicy
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         public void addActivityPolicyExemption(@NonNull ActivityPolicyExemption exemption) {
             mVirtualDeviceInternal.addActivityPolicyExemption(Objects.requireNonNull(exemption));
         }
@@ -865,7 +986,7 @@ public final class VirtualDeviceManager {
          * @see #addActivityPolicyExemption(ActivityPolicyExemption)
          * @see #setDevicePolicy
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         public void removeActivityPolicyExemption(@NonNull ActivityPolicyExemption exemption) {
             mVirtualDeviceInternal.removeActivityPolicyExemption(Objects.requireNonNull(exemption));
         }
@@ -887,7 +1008,7 @@ public final class VirtualDeviceManager {
          * @see VirtualDeviceParams#POLICY_TYPE_RECENTS
          * @see VirtualDeviceParams#POLICY_TYPE_ACTIVITY
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         public void setDevicePolicy(
                 @VirtualDeviceParams.DynamicDisplayPolicyType int policyType,
                 @VirtualDeviceParams.DevicePolicy int devicePolicy,
@@ -1038,9 +1159,7 @@ public final class VirtualDeviceManager {
          * @param config the touchscreen configurations for the virtual stylus.
          */
         @NonNull
-        @FlaggedApi(Flags.FLAG_VIRTUAL_STYLUS)
-        public VirtualStylus createVirtualStylus(
-                @NonNull VirtualStylusConfig config) {
+        public VirtualStylus createVirtualStylus(@NonNull VirtualStylusConfig config) {
             return mVirtualDeviceInternal.createVirtualStylus(config);
         }
 
@@ -1051,10 +1170,10 @@ public final class VirtualDeviceManager {
          * @see android.view.InputDevice#SOURCE_ROTARY_ENCODER
          */
         @NonNull
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_VIRTUAL_ROTARY)
+        @FlaggedApi(Flags.FLAG_VIRTUAL_ROTARY)
         public VirtualRotaryEncoder createVirtualRotaryEncoder(
                 @NonNull VirtualRotaryEncoderConfig config) {
-            if (!android.companion.virtualdevice.flags.Flags.virtualRotary()) {
+            if (!Flags.virtualRotary()) {
                 throw new UnsupportedOperationException("Virtual rotary support not enabled");
             }
             return mVirtualDeviceInternal.createVirtualRotaryEncoder(config);
@@ -1087,10 +1206,23 @@ public final class VirtualDeviceManager {
         }
 
         /**
-         * Creates a new virtual camera with the given {@link VirtualCameraConfig}. A virtual device
-         * can create a virtual camera only if it has
-         * {@link VirtualDeviceParams#DEVICE_POLICY_CUSTOM} as its
-         * {@link VirtualDeviceParams#POLICY_TYPE_CAMERA}.
+         * Creates a new virtual camera with the given {@link VirtualCameraConfig}.
+         *
+         * <p>A virtual device with {@link VirtualDeviceParams#DEVICE_POLICY_CUSTOM} for its
+         * {@link VirtualDeviceParams#POLICY_TYPE_CAMERA} can create virtual cameras
+         * with any {@link CameraCharacteristics#LENS_FACING}, though at most one of each
+         * {@link CameraMetadata#LENS_FACING_FRONT} and {@link CameraMetadata#LENS_FACING_BACK}.
+         * Multiple {@link CameraMetadata#LENS_FACING_EXTERNAL} virtual cameras are allowed.
+         * The virtual cameras (including the external ones) are guarded by a separate
+         * {@link Manifest.permission#CAMERA} permission relevant only to the virtual device.
+         *
+         * <p>A virtual device with {@link VirtualDeviceParams#DEVICE_POLICY_DEFAULT} for its
+         * {@link VirtualDeviceParams#POLICY_TYPE_CAMERA} can create <b>only</b> virtual cameras
+         * with {@link CameraMetadata#LENS_FACING_EXTERNAL}. The created virtual external cameras
+         * are visible from {@link CameraManager} created with a default device context.
+         * {@link Context#DEVICE_ID_DEFAULT}.
+         * In this case the virtual external cameras are guarded by the default's device
+         * {@link Manifest.permission#CAMERA} permission.
          *
          * @param config camera configuration.
          * @return newly created camera.
@@ -1098,12 +1230,7 @@ public final class VirtualDeviceManager {
          * @see VirtualDeviceParams#POLICY_TYPE_CAMERA
          */
         @NonNull
-        @FlaggedApi(Flags.FLAG_VIRTUAL_CAMERA)
         public VirtualCamera createVirtualCamera(@NonNull VirtualCameraConfig config) {
-            if (!Flags.virtualCamera()) {
-                throw new UnsupportedOperationException(
-                        "Flag is not enabled: %s".formatted(Flags.FLAG_VIRTUAL_CAMERA));
-            }
             return mVirtualDeviceInternal.createVirtualCamera(Objects.requireNonNull(config));
         }
 
@@ -1130,11 +1257,35 @@ public final class VirtualDeviceManager {
          * @throws SecurityException if the display is not owned by this device or is not
          *                           {@link DisplayManager#VIRTUAL_DISPLAY_FLAG_TRUSTED trusted}
          */
-        @FlaggedApi(Flags.FLAG_VDM_CUSTOM_IME)
         public void setDisplayImePolicy(int displayId, @WindowManager.DisplayImePolicy int policy) {
-            if (Flags.vdmCustomIme()) {
-                mVirtualDeviceInternal.setDisplayImePolicy(displayId, policy);
+            mVirtualDeviceInternal.setDisplayImePolicy(displayId, policy);
+        }
+
+        /**
+         * Specifies the UI mode on the given display.
+         *
+         * <p>By default, all displays created by virtual devices have
+         * {@link Configuration#UI_MODE_TYPE_UNDEFINED} and
+         * {@link Configuration#UI_MODE_NIGHT_UNDEFINED}, meaning that they follow the global UI
+         * mode type and night mode. These constants can also be used to unset a previously set
+         * UI mode.</p>
+         *
+         * @param displayId the ID of the display to change the UI mode for. It must be a trusted
+         *   non-mirror display, owned by this virtual device.
+         * @param uiMode the UI mode to use on that display, a combination of the UI mode type
+         *   given by the {@link Configuration#UI_MODE_TYPE_MASK} bits, and the night mode given by
+         *   the {@link Configuration#UI_MODE_NIGHT_MASK} bits.
+         * @throws SecurityException if the display is not owned by this device, is not
+         *   {@link DisplayManager#VIRTUAL_DISPLAY_FLAG_TRUSTED trusted}, or is a
+         *   {@link DisplayManager#VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR mirror} display.
+         * @see Configuration#uiMode
+         */
+        @FlaggedApi(Flags.FLAG_DEVICE_AWARE_UI_MODE)
+        public void setDisplayUiMode(int displayId, @DisplayUiMode int uiMode) {
+            if (!Flags.deviceAwareUiMode()) {
+                throw new UnsupportedOperationException("Required flag is not enabled");
             }
+            mVirtualDeviceInternal.setDisplayUiMode(displayId, uiMode);
         }
 
         /**
@@ -1269,7 +1420,7 @@ public final class VirtualDeviceManager {
          * @see VirtualDeviceParams#POLICY_TYPE_ACTIVITY
          * @see VirtualDevice#addActivityPolicyExemption(ActivityPolicyExemption)
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         default void onActivityLaunchBlocked(int displayId, @NonNull ComponentName componentName,
                 @NonNull UserHandle user, @Nullable IntentSender intentSender) {}
 
@@ -1285,19 +1436,23 @@ public final class VirtualDeviceManager {
          * @see Display#FLAG_SECURE
          * @see WindowManager.LayoutParams#FLAG_SECURE
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         default void onSecureWindowShown(int displayId, @NonNull ComponentName componentName,
                 @NonNull UserHandle user) {}
 
         /**
-         * Called when a window with a secure surface is no longer shown on the device.
+         * Called when there is no longer any window with a secure surface shown on the device.
+         *
+         * <p>This is only called once there are no more secure windows shown on the device. If
+         * there are multiple secure windows shown on the device, this callback will be called only
+         * once all of them are hidden.</p>
          *
          * @param displayId The display ID on which the window was shown before.
          *
          * @see Display#FLAG_SECURE
          * @see WindowManager.LayoutParams#FLAG_SECURE
          */
-        @FlaggedApi(android.companion.virtualdevice.flags.Flags.FLAG_ACTIVITY_CONTROL_API)
+        @FlaggedApi(Flags.FLAG_ACTIVITY_CONTROL_API)
         default void onSecureWindowHidden(int displayId) {}
     }
 
@@ -1344,7 +1499,6 @@ public final class VirtualDeviceManager {
      *
      * @see #registerVirtualDeviceListener
      */
-    @FlaggedApi(Flags.FLAG_VDM_PUBLIC_APIS)
     public interface VirtualDeviceListener {
         /**
          * Called whenever a new virtual device has been added to the system.
@@ -1393,6 +1547,30 @@ public final class VirtualDeviceManager {
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
+        }
+    }
+
+    /**
+     * A wrapper for {@link AutomatedPackageListener} that executes callbacks on the given executor.
+     */
+    private static class AutomatedPackageListenerDelegate extends IAutomatedPackageListener.Stub {
+        private final AutomatedPackageListener mListener;
+        private final Executor mExecutor;
+
+        private AutomatedPackageListenerDelegate(
+                Executor executor, AutomatedPackageListener listener) {
+            mExecutor = executor;
+            mListener = listener;
+        }
+
+        @Override
+        public void onAutomatedPackagesChanged(
+                @NonNull String automatingPackage,
+                @NonNull List<String> automatedPackages,
+                @NonNull UserHandle user) {
+            Binder.withCleanCallingIdentity(() ->
+                    mExecutor.execute(() -> mListener.onAutomatedPackagesChanged(
+                            automatingPackage, automatedPackages, user)));
         }
     }
 }

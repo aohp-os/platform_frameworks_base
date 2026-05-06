@@ -64,7 +64,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.os.Handler;
 import android.os.RemoteException;
-import android.platform.test.annotations.EnableFlags;
 import android.service.notification.NotificationListenerService.Ranking;
 import android.service.notification.NotificationListenerService.RankingMap;
 import android.service.notification.StatusBarNotification;
@@ -78,11 +77,11 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.statusbar.NotificationVisibility;
-import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.dump.LogBufferEulogizer;
 import com.android.systemui.statusbar.RankingBuilder;
+import com.android.systemui.statusbar.notification.BundleInteractionLogger;
 import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.collection.NoManSimulator.NotifEvent;
 import com.android.systemui.statusbar.notification.collection.NotifCollection.CancellationReason;
@@ -96,8 +95,10 @@ import com.android.systemui.statusbar.notification.collection.notifcollection.No
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionLogger;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifDismissInterceptor;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifLifetimeExtender;
+import com.android.systemui.statusbar.notification.collection.notifcollection.UpdateSource;
 import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProvider;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi;
 import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.time.FakeSystemClock;
 
@@ -132,6 +133,7 @@ public class NotifCollectionTest extends SysuiTestCase {
     @Spy private RecordingCollectionListener mCollectionListener;
     @Mock private CollectionReadyForBuildListener mBuildListener;
     @Mock private NotificationDismissibilityProvider mDismissibilityProvider;
+    @Mock private BundleInteractionLogger mBundleLogger;
 
     @Spy private RecordingLifetimeExtender mExtender1 = new RecordingLifetimeExtender("Extender1");
     @Spy private RecordingLifetimeExtender mExtender2 = new RecordingLifetimeExtender("Extender2");
@@ -176,7 +178,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 mBgExecutor,
                 mEulogizer,
                 mock(DumpManager.class),
-                mDismissibilityProvider);
+                mDismissibilityProvider,
+                mBundleLogger);
         mCollection.attach(mGroupCoalescer);
         mCollection.addCollectionListener(mCollectionListener);
         mCollection.setBuildListener(mBuildListener);
@@ -567,7 +570,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 notif2.sbn.getKey(),
                 stats.dismissalSurface,
                 stats.dismissalSentiment,
-                stats.notificationVisibility);
+                stats.notificationVisibility,
+                false);
     }
 
     @Test
@@ -716,7 +720,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 notif.sbn.getKey(),
                 stats.dismissalSurface,
                 stats.dismissalSentiment,
-                stats.notificationVisibility);
+                stats.notificationVisibility,
+                false);
     }
 
     @Test
@@ -752,7 +757,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 eq(notif.sbn.getKey()),
                 anyInt(),
                 anyInt(),
-                eq(stats.notificationVisibility));
+                eq(stats.notificationVisibility),
+                anyBoolean());
     }
 
     @Test
@@ -782,7 +788,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 eq(notif.sbn.getKey()),
                 anyInt(),
                 anyInt(),
-                eq(stats.notificationVisibility));
+                eq(stats.notificationVisibility),
+                anyBoolean());
     }
 
     @Test
@@ -1290,9 +1297,9 @@ public class NotifCollectionTest extends SysuiTestCase {
         clearInvocations(mBuildListener);
 
         // WHEN both notifications are manually dismissed together
-        mCollection.dismissNotifications(
-                List.of(entryWithDefaultStats(entry1),
-                        entryWithDefaultStats(entry2)));
+        List<EntryWithDismissStats> entriesToDismiss = List.of(entryWithDefaultStats(entry1),
+                entryWithDefaultStats(entry2));
+        mCollection.dismissNotifications(entriesToDismiss, /* fromBundle= */ false);
 
         // THEN build list is only called one time
         verifyBuiltList(List.of(entry1, entry2));
@@ -1309,9 +1316,9 @@ public class NotifCollectionTest extends SysuiTestCase {
         // WHEN both notifications are manually dismissed together
         DismissedByUserStats stats1 = defaultStats(entry1);
         DismissedByUserStats stats2 = defaultStats(entry2);
-        mCollection.dismissNotifications(
-                List.of(entryWithDefaultStats(entry1),
-                        entryWithDefaultStats(entry2)));
+        List<EntryWithDismissStats> entriesToDismiss = List.of(entryWithDefaultStats(entry1),
+                entryWithDefaultStats(entry2));
+        mCollection.dismissNotifications(entriesToDismiss, /* fromBundle= */ false);
 
         // THEN we send the dismissals to system server
         FakeExecutor.exhaustExecutors(mBgExecutor);
@@ -1321,7 +1328,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 notif1.sbn.getKey(),
                 stats1.dismissalSurface,
                 stats1.dismissalSentiment,
-                stats1.notificationVisibility);
+                stats1.notificationVisibility,
+                false);
 
         verify(mStatusBarService).onNotificationClear(
                 notif2.sbn.getPackageName(),
@@ -1329,7 +1337,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 notif2.sbn.getKey(),
                 stats2.dismissalSurface,
                 stats2.dismissalSentiment,
-                stats2.notificationVisibility);
+                stats2.notificationVisibility,
+                false);
     }
 
     @Test
@@ -1341,9 +1350,9 @@ public class NotifCollectionTest extends SysuiTestCase {
         NotificationEntry entry2 = mCollectionListener.getEntry(notif2.key);
 
         // WHEN both notifications are manually dismissed together
-        mCollection.dismissNotifications(
-                List.of(entryWithDefaultStats(entry1),
-                        entryWithDefaultStats(entry2)));
+        List<EntryWithDismissStats> entriesToDismiss = List.of(entryWithDefaultStats(entry1),
+                entryWithDefaultStats(entry2));
+        mCollection.dismissNotifications(entriesToDismiss, /* fromBundle= */ false);
 
         // THEN the entries are marked as dismissed
         assertEquals(DISMISSED, entry1.getDismissState());
@@ -1366,9 +1375,9 @@ public class NotifCollectionTest extends SysuiTestCase {
         NotificationEntry entry2 = mCollectionListener.getEntry(notif2.key);
 
         // WHEN both notifications are manually dismissed together
-        mCollection.dismissNotifications(
-                List.of(entryWithDefaultStats(entry1),
-                        entryWithDefaultStats(entry2)));
+        List<EntryWithDismissStats> entriesToDismiss = List.of(entryWithDefaultStats(entry1),
+                entryWithDefaultStats(entry2));
+        mCollection.dismissNotifications(entriesToDismiss, /* fromBundle= */ false);
 
         // THEN all interceptors get checked
         verify(mInterceptor1).shouldInterceptDismissal(entry1);
@@ -1383,7 +1392,6 @@ public class NotifCollectionTest extends SysuiTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_NOTIFICATIONS_DISMISS_PRUNED_SUMMARIES)
     public void testDismissNotificationsIncludesPrunedParents() {
         // GIVEN a collection with 2 groups; one has a single child, one has two.
         mCollection.addNotificationDismissInterceptor(mInterceptor1);
@@ -1407,9 +1415,9 @@ public class NotifCollectionTest extends SysuiTestCase {
         NotificationEntry entry2child2 = mCollectionListener.getEntry(notif2child2.key);
 
         // WHEN one child from each group are manually dismissed together
-        mCollection.dismissNotifications(
-                List.of(entryWithDefaultStats(entry1child),
-                        entryWithDefaultStats(entry2child1)));
+        List<EntryWithDismissStats> entriesToDismiss = List.of(entryWithDefaultStats(entry1child),
+                entryWithDefaultStats(entry2child1));
+        mCollection.dismissNotifications(entriesToDismiss, /* fromBundle= */ false);
 
         // THEN the summary for the singleton child is dismissed, but not the other summary
         verify(mInterceptor1).shouldInterceptDismissal(entry1summary);
@@ -1588,7 +1596,7 @@ public class NotifCollectionTest extends SysuiTestCase {
 
         // THEN entry updated gets called, added does not, and ranking is called again
         verify(mCollectionListener).onEntryUpdated(eq(entry));
-        verify(mCollectionListener).onEntryUpdated(eq(entry), eq(true));
+        verify(mCollectionListener).onEntryUpdated(eq(entry), eq(UpdateSource.App));
         verify(mCollectionListener).onEntryAdded((entry));
         verify(mCollectionListener, times(2)).onRankingApplied();
     }
@@ -1611,7 +1619,7 @@ public class NotifCollectionTest extends SysuiTestCase {
         verify(mCollectionListener).onEntryAdded(eq(entry));
         verify(mCollectionListener).onRankingApplied();
         verify(mCollectionListener).onEntryUpdated(eq(entry));
-        verify(mCollectionListener).onEntryUpdated(eq(entry), eq(false));
+        verify(mCollectionListener).onEntryUpdated(eq(entry), eq(UpdateSource.SystemUi));
     }
 
     @Test
@@ -1627,7 +1635,7 @@ public class NotifCollectionTest extends SysuiTestCase {
         verify(mCollectionListener, never()).onRankingUpdate(any());
         verify(mCollectionListener, never()).onRankingApplied();
         verify(mCollectionListener, never()).onEntryUpdated(any());
-        verify(mCollectionListener, never()).onEntryUpdated(any(), anyBoolean());
+        verify(mCollectionListener, never()).onEntryUpdated(any(), any());
     }
 
     @Test
@@ -1683,7 +1691,7 @@ public class NotifCollectionTest extends SysuiTestCase {
         onDismiss.run();
         FakeExecutor.exhaustExecutors(mBgExecutor);
         verify(mStatusBarService).onNotificationClear(any(), anyInt(), eq(notifEvent.key),
-                anyInt(), anyInt(), any());
+                anyInt(), anyInt(), any(), anyBoolean());
         verifyNoMoreInteractions(mStatusBarService);
         verifyNoMoreInteractions(mCollectionListener);
     }
@@ -1787,6 +1795,7 @@ public class NotifCollectionTest extends SysuiTestCase {
 
     private static NotificationEntryBuilder buildNotif(String pkg, int id, String tag) {
         return new NotificationEntryBuilder()
+                .setPostTime(System.currentTimeMillis())
                 .setPkg(pkg)
                 .setId(id)
                 .setTag(tag);
@@ -1806,7 +1815,13 @@ public class NotifCollectionTest extends SysuiTestCase {
     }
 
     private static EntryWithDismissStats entryWithDefaultStats(NotificationEntry entry) {
-        return new EntryWithDismissStats(entry, defaultStats(entry));
+        if (NotificationBundleUi.isEnabled()) {
+            return new EntryWithDismissStats(
+                    null, defaultStats(entry), entry.getKey(), entry.hashCode());
+        } else {
+            return new EntryWithDismissStats(
+                    entry, defaultStats(entry), entry.getKey(), entry.hashCode());
+        }
     }
 
     private CollectionEvent postNotif(NotificationEntryBuilder builder) {
@@ -1839,7 +1854,7 @@ public class NotifCollectionTest extends SysuiTestCase {
         }
 
         @Override
-        public void onEntryUpdated(NotificationEntry entry, boolean fromSystem) {
+        public void onEntryUpdated(NotificationEntry entry, UpdateSource source) {
             onEntryUpdated(entry);
         }
 

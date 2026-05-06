@@ -19,12 +19,17 @@ package com.android.server.wm;
 import static android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
+import static android.view.WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_MAGNIFICATION_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR;
 import static android.view.WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL;
 import static android.view.WindowManager.LayoutParams.TYPE_NOTIFICATION_SHADE;
 import static android.view.WindowManager.LayoutParams.TYPE_SECURE_SYSTEM_OVERLAY;
 import static android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR;
+import static android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR_SUB_PANEL;
+import static android.view.WindowManager.LayoutParams.TYPE_VOLUME_OVERLAY;
+import static android.view.WindowManager.LayoutParams.TYPE_WALLPAPER;
+import static android.window.DisplayAreaOrganizer.FEATURE_APP_ZOOM_OUT;
 import static android.window.DisplayAreaOrganizer.FEATURE_DEFAULT_TASK_CONTAINER;
 import static android.window.DisplayAreaOrganizer.FEATURE_FULLSCREEN_MAGNIFICATION;
 import static android.window.DisplayAreaOrganizer.FEATURE_HIDE_DISPLAY_CUTOUT;
@@ -51,6 +56,12 @@ import java.util.List;
  * Policy that manages {@link DisplayArea}.
  */
 public abstract class DisplayAreaPolicy {
+    /**
+     * No corresponding use case yet (see b/154719717). The current implementation still uses
+     * {@link WindowState#shouldMagnify}.
+     */
+    static final boolean USE_DISPLAY_AREA_FOR_FULLSCREEN_MAGNIFICATION = false;
+
     protected final WindowManagerService mWmService;
 
     /**
@@ -106,8 +117,9 @@ public abstract class DisplayAreaPolicy {
         public DisplayAreaPolicy instantiate(WindowManagerService wmService,
                 DisplayContent content, RootDisplayArea root,
                 DisplayArea.Tokens imeContainer) {
-            final TaskDisplayArea defaultTaskDisplayArea = new TaskDisplayArea(content, wmService,
-                    "DefaultTaskDisplayArea", FEATURE_DEFAULT_TASK_CONTAINER);
+            final TaskDisplayArea defaultTaskDisplayArea = new TaskDisplayArea(wmService,
+                    "DefaultTaskDisplayArea", FEATURE_DEFAULT_TASK_CONTAINER,
+                    false /* createdByOrganizer */, true /* canHostHomeTask */);
             final List<TaskDisplayArea> tdaList = new ArrayList<>();
             tdaList.add(defaultTaskDisplayArea);
 
@@ -123,7 +135,8 @@ public abstract class DisplayAreaPolicy {
 
             // Instantiate the policy with the hierarchy defined above. This will create and attach
             // all the necessary DisplayAreas to the root.
-            return new DisplayAreaPolicyBuilder().setRootHierarchy(rootHierarchy).build(wmService);
+            return new DisplayAreaPolicyBuilder(content.getDisplayId(), rootHierarchy)
+                    .build(wmService);
         }
 
         private void configureTrustedHierarchyBuilder(HierarchyBuilder rootHierarchy,
@@ -151,16 +164,27 @@ public abstract class DisplayAreaPolicy {
                                 .all()
                                 .except(TYPE_NAVIGATION_BAR, TYPE_NAVIGATION_BAR_PANEL,
                                         TYPE_SECURE_SYSTEM_OVERLAY)
+                                .build())
+                        .addFeature(new Feature.Builder(wmService.mPolicy, "AppZoomOut",
+                                FEATURE_APP_ZOOM_OUT)
+                                .upTo(TYPE_VOLUME_OVERLAY)
+                                .except(TYPE_NAVIGATION_BAR, TYPE_NAVIGATION_BAR_PANEL,
+                                        TYPE_STATUS_BAR, TYPE_STATUS_BAR_SUB_PANEL,
+                                        TYPE_NOTIFICATION_SHADE, TYPE_KEYGUARD_DIALOG,
+                                        TYPE_WALLPAPER)
+                                .build());
+            }
+            if (USE_DISPLAY_AREA_FOR_FULLSCREEN_MAGNIFICATION) {
+                rootHierarchy.addFeature(
+                        new Feature.Builder(wmService.mPolicy, "FullscreenMagnification",
+                                FEATURE_FULLSCREEN_MAGNIFICATION)
+                                .all()
+                                .except(TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY, TYPE_INPUT_METHOD,
+                                        TYPE_INPUT_METHOD_DIALOG, TYPE_MAGNIFICATION_OVERLAY,
+                                        TYPE_NAVIGATION_BAR, TYPE_NAVIGATION_BAR_PANEL)
                                 .build());
             }
             rootHierarchy
-                    .addFeature(new Feature.Builder(wmService.mPolicy, "FullscreenMagnification",
-                            FEATURE_FULLSCREEN_MAGNIFICATION)
-                            .all()
-                            .except(TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY, TYPE_INPUT_METHOD,
-                                    TYPE_INPUT_METHOD_DIALOG, TYPE_MAGNIFICATION_OVERLAY,
-                                    TYPE_NAVIGATION_BAR, TYPE_NAVIGATION_BAR_PANEL)
-                            .build())
                     .addFeature(new Feature.Builder(wmService.mPolicy, "ImePlaceholder",
                             FEATURE_IME_PLACEHOLDER)
                             .and(TYPE_INPUT_METHOD, TYPE_INPUT_METHOD_DIALOG)

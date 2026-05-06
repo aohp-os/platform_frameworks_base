@@ -16,91 +16,77 @@
 
 package com.android.systemui.media.controls.domain.interactor
 
-import android.R
-import android.graphics.drawable.Icon
-import android.os.Process
+import android.os.UserHandle
+import android.provider.Settings
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
-import com.android.internal.logging.InstanceId
+import com.android.compose.animation.scene.ObservableTransitionState
+import com.android.compose.animation.scene.SceneKey
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.flags.Flags
-import com.android.systemui.flags.fakeFeatureFlagsClassic
+import com.android.systemui.deviceentry.domain.interactor.deviceEntryInteractor
+import com.android.systemui.flags.DisableSceneContainer
+import com.android.systemui.flags.EnableSceneContainer
+import com.android.systemui.keyguard.data.repository.fakeDeviceEntryFingerprintAuthRepository
+import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
+import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.SuccessFingerprintAuthenticationStatus
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.media.controls.MediaTestHelper
-import com.android.systemui.media.controls.data.repository.MediaFilterRepository
-import com.android.systemui.media.controls.data.repository.mediaFilterRepository
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.media.controls.domain.pipeline.interactor.MediaCarouselInteractor
-import com.android.systemui.media.controls.domain.pipeline.interactor.MediaRecommendationsInteractor
 import com.android.systemui.media.controls.domain.pipeline.interactor.mediaCarouselInteractor
-import com.android.systemui.media.controls.domain.pipeline.interactor.mediaRecommendationsInteractor
-import com.android.systemui.media.controls.shared.model.MediaCommonModel
 import com.android.systemui.media.controls.shared.model.MediaData
-import com.android.systemui.media.controls.shared.model.MediaDataLoadingModel
-import com.android.systemui.media.controls.shared.model.SmartspaceMediaData
-import com.android.systemui.media.controls.shared.model.SmartspaceMediaLoadingModel
-import com.android.systemui.media.controls.util.MediaSmartspaceLogger
-import com.android.systemui.media.controls.util.SmallHash
-import com.android.systemui.media.controls.util.mediaSmartspaceLogger
-import com.android.systemui.media.controls.util.mockMediaSmartspaceLogger
+import com.android.systemui.media.remedia.data.repository.MediaPipelineRepository
+import com.android.systemui.media.remedia.data.repository.mediaPipelineRepository
+import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.testKosmos
+import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.Mockito.reset
-import org.mockito.kotlin.never
-import org.mockito.kotlin.verify
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class MediaCarouselInteractorTest : SysuiTestCase() {
 
-    private val kosmos = testKosmos()
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
     private val testScope = kosmos.testScope
+    private val transitionRepository = kosmos.fakeKeyguardTransitionRepository
+    private lateinit var mediaPipelineRepository: MediaPipelineRepository
 
-    private val mediaFilterRepository: MediaFilterRepository =
-        with(kosmos) {
-            mediaSmartspaceLogger = mockMediaSmartspaceLogger
-            mediaFilterRepository
-        }
-    private val mediaRecommendationsInteractor: MediaRecommendationsInteractor =
-        kosmos.mediaRecommendationsInteractor
-    val icon = Icon.createWithResource(context, R.drawable.ic_media_play)
-    private val mediaRecommendation =
-        SmartspaceMediaData(
-            targetId = KEY_MEDIA_SMARTSPACE,
-            isActive = true,
-            packageName = PACKAGE_NAME,
-            recommendations = MediaTestHelper.getValidRecommendationList(icon),
-        )
-    private val smartspaceLogger = kosmos.mockMediaSmartspaceLogger
-
-    private val underTest: MediaCarouselInteractor = kosmos.mediaCarouselInteractor
+    private lateinit var underTest: MediaCarouselInteractor
 
     @Before
     fun setUp() {
+        mediaPipelineRepository = kosmos.mediaPipelineRepository
+        underTest = kosmos.mediaCarouselInteractor
         underTest.start()
     }
 
     @Test
     fun addUserMediaEntry_activeThenInactivate() =
         testScope.runTest {
-            val hasActiveMediaOrRecommendation by
-                collectLastValue(underTest.hasActiveMediaOrRecommendation)
+            val hasActiveMedia by collectLastValue(underTest.hasActiveMedia)
 
             val userMedia = MediaData(active = true)
 
-            mediaFilterRepository.addSelectedUserMediaEntry(userMedia)
+            mediaPipelineRepository.addCurrentUserMediaEntry(userMedia)
 
-            assertThat(hasActiveMediaOrRecommendation).isTrue()
+            assertThat(hasActiveMedia).isTrue()
             assertThat(underTest.hasActiveMedia()).isTrue()
             assertThat(underTest.hasAnyMedia()).isTrue()
 
-            mediaFilterRepository.addSelectedUserMediaEntry(userMedia.copy(active = false))
+            mediaPipelineRepository.addCurrentUserMediaEntry(userMedia.copy(active = false))
 
-            assertThat(hasActiveMediaOrRecommendation).isFalse()
+            assertThat(hasActiveMedia).isFalse()
             assertThat(underTest.hasActiveMedia()).isFalse()
             assertThat(underTest.hasAnyMedia()).isTrue()
         }
@@ -108,118 +94,23 @@ class MediaCarouselInteractorTest : SysuiTestCase() {
     @Test
     fun addInactiveUserMediaEntry_thenRemove() =
         testScope.runTest {
-            val hasActiveMediaOrRecommendation by
-                collectLastValue(underTest.hasActiveMediaOrRecommendation)
+            val hasActiveMedia by collectLastValue(underTest.hasActiveMedia)
 
             val userMedia = MediaData(active = false)
             val instanceId = userMedia.instanceId
 
-            mediaFilterRepository.addSelectedUserMediaEntry(userMedia)
-            mediaFilterRepository.addMediaDataLoadingState(MediaDataLoadingModel.Loaded(instanceId))
+            mediaPipelineRepository.addCurrentUserMediaEntry(userMedia)
 
-            assertThat(hasActiveMediaOrRecommendation).isFalse()
+            assertThat(hasActiveMedia).isFalse()
             assertThat(underTest.hasActiveMedia()).isFalse()
             assertThat(underTest.hasAnyMedia()).isTrue()
 
-            assertThat(mediaFilterRepository.removeSelectedUserMediaEntry(instanceId, userMedia))
+            assertThat(mediaPipelineRepository.removeCurrentUserMediaEntry(instanceId, userMedia))
                 .isTrue()
-            mediaFilterRepository.addMediaDataLoadingState(
-                MediaDataLoadingModel.Removed(instanceId)
-            )
 
-            assertThat(hasActiveMediaOrRecommendation).isFalse()
+            assertThat(hasActiveMedia).isFalse()
             assertThat(underTest.hasActiveMedia()).isFalse()
             assertThat(underTest.hasAnyMedia()).isFalse()
-        }
-
-    @Test
-    fun addActiveRecommendation_inactiveMedia() =
-        testScope.runTest {
-            val hasActiveMediaOrRecommendation by
-                collectLastValue(underTest.hasActiveMediaOrRecommendation)
-            val hasAnyMediaOrRecommendation by
-                collectLastValue(underTest.hasAnyMediaOrRecommendation)
-            val currentMedia by collectLastValue(underTest.currentMedia)
-            kosmos.fakeFeatureFlagsClassic.set(Flags.MEDIA_RETAIN_RECOMMENDATIONS, false)
-
-            val userMedia = MediaData(active = false)
-            val recsLoadingModel = SmartspaceMediaLoadingModel.Loaded(KEY_MEDIA_SMARTSPACE, true)
-            val mediaLoadingModel = MediaDataLoadingModel.Loaded(userMedia.instanceId)
-
-            mediaFilterRepository.setRecommendation(mediaRecommendation)
-            mediaFilterRepository.setRecommendationsLoadingState(recsLoadingModel)
-
-            assertThat(hasActiveMediaOrRecommendation).isTrue()
-            assertThat(hasAnyMediaOrRecommendation).isTrue()
-            assertThat(currentMedia)
-                .containsExactly(MediaCommonModel.MediaRecommendations(recsLoadingModel))
-
-            mediaFilterRepository.addSelectedUserMediaEntry(userMedia)
-            mediaFilterRepository.addMediaDataLoadingState(mediaLoadingModel)
-            mediaFilterRepository.setOrderedMedia()
-
-            assertThat(hasActiveMediaOrRecommendation).isTrue()
-            assertThat(hasAnyMediaOrRecommendation).isTrue()
-            assertThat(currentMedia)
-                .containsExactly(
-                    MediaCommonModel.MediaRecommendations(recsLoadingModel),
-                    MediaCommonModel.MediaControl(mediaLoadingModel, true)
-                )
-                .inOrder()
-
-            underTest.logSmartspaceSeenCard(0, 1, false)
-
-            verify(smartspaceLogger)
-                .logSmartspaceCardUIEvent(
-                    MediaSmartspaceLogger.SMARTSPACE_CARD_SEEN_EVENT,
-                    SmallHash.hash(mediaRecommendation.targetId),
-                    Process.INVALID_UID,
-                    surface = SURFACE,
-                    2,
-                    true
-                )
-        }
-
-    @Test
-    fun addActiveRecommendation_thenInactive() =
-        testScope.runTest {
-            val hasActiveMediaOrRecommendation by
-                collectLastValue(underTest.hasActiveMediaOrRecommendation)
-            val hasAnyMediaOrRecommendation by
-                collectLastValue(underTest.hasAnyMediaOrRecommendation)
-            kosmos.fakeFeatureFlagsClassic.set(Flags.MEDIA_RETAIN_RECOMMENDATIONS, false)
-
-            mediaFilterRepository.setRecommendation(mediaRecommendation)
-
-            assertThat(hasActiveMediaOrRecommendation).isTrue()
-            assertThat(hasAnyMediaOrRecommendation).isTrue()
-
-            mediaFilterRepository.setRecommendation(mediaRecommendation.copy(isActive = false))
-
-            assertThat(hasActiveMediaOrRecommendation).isFalse()
-            assertThat(hasAnyMediaOrRecommendation).isFalse()
-        }
-
-    @Test
-    fun addActiveRecommendation_thenInvalid() =
-        testScope.runTest {
-            val hasActiveMediaOrRecommendation by
-                collectLastValue(underTest.hasActiveMediaOrRecommendation)
-            val hasAnyMediaOrRecommendation by
-                collectLastValue(underTest.hasAnyMediaOrRecommendation)
-            kosmos.fakeFeatureFlagsClassic.set(Flags.MEDIA_RETAIN_RECOMMENDATIONS, false)
-
-            mediaFilterRepository.setRecommendation(mediaRecommendation)
-
-            assertThat(hasActiveMediaOrRecommendation).isTrue()
-            assertThat(hasAnyMediaOrRecommendation).isTrue()
-
-            mediaFilterRepository.setRecommendation(
-                mediaRecommendation.copy(recommendations = listOf())
-            )
-
-            assertThat(hasActiveMediaOrRecommendation).isFalse()
-            assertThat(hasAnyMediaOrRecommendation).isFalse()
         }
 
     @Test
@@ -227,130 +118,191 @@ class MediaCarouselInteractorTest : SysuiTestCase() {
         testScope.runTest { assertThat(underTest.hasAnyMedia()).isFalse() }
 
     @Test
-    fun hasAnyMediaOrRecommendation_noMediaSet_returnsFalse() =
-        testScope.runTest { assertThat(underTest.hasAnyMediaOrRecommendation.value).isFalse() }
-
-    @Test
     fun hasActiveMedia_noMediaSet_returnsFalse() =
         testScope.runTest { assertThat(underTest.hasActiveMedia()).isFalse() }
 
+    @DisableSceneContainer
     @Test
-    fun hasActiveMediaOrRecommendation_nothingSet_returnsFalse() =
-        testScope.runTest { assertThat(underTest.hasActiveMediaOrRecommendation.value).isFalse() }
-
-    @Test
-    fun loadMediaFromRec() =
+    fun onLockscreen_mediaAllowed_lockedAndHidden_returnsFalse() =
         testScope.runTest {
-            val currentMedia by collectLastValue(underTest.currentMedia)
-            val instanceId = InstanceId.fakeInstanceId(123)
-            val data =
-                MediaData(
-                    active = true,
-                    instanceId = instanceId,
-                    packageName = PACKAGE_NAME,
-                    notificationKey = KEY
-                )
-            val smartspaceLoadingModel = SmartspaceMediaLoadingModel.Loaded(KEY_MEDIA_SMARTSPACE)
-            val mediaLoadingModel = MediaDataLoadingModel.Loaded(instanceId)
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
 
-            mediaFilterRepository.setRecommendation(mediaRecommendation)
-            mediaFilterRepository.setRecommendationsLoadingState(smartspaceLoadingModel)
-            mediaRecommendationsInteractor.switchToMediaControl(PACKAGE_NAME)
-            mediaFilterRepository.addSelectedUserMediaEntry(data)
-            mediaFilterRepository.addMediaDataLoadingState(mediaLoadingModel)
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.LOCKSCREEN,
+                this,
+            )
 
-            assertThat(currentMedia)
-                .containsExactly(MediaCommonModel.MediaRecommendations(smartspaceLoadingModel))
-                .inOrder()
-
-            mediaFilterRepository.addSelectedUserMediaEntry(data.copy(isPlaying = true))
-            mediaFilterRepository.addMediaDataLoadingState(mediaLoadingModel)
-
-            assertThat(currentMedia)
-                .containsExactly(
-                    MediaCommonModel.MediaControl(mediaLoadingModel, isMediaFromRec = true),
-                    MediaCommonModel.MediaRecommendations(smartspaceLoadingModel)
-                )
-                .inOrder()
+            assertThat(isLockedAndHidden).isFalse()
         }
 
+    @DisableSceneContainer
     @Test
-    fun loadMediaAndRecommendation_logSmartspaceSeenCard() {
-        val instanceId = InstanceId.fakeInstanceId(123)
-        val data =
-            MediaData(
-                active = true,
-                instanceId = instanceId,
-                packageName = PACKAGE_NAME,
-                notificationKey = KEY
+    fun onLockscreen_mediaNotAllowed_lockedAndHidden_returnsTrue() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
             )
-        val smartspaceLoadingModel = SmartspaceMediaLoadingModel.Loaded(KEY_MEDIA_SMARTSPACE)
-        val mediaLoadingModel = MediaDataLoadingModel.Loaded(instanceId)
-
-        mediaFilterRepository.addSelectedUserMediaEntry(data)
-        mediaFilterRepository.addMediaDataLoadingState(mediaLoadingModel)
-        underTest.logSmartspaceSeenCard(0, 1, false)
-
-        verify(smartspaceLogger)
-            .logSmartspaceCardUIEvent(
-                MediaSmartspaceLogger.SMARTSPACE_CARD_SEEN_EVENT,
-                data.smartspaceId,
-                data.appUid,
-                surface = SURFACE,
-                1
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.LOCKSCREEN,
+                this,
             )
 
-        reset(smartspaceLogger)
-        mediaFilterRepository.addSelectedUserMediaEntry(data)
-        mediaFilterRepository.addMediaDataLoadingState(mediaLoadingModel)
-        underTest.logSmartspaceSeenCard(0, 1, true)
+            assertThat(isLockedAndHidden).isTrue()
+        }
 
-        verify(smartspaceLogger, never())
-            .logSmartspaceCardUIEvent(
-                MediaSmartspaceLogger.SMARTSPACE_CARD_SEEN_EVENT,
-                data.smartspaceId,
-                data.appUid,
-                surface = SURFACE,
-                2
+    @DisableSceneContainer
+    @Test
+    fun onKeyguardGone_mediaAllowed_lockedAndHidden_returnsFalse() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.LOCKSCREEN,
+                to = KeyguardState.GONE,
+                this,
             )
 
-        reset(smartspaceLogger)
-        mediaFilterRepository.setRecommendation(mediaRecommendation)
-        mediaFilterRepository.setRecommendationsLoadingState(smartspaceLoadingModel)
-        underTest.logSmartspaceSeenCard(1, 1, true)
+            assertThat(isLockedAndHidden).isFalse()
+        }
 
-        verify(smartspaceLogger)
-            .logSmartspaceCardUIEvent(
-                MediaSmartspaceLogger.SMARTSPACE_CARD_SEEN_EVENT,
-                SmallHash.hash(mediaRecommendation.targetId),
-                Process.INVALID_UID,
-                surface = SURFACE,
-                2,
-                true,
-                rank = 1
+    @DisableSceneContainer
+    @Test
+    fun onKeyguardGone_mediaNotAllowed_lockedAndHidden_returnsFalse() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
+            )
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.LOCKSCREEN,
+                to = KeyguardState.GONE,
+                this,
             )
 
-        reset(smartspaceLogger)
-        mediaFilterRepository.addSelectedUserMediaEntry(data)
-        mediaFilterRepository.addMediaDataLoadingState(
-            mediaLoadingModel.copy(receivedSmartspaceCardLatency = 1)
+            assertThat(isLockedAndHidden).isFalse()
+        }
+
+    @DisableSceneContainer
+    @Test
+    fun goingToDozing_mediaAllowed_lockedAndHidden_returnsFalse() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.DOZING,
+                this,
+            )
+
+            assertThat(isLockedAndHidden).isFalse()
+        }
+
+    @DisableSceneContainer
+    @Test
+    fun goingToDozing_mediaNotAllowed_lockedAndHidden_returnsTrue() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
+            )
+            transitionRepository.sendTransitionSteps(
+                from = KeyguardState.GONE,
+                to = KeyguardState.DOZING,
+                this,
+            )
+
+            assertThat(isLockedAndHidden).isTrue()
+        }
+
+    @EnableSceneContainer
+    @Test
+    fun deviceNotEntered_mediaNotAllowed_lockedAndHidden() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
+            )
+            setDeviceEntered(false)
+
+            assertThat(isLockedAndHidden).isTrue()
+        }
+
+    @EnableSceneContainer
+    @Test
+    fun deviceNotEntered_mediaAllowed_notLockedAndHidden() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            setDeviceEntered(false)
+
+            assertThat(isLockedAndHidden).isFalse()
+        }
+
+    @EnableSceneContainer
+    @Test
+    fun deviceEntered_mediaNotAllowed_notLockedAndHidden() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            kosmos.fakeSettings.putBoolForUser(
+                Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN,
+                false,
+                UserHandle.USER_CURRENT,
+            )
+            setDeviceEntered(true)
+
+            assertThat(isLockedAndHidden).isFalse()
+        }
+
+    @EnableSceneContainer
+    @Test
+    fun deviceEntered_mediaAllowed_notLockedAndHidden() =
+        testScope.runTest {
+            val isLockedAndHidden by collectLastValue(underTest.isLockedAndHidden)
+
+            setDeviceEntered(true)
+
+            assertThat(isLockedAndHidden).isFalse()
+        }
+
+    private fun TestScope.setDeviceEntered(isEntered: Boolean) {
+        if (isEntered) {
+            // Unlock the device, marking the device as entered
+            kosmos.fakeDeviceEntryFingerprintAuthRepository.setAuthenticationStatus(
+                SuccessFingerprintAuthenticationStatus(0, true)
+            )
+            runCurrent()
+        }
+        setScene(
+            if (isEntered) {
+                Scenes.Gone
+            } else {
+                Scenes.Lockscreen
+            }
         )
-        underTest.logSmartspaceSeenCard(0, 1, true)
-
-        verify(smartspaceLogger)
-            .logSmartspaceCardUIEvent(
-                MediaSmartspaceLogger.SMARTSPACE_CARD_SEEN_EVENT,
-                data.smartspaceId,
-                data.appUid,
-                surface = SURFACE,
-                2
-            )
+        assertThat(kosmos.deviceEntryInteractor.isDeviceEntered.value).isEqualTo(isEntered)
     }
 
-    companion object {
-        private const val KEY_MEDIA_SMARTSPACE = "MEDIA_SMARTSPACE_ID"
-        private const val PACKAGE_NAME = "com.android.example"
-        private const val KEY = "key"
-        private const val SURFACE = 4
+    private fun TestScope.setScene(key: SceneKey) {
+        kosmos.sceneInteractor.changeScene(key, "test")
+        kosmos.sceneInteractor.setTransitionState(
+            MutableStateFlow<ObservableTransitionState>(ObservableTransitionState.Idle(key))
+        )
+        runCurrent()
     }
 }

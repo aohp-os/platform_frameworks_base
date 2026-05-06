@@ -532,12 +532,28 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     public static final int FLAG_NO_FOCUS_CHANGE = MotionEventFlag.NO_FOCUS_CHANGE;
 
     /**
-     * This flag indicates that this event was modified by or generated from an accessibility
-     * service. Value = 0x800
+     * This flag indicates that this event was injected from some
+     * {@link android.accessibilityservice.AccessibilityService}, which may be either an
+     * Accessibility Tool OR a service using that API for purposes other than assisting users with
+     * disabilities. Value = 0x800
+     * @see #FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL
      * @hide
      */
     @TestApi
     public static final int FLAG_IS_ACCESSIBILITY_EVENT = MotionEventFlag.IS_ACCESSIBILITY_EVENT;
+
+    /**
+     * This flag indicates that this event was injected from an
+     * {@link android.accessibilityservice.AccessibilityService} with the
+     * {@link android.accessibilityservice.AccessibilityServiceInfo#isAccessibilityTool()} property
+     * set to true. These services (known as "Accessibility Tools") are used to assist users with
+     * disabilities, so events from these services should be able to reach all Views including
+     * Views which set {@link View#isAccessibilityDataSensitive()} to true.
+     * Value = 0x1000
+     * @hide
+     */
+    public static final int FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL =
+            MotionEventFlag.INJECTED_FROM_ACCESSIBILITY_TOOL;
 
     /**
      * Private flag that indicates when the system has detected that this motion event
@@ -566,6 +582,26 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     public static final int FLAG_TARGET_ACCESSIBILITY_FOCUS =
             MotionEventFlag.TARGET_ACCESSIBILITY_FOCUS;
 
+    /**
+     * This flag is not used in Java, but is added here for completeness / so that it gets properly
+     * displayed in tracing tools.
+     * @deprecated This flag is not used in Java.
+     * @hide
+     */
+    @Deprecated
+    public static final int FLAG_SUPPORTS_ORIENTATION =
+            MotionEventFlag.PRIVATE_FLAG_SUPPORTS_ORIENTATION;
+
+    /**
+     * This flag is not used in Java, but is added here for completeness / so that it gets properly
+     * displayed in tracing tools.
+     * @deprecated This flag is not used in Java.
+     * @hide
+     */
+    @Deprecated
+    public static final int FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION =
+            MotionEventFlag.PRIVATE_FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION;
+
     /** @hide */
     @IntDef(flag = true, prefix = { "FLAG_" }, value = {
             FLAG_WINDOW_IS_OBSCURED,
@@ -574,6 +610,8 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             FLAG_IS_GENERATED_GESTURE,
             FLAG_CANCELED,
             FLAG_NO_FOCUS_CHANGE,
+            FLAG_SUPPORTS_ORIENTATION,
+            FLAG_SUPPORTS_DIRECTIONAL_ORIENTATION,
             FLAG_IS_ACCESSIBILITY_EVENT,
             FLAG_TAINTED,
             FLAG_TARGET_ACCESSIBILITY_FOCUS,
@@ -2493,6 +2531,29 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     }
 
     /**
+     * Returns {@code true} if this motion event is a synthesized touchpad gesture.
+     *
+     * <p>Before using this method, consider whether you truly need to apply special treatment to
+     * all synthesized touchpad gestures (including ones which may be added in future), or whether a
+     * check for a specific classification (e.g. {@link #CLASSIFICATION_TWO_FINGER_SWIPE}) would
+     * suffice instead.
+     *
+     * @see #CLASSIFICATION_TWO_FINGER_SWIPE
+     * @see #CLASSIFICATION_PINCH
+     * @see #CLASSIFICATION_MULTI_FINGER_SWIPE
+     *
+     * @hide
+     */
+    public boolean isSynthesizedTouchpadGesture() {
+        int classification = getClassification();
+        return isFromSource(InputDevice.SOURCE_MOUSE) && getToolType(0)
+                == MotionEvent.TOOL_TYPE_FINGER && (
+                classification == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE
+                        || classification == MotionEvent.CLASSIFICATION_PINCH
+                        || classification == MotionEvent.CLASSIFICATION_MULTI_FINGER_SWIPE);
+    }
+
+    /**
      * Gets the motion event flags.
      *
      * @see #FLAG_WINDOW_IS_OBSCURED
@@ -2532,6 +2593,24 @@ public final class MotionEvent extends InputEvent implements Parcelable {
         nativeSetFlags(mNativePtr, targetsFocus
                 ? flags | FLAG_TARGET_ACCESSIBILITY_FOCUS
                 : flags & ~FLAG_TARGET_ACCESSIBILITY_FOCUS);
+    }
+
+    /**
+     * @see #FLAG_IS_ACCESSIBILITY_EVENT
+     * @hide
+     */
+    public boolean isInjectedFromAccessibilityService() {
+        final int flags = getFlags();
+        return (flags & FLAG_IS_ACCESSIBILITY_EVENT) != 0;
+    }
+
+    /**
+     * @see #FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL
+     * @hide
+     */
+    public boolean isInjectedFromAccessibilityTool() {
+        final int flags = getFlags();
+        return (flags & FLAG_INJECTED_FROM_ACCESSIBILITY_TOOL) != 0;
     }
 
     /** @hide */
@@ -4096,6 +4175,8 @@ public final class MotionEvent extends InputEvent implements Parcelable {
                 return "TWO_FINGER_SWIPE";
             case CLASSIFICATION_MULTI_FINGER_SWIPE:
                 return "MULTI_FINGER_SWIPE";
+            case CLASSIFICATION_PINCH:
+                return "PINCH";
         }
         return "UNKNOWN";
     }

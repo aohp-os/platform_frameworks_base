@@ -16,7 +16,6 @@
 
 package android.security;
 
-import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -88,7 +87,10 @@ public class NetworkSecurityPolicy {
      * @hide
      */
     public void setCleartextTrafficPermitted(boolean permitted) {
-        FrameworkNetworkSecurityPolicy policy = new FrameworkNetworkSecurityPolicy(permitted);
+        libcore.net.NetworkSecurityPolicy currentPolicy =
+                libcore.net.NetworkSecurityPolicy.getInstance();
+        OverlayNetworkSecurityPolicy policy =
+                new OverlayNetworkSecurityPolicy(currentPolicy, permitted);
         libcore.net.NetworkSecurityPolicy.setInstance(policy);
     }
 
@@ -102,7 +104,6 @@ public class NetworkSecurityPolicy {
      * @return {@code true} if certificate transparency verification is required and {@code false}
      *     otherwise
      */
-    @FlaggedApi(Flags.FLAG_CERTIFICATE_TRANSPARENCY_CONFIGURATION)
     public boolean isCertificateTransparencyVerificationRequired(@NonNull String hostname) {
         return libcore.net.NetworkSecurityPolicy.getInstance()
                 .isCertificateTransparencyVerificationRequired(hostname);

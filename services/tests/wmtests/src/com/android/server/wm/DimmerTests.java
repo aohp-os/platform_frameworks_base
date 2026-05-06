@@ -25,6 +25,7 @@ import static com.android.server.wm.utils.LastCallVerifier.lastCall;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,14 +34,14 @@ import static org.mockito.Mockito.when;
 
 import android.graphics.Rect;
 import android.platform.test.annotations.Presubmit;
-import android.platform.test.annotations.RequiresFlagsDisabled;
-import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.view.SurfaceControl;
 import android.view.SurfaceSession;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.android.server.testutils.StubTransaction;
 import com.android.server.wm.utils.MockAnimationAdapter;
-import com.android.window.flags.Flags;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -65,11 +66,12 @@ public class DimmerTests extends WindowTestsBase {
             mVisibleRequested = true;
         }
 
-        class MockSurfaceBuilder extends SurfaceControl.Builder {
+        static class MockSurfaceBuilder extends SurfaceControl.Builder {
             MockSurfaceBuilder(SurfaceSession ss) {
                 super(ss);
             }
 
+            @NonNull
             @Override
             public SurfaceControl build() {
                 SurfaceControl mSc = mock(SurfaceControl.class);
@@ -78,26 +80,31 @@ public class DimmerTests extends WindowTestsBase {
             }
         }
 
+        @NonNull
         @Override
-        SurfaceControl.Builder makeChildSurface(WindowContainer child) {
+        SurfaceControl.Builder makeChildSurface(@Nullable WindowContainer child) {
             return new MockSurfaceBuilder(mSession);
         }
 
+        @Nullable
         @Override
         public SurfaceControl getSurfaceControl() {
             return mHostControl;
         }
 
+        @NonNull
         @Override
         public SurfaceControl.Transaction getSyncTransaction() {
             return mHostTransaction;
         }
 
+        @NonNull
         @Override
         public SurfaceControl.Transaction getPendingTransaction() {
             return mHostTransaction;
         }
 
+        @NonNull
         @Override
         public Rect getBounds() {
             return mBounds;
@@ -105,9 +112,10 @@ public class DimmerTests extends WindowTestsBase {
     }
 
     static class MockAnimationAdapterFactory extends DimmerAnimationHelper.AnimationAdapterFactory {
+        @NonNull
         @Override
-        public AnimationAdapter get(LocalAnimationAdapter.AnimationSpec alphaAnimationSpec,
-                SurfaceAnimationRunner runner) {
+        public AnimationAdapter get(@NonNull LocalAnimationAdapter.AnimationSpec alphaAnimationSpec,
+                @NonNull SurfaceAnimationRunner runner) {
             return sTestAnimation;
         }
     }
@@ -172,22 +180,6 @@ public class DimmerTests extends WindowTestsBase {
     }
 
     @Test
-    @RequiresFlagsDisabled(Flags.FLAG_USE_TASKS_DIM_ONLY)
-    public void testUpdateDimsAppliesCrop() {
-        mDimmer.adjustAppearance(mChild1, 1, 1);
-        mDimmer.adjustPosition(mChild1, mChild1);
-
-        int width = 100;
-        int height = 300;
-        mDimmer.getDimBounds().set(0, 0, width, height);
-        mDimmer.updateDims(mTransaction);
-
-        verify(mTransaction).setWindowCrop(mDimmer.getDimLayer(), width, height);
-        verify(mTransaction).show(mDimmer.getDimLayer());
-    }
-
-    @Test
-    @RequiresFlagsEnabled(Flags.FLAG_USE_TASKS_DIM_ONLY)
     public void testBoundsInActivityEmbeddingForWholeTask() {
         final WindowState dimmingWindow = getMockDimmingContainer();
         TestActivityEmbeddingMock embedding = new TestActivityEmbeddingMock();
@@ -203,7 +195,6 @@ public class DimmerTests extends WindowTestsBase {
     }
 
     @Test
-    @RequiresFlagsEnabled(Flags.FLAG_USE_TASKS_DIM_ONLY)
     public void testBoundsInActivityEmbeddingForTaskFragmentOnly() {
         final WindowState dimmingWindow = getMockDimmingContainer();
         TestActivityEmbeddingMock embedding = new TestActivityEmbeddingMock();
@@ -224,7 +215,6 @@ public class DimmerTests extends WindowTestsBase {
     }
 
     @Test
-    @RequiresFlagsEnabled(Flags.FLAG_USE_TASKS_DIM_ONLY)
     public void testDimBoundsAdaptToResizing() {
         // First call with some generic bounds
         mDimmer.adjustAppearance(mChild1, 0.5f, 1);
@@ -294,27 +284,6 @@ public class DimmerTests extends WindowTestsBase {
         mDimmer.updateDims(mTransaction);
         verify(mTransaction).show(dimLayer);
         verify(mTransaction, never()).remove(dimLayer);
-    }
-
-    @Test
-    @RequiresFlagsDisabled(Flags.FLAG_USE_TASKS_DIM_ONLY)
-    public void testDimUpdateWhileDimming() {
-        final float alpha = 0.8f;
-        mDimmer.adjustAppearance(mChild1, alpha, 20);
-        mDimmer.adjustPosition(mChild1, mChild1);
-        final Rect bounds = mDimmer.getDimBounds();
-
-        SurfaceControl dimLayer = mDimmer.getDimLayer();
-        bounds.set(0, 0, 10, 10);
-        mDimmer.updateDims(mTransaction);
-        verify(mTransaction).setWindowCrop(dimLayer, bounds.width(), bounds.height());
-        verify(mTransaction, times(1)).show(dimLayer);
-        verify(mTransaction).setPosition(dimLayer, 0, 0);
-
-        bounds.set(10, 10, 30, 30);
-        mDimmer.updateDims(mTransaction);
-        verify(mTransaction).setWindowCrop(dimLayer, bounds.width(), bounds.height());
-        verify(mTransaction).setPosition(dimLayer, 10, 10);
     }
 
     @Test
@@ -431,5 +400,33 @@ public class DimmerTests extends WindowTestsBase {
                 anyInt(), any(SurfaceAnimator.OnAnimationFinishedCallback.class));
         verify(mTransaction, never()).setAlpha(dimLayer, 0.5f);
         verify(mTransaction).setAlpha(dimLayer, 0.9f);
+    }
+
+    /**
+     * A window requesting to dim to 0 and without blur would cause the dim to be created and
+     * destroyed continuously.
+     * Ensure the dim layer is not created until the window is requesting valid values.
+     */
+    @Test
+    public void testDimNotCreatedIfNoAlphaNoBlur() {
+        mDimmer.adjustAppearance(mChild1, 0.0f, 0);
+        mDimmer.adjustPosition(mChild1, mChild1);
+        assertNull(mDimmer.getDimLayer());
+        mDimmer.updateDims(mTransaction);
+        assertNull(mDimmer.getDimLayer());
+
+        mDimmer.adjustAppearance(mChild1, 0.9f, 0);
+        mDimmer.adjustPosition(mChild1, mChild1);
+        assertNotNull(mDimmer.getDimLayer());
+    }
+
+    /**
+     * If there is a blur, then the dim layer is created even though alpha is 0
+     */
+    @Test
+    public void testDimCreatedIfNoAlphaButHasBlur() {
+        mDimmer.adjustAppearance(mChild1, 0.0f, 10);
+        mDimmer.adjustPosition(mChild1, mChild1);
+        assertNotNull(mDimmer.getDimLayer());
     }
 }

@@ -16,7 +16,12 @@
 
 package android.telephony;
 
+import static android.annotation.SystemApi.Client.MODULE_LIBRARIES;
+
+import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.SystemApi;
 import android.app.SystemServiceRegistry;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
@@ -34,12 +39,13 @@ import android.telephony.satellite.SatelliteManager;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.util.Preconditions;
 
-
 /**
  * Class for performing registration for all telephony services.
  *
  * @hide
  */
+@SystemApi(client = MODULE_LIBRARIES)
+@FlaggedApi(Flags.FLAG_ENABLE_PHONE_NUMBER_PARSING_API)
 public class TelephonyFrameworkInitializer {
 
     private TelephonyFrameworkInitializer() {
@@ -60,10 +66,13 @@ public class TelephonyFrameworkInitializer {
     /**
      * Sets an instance of {@link TelephonyServiceManager} that allows
      * the telephony mainline module to register/obtain telephony binder services. This is called
-     * by the platform during the system initialization.
+     * by ActivityThread on app startup and sets the app's instance of
+     * TelephonyServiceManager.
      *
      * @param telephonyServiceManager instance of {@link TelephonyServiceManager} that allows
      * the telephony mainline module to register/obtain telephony binder services.
+     *
+     * @hide
      */
     public static void setTelephonyServiceManager(
             @NonNull TelephonyServiceManager telephonyServiceManager) {
@@ -77,9 +86,6 @@ public class TelephonyFrameworkInitializer {
     // also check through Compatibility framework a few lines below).
     @SuppressWarnings("AndroidFrameworkCompatChange")
     private static boolean hasSystemFeature(Context context, String feature) {
-        // Check release status of this change in behavior.
-        if (!Flags.minimalTelephonyManagersConditionalOnFeatures()) return true;
-
         // Check SDK version of the vendor partition.
         final int vendorApiLevel = SystemProperties.getInt(
                 "ro.vendor.api_level", Build.VERSION.DEVICE_INITIAL_SDK_INT);
@@ -98,6 +104,8 @@ public class TelephonyFrameworkInitializer {
      *
      * @throws IllegalStateException if this is called from anywhere besides
      * {@link SystemServiceRegistry}
+     *
+     * @hide
      */
     public static void registerServiceWrappers() {
         SystemServiceRegistry.registerContextAwareService(
@@ -147,9 +155,22 @@ public class TelephonyFrameworkInitializer {
                 context -> hasSystemFeature(context, PackageManager.FEATURE_TELEPHONY_SATELLITE)
                         ? new SatelliteManager(context) : null
         );
+
+        if (Flags.enablePhoneNumberParsingApi()) {
+            TelephonyServicesInitializer.registerServiceWrappers();
+        }
     }
 
-    /** @hide */
+    /**
+     * Retrieves an instance of {@link TelephonyServiceManager} that allows the telephony mainline
+     * module to register/obtain telephony binder services.
+     *
+     * @return instance of {@link TelephonyServiceManager}
+     *
+     * @hide
+     */
+    @SystemApi(client = MODULE_LIBRARIES)
+    @Nullable
     public static TelephonyServiceManager getTelephonyServiceManager() {
         return sTelephonyServiceManager;
     }

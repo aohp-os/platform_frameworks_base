@@ -17,6 +17,7 @@
 package com.android.systemui.deviceentry.domain.interactor
 
 import android.provider.Settings
+import android.security.Flags.secureLockDevice
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.android.systemui.CoreStartable
@@ -33,15 +34,19 @@ import com.android.systemui.keyguard.KeyguardViewMediator
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.TrustInteractor
 import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.shared.model.WakeSleepReason
+import com.android.systemui.scene.domain.SceneFrameworkTableLog
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
-import com.android.systemui.util.settings.repository.UserAwareSecureSettingsRepository
+import com.android.systemui.securelockdevice.domain.interactor.SecureLockDeviceInteractor
+import com.android.systemui.shared.settings.data.repository.SecureSettingsRepository
 import com.android.systemui.utils.coroutines.flow.flatMapLatestConflated
+import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -49,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -56,46 +62,30 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class DeviceUnlockedInteractor
 @Inject
 constructor(
     private val authenticationInteractor: AuthenticationInteractor,
     private val repository: DeviceEntryRepository,
-    trustInteractor: TrustInteractor,
+    private val trustInteractor: TrustInteractor,
     faceAuthInteractor: DeviceEntryFaceAuthInteractor,
     fingerprintAuthInteractor: DeviceEntryFingerprintAuthInteractor,
     private val powerInteractor: PowerInteractor,
     private val biometricSettingsInteractor: DeviceEntryBiometricSettingsInteractor,
+    secureLockDeviceInteractor: Lazy<SecureLockDeviceInteractor>,
     private val systemPropertiesHelper: SystemPropertiesHelper,
-    private val userAwareSecureSettingsRepository: UserAwareSecureSettingsRepository,
+    private val secureSettingsRepository: SecureSettingsRepository,
     private val keyguardInteractor: KeyguardInteractor,
+    @SceneFrameworkTableLog private val tableLogBuffer: TableLogBuffer,
+    deviceEntryBypassInteractor: DeviceEntryBypassInteractor,
 ) : ExclusiveActivatable() {
-
-    private val deviceUnlockSource =
-        merge(
-            fingerprintAuthInteractor.fingerprintSuccess.map { DeviceUnlockSource.Fingerprint },
-            faceAuthInteractor.isAuthenticated
-                .filter { it }
-                .map {
-                    if (repository.isBypassEnabled.value) {
-                        DeviceUnlockSource.FaceWithBypass
-                    } else {
-                        DeviceUnlockSource.FaceWithoutBypass
-                    }
-                },
-            trustInteractor.isTrusted.filter { it }.map { DeviceUnlockSource.TrustAgent },
-            authenticationInteractor.onAuthenticationResult
-                .filter { it }
-                .map { DeviceUnlockSource.BouncerInput },
-        )
-
     private val faceEnrolledAndEnabled = biometricSettingsInteractor.isFaceAuthEnrolledAndEnabled
     private val fingerprintEnrolledAndEnabled =
         biometricSettingsInteractor.isFingerprintAuthEnrolledAndEnabled
@@ -120,6 +110,10 @@ constructor(
                     trustInteractor.isTrustAgentCurrentlyAllowed,
                 ) { authFlags, isFaceLockedOut, isFingerprintLockedOut, trustManaged ->
                     when {
+                        authFlags.isPrimaryAuthRequiredForSecureLockDevice ->
+                            DeviceEntryRestrictionReason.SecureLockDevicePrimaryAuth
+                        authFlags.isStrongBiometricAuthRequiredForSecureLockDevice ->
+                            DeviceEntryRestrictionReason.SecureLockDeviceStrongBiometricOnlyAuth
                         authFlags.isPrimaryAuthRequiredAfterReboot &&
                             wasRebootedForMainlineUpdate() ->
                             DeviceEntryRestrictionReason.DeviceNotUnlockedSinceMainlineUpdate
@@ -132,8 +126,6 @@ constructor(
                             DeviceEntryRestrictionReason.UnattendedUpdate
                         authFlags.isPrimaryAuthRequiredAfterTimeout ->
                             DeviceEntryRestrictionReason.SecurityTimeout
-                        authFlags.isPrimaryAuthRequiredAfterLockout ->
-                            DeviceEntryRestrictionReason.BouncerLockedOut
                         isFingerprintLockedOut ->
                             DeviceEntryRestrictionReason.StrongBiometricsLockedOut
                         isFaceLockedOut && faceAuthInteractor.isFaceAuthStrong() ->
@@ -166,6 +158,71 @@ constructor(
     val isInLockdown: Flow<Boolean> = deviceEntryRestrictionReason.map { it.isInLockdown() }
 
     /**
+     * Whether secure lock device mode is enabled, meaning device entry requires two-factor
+     * authentication: primary auth on the bouncer, followed by strong biometric-only auth on the
+     * bouncer.
+     *
+     * @see SecureLockDeviceInteractor.isSecureLockDeviceEnabled
+     *
+     * Returns false when FLAG_SECURE_LOCK_DEVICE is disabled
+     */
+    val isSecureLockDeviceEnabled: Flow<Boolean> =
+        if (secureLockDevice()) {
+            secureLockDeviceInteractor.get().isSecureLockDeviceEnabled
+        } else {
+            flowOf(false)
+        }
+
+    /**
+     * Whether the device is fully unlocked and ready to dismiss in secure lock device.
+     *
+     * @see SecureLockDeviceInteractor.isFullyUnlockedAndReadyToDismiss
+     *
+     * Returns false when FLAG_SECURE_LOCK_DEVICE is disabled
+     */
+    private val isFullyUnlockedAndReadyToDismissInSecureLockDevice: Flow<Boolean> =
+        if (secureLockDevice()) {
+            secureLockDeviceInteractor.get().isFullyUnlockedAndReadyToDismiss
+        } else {
+            flowOf(false)
+        }
+
+    /** Indicates when a device has been unlocked from successful authentication on the bouncer. */
+    private val onUnlockFromBouncer = authenticationInteractor.onAuthenticationResult.filter { it }
+
+    private val deviceUnlockSource =
+        /**
+         * When secure lock device is active, the device is not considered unlocked after successful
+         * bouncer auth. Secure Lock Device requires two-factor authentication: primary auth on the
+         * bouncer, followed by strong biometric authentication on the bouncer, in order to unlock
+         * and enter the device.
+         */
+        isSecureLockDeviceEnabled.flatMapLatest { isSecureLockDeviceEnabled ->
+            if (isSecureLockDeviceEnabled) {
+                isFullyUnlockedAndReadyToDismissInSecureLockDevice
+                    .filter { it }
+                    .map { DeviceUnlockSource.SecureLockDeviceTwoFactorAuth }
+            } else {
+                merge(
+                    fingerprintAuthInteractor.fingerprintSuccess.map {
+                        DeviceUnlockSource.Fingerprint
+                    },
+                    faceAuthInteractor.isAuthenticated
+                        .filter { it }
+                        .map {
+                            if (deviceEntryBypassInteractor.isBypassEnabled.value) {
+                                DeviceUnlockSource.FaceWithBypass
+                            } else {
+                                DeviceUnlockSource.FaceWithoutBypass
+                            }
+                        },
+                    trustInteractor.isTrusted.filter { it }.map { DeviceUnlockSource.TrustAgent },
+                    onUnlockFromBouncer.map { DeviceUnlockSource.BouncerInput },
+                )
+            }
+        }
+
+    /**
      * Whether the device is unlocked or not, along with the information about the authentication
      * method that was used to unlock the device.
      *
@@ -180,20 +237,41 @@ constructor(
     val deviceUnlockStatus: StateFlow<DeviceUnlockStatus> =
         repository.deviceUnlockStatus.asStateFlow()
 
-    private val lockNowRequests = Channel<Unit>()
+    /** Helper property to check if the device is unlocked. */
+    val isUnlocked: Boolean
+        get() = deviceUnlockStatus.value.isUnlocked
+
+    /** A [Channel] of "lock now" requests where the values are the debugging reasons. */
+    private val lockNowRequests = Channel<String>()
 
     override suspend fun onActivated(): Nothing {
-        authenticationInteractor.authenticationMethod.collectLatest { authMethod ->
-            if (!authMethod.isSecure) {
-                // Device remains unlocked as long as the authentication method is not secure.
-                Log.d(TAG, "remaining unlocked because auth method not secure")
-                repository.deviceUnlockStatus.value = DeviceUnlockStatus(true, null)
-            } else if (authMethod == AuthenticationMethodModel.Sim) {
-                // Device remains locked while SIM is locked.
-                Log.d(TAG, "remaining locked because SIM locked")
-                repository.deviceUnlockStatus.value = DeviceUnlockStatus(false, null)
-            } else {
-                handleLockAndUnlockEvents()
+        coroutineScope {
+            launch {
+                authenticationInteractor.authenticationMethod.collectLatest { authMethod ->
+                    if (!authMethod.isSecure) {
+                        // Device remains unlocked as long as the authentication method is not
+                        // secure.
+                        Log.d(TAG, "remaining unlocked because auth method not secure")
+                        repository.deviceUnlockStatus.value = DeviceUnlockStatus(true, null)
+                    } else if (authMethod == AuthenticationMethodModel.Sim) {
+                        // Device remains locked while SIM is locked.
+                        Log.d(TAG, "remaining locked because SIM locked")
+                        repository.deviceUnlockStatus.value = DeviceUnlockStatus(false, null)
+                    } else {
+                        handleLockAndUnlockEvents()
+                    }
+                }
+            }
+
+            launch {
+                deviceUnlockStatus
+                    .map { it.isUnlocked }
+                    .logDiffsForTable(
+                        tableLogBuffer = tableLogBuffer,
+                        columnName = "isUnlocked",
+                        initialValue = deviceUnlockStatus.value.isUnlocked,
+                    )
+                    .collect()
             }
         }
 
@@ -201,8 +279,8 @@ constructor(
     }
 
     /** Locks the device instantly. */
-    fun lockNow() {
-        lockNowRequests.trySend(Unit)
+    fun lockNow(debuggingReason: String) {
+        lockNowRequests.trySend(debuggingReason)
     }
 
     private suspend fun handleLockAndUnlockEvents() {
@@ -227,47 +305,69 @@ constructor(
 
     private suspend fun handleLockEvents() {
         merge(
-                // Device wakefulness events.
-                powerInteractor.detailedWakefulness
-                    .map { Pair(it.isAsleep(), it.lastSleepReason) }
-                    .distinctUntilChangedBy { it.first }
-                    .map { (isAsleep, lastSleepReason) ->
-                        if (isAsleep) {
-                            if (
-                                (lastSleepReason == WakeSleepReason.POWER_BUTTON) &&
-                                    authenticationInteractor.getPowerButtonInstantlyLocks()
-                            ) {
-                                LockImmediately("locked instantly from power button")
-                            } else if (lastSleepReason == WakeSleepReason.SLEEP_BUTTON) {
-                                LockImmediately("locked instantly from sleep button")
-                            } else {
-                                LockWithDelay("entering sleep")
-                            }
-                        } else {
-                            CancelDelayedLock("waking up")
-                        }
-                    },
+                trustInteractor.isTrusted.flatMapLatestConflated { isTrusted ->
+                    if (isTrusted) {
+                        // When entering a trusted environment, power-related lock events are
+                        // ignored.
+                        Log.d(TAG, "In trusted environment, ignoring power-related lock events")
+                        flowOf(CancelDelayedLock("in trusted environment"))
+                    } else {
+                        // When not in a trusted environment, power-related lock events are treated
+                        // as normal.
+                        Log.d(
+                            TAG,
+                            "Not in trusted environment, power-related lock events treated as normal",
+                        )
+                        merge(
+                            // Device wakefulness events.
+                            powerInteractor.detailedWakefulness
+                                .map { Pair(it.isAsleep(), it.lastSleepReason) }
+                                .distinctUntilChangedBy { it.first }
+                                .map { (isAsleep, lastSleepReason) ->
+                                    if (isAsleep) {
+                                        if (
+                                            (lastSleepReason == WakeSleepReason.POWER_BUTTON) &&
+                                                authenticationInteractor
+                                                    .getPowerButtonInstantlyLocks()
+                                        ) {
+                                            LockImmediately("locked instantly from power button")
+                                        } else if (
+                                            lastSleepReason == WakeSleepReason.SLEEP_BUTTON
+                                        ) {
+                                            LockImmediately("locked instantly from sleep button")
+                                        } else {
+                                            LockWithDelay("entering sleep")
+                                        }
+                                    } else {
+                                        CancelDelayedLock("waking up")
+                                    }
+                                },
+                            // Started dreaming
+                            powerInteractor.isInteractive.flatMapLatestConflated { isInteractive ->
+                                // Only respond to dream state changes while the device is
+                                // interactive.
+                                if (isInteractive) {
+                                    keyguardInteractor.isDreamingAny.distinctUntilChanged().map {
+                                        isDreaming ->
+                                        if (isDreaming) {
+                                            LockWithDelay("started dreaming")
+                                        } else {
+                                            CancelDelayedLock("stopped dreaming")
+                                        }
+                                    }
+                                } else {
+                                    emptyFlow()
+                                }
+                            },
+                        )
+                    }
+                },
                 // Device enters lockdown.
                 isInLockdown
                     .distinctUntilChanged()
                     .filter { it }
                     .map { LockImmediately("lockdown") },
-                // Started dreaming
-                powerInteractor.isInteractive.flatMapLatestConflated { isInteractive ->
-                    // Only respond to dream state changes while the device is interactive.
-                    if (isInteractive) {
-                        keyguardInteractor.isDreamingAny.distinctUntilChanged().map { isDreaming ->
-                            if (isDreaming) {
-                                LockWithDelay("started dreaming")
-                            } else {
-                                CancelDelayedLock("stopped dreaming")
-                            }
-                        }
-                    } else {
-                        emptyFlow()
-                    }
-                },
-                lockNowRequests.receiveAsFlow().map { LockImmediately("lockNow") },
+                lockNowRequests.receiveAsFlow().map { reason -> LockImmediately(reason) },
             )
             .collectLatest(::onLockEvent)
     }
@@ -311,7 +411,7 @@ constructor(
      */
     private suspend fun lockDelay(): Long {
         val lockAfterScreenTimeoutSetting =
-            userAwareSecureSettingsRepository
+            secureSettingsRepository
                 .getInt(
                     Settings.Secure.LOCK_SCREEN_LOCK_AFTER_TIMEOUT,
                     KeyguardViewMediator.KEYGUARD_LOCK_AFTER_DELAY_DEFAULT,
@@ -329,7 +429,7 @@ constructor(
         }
 
         val screenOffTimeoutSetting =
-            userAwareSecureSettingsRepository
+            secureSettingsRepository
                 .getInt(
                     Settings.System.SCREEN_OFF_TIMEOUT,
                     KeyguardViewMediator.KEYGUARD_DISPLAY_TIMEOUT_DELAY_DEFAULT,
@@ -347,6 +447,9 @@ constructor(
         return when (this) {
             DeviceEntryRestrictionReason.UserLockdown -> true
             DeviceEntryRestrictionReason.PolicyLockdown -> true
+            // Device locking is handled via the lockNow request from SecureLockDeviceService
+            DeviceEntryRestrictionReason.SecureLockDevicePrimaryAuth -> false
+            DeviceEntryRestrictionReason.SecureLockDeviceStrongBiometricOnlyAuth -> false
 
             // Add individual enum value instead of using "else" so new reasons are guaranteed
             // to be added here at compile-time.
@@ -376,8 +479,7 @@ constructor(
         private val interactor: DeviceUnlockedInteractor,
     ) : CoreStartable {
         override fun start() {
-            if (!SceneContainerFlag.isEnabled)
-                return
+            if (!SceneContainerFlag.isEnabled) return
 
             applicationScope.launch { interactor.activate() }
         }

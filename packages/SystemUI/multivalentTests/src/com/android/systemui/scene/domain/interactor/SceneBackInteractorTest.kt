@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.scene.domain.interactor
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,46 +23,40 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.authentication.data.repository.FakeAuthenticationRepository
 import com.android.systemui.authentication.domain.interactor.AuthenticationResult
 import com.android.systemui.authentication.domain.interactor.authenticationInteractor
-import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.EnableSceneContainer
-import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.runTest
+import com.android.systemui.kosmos.useUnconfinedTestDispatcher
 import com.android.systemui.scene.data.model.asIterable
 import com.android.systemui.scene.data.model.sceneStackOf
 import com.android.systemui.scene.domain.startable.sceneContainerStartable
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.shade.domain.interactor.enableSingleShade
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
+@EnableSceneContainer
 class SceneBackInteractorTest : SysuiTestCase() {
 
-    private val kosmos = testKosmos()
-    private val testScope = kosmos.testScope
-    private val sceneInteractor by lazy { kosmos.sceneInteractor }
-    private val sceneContainerStartable by lazy { kosmos.sceneContainerStartable }
-    private val authenticationInteractor by lazy { kosmos.authenticationInteractor }
+    private val kosmos = testKosmos().useUnconfinedTestDispatcher()
 
     private val underTest by lazy { kosmos.sceneBackInteractor }
 
     @Test
-    @EnableSceneContainer
-    fun navigateToQs_thenBouncer_thenBack_whileLocked() =
-        testScope.runTest {
+    fun navigateToQs_thenBack_whileLocked() =
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
 
             assertRoute(
                 RouteNode(Scenes.Lockscreen, null),
                 RouteNode(Scenes.Shade, Scenes.Lockscreen),
-                RouteNode(Scenes.QuickSettings, Scenes.Shade),
-                RouteNode(Scenes.Bouncer, Scenes.QuickSettings),
                 RouteNode(Scenes.QuickSettings, Scenes.Shade),
                 RouteNode(Scenes.Shade, Scenes.Lockscreen),
                 RouteNode(Scenes.Lockscreen, null),
@@ -72,58 +64,40 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableSceneContainer
-    fun navigateToQs_thenBouncer_thenUnlock() =
-        testScope.runTest {
+    fun navigateToQs_thenUnlock() =
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
 
             assertRoute(
                 RouteNode(Scenes.Lockscreen, null),
                 RouteNode(Scenes.Shade, Scenes.Lockscreen),
-                RouteNode(Scenes.QuickSettings, Scenes.Shade),
-                RouteNode(Scenes.Bouncer, Scenes.QuickSettings, unlockDevice = true),
+                RouteNode(Scenes.QuickSettings, Scenes.Shade, unlockDevice = true),
                 RouteNode(Scenes.Gone, null),
             )
         }
 
     @Test
-    @EnableSceneContainer
-    fun navigateToQs_skippingShade_thenBouncer_thenBack_whileLocked() =
-        testScope.runTest {
+    fun navigateToQs_skippingShade_thenBack_whileLocked() =
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
 
             assertRoute(
                 RouteNode(Scenes.Lockscreen, null),
-                RouteNode(Scenes.QuickSettings, Scenes.Lockscreen),
-                RouteNode(Scenes.Bouncer, Scenes.QuickSettings),
                 RouteNode(Scenes.QuickSettings, Scenes.Lockscreen),
                 RouteNode(Scenes.Lockscreen, null),
             )
         }
 
     @Test
-    @EnableSceneContainer
-    fun navigateToBouncer_thenBack_whileLocked() =
-        testScope.runTest {
+    fun navigateToQs_skippingShade_thenBack_thenShade_whileLocked() =
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
 
             assertRoute(
                 RouteNode(Scenes.Lockscreen, null),
-                RouteNode(Scenes.Bouncer, Scenes.Lockscreen),
-                RouteNode(Scenes.Lockscreen, null),
-            )
-        }
-
-    @Test
-    @EnableSceneContainer
-    fun navigateToQs_skippingShade_thenBouncer_thenBack_thenShade_whileLocked() =
-        testScope.runTest {
-            sceneContainerStartable.start()
-
-            assertRoute(
-                RouteNode(Scenes.Lockscreen, null),
-                RouteNode(Scenes.QuickSettings, Scenes.Lockscreen),
-                RouteNode(Scenes.Bouncer, Scenes.QuickSettings),
                 RouteNode(Scenes.QuickSettings, Scenes.Lockscreen),
                 RouteNode(Scenes.Lockscreen, null),
                 RouteNode(Scenes.Shade, Scenes.Lockscreen),
@@ -131,9 +105,9 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableSceneContainer
     fun navigateToQs_thenBack_whileUnlocked() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
             unlockDevice()
 
@@ -147,9 +121,9 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableSceneContainer
     fun navigateToQs_skippingShade_thenBack_whileUnlocked() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
             unlockDevice()
 
@@ -161,9 +135,9 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableSceneContainer
     fun navigateToQs_skippingShade_thenBack_thenShade_whileUnlocked() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             sceneContainerStartable.start()
             unlockDevice()
 
@@ -176,14 +150,13 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableSceneContainer
     fun updateBackStack() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             underTest.onSceneChange(from = Scenes.Lockscreen, to = Scenes.Shade)
             underTest.onSceneChange(from = Scenes.Shade, to = Scenes.QuickSettings)
-            underTest.onSceneChange(from = Scenes.QuickSettings, to = Scenes.Bouncer)
             assertThat(underTest.backStack.value.asIterable().toList())
-                .isEqualTo(listOf(Scenes.QuickSettings, Scenes.Shade, Scenes.Lockscreen))
+                .isEqualTo(listOf(Scenes.Shade, Scenes.Lockscreen))
 
             underTest.updateBackStack { stack ->
                 // Reverse the stack, just to see if it can be done:
@@ -191,16 +164,45 @@ class SceneBackInteractorTest : SysuiTestCase() {
             }
 
             assertThat(underTest.backStack.value.asIterable().toList())
-                .isEqualTo(listOf(Scenes.Lockscreen, Scenes.Shade, Scenes.QuickSettings))
+                .isEqualTo(listOf(Scenes.Lockscreen, Scenes.Shade))
         }
 
-    private suspend fun TestScope.assertRoute(vararg route: RouteNode) {
+    @Test
+    fun replaceLockscreenSceneOnBackStack_replacesLockscreenWithGone() =
+        kosmos.runTest {
+            enableSingleShade()
+            underTest.onSceneChange(from = Scenes.Lockscreen, to = Scenes.Shade)
+            underTest.onSceneChange(from = Scenes.Shade, to = Scenes.QuickSettings)
+            assertThat(underTest.backStack.value.asIterable().toList())
+                .isEqualTo(listOf(Scenes.Shade, Scenes.Lockscreen))
+
+            underTest.replaceLockscreenSceneOnBackStack()
+
+            assertThat(underTest.backStack.value.asIterable().toList())
+                .isEqualTo(listOf(Scenes.Shade, Scenes.Gone))
+        }
+
+    @Test
+    fun replaceLockscreenSceneOnBackStack_nothingToDo() =
+        kosmos.runTest {
+            enableSingleShade()
+            underTest.onSceneChange(from = Scenes.Gone, to = Scenes.Shade)
+            underTest.onSceneChange(from = Scenes.Shade, to = Scenes.QuickSettings)
+            assertThat(underTest.backStack.value.asIterable().toList())
+                .isEqualTo(listOf(Scenes.Shade, Scenes.Gone))
+
+            underTest.replaceLockscreenSceneOnBackStack()
+
+            assertThat(underTest.backStack.value.asIterable().toList())
+                .isEqualTo(listOf(Scenes.Shade, Scenes.Gone))
+        }
+
+    private suspend fun Kosmos.assertRoute(vararg route: RouteNode) {
         val currentScene by collectLastValue(sceneInteractor.currentScene)
         val backScene by collectLastValue(underTest.backScene)
 
         route.forEachIndexed { index, node ->
             sceneInteractor.changeScene(node.changeSceneTo, "")
-            runCurrent()
             assertWithMessage("node at index $index currentScene mismatch")
                 .that(currentScene)
                 .isEqualTo(node.changeSceneTo)
@@ -213,9 +215,8 @@ class SceneBackInteractorTest : SysuiTestCase() {
         }
     }
 
-    private suspend fun TestScope.unlockDevice() {
+    private suspend fun Kosmos.unlockDevice() {
         val currentScene by collectLastValue(sceneInteractor.currentScene)
-        runCurrent()
         assertThat(authenticationInteractor.authenticate(FakeAuthenticationRepository.DEFAULT_PIN))
             .isEqualTo(AuthenticationResult.SUCCEEDED)
         assertThat(currentScene).isEqualTo(Scenes.Gone)

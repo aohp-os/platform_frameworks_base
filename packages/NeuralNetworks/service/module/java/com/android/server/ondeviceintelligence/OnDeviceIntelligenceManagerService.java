@@ -248,7 +248,7 @@ public class OnDeviceIntelligenceManagerService extends SystemService {
             @Override
             public void getFeature(int id, IFeatureCallback featureCallback)
                     throws RemoteException {
-                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal getFeatures");
+                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal getFeature");
                 Objects.requireNonNull(featureCallback);
                 mContext.enforceCallingPermission(
                         Manifest.permission.USE_ON_DEVICE_INTELLIGENCE, TAG);
@@ -286,7 +286,7 @@ public class OnDeviceIntelligenceManagerService extends SystemService {
             @Override
             public void listFeatures(IListFeaturesCallback listFeaturesCallback)
                     throws RemoteException {
-                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal getFeatures");
+                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal listFeatures");
                 Objects.requireNonNull(listFeaturesCallback);
                 mContext.enforceCallingPermission(
                         Manifest.permission.USE_ON_DEVICE_INTELLIGENCE, TAG);
@@ -329,7 +329,7 @@ public class OnDeviceIntelligenceManagerService extends SystemService {
             public void getFeatureDetails(Feature feature,
                     IFeatureDetailsCallback featureDetailsCallback)
                     throws RemoteException {
-                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal getFeatureStatus");
+                Slog.i(TAG, "OnDeviceIntelligenceManagerInternal getFeatureDetails");
                 Objects.requireNonNull(feature);
                 Objects.requireNonNull(featureDetailsCallback);
                 mContext.enforceCallingPermission(
@@ -760,13 +760,8 @@ public class OnDeviceIntelligenceManagerService extends SystemService {
             if (mTemporaryConfigNamespace != null) {
                 return mTemporaryConfigNamespace;
             }
-            return mContext.getResources()
-                    .getString(
-                            mContext.getResources()
-                                    .getIdentifier(
-                                            "config_defaultOnDeviceIntelligenceDeviceConfigNamespace",
-                                            "string",
-                                            "android"));
+            return mContext.getResources().getString(
+                    android.R.string.config_defaultOnDeviceIntelligenceDeviceConfigNamespace);
         }
     }
 
@@ -948,22 +943,10 @@ public class OnDeviceIntelligenceManagerService extends SystemService {
                 return mTemporaryServiceNames;
             }
         }
-        return new String[]{
-                mContext.getResources()
-                        .getString(
-                        mContext.getResources()
-                                .getIdentifier(
-                                        "config_defaultOnDeviceIntelligenceService",
-                                        "string",
-                                        "android")),
-                mContext.getResources()
-                        .getString(
-                        mContext.getResources()
-                                .getIdentifier(
-                                        "config_defaultOnDeviceSandboxedInferenceService",
-                                        "string",
-                                        "android"))
-        };
+        return new String[]{mContext.getResources().getString(
+                android.R.string.config_defaultOnDeviceIntelligenceService),
+                mContext.getResources().getString(
+                        android.R.string.config_defaultOnDeviceSandboxedInferenceService)};
     }
 
     protected String[] getBroadcastKeys() throws Resources.NotFoundException {

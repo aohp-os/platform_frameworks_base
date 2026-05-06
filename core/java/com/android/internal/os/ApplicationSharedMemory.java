@@ -18,6 +18,7 @@ package com.android.internal.os;
 
 import android.annotation.NonNull;
 import android.util.Log;
+
 import com.android.internal.annotations.VisibleForTesting;
 
 import dalvik.annotation.optimization.CriticalNative;
@@ -324,4 +325,55 @@ public class ApplicationSharedMemory implements AutoCloseable {
      */
     @FastNative
     private static native long nativeGetSystemNonceBlock(long ptr);
+
+    /**
+     * Perform a one-time write of cached SDK feature versions.
+     *
+     * @throws IllegalStateException if the feature versions have already been written or the ashmem
+     *     is immutable.
+     * @throws IllegalArgumentException if the provided feature version array is too large.
+     */
+    public void writeSystemFeaturesCache(@NonNull int[] featureVersions) {
+        checkMutable();
+        nativeWriteSystemFeaturesCache(mPtr, featureVersions);
+    }
+
+    /**
+     * Read the cached SDK feature versions previously written to shared memory.
+     *
+     * Note: The result should generally be cached elsewhere for global reuse.
+     */
+    // TODO(b/326623529): Consider using a MappedByteBuffer or equivalent to avoid needing a
+    // Java copy of the cached data for potentially frequent reads. Alternatively, the JNI query
+    // lookup for a given feature could be cheap enough to avoid the cached Java copy entirely.
+    public @NonNull int[] readSystemFeaturesCache() {
+        checkMapped();
+        return nativeReadSystemFeaturesCache(mPtr);
+    }
+
+    /** Sets the current animator scale from the WindowManagerService.
+     */
+    public void setCurrentAnimatorScale(float scale) {
+        checkMutable();
+        nativeSetCurrentAnimatorScale(mPtr, scale);
+    }
+
+    /** Returns the current animator scale set by the WindowManagerService.
+     */
+    public float getCurrentAnimatorScale() {
+        checkMapped();
+        return nativeGetCurrentAnimatorScale(mPtr);
+    }
+
+    @FastNative
+    private static native void nativeWriteSystemFeaturesCache(long ptr, int[] cache);
+
+    @FastNative
+    private static native int[] nativeReadSystemFeaturesCache(long ptr);
+
+    @FastNative
+    private static native void nativeSetCurrentAnimatorScale(long ptr, float scale);
+
+    @FastNative
+    private static native float nativeGetCurrentAnimatorScale(long ptr);
 }

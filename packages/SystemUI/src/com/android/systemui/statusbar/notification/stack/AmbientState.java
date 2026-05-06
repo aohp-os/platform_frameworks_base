@@ -21,6 +21,7 @@ import static com.android.systemui.statusbar.notification.NotificationUtils.logK
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
+import android.graphics.RectF;
 import android.util.MathUtils;
 
 import androidx.annotation.VisibleForTesting;
@@ -35,12 +36,14 @@ import com.android.systemui.shade.transition.LargeScreenShadeInterpolator;
 import com.android.systemui.statusbar.NotificationShelf;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import com.android.systemui.statusbar.notification.data.repository.HeadsUpRepository;
+import com.android.systemui.statusbar.notification.headsup.AvalancheController;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.BypassController;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.SectionProvider;
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager;
-import com.android.systemui.statusbar.notification.headsup.AvalancheController;
 
 import java.io.PrintWriter;
 
@@ -60,15 +63,15 @@ public class AmbientState implements Dumpable {
     private final BypassController mBypassController;
     private final LargeScreenShadeInterpolator mLargeScreenShadeInterpolator;
     private final AvalancheController mAvalancheController;
+    private final HeadsUpRepository mHeadsUpRepository;
 
     /**
      *  Used to read bouncer states.
      */
     private StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
     private float mStackTop;
-    private float mStackCutoff;
+    private RectF mDrawBounds = new RectF();
     private float mHeadsUpTop;
-    private float mHeadsUpBottom;
     private int mScrollY;
     private float mOverScrollTopAmount;
     private float mOverScrollBottomAmount;
@@ -98,6 +101,21 @@ public class AmbientState implements Dumpable {
     private boolean mPulsing;
     private float mHideAmount;
     private float mPulseHeight = MAX_PULSE_HEIGHT;
+    private boolean mApplyHunTranslation;
+
+    /**
+     * Sets whether HUN translation should be applied to viewState.yTranslation
+     */
+    public void setApplyHunTranslation(boolean apply) {
+        mApplyHunTranslation = apply;
+    }
+
+    /**
+     * @return {@code true} if HUN translation should be applied to viewState.yTranslation
+     */
+    public boolean shouldApplyHunTranslation() {
+        return mApplyHunTranslation;
+    }
 
     /**
      * The ExpandableNotificationRow that is pulsing, or the one that was pulsing
@@ -304,6 +322,7 @@ public class AmbientState implements Dumpable {
             @NonNull BypassController bypassController,
             @Nullable StatusBarKeyguardViewManager statusBarKeyguardViewManager,
             @NonNull LargeScreenShadeInterpolator largeScreenShadeInterpolator,
+            @NonNull HeadsUpRepository headsUpRepository,
             AvalancheController avalancheController
     ) {
         mSectionProvider = sectionProvider;
@@ -311,6 +330,7 @@ public class AmbientState implements Dumpable {
         mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
         mLargeScreenShadeInterpolator = largeScreenShadeInterpolator;
         mAvalancheController = avalancheController;
+        mHeadsUpRepository = headsUpRepository;
         reload(context);
         dumpManager.registerDumpable(this);
     }
@@ -389,19 +409,26 @@ public class AmbientState implements Dumpable {
         this.mStackTop = mStackTop;
     }
 
+    /** @return bounds of the area in view pixels where the NSSL's content can be placed. */
+    @NonNull
+    public RectF getDrawBounds() {
+        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return new RectF();
+        return mDrawBounds;
+    }
+
+    /** @see #getDrawBounds()  */
+    public void setDrawBounds(@NonNull RectF drawBounds) {
+        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return;
+        mDrawBounds = drawBounds;
+    }
+
     /**
      * Y coordinate in view pixels above which the bottom of the notification stack / shelf / footer
      * must be.
      */
     public float getStackCutoff() {
         if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return 0f;
-        return mStackCutoff;
-    }
-
-    /** @see #getStackCutoff() */
-    public void setStackCutoff(float stackCutoff) {
-        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return;
-        this.mStackCutoff = stackCutoff;
+        return mDrawBounds.bottom;
     }
 
     /** y coordinate of the top position of a pinned HUN */
@@ -414,18 +441,6 @@ public class AmbientState implements Dumpable {
     public void setHeadsUpTop(float mHeadsUpTop) {
         if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return;
         this.mHeadsUpTop = mHeadsUpTop;
-    }
-
-    /** the bottom-most y position where we can draw pinned HUNs  */
-    public float getHeadsUpBottom() {
-        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return 0f;
-        return mHeadsUpBottom;
-    }
-
-    /** @see #getHeadsUpBottom() */
-    public void setHeadsUpBottom(float headsUpBottom) {
-        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return;
-        mHeadsUpBottom = headsUpBottom;
     }
 
     public int getScrollY() {
@@ -689,8 +704,14 @@ public class AmbientState implements Dumpable {
         return mPulsing;
     }
 
+    public boolean isPulsing(String entryKey) {
+        boolean isHeadsUp = mHeadsUpRepository.isHeadsUpEntry(entryKey);
+        return mPulsing && isHeadsUp;
+    }
+
     public boolean isPulsing(NotificationEntry entry) {
-        return mPulsing && entry.isHeadsUpEntry();
+        boolean isHeadsUp = entry.isHeadsUpEntry();
+        return mPulsing && isHeadsUp;
     }
 
     public void setPulsingRow(ExpandableNotificationRow row) {
@@ -740,7 +761,10 @@ public class AmbientState implements Dumpable {
      * @return whether a row is dozing and not pulsing right now
      */
     public boolean isDozingAndNotPulsing(ExpandableNotificationRow row) {
-        return isDozing() && !isPulsing(row.getEntry());
+        boolean isPulsing = NotificationBundleUi.isEnabled()
+                ? isPulsing(row.getKey())
+                : isPulsing(row.getEntryLegacy());
+        return isDozing() && !isPulsing;
     }
 
     /**
@@ -859,10 +883,11 @@ public class AmbientState implements Dumpable {
 
     @Override
     public void dump(PrintWriter pw, String[] args) {
-        pw.println("mStackTop=" + mStackTop);
-        pw.println("mStackCutoff=" + mStackCutoff);
-        pw.println("mHeadsUpTop=" + mHeadsUpTop);
-        pw.println("mHeadsUpBottom=" + mHeadsUpBottom);
+        if (SceneContainerFlag.isEnabled()) {
+            pw.println("mStackTop=" + mStackTop);
+            pw.print("mDrawBounds=" + mDrawBounds);
+            pw.println("mHeadsUpTop=" + mHeadsUpTop);
+        }
         pw.println("mTopPadding=" + mTopPadding);
         pw.println("mStackTopMargin=" + mStackTopMargin);
         pw.println("mStackTranslation=" + mStackTranslation);

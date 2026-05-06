@@ -22,7 +22,6 @@ import static android.provider.Settings.Global.DISABLE_SCREEN_SHARE_PROTECTIONS_
 import static android.view.Display.INVALID_DISPLAY;
 
 import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -37,13 +36,10 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.ActivityManagerInternal;
 import android.app.AppOpsManager;
-import android.app.Instrumentation;
 import android.app.KeyguardManager;
-import android.app.role.RoleManager;
 import android.companion.AssociationRequest;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
@@ -52,6 +48,7 @@ import android.content.pm.PackageManager.ApplicationInfoFlags;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.media.projection.MediaProjectionManager;
 import android.os.UserHandle;
+import android.os.Process;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.flag.junit.SetFlagsRule;
@@ -69,7 +66,6 @@ import com.android.server.SystemConfig;
 import com.android.server.wm.WindowManagerInternal;
 
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -79,9 +75,7 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
-import java.util.Objects;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -95,7 +89,7 @@ import java.util.function.Consumer;
 @RunWith(AndroidJUnit4.class)
 @SuppressLint({"UseCheckPermission", "VisibleForTests", "MissingPermission"})
 public class MediaProjectionStopControllerTest {
-    private static final int UID = 10;
+    private static final int UID = Process.myUid();
     private static final String PACKAGE_NAME = "test.package";
     private final ApplicationInfo mAppInfo = new ApplicationInfo();
     @Rule
@@ -123,6 +117,8 @@ public class MediaProjectionStopControllerTest {
     private KeyguardManager mKeyguardManager;
     @Mock
     private TelecomManager mTelecomManager;
+    @Mock
+    private MediaProjectionStopController.RoleHolderProvider mRoleManager;
 
     private AppOpsManager mAppOpsManager;
     @Mock
@@ -145,11 +141,16 @@ public class MediaProjectionStopControllerTest {
         mContext.addMockSystemService(TelecomManager.class, mTelecomManager);
         mContext.setMockPackageManager(mPackageManager);
 
-        mStopController = new MediaProjectionStopController(mContext, mStopConsumer);
+        mStopController = new MediaProjectionStopController(mContext, mStopConsumer, mRoleManager);
         mService = new MediaProjectionManagerService(mContext,
                 mMediaProjectionMetricsLoggerInjector);
 
         mAppInfo.targetSdkVersion = 35;
+        mAppInfo.packageName = PACKAGE_NAME;
+
+        doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(anyString(),
+                any(ApplicationInfoFlags.class), any(UserHandle.class));
+        doReturn(UID).when(mPackageManager).getPackageUidAsUser(anyString(), any(int.class));
     }
 
     private static AppOpsManager mockAppOpsManager() {
@@ -170,8 +171,6 @@ public class MediaProjectionStopControllerTest {
     }
 
     @Test
-    @EnableFlags(
-            android.companion.virtualdevice.flags.Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     public void testMediaProjectionNotRestricted() throws Exception {
         when(mKeyguardManager.isKeyguardLocked()).thenReturn(false);
 
@@ -180,8 +179,6 @@ public class MediaProjectionStopControllerTest {
     }
 
     @Test
-    @EnableFlags(
-            android.companion.virtualdevice.flags.Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     public void testMediaProjectionRestricted() throws Exception {
         MediaProjectionManagerService.MediaProjection mediaProjection = createMediaProjection();
         mediaProjection.notifyVirtualDisplayCreated(1);
@@ -239,21 +236,13 @@ public class MediaProjectionStopControllerTest {
 
     @Test
     public void testExemptFromStoppingHasAppStreamingRole() throws Exception {
-        runWithRole(
-                AssociationRequest.DEVICE_PROFILE_APP_STREAMING,
-                () -> {
-                    try {
-                        MediaProjectionManagerService.MediaProjection mediaProjection =
-                                createMediaProjection();
-                        doReturn(PackageManager.PERMISSION_DENIED).when(
-                                mPackageManager).checkPermission(
-                                RECORD_SENSITIVE_CONTENT, mediaProjection.packageName);
-                        assertThat(mStopController.isExemptFromStopping(mediaProjection,
-                                MediaProjectionStopController.STOP_REASON_UNKNOWN)).isTrue();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+        MediaProjectionManagerService.MediaProjection mediaProjection = createMediaProjection();
+        doReturn(PackageManager.PERMISSION_DENIED).when(mPackageManager).checkPermission(
+                RECORD_SENSITIVE_CONTENT, mediaProjection.packageName);
+        doReturn(List.of(mediaProjection.packageName)).when(mRoleManager).getRoleHoldersAsUser(
+                eq(AssociationRequest.DEVICE_PROFILE_APP_STREAMING), any(UserHandle.class));
+        assertThat(mStopController.isExemptFromStopping(mediaProjection,
+                MediaProjectionStopController.STOP_REASON_UNKNOWN)).isTrue();
     }
 
     @Test
@@ -300,8 +289,22 @@ public class MediaProjectionStopControllerTest {
     }
 
     @Test
-    @EnableFlags(
-            android.companion.virtualdevice.flags.Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
+    public void isStopReasonCallEnd_stopReasonCallEnd_returnsTrue() {
+        boolean result =
+                mStopController.isStopReasonCallEnd(
+                        MediaProjectionStopController.STOP_REASON_CALL_END);
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    public void isStopReasonCallEnd_stopReasonKeyguard_returnsFalse() {
+        boolean result =
+                mStopController.isStopReasonCallEnd(
+                        MediaProjectionStopController.STOP_REASON_KEYGUARD);
+        assertThat(result).isFalse();
+    }
+
+    @Test
     public void testKeyguardLockedStateChanged_unlocked() {
         mStopController.onKeyguardLockedStateChanged(false);
 
@@ -309,8 +312,6 @@ public class MediaProjectionStopControllerTest {
     }
 
     @Test
-    @EnableFlags(
-            android.companion.virtualdevice.flags.Flags.FLAG_MEDIA_PROJECTION_KEYGUARD_RESTRICTIONS)
     public void testKeyguardLockedStateChanged_locked() {
         mStopController.onKeyguardLockedStateChanged(true);
 
@@ -419,50 +420,6 @@ public class MediaProjectionStopControllerTest {
         doReturn(mAppInfo).when(mPackageManager).getApplicationInfoAsUser(Mockito.isNull(),
                 any(ApplicationInfoFlags.class), any(UserHandle.class));
         return mService.createProjectionInternal(UID, packageName,
-                MediaProjectionManager.TYPE_SCREEN_CAPTURE, false, mContext.getUser(),
-                INVALID_DISPLAY);
-    }
-
-    /**
-     * Run the provided block giving the current context's package the provided role.
-     */
-    @SuppressWarnings("SameParameterValue")
-    private void runWithRole(String role, Runnable block) {
-        Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        String packageName = mContext.getPackageName();
-        UserHandle user = instrumentation.getTargetContext().getUser();
-        RoleManager roleManager = Objects.requireNonNull(
-                mContext.getSystemService(RoleManager.class));
-        try {
-            CountDownLatch latch = new CountDownLatch(1);
-            instrumentation.getUiAutomation().adoptShellPermissionIdentity(
-                    Manifest.permission.MANAGE_ROLE_HOLDERS,
-                    Manifest.permission.BYPASS_ROLE_QUALIFICATION);
-
-            roleManager.setBypassingRoleQualification(true);
-            roleManager.addRoleHolderAsUser(role, packageName,
-                    /* flags= */ RoleManager.MANAGE_HOLDERS_FLAG_DONT_KILL_APP, user,
-                    mContext.getMainExecutor(), success -> {
-                        if (success) {
-                            latch.countDown();
-                        } else {
-                            Assert.fail("Couldn't set role for test (failure) " + role);
-                        }
-                    });
-            assertWithMessage("Couldn't set role for test (timeout) : " + role)
-                    .that(latch.await(1, TimeUnit.SECONDS)).isTrue();
-            block.run();
-
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
-            roleManager.removeRoleHolderAsUser(role, packageName,
-                    /* flags= */ RoleManager.MANAGE_HOLDERS_FLAG_DONT_KILL_APP, user,
-                    mContext.getMainExecutor(), (aBool) -> {
-                    });
-            roleManager.setBypassingRoleQualification(false);
-            instrumentation.getUiAutomation()
-                    .dropShellPermissionIdentity();
-        }
+                MediaProjectionManager.TYPE_SCREEN_CAPTURE, false, INVALID_DISPLAY);
     }
 }

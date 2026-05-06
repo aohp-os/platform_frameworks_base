@@ -18,7 +18,7 @@ package com.android.server.job.controllers;
 
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 
-import android.app.job.JobInfo;
+import android.annotation.NonNull;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -28,6 +28,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.UserHandle;
+import android.provider.DeviceConfig;
 import android.util.ArraySet;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
@@ -39,6 +40,7 @@ import com.android.internal.util.ArrayUtils;
 import com.android.server.AppSchedulingModuleThread;
 import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
+import com.android.server.deviceidle.Flags;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.StateControllerProto;
 import com.android.server.job.StateControllerProto.DeviceIdleJobsController.TrackedJob;
@@ -56,7 +58,10 @@ public final class DeviceIdleJobsController extends StateController {
     private static final boolean DEBUG = JobSchedulerService.DEBUG
             || Log.isLoggable(TAG, Log.DEBUG);
 
-    private static final long BACKGROUND_JOBS_DELAY = 3000;
+    /** Prefix to use with all constant keys in order to "sub-namespace" the keys. */
+    private static final String DIJC_CONSTANT_PREFIX = "dijc_";
+    private static final String KEY_BACKGROUND_JOBS_DELAY_MS =
+            DIJC_CONSTANT_PREFIX + "background_jobs_delay_ms";
 
     static final int PROCESS_BACKGROUND_JOBS = 1;
 
@@ -78,6 +83,8 @@ public final class DeviceIdleJobsController extends StateController {
     private int[] mDeviceIdleWhitelistAppIds;
     private int[] mPowerSaveTempWhitelistAppIds;
 
+    private long mBackgroundJobsDelay;
+
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -97,7 +104,7 @@ public final class DeviceIdleJobsController extends StateController {
                         }
                     }
                     break;
-                case PowerManager.ACTION_POWER_SAVE_TEMP_WHITELIST_CHANGED:
+                case "android.os.action.POWER_SAVE_TEMP_WHITELIST_CHANGED":
                     synchronized (mLock) {
                         mPowerSaveTempWhitelistAppIds =
                                 mLocalDeviceIdleController.getPowerSaveTempWhitelistAppIds();
@@ -128,6 +135,9 @@ public final class DeviceIdleJobsController extends StateController {
     public DeviceIdleJobsController(JobSchedulerService service) {
         super(service);
 
+        mBackgroundJobsDelay = mContext.getResources().getInteger(
+                com.android.internal.R.integer.config_jobSchedulerBackgroundJobsDelay);
+
         mHandler = new DeviceIdleJobsDelayHandler(AppSchedulingModuleThread.get().getLooper());
         // Register for device idle mode changes
         mPowerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
@@ -142,9 +152,10 @@ public final class DeviceIdleJobsController extends StateController {
         filter.addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
         filter.addAction(PowerManager.ACTION_LIGHT_DEVICE_IDLE_MODE_CHANGED);
         filter.addAction(PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED);
-        filter.addAction(PowerManager.ACTION_POWER_SAVE_TEMP_WHITELIST_CHANGED);
-        mContext.registerReceiverAsUser(
-                mBroadcastReceiver, UserHandle.ALL, filter, null, null);
+        if (!Flags.stopPowerSaveTempWhitelistBroadcast()) {
+            filter.addAction("android.os.action.POWER_SAVE_TEMP_WHITELIST_CHANGED");
+        }
+        mContext.registerReceiverAsUser(mBroadcastReceiver, UserHandle.ALL, filter, null, mHandler);
     }
 
     void updateIdleMode(boolean enabled) {
@@ -165,7 +176,7 @@ public final class DeviceIdleJobsController extends StateController {
                 // When coming out of doze, process all foreground uids and EJs immediately,
                 // while others will be processed after a delay of 3 seconds.
                 mService.getJobStore().forEachJob(mShouldRushEvaluation, mDeviceIdleUpdateFunctor);
-                mHandler.sendEmptyMessageDelayed(PROCESS_BACKGROUND_JOBS, BACKGROUND_JOBS_DELAY);
+                mHandler.sendEmptyMessageDelayed(PROCESS_BACKGROUND_JOBS, mBackgroundJobsDelay);
             }
         }
         // Inform the job scheduler service about idle mode changes
@@ -210,30 +221,38 @@ public final class DeviceIdleJobsController extends StateController {
     }
 
     private boolean updateTaskStateLocked(JobStatus task, final long nowElapsed) {
-        final boolean allowInIdle =
-                (!android.app.job.Flags.ignoreImportantWhileForeground()
-                        && ((task.getFlags() & JobInfo.FLAG_IMPORTANT_WHILE_FOREGROUND) != 0))
-                && (mForegroundUids.get(task.getSourceUid()) || isTempWhitelistedLocked(task));
         final boolean whitelisted = isWhitelistedLocked(task);
-        final boolean enableTask = !mDeviceIdleMode || whitelisted || allowInIdle;
+        final boolean enableTask = !mDeviceIdleMode || whitelisted;
         return task.setDeviceNotDozingConstraintSatisfied(nowElapsed, enableTask, whitelisted);
     }
 
     @Override
     public void maybeStartTrackingJobLocked(JobStatus jobStatus, JobStatus lastJob) {
-        if (!android.app.job.Flags.ignoreImportantWhileForeground()
-                && (jobStatus.getFlags() & JobInfo.FLAG_IMPORTANT_WHILE_FOREGROUND) != 0) {
-            mAllowInIdleJobs.add(jobStatus);
-        }
         updateTaskStateLocked(jobStatus, sElapsedRealtimeClock.millis());
     }
 
     @Override
     public void maybeStopTrackingJobLocked(JobStatus jobStatus, JobStatus incomingJob) {
-        if (!android.app.job.Flags.ignoreImportantWhileForeground()
-                && (jobStatus.getFlags() & JobInfo.FLAG_IMPORTANT_WHILE_FOREGROUND) != 0) {
-            mAllowInIdleJobs.remove(jobStatus);
+    }
+
+    @Override
+    public void processConstantLocked(@NonNull DeviceConfig.Properties properties,
+            @NonNull String key) {
+        switch (key) {
+            case KEY_BACKGROUND_JOBS_DELAY_MS:
+                mBackgroundJobsDelay = Math.max(0, properties.getLong(key, mBackgroundJobsDelay));
+                break;
         }
+    }
+
+    @Override
+    public void dumpConstants(IndentingPrintWriter pw) {
+        pw.println();
+        pw.print(DeviceIdleJobsController.class.getSimpleName());
+        pw.println(":");
+        pw.increaseIndent();
+        pw.print(KEY_BACKGROUND_JOBS_DELAY_MS, mBackgroundJobsDelay).println();
+        pw.decreaseIndent();
     }
 
     @Override

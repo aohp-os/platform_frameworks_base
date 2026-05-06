@@ -20,7 +20,6 @@ import static android.content.Intent.ACTION_PACKAGE_ADDED;
 import static android.content.Intent.ACTION_PACKAGE_REMOVED;
 import static android.content.Intent.EXTRA_REPLACING;
 import static android.server.app.Flags.gameDefaultFrameRate;
-import static android.server.app.Flags.disableGameModeWhenAppTop;
 
 import static com.android.internal.R.styleable.GameModeConfig_allowGameAngleDriver;
 import static com.android.internal.R.styleable.GameModeConfig_allowGameDownscaling;
@@ -361,6 +360,14 @@ public final class GameManagerService extends IGameManagerService.Stub {
                 case POPULATE_GAME_MODE_SETTINGS: {
                     removeEqualMessages(POPULATE_GAME_MODE_SETTINGS, msg.obj);
                     final int userId = (int) msg.obj;
+                    synchronized (mLock) {
+                        if (!mSettings.containsKey(userId)) {
+                            GameManagerSettings userSettings = new GameManagerSettings(
+                                    Environment.getDataSystemDeDirectory(userId));
+                            mSettings.put(userId, userSettings);
+                            userSettings.readPersistentDataLocked();
+                        }
+                    }
                     final String[] packageNames = getInstalledGamePackageNames(userId);
                     updateConfigsForUser(userId, false /*checkGamePackage*/, packageNames);
                     break;
@@ -990,8 +997,7 @@ public final class GameManagerService extends IGameManagerService.Stub {
         @Override
         public void onUserStarting(@NonNull TargetUser user) {
             Slog.d(TAG, "Starting user " + user.getUserIdentifier());
-            mService.onUserStarting(user,
-                    Environment.getDataSystemDeDirectory(user.getUserIdentifier()));
+            mService.onUserStarting(user, /*settingDataDirOverride*/ null);
         }
 
         @Override
@@ -1596,13 +1602,16 @@ public final class GameManagerService extends IGameManagerService.Stub {
         }
     }
 
-    void onUserStarting(@NonNull TargetUser user, File settingDataDir) {
+    void onUserStarting(@NonNull TargetUser user, File settingDataDirOverride) {
         final int userId = user.getUserIdentifier();
-        synchronized (mLock) {
-            if (!mSettings.containsKey(userId)) {
-                GameManagerSettings userSettings = new GameManagerSettings(settingDataDir);
-                mSettings.put(userId, userSettings);
-                userSettings.readPersistentDataLocked();
+        if (settingDataDirOverride != null) {
+            synchronized (mLock) {
+                if (!mSettings.containsKey(userId)) {
+                    GameManagerSettings userSettings = new GameManagerSettings(
+                            settingDataDirOverride);
+                    mSettings.put(userId, userSettings);
+                    userSettings.readPersistentDataLocked();
+                }
             }
         }
         sendUserMessage(userId, POPULATE_GAME_MODE_SETTINGS, EVENT_ON_USER_STARTING,
@@ -2317,17 +2326,14 @@ public final class GameManagerService extends IGameManagerService.Stub {
                     p -> isPackageGame(p, userId));
             synchronized (mUidObserverLock) {
                 if (isNotGame) {
-                    if (disableGameModeWhenAppTop()) {
-                        if (!mGameForegroundUids.isEmpty() && mNonGameForegroundUids.isEmpty()) {
-                            Slog.v(TAG, "Game power mode OFF (first non-game in foreground)");
-                            mPowerManagerInternal.setPowerMode(Mode.GAME, false);
-                        }
-                        mNonGameForegroundUids.add(uid);
+                    if (!mGameForegroundUids.isEmpty() && mNonGameForegroundUids.isEmpty()) {
+                        Slog.v(TAG, "Game power mode OFF (first non-game in foreground)");
+                        mPowerManagerInternal.setPowerMode(Mode.GAME, false);
                     }
+                    mNonGameForegroundUids.add(uid);
                     return;
                 }
-                if (mGameForegroundUids.isEmpty() && (!disableGameModeWhenAppTop()
-                        || mNonGameForegroundUids.isEmpty())) {
+                if (mGameForegroundUids.isEmpty() && mNonGameForegroundUids.isEmpty()) {
                     Slog.v(TAG, "Game power mode ON (first game in foreground)");
                     mPowerManagerInternal.setPowerMode(Mode.GAME, true);
                 }
@@ -2344,12 +2350,11 @@ public final class GameManagerService extends IGameManagerService.Stub {
             synchronized (mUidObserverLock) {
                 if (mGameForegroundUids.contains(uid)) {
                     mGameForegroundUids.remove(uid);
-                    if (mGameForegroundUids.isEmpty() && (!disableGameModeWhenAppTop()
-                            || mNonGameForegroundUids.isEmpty())) {
+                    if (mGameForegroundUids.isEmpty() && mNonGameForegroundUids.isEmpty()) {
                         Slog.v(TAG, "Game power mode OFF (no games in foreground)");
                         mPowerManagerInternal.setPowerMode(Mode.GAME, false);
                     }
-                } else if (disableGameModeWhenAppTop() && mNonGameForegroundUids.contains(uid)) {
+                } else if (mNonGameForegroundUids.contains(uid)) {
                     mNonGameForegroundUids.remove(uid);
                     if (mNonGameForegroundUids.isEmpty() && !mGameForegroundUids.isEmpty()) {
                         Slog.v(TAG, "Game power mode ON (only games in foreground)");

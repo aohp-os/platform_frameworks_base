@@ -5,6 +5,7 @@ import android.testing.TestableResources
 import android.view.ContextThemeWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import androidx.test.platform.app.InstrumentationRegistry
 import com.android.internal.logging.MetricsLogger
 import com.android.internal.logging.UiEventLogger
 import com.android.systemui.SysuiTestCase
@@ -22,10 +23,12 @@ import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.settings.brightness.BrightnessController
 import com.android.systemui.settings.brightness.BrightnessSliderController
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
+import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController
 import com.android.systemui.tuner.TunerService
 import com.google.common.truth.Truth.assertThat
 import javax.inject.Provider
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -66,6 +69,7 @@ class QSPanelControllerTest : SysuiTestCase() {
     @Mock private lateinit var pagedTileLayout: PagedTileLayout
     @Mock private lateinit var longPressEffectProvider: Provider<QSLongPressEffect>
     @Mock private lateinit var mediaCarouselInteractor: MediaCarouselInteractor
+    @Mock private lateinit var configurationController: ConfigurationController
 
     private val usingMediaPlayer: Boolean by lazy { !SceneContainerFlag.isEnabled }
 
@@ -108,21 +112,33 @@ class QSPanelControllerTest : SysuiTestCase() {
                 ResourcesSplitShadeStateController(),
                 longPressEffectProvider,
                 mediaCarouselInteractor,
+                configurationController,
             )
     }
 
     @After
     fun tearDown() {
-        controller.destroy()
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            // Ensure destroy() is called on the main thread for `mJavaAdapterDisposableHandle` to
+            // run properly.
+            controller.destroy()
+        }
         reset(mediaHost)
     }
 
     @Test
-    fun onInit_setsMediaAsExpanded() {
-        controller.onInit()
+    fun onInit_setsMediaAsExpanded() =
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            // Set up media carousel interactor
+            if (SceneContainerFlag.isEnabled) {
+                val mockStateFlow = MutableStateFlow(false)
+                whenever(mediaCarouselInteractor.hasAnyMedia).thenReturn(mockStateFlow)
+            }
 
-        verify(mediaHost).expansion = MediaHostState.EXPANDED
-    }
+            controller.onInit()
+
+            verify(mediaHost).expansion = MediaHostState.EXPANDED
+        }
 
     @Test
     fun testSetListeningDoesntRefreshListeningTiles() {

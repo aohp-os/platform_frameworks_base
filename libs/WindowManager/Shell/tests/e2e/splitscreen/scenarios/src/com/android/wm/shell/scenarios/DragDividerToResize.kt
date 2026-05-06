@@ -23,6 +23,7 @@ import android.tools.traces.parsers.WindowManagerStateHelper
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import com.android.launcher3.tapl.LauncherInstrumentation
+import android.tools.helpers.RecentTasksUtils
 import com.android.wm.shell.Utils
 import com.android.wm.shell.flicker.utils.SplitScreenUtils
 import org.junit.After
@@ -46,10 +47,10 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
 
     @Before
     fun setup() {
+        // TODO: b/349075982 - Remove once launcher rotation and checks are stable.
+        tapl.expectedRotationCheckEnabled = false
         tapl.setEnableRotation(true)
         tapl.setExpectedRotation(rotation.value)
-        // TODO: b/349075982 - Remove once launcher rotation and checks are stable.
-        tapl.setExpectedRotationCheckEnabled(false)
 
         SplitScreenUtils.enterSplit(wmHelper, tapl, device, primaryApp, secondaryApp, rotation)
     }
@@ -61,7 +62,6 @@ constructor(val rotation: Rotation = Rotation.ROTATION_0) {
 
     @After
     fun teardown() {
-        primaryApp.exit(wmHelper)
-        secondaryApp.exit(wmHelper)
+        RecentTasksUtils.clearAllVisibleRecentTasks(instrumentation)
     }
 }

@@ -12,7 +12,7 @@ responsible for maintaining the view within the hierarchy and propagating events
 clock controller.
 
 ### Clock Library Code
-[ClockProvider and ClockController](../plugin/src/com/android/systemui/plugins/clocks/ClockProviderPlugin.kt)
+[ClockProvider and ClockController](../plugin/src/com/android/systemui/plugins/keyguard/ui/clocks/ClockProviderPlugin.kt)
 serve as the interface between the lockscreen (or other host application) and the clock that is
 being rendered. Implementing these interfaces is the primary integration point for rendering clocks
 in SystemUI. Many of the methods have an empty default implementation and are optional for
@@ -29,25 +29,22 @@ versions of android.
 
 The [ClockRegistry](../customization/src/com/android/systemui/shared/clocks/ClockRegistry.kt)
 determines which clock should be shown, and handles creating them. It does this by maintaining a
-list of [ClockProviders](../plugin/src/com/android/systemui/plugins/clocks/ClockProviderPlugin.kt) and
+list of [ClockProviders](../plugin/src/src/com/android/systemui/plugins/keyguard/ui/clocks/ClockProviderPlugin.kt) and
 delegating work to them as appropriate. The DefaultClockProvider is compiled in so that it is
 guaranteed to be available, and additional ClockProviders are loaded at runtime via
 [PluginManager](../plugin_core/src/com/android/systemui/plugins/PluginManager.java).
 
-[ClockPlugin](../plugin/src/com/android/systemui/plugins/clocks/ClockPlugin.java) is deprecated and no
+[ClockPlugin](../plugin/src/src/com/android/systemui/plugins/keyguard/ui/clocks/ClockPlugin.java) is deprecated and no
 longer used by keyguard to render clocks. The host code has been disabled but most of it is still
 present in the source tree, although it will likely be removed in a later patch.
+
+A [sample plugin](../customization/clocks/sample/) with minimal functionality is available as an example.
+It renders the current time, but does not enable many of the more advanced functions.
 
 ### Lockscreen Host
 [ClockEventController](../src/com/android/keyguard/ClockEventController.kt) propagates events from
 SystemUI event dispatchers to the clock controllers. It maintains a set of event listeners, but
 otherwise attempts to do as little work as possible. It does maintain some state where necessary.
-
-[KeyguardClockSwitchController](../src/com/android/keyguard/KeyguardClockSwitchController.java) is
-the primary controller for the [KeyguardClockSwitch](../src/com/android/keyguard/KeyguardClockSwitch.java),
-which serves as the view parent within SystemUI. Together they ensure the correct clock (either
-large or small) is shown, handle animation between clock sizes, and control some sizing/layout
-parameters for the clocks.
 
 ### Creating a custom clock
 In order to create a custom clock, a partner must:

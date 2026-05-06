@@ -30,8 +30,10 @@ import android.window.WindowContainerTransaction
 import androidx.core.animation.addListener
 import com.android.internal.jank.Cuj
 import com.android.internal.jank.InteractionJankMonitor
+import com.android.internal.protolog.ProtoLog
+import com.android.wm.shell.desktopmode.DesktopModeTransitionTypes.TRANSIT_DESKTOP_MODE_TOGGLE_RESIZE
+import com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_DESKTOP_MODE
 import com.android.wm.shell.transition.Transitions
-import com.android.wm.shell.transition.Transitions.TRANSIT_DESKTOP_MODE_TOGGLE_RESIZE
 import com.android.wm.shell.windowdecor.OnTaskResizeAnimationListener
 import java.util.function.Supplier
 
@@ -47,6 +49,7 @@ class ToggleResizeDesktopTaskTransitionHandler(
 
     private var boundsAnimator: Animator? = null
     private var initialBounds: Rect? = null
+    private var callback: (() -> Unit)? = null
 
     constructor(
         transitions: Transitions,
@@ -61,9 +64,14 @@ class ToggleResizeDesktopTaskTransitionHandler(
      *   bounds of the actual task). This is provided so that the animation resizing can begin where
      *   the task leash currently is for smoother UX.
      */
-    fun startTransition(wct: WindowContainerTransaction, taskLeashBounds: Rect? = null) {
+    fun startTransition(
+        wct: WindowContainerTransaction,
+        taskLeashBounds: Rect? = null,
+        callback: (() -> Unit)? = null,
+    ) {
         transitions.startTransition(TRANSIT_DESKTOP_MODE_TOGGLE_RESIZE, wct, this)
         initialBounds = taskLeashBounds
+        this.callback = callback
     }
 
     fun setOnTaskResizeAnimationListener(listener: OnTaskResizeAnimationListener) {
@@ -77,7 +85,7 @@ class ToggleResizeDesktopTaskTransitionHandler(
         finishTransaction: SurfaceControl.Transaction,
         finishCallback: Transitions.TransitionFinishCallback,
     ): Boolean {
-        val change = findRelevantChange(info)
+        val change = findRelevantChange(info) ?: return false
         val leash = change.leash
         val taskId = checkNotNull(change.taskInfo).taskId
         val startBounds = initialBounds ?: change.startAbsBounds
@@ -121,6 +129,8 @@ class ToggleResizeDesktopTaskTransitionHandler(
                             interactionJankMonitor.end(Cuj.CUJ_DESKTOP_MODE_MAXIMIZE_WINDOW)
                             interactionJankMonitor.end(Cuj.CUJ_DESKTOP_MODE_UNMAXIMIZE_WINDOW)
                             interactionJankMonitor.end(Cuj.CUJ_DESKTOP_MODE_SNAP_RESIZE)
+                            callback?.invoke()
+                            callback = null
                         },
                     )
                     addUpdateListener { anim ->
@@ -143,28 +153,30 @@ class ToggleResizeDesktopTaskTransitionHandler(
         return null
     }
 
-    private fun findRelevantChange(info: TransitionInfo): TransitionInfo.Change {
+    private fun findRelevantChange(info: TransitionInfo): TransitionInfo.Change? {
         val matchingChanges =
             info.changes.filter { c ->
                 !isWallpaper(c) && isValidTaskChange(c) && c.mode == TRANSIT_CHANGE
             }
         if (matchingChanges.size != 1) {
-            throw IllegalStateException(
-                "Expected 1 relevant change but found: ${matchingChanges.size}"
-            )
+            logE("Expected 1 relevant change but found: %d", matchingChanges.size)
+            return null
         }
         return matchingChanges.first()
     }
 
-    private fun isWallpaper(change: TransitionInfo.Change): Boolean {
-        return (change.flags and TransitionInfo.FLAG_IS_WALLPAPER) != 0
-    }
+    private fun isWallpaper(change: TransitionInfo.Change): Boolean =
+        (change.flags and TransitionInfo.FLAG_IS_WALLPAPER) != 0
 
-    private fun isValidTaskChange(change: TransitionInfo.Change): Boolean {
-        return change.taskInfo != null && change.taskInfo?.taskId != -1
+    private fun isValidTaskChange(change: TransitionInfo.Change): Boolean =
+        change.taskInfo != null && change.taskInfo?.taskId != -1
+
+    private fun logE(msg: String, vararg arguments: Any?) {
+        ProtoLog.e(WM_SHELL_DESKTOP_MODE, "%s: $msg", TAG, *arguments)
     }
 
     companion object {
         private const val RESIZE_DURATION_MS = 300L
+        private const val TAG = "ToggleResizeDesktopTaskTransitionHandler"
     }
 }

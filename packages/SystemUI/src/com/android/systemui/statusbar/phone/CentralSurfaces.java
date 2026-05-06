@@ -16,8 +16,6 @@
 
 package com.android.systemui.statusbar.phone;
 
-import static com.android.wm.shell.transition.Transitions.ENABLE_SHELL_TRANSITIONS;
-
 import android.annotation.Nullable;
 import android.app.ActivityOptions;
 import android.content.Context;
@@ -63,7 +61,7 @@ public interface CentralSurfaces extends Dumpable, LifecycleOwner, CoreStartable
     boolean SPEW = false;
     boolean DEBUG_GESTURES = false;
     boolean DEBUG_MEDIA_FAKE_ARTWORK = false;
-    boolean DEBUG_CAMERA_LIFT = false;
+    boolean DEBUG_POWER_BUTTON_GESTURE = false;
     boolean DEBUG_WINDOW_STATE = false;
     boolean DEBUG_WAKEUP_DELAY = Compile.IS_DEBUG;
     boolean SHOW_LOCKSCREEN_MEDIA_ARTWORK = true;
@@ -146,14 +144,10 @@ public interface CentralSurfaces extends Dumpable, LifecycleOwner, CoreStartable
             @Nullable RemoteAnimationAdapter animationAdapter) {
         ActivityOptions options;
         if (animationAdapter != null) {
-            if (ENABLE_SHELL_TRANSITIONS) {
-                options = ActivityOptions.makeRemoteTransition(
-                        new RemoteTransition(
-                                RemoteAnimationRunnerCompat.wrap(animationAdapter.getRunner()),
-                                animationAdapter.getCallingApplication(), "SysUILaunch"));
-            } else {
-                options = ActivityOptions.makeRemoteAnimation(animationAdapter);
-            }
+            options = ActivityOptions.makeRemoteTransition(
+                    new RemoteTransition(
+                            RemoteAnimationRunnerCompat.wrap(animationAdapter.getRunner()),
+                            animationAdapter.getCallingApplication(), "SysUILaunch"));
         } else {
             options = ActivityOptions.makeBasic();
         }
@@ -312,6 +306,15 @@ public interface CentralSurfaces extends Dumpable, LifecycleOwner, CoreStartable
     void setLaunchCameraOnFinishedGoingToSleep(boolean launch);
 
     void setLaunchCameraOnFinishedWaking(boolean launch);
+    /**
+     * Notifies SysUI to launch wallet when device finishes sleeping.
+     */
+    void setLaunchWalletOnFinishedGoingToSleep(boolean launch);
+
+    /**
+     * Notifies SysUI to launch wallet when device finishes waking.
+     */
+    void setLaunchWalletOnFinishedWaking(boolean launch);
 
     void setLaunchEmergencyActionOnFinishedGoingToSleep(boolean launch);
 

@@ -32,8 +32,8 @@ license {
     ],
 }
 
-android_app {
-    name: "PackageInstaller",
+java_defaults {
+    name: "package_installer_defaults",
     defaults: ["platform_app_defaults"],
 
     srcs: [
@@ -47,82 +47,49 @@ android_app {
     sdk_version: "system_current",
     rename_resources_package: false,
     static_libs: [
-        "androidx.leanback_leanback",
+        "android.content.pm.flags-aconfig-java",
+        "android.multiuser.flags-aconfig-java",
+        "android.os.flags-aconfig-java",
         "androidx.annotation_annotation",
         "androidx.fragment_fragment",
-        "androidx.lifecycle_lifecycle-livedata",
+        "androidx.leanback_leanback",
         "androidx.lifecycle_lifecycle-extensions",
-        "android.content.pm.flags-aconfig-java",
-        "android.os.flags-aconfig-java",
-        "android.multiuser.flags-aconfig-java",
+        "androidx.lifecycle_lifecycle-livedata",
+        "com.google.android.material_material",
+        "kotlin-parcelize-runtime",
     ],
 
     lint: {
         error_checks: ["Recycle"],
     },
+    kotlin_plugins: ["kotlin-parcelize-compiler-plugin"],
+
+    optimize: {
+        optimize: true,
+        shrink: true,
+        shrink_resources: true,
+    },
+}
+
+android_app {
+    name: "PackageInstaller",
+    defaults: ["package_installer_defaults"],
 }
 
 android_app {
     name: "PackageInstaller_tablet",
-    defaults: ["platform_app_defaults"],
+    defaults: ["package_installer_defaults"],
 
-    srcs: [
-        "src/**/*.java",
-        "src/**/*.kt",
-    ],
-
-    certificate: "platform",
-    privileged: true,
-    platform_apis: false,
-    sdk_version: "system_current",
-    rename_resources_package: false,
     overrides: ["PackageInstaller"],
 
-    static_libs: [
-        "androidx.leanback_leanback",
-        "androidx.fragment_fragment",
-        "androidx.lifecycle_lifecycle-livedata",
-        "androidx.lifecycle_lifecycle-extensions",
-        "android.content.pm.flags-aconfig-java",
-        "android.os.flags-aconfig-java",
-        "android.multiuser.flags-aconfig-java",
-    ],
     aaptflags: ["--product tablet"],
-
-    lint: {
-        error_checks: ["Recycle"],
-    },
 }
 
 android_app {
     name: "PackageInstaller_tv",
-    defaults: ["platform_app_defaults"],
+    defaults: ["package_installer_defaults"],
 
-    srcs: [
-        "src/**/*.java",
-        "src/**/*.kt",
-    ],
-
-    certificate: "platform",
-    privileged: true,
-    platform_apis: false,
-    sdk_version: "system_current",
-    rename_resources_package: false,
     overrides: ["PackageInstaller"],
 
-    static_libs: [
-        "androidx.leanback_leanback",
-        "androidx.annotation_annotation",
-        "androidx.fragment_fragment",
-        "androidx.lifecycle_lifecycle-livedata",
-        "androidx.lifecycle_lifecycle-extensions",
-        "android.content.pm.flags-aconfig-java",
-        "android.os.flags-aconfig-java",
-        "android.multiuser.flags-aconfig-java",
-    ],
     aaptflags: ["--product tv"],
-
-    lint: {
-        error_checks: ["Recycle"],
-    },
 }

@@ -16,6 +16,8 @@
 
 package com.android.server.display.mode;
 
+import static android.view.Display.Mode.INVALID_MODE_ID;
+
 import android.annotation.Nullable;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -55,15 +57,17 @@ final class VoteSummary {
     @Nullable
     public List<Integer> supportedModeIds;
 
-    final boolean mIsDisplayResolutionRangeVotingEnabled;
+    /**
+     * set of rejected modes due to mode config failure for connected display
+     */
+    public Set<Integer> rejectedModeIds = new HashSet<>();
 
     private final boolean mSupportedModesVoteEnabled;
     private final boolean mSupportsFrameRateOverride;
     private final boolean mLoggingEnabled;
 
-    VoteSummary(boolean isDisplayResolutionRangeVotingEnabled, boolean supportedModesVoteEnabled,
+    VoteSummary(boolean supportedModesVoteEnabled,
             boolean loggingEnabled, boolean supportsFrameRateOverride) {
-        mIsDisplayResolutionRangeVotingEnabled = isDisplayResolutionRangeVotingEnabled;
         mSupportedModesVoteEnabled = supportedModesVoteEnabled;
         mLoggingEnabled = loggingEnabled;
         mSupportsFrameRateOverride = supportsFrameRateOverride;
@@ -97,7 +101,7 @@ final class VoteSummary {
         if (height == Vote.INVALID_SIZE || width == Vote.INVALID_SIZE) {
             width = defaultMode.getPhysicalWidth();
             height = defaultMode.getPhysicalHeight();
-        } else if (mIsDisplayResolutionRangeVotingEnabled) {
+        } else {
             updateSummaryWithBestAllowedResolution(modes);
         }
         if (mLoggingEnabled) {
@@ -126,10 +130,16 @@ final class VoteSummary {
         boolean missingBaseModeRefreshRate = appRequestBaseModeRefreshRate > 0f;
 
         for (Display.Mode mode : modes) {
+            if (mode.getParentModeId() != INVALID_MODE_ID) {
+                continue;
+            }
             if (!validateRefreshRatesSupported(mode)) {
                 continue;
             }
             if (!validateModeSupported(mode)) {
+                continue;
+            }
+            if (!validateModeRejected(mode)) {
                 continue;
             }
             if (!validateModeSize(mode)) {
@@ -285,6 +295,22 @@ final class VoteSummary {
         return false;
     }
 
+    private boolean validateModeRejected(Display.Mode mode) {
+        if (rejectedModeIds == null) {
+            return true;
+        }
+        if (!rejectedModeIds.contains(mode.getModeId())) {
+            return true;
+        }
+        if (mLoggingEnabled) {
+            Slog.w(TAG, "Discarding mode" + mode.getModeId()
+                    + ", is a rejectedMode"
+                    + ": mode.modeId=" + mode.getModeId()
+                    + ", rejectedModeIds=" + rejectedModeIds);
+        }
+        return false;
+    }
+
     private boolean validateRefreshRatesSupported(Display.Mode mode) {
         if (supportedRefreshRates == null || !mSupportedModesVoteEnabled) {
             return true;
@@ -397,6 +423,7 @@ final class VoteSummary {
         requestedRefreshRates.clear();
         supportedRefreshRates = null;
         supportedModeIds = null;
+        rejectedModeIds.clear();
         if (mLoggingEnabled) {
             Slog.i(TAG, "Summary reset: " + this);
         }
@@ -421,8 +448,7 @@ final class VoteSummary {
                 + ", requestRefreshRates=" + requestedRefreshRates
                 + ", supportedRefreshRates=" + supportedRefreshRates
                 + ", supportedModeIds=" + supportedModeIds
-                + ", mIsDisplayResolutionRangeVotingEnabled="
-                + mIsDisplayResolutionRangeVotingEnabled
+                + ", rejectedModeIds=" + rejectedModeIds
                 + ", mSupportedModesVoteEnabled=" + mSupportedModesVoteEnabled
                 + ", mSupportsFrameRateOverride=" + mSupportsFrameRateOverride + " }";
     }

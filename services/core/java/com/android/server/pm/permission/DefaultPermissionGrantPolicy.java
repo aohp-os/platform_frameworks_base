@@ -48,8 +48,8 @@ import android.os.Message;
 import android.os.Process;
 import android.os.UserHandle;
 import android.os.storage.StorageManager;
-import android.permission.PermissionManager;
 import android.permission.flags.Flags;
+import android.permission.PermissionManager;
 import android.print.PrintManager;
 import android.provider.CalendarContract;
 import android.provider.ContactsContract;
@@ -143,6 +143,7 @@ final class DefaultPermissionGrantPolicy {
         PHONE_PERMISSIONS.add(Manifest.permission.ADD_VOICEMAIL);
         PHONE_PERMISSIONS.add(Manifest.permission.USE_SIP);
         PHONE_PERMISSIONS.add(Manifest.permission.PROCESS_OUTGOING_CALLS);
+        PHONE_PERMISSIONS.add(Manifest.permission.ANSWER_PHONE_CALLS);
     }
 
     private static final Set<String> CONTACTS_PERMISSIONS = new ArraySet<>();
@@ -216,13 +217,12 @@ final class DefaultPermissionGrantPolicy {
 
     private static final Set<String> SENSORS_PERMISSIONS = new ArraySet<>();
     static {
-        if (Flags.replaceBodySensorPermissionEnabled()) {
-            SENSORS_PERMISSIONS.add(HealthPermissions.READ_HEART_RATE);
-            SENSORS_PERMISSIONS.add(HealthPermissions.READ_HEALTH_DATA_IN_BACKGROUND);
-        } else {
-            SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS);
-            SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS_BACKGROUND);
-        }
+        SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS);
+        SENSORS_PERMISSIONS.add(Manifest.permission.BODY_SENSORS_BACKGROUND);
+
+
+        SENSORS_PERMISSIONS.add(HealthPermissions.READ_HEART_RATE);
+        SENSORS_PERMISSIONS.add(HealthPermissions.READ_HEALTH_DATA_IN_BACKGROUND);
     }
 
     private static final Set<String> STORAGE_PERMISSIONS = new ArraySet<>();
@@ -238,6 +238,9 @@ final class DefaultPermissionGrantPolicy {
 
     private static final Set<String> NEARBY_DEVICES_PERMISSIONS = new ArraySet<>();
     static {
+        if (Flags.accessLocalNetworkPermissionEnabled()) {
+            NEARBY_DEVICES_PERMISSIONS.add(Manifest.permission.ACCESS_LOCAL_NETWORK);
+        }
         NEARBY_DEVICES_PERMISSIONS.add(Manifest.permission.BLUETOOTH_ADVERTISE);
         NEARBY_DEVICES_PERMISSIONS.add(Manifest.permission.BLUETOOTH_CONNECT);
         NEARBY_DEVICES_PERMISSIONS.add(Manifest.permission.BLUETOOTH_SCAN);
@@ -897,7 +900,7 @@ final class DefaultPermissionGrantPolicy {
                     SearchManager.INTENT_ACTION_GLOBAL_SEARCH, userId);
             grantPermissionsToSystemPackage(pm, voiceSearchPackage,
                     userId, PHONE_PERMISSIONS, CALENDAR_PERMISSIONS, NEARBY_DEVICES_PERMISSIONS,
-                    COARSE_BACKGROUND_LOCATION_PERMISSIONS);
+                    COARSE_BACKGROUND_LOCATION_PERMISSIONS, CONTACTS_PERMISSIONS);
             revokeRuntimePermissions(pm, voiceSearchPackage,
                 FINE_LOCATION_PERMISSIONS, false, userId);
         }
@@ -1058,6 +1061,7 @@ final class DefaultPermissionGrantPolicy {
         }
     }
 
+    @Deprecated
     public void grantDefaultPermissionsToEnabledCarrierApps(String[] packageNames, int userId) {
         Log.i(TAG, "Granting permissions to enabled carrier apps for user:" + userId);
         if (packageNames == null) {

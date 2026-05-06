@@ -3,18 +3,24 @@ package com.android.systemui.qs.pipeline.data.repository
 import android.annotation.UserIdInt
 import android.database.ContentObserver
 import android.provider.Settings
+import com.android.app.tracing.coroutines.launchTraced as launch
+import com.android.systemui.Flags.hsuQsChanges
 import com.android.systemui.common.coroutine.ConflatedCallbackFlow
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.qs.pipeline.data.model.RestoreData
 import com.android.systemui.qs.pipeline.shared.TileSpec
+import com.android.systemui.qs.pipeline.shared.TilesUpgradePath
 import com.android.systemui.qs.pipeline.shared.logging.QSPipelineLogger
+import com.android.systemui.user.domain.interactor.HeadlessSystemUserMode
 import com.android.systemui.util.settings.SecureSettings
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -23,7 +29,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
-import com.android.app.tracing.coroutines.launchTraced as launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -42,33 +47,51 @@ constructor(
     @Assisted private val userId: Int,
     private val defaultTilesRepository: DefaultTilesRepository,
     private val secureSettings: SecureSettings,
+    private val hsum: HeadlessSystemUserMode,
     private val logger: QSPipelineLogger,
     @Application private val applicationScope: CoroutineScope,
     @Background private val backgroundDispatcher: CoroutineDispatcher,
 ) {
 
+    private val _tilesUpgradePath = Channel<TilesUpgradePath>(capacity = 3)
+    val tilesUpgradePath: ReceiveChannel<TilesUpgradePath> = _tilesUpgradePath
+
     private val defaultTiles: List<TileSpec>
-        get() = defaultTilesRepository.defaultTiles
+        get() = defaultTilesRepository.getDefaultTiles(isHeadlessSystemUser)
 
     private val changeEvents =
         MutableSharedFlow<ChangeAction>(extraBufferCapacity = CHANGES_BUFFER_SIZE)
+
+    private var isHeadlessSystemUser = false
 
     private lateinit var _tiles: StateFlow<List<TileSpec>>
 
     suspend fun tiles(): Flow<List<TileSpec>> {
         if (!::_tiles.isInitialized) {
+            withContext(backgroundDispatcher) {
+              isHeadlessSystemUser = hsuQsChanges() && hsum.isHeadlessSystemUser(userId)
+            }
             _tiles =
                 changeEvents
                     .scan(loadTilesFromSettingsAndParse(userId)) { current, change ->
                         change
                             .apply(current)
-                            .also {
-                                if (current != it) {
+                            .also { afterRestore ->
+                                if (current != afterRestore) {
                                     if (change is RestoreTiles) {
-                                        logger.logTilesRestoredAndReconciled(current, it, userId)
+                                        logger.logTilesRestoredAndReconciled(
+                                            current,
+                                            afterRestore,
+                                            userId,
+                                        )
                                     } else {
-                                        logger.logProcessTileChange(change, it, userId)
+                                        logger.logProcessTileChange(change, afterRestore, userId)
                                     }
+                                }
+                                if (change is RestoreTiles) {
+                                    _tilesUpgradePath.send(
+                                        TilesUpgradePath.RestoreFromBackup(afterRestore.toSet())
+                                    )
                                 }
                             }
                             // Distinct preserves the order of the elements removing later
@@ -147,7 +170,13 @@ constructor(
     }
 
     private suspend fun loadTilesFromSettingsAndParse(userId: Int): List<TileSpec> {
-        return parseTileSpecs(loadTilesFromSettings(userId), userId)
+        val loadedTiles = loadTilesFromSettings(userId)
+        if (loadedTiles.isNotEmpty()) {
+            _tilesUpgradePath.send(TilesUpgradePath.ReadFromSettings(loadedTiles.toSet()))
+        } else {
+            _tilesUpgradePath.send(TilesUpgradePath.DefaultSet)
+        }
+        return parseTileSpecs(loadedTiles, userId)
     }
 
     private suspend fun loadTilesFromSettings(userId: Int): List<TileSpec> {
@@ -165,8 +194,9 @@ constructor(
         changeEvents.emit(PrependDefault(defaultTiles))
     }
 
-    suspend fun resetToDefault() {
+    suspend fun resetToDefault(): List<TileSpec> {
         changeEvents.emit(ResetToDefault(defaultTiles))
+        return defaultTiles
     }
 
     sealed interface ChangeAction {

@@ -23,7 +23,6 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.os.BatteryManager;
-import android.platform.test.ravenwood.RavenwoodRule;
 
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
@@ -34,24 +33,22 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
-import java.nio.file.Files;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 public class BatteryStatsResetTest {
 
     @Rule(order = 0)
-    public final RavenwoodRule mRavenwood = new RavenwoodRule.Builder()
-            .setProvideMainThread(true)
-            .build();
+    public final BatteryUsageStatsRule mStatsRule = new BatteryUsageStatsRule()
+            .createTempDirectory();
 
     private static final int BATTERY_NOMINAL_VOLTAGE_MV = 3700;
     private static final int BATTERY_CAPACITY_UAH = 4_000_000;
     private static final int BATTERY_CHARGE_RATE_SECONDS_PER_LEVEL = 100;
 
     private MockClock mMockClock;
-    private BatteryStatsImpl.BatteryStatsConfig mConfig;
     private MockBatteryStatsImpl mBatteryStatsImpl;
+    private BatteryStatsImpl.BatteryStatsConfig mConfig;
 
     /**
      * Battery status. Must be one of the following:
@@ -92,10 +89,9 @@ public class BatteryStatsResetTest {
 
     @Before
     public void setUp() throws IOException {
-        mConfig = mock(BatteryStatsImpl.BatteryStatsConfig.class);
-        mMockClock = new MockClock();
-        mBatteryStatsImpl = new MockBatteryStatsImpl(mConfig, mMockClock,
-                Files.createTempDirectory("BatteryStatsResetTest").toFile());
+        mMockClock = mStatsRule.getMockClock();
+        mConfig = mStatsRule.getBatteryStatsConfig();
+        mBatteryStatsImpl = mStatsRule.getBatteryStats();
         mBatteryStatsImpl.onSystemReady(mock(Context.class));
 
         // Set up the battery state. Start off with a fully charged plugged in battery.
@@ -112,7 +108,9 @@ public class BatteryStatsResetTest {
 
     @Test
     public void testResetOnUnplug_highBatteryLevel() {
+        long initialStartTime = mBatteryStatsImpl.getHistory().getStartTime();
         when(mConfig.shouldResetOnUnplugHighBatteryLevel()).thenReturn(true);
+        when(mConfig.getHighBatteryLevelAfterCharge()).thenReturn(94);
 
         long expectedResetTimeUs = 0;
 
@@ -120,9 +118,9 @@ public class BatteryStatsResetTest {
         dischargeToLevel(60);
 
         plugBattery(BatteryManager.BATTERY_PLUGGED_USB);
-        chargeToLevel(80);
+        chargeToLevel(93);
         unplugBattery();
-        // Reset should not occur until battery level above 90.
+        // Reset should not occur until battery level above getHighBatteryLevelAfterCharge.
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
         plugBattery(BatteryManager.BATTERY_PLUGGED_USB);
@@ -145,10 +143,12 @@ public class BatteryStatsResetTest {
         unplugBattery();
         // Reset should not occur since the high battery level logic has been disabled.
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
+        assertThat(mBatteryStatsImpl.getHistory().getStartTime()).isEqualTo(initialStartTime);
     }
 
     @Test
     public void testResetOnUnplug_significantCharge() {
+        long initialStartTime = mBatteryStatsImpl.getHistory().getStartTime();
         when(mConfig.shouldResetOnUnplugAfterSignificantCharge()).thenReturn(true);
         long expectedResetTimeUs = 0;
 
@@ -189,6 +189,7 @@ public class BatteryStatsResetTest {
         unplugBattery();
         // Reset should not occur after significant charge amount.
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
+        assertThat(mBatteryStatsImpl.getHistory().getStartTime()).isEqualTo(initialStartTime);
     }
 
     @Test
@@ -244,7 +245,7 @@ public class BatteryStatsResetTest {
     }
 
     @Test
-    public void testResetWhilePluggedIn_longPlugIn() {
+    public void testResetWhilePluggedIn_longPlugIn() throws Throwable {
         // disable high battery level reset on unplug.
         when(mConfig.shouldResetOnUnplugHighBatteryLevel()).thenReturn(false);
         when(mConfig.shouldResetOnUnplugAfterSignificantCharge()).thenReturn(false);
@@ -253,18 +254,22 @@ public class BatteryStatsResetTest {
 
         plugBattery(BatteryManager.BATTERY_PLUGGED_USB);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
-        // Reset should not occur
+        mStatsRule.waitForBackgroundThread();
+        // Reset should not have occurred
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+
         // Reset should still not occur
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
+
         // Reset 47 hour threshold crossed, reset should occur.
         expectedResetTimeUs = mMockClock.elapsedRealtime() * 1000;
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
@@ -272,12 +277,14 @@ public class BatteryStatsResetTest {
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
         // Reset should not occur
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
         // Reset another 47 hour threshold crossed, reset should occur.
         expectedResetTimeUs = mMockClock.elapsedRealtime() * 1000;
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
@@ -285,6 +292,7 @@ public class BatteryStatsResetTest {
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
         // Reset should not occur
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
@@ -294,12 +302,14 @@ public class BatteryStatsResetTest {
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
         // Reset should not occur, since unplug occurred recently.
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
 
         // Increment time a day
         incTimeMs(24L * 60L * 60L * 1000L);
         mBatteryStatsImpl.maybeResetWhilePluggedInLocked();
+        mStatsRule.waitForBackgroundThread();
         // Reset another 47 hour threshold crossed, reset should occur.
         expectedResetTimeUs = mMockClock.elapsedRealtime() * 1000;
         assertThat(mBatteryStatsImpl.getStatsStartRealtime()).isEqualTo(expectedResetTimeUs);
@@ -353,5 +363,10 @@ public class BatteryStatsResetTest {
                 mBatteryChargeFullUah, mBatteryChargeTimeToFullSeconds,
                 mMockClock.elapsedRealtime(), mMockClock.uptimeMillis(),
                 mMockClock.currentTimeMillis());
+        try {
+            mStatsRule.waitForBackgroundThread();
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
     }
 }

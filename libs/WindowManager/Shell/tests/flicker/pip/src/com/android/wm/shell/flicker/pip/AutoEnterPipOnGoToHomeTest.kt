@@ -16,28 +16,24 @@
 
 package com.android.wm.shell.flicker.pip
 
-import android.platform.test.annotations.FlakyTest
+import androidx.test.filters.FlakyTest
 import android.platform.test.annotations.Postsubmit
 import android.platform.test.annotations.Presubmit
-import android.platform.test.annotations.RequiresDevice
+import androidx.test.filters.RequiresDevice
 import android.platform.test.annotations.RequiresFlagsDisabled
 import android.tools.flicker.junit.FlickerParametersRunnerFactory
-import android.tools.flicker.legacy.FlickerBuilder
-import android.tools.flicker.legacy.LegacyFlickerTest
-import android.tools.flicker.subject.exceptions.ExceptionMessageBuilder
-import android.tools.flicker.subject.exceptions.IncorrectRegionException
-import android.tools.flicker.subject.layers.LayerSubject
+import android.tools.flicker.FlickerBuilder
+import android.tools.flicker.FlickerTest
 import com.android.server.wm.flicker.helpers.PipAppHelper
 import com.android.wm.shell.Flags
 import com.android.wm.shell.flicker.pip.common.EnterPipTransition
+import com.android.wm.shell.flicker.pip.common.widthNotSmallerThan
 import org.junit.Assume
 import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
 import org.junit.runners.Parameterized
-import kotlin.math.abs
-
 
 /**
  * Test entering pip from an app via auto-enter property when navigating to home.
@@ -55,7 +51,7 @@ import kotlin.math.abs
  * ```
  *     1. All assertions are inherited from [EnterPipTest]
  *     2. Part of the test setup occurs automatically via
- *        [android.tools.flicker.legacy.runner.TransitionRunner],
+ *        [android.tools.flicker.runner.TransitionRunner],
  *        including configuring navigation mode, initial orientation and ensuring no
  *        apps are running before setup
  * ```
@@ -65,7 +61,7 @@ import kotlin.math.abs
 @Parameterized.UseParametersRunnerFactory(FlickerParametersRunnerFactory::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 @RequiresFlagsDisabled(Flags.FLAG_ENABLE_PIP2)
-open class AutoEnterPipOnGoToHomeTest(flicker: LegacyFlickerTest) : EnterPipTransition(flicker) {
+open class AutoEnterPipOnGoToHomeTest(flicker: FlickerTest) : EnterPipTransition(flicker) {
     override val pipApp: PipAppHelper = PipAppHelper(instrumentation)
 
     override val thisTransition: FlickerBuilder.() -> Unit = { transitions { tapl.goHome() } }
@@ -74,22 +70,6 @@ open class AutoEnterPipOnGoToHomeTest(flicker: LegacyFlickerTest) : EnterPipTran
         setup {
             pipApp.launchViaIntent(wmHelper)
             pipApp.enableAutoEnterForPipActivity()
-        }
-    }
-
-    override val defaultTeardown: FlickerBuilder.() -> Unit = { teardown { pipApp.exit(wmHelper) } }
-
-    private val widthNotSmallerThan: LayerSubject.(LayerSubject) -> Unit = {
-        val width = visibleRegion.region.bounds.width()
-        val otherWidth = it.visibleRegion.region.bounds.width()
-        if (width < otherWidth && abs(width - otherWidth) > EPSILON) {
-            val errorMsgBuilder =
-                ExceptionMessageBuilder()
-                    .forSubject(this)
-                    .forIncorrectRegion("width. $width smaller than $otherWidth")
-                    .setExpected(width)
-                    .setActual(otherWidth)
-            throw IncorrectRegionException(errorMsgBuilder)
         }
     }
 
@@ -134,7 +114,7 @@ open class AutoEnterPipOnGoToHomeTest(flicker: LegacyFlickerTest) : EnterPipTran
     /** Checks that [pipApp] window is animated towards default position in right bottom corner */
     @FlakyTest(bugId = 255578530)
     @Test
-    fun pipLayerMovesTowardsRightBottomCorner() {
+    open fun pipLayerMovesTowardsRightBottomCorner() {
         // in gestural nav the swipe makes PiP first go upwards
         Assume.assumeFalse(flicker.scenario.isGesturalNavigation)
         flicker.assertLayers {
@@ -160,10 +140,5 @@ open class AutoEnterPipOnGoToHomeTest(flicker: LegacyFlickerTest) : EnterPipTran
     @Test
     override fun visibleLayersShownMoreThanOneConsecutiveEntry() {
         super.visibleLayersShownMoreThanOneConsecutiveEntry()
-    }
-
-    companion object {
-        // TODO(b/363080056): A margin of error allowed on certain layer size calculations.
-        const val EPSILON = 1
     }
 }

@@ -16,6 +16,7 @@
 
 package com.android.keyguard
 
+import android.hardware.input.InputManager
 import android.telephony.PinResult
 import android.telephony.TelephonyManager
 import android.testing.TestableLooper
@@ -35,6 +36,7 @@ import com.android.systemui.res.R
 import com.android.systemui.testKosmos
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.wrapper.LockPatternCheckerWrapper
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,7 +59,6 @@ class KeyguardSimPukViewControllerTest : SysuiTestCase() {
     @Mock private lateinit var keyguardSecurityCallback: KeyguardSecurityCallback
     @Mock private lateinit var messageAreaControllerFactory: KeyguardMessageAreaController.Factory
     @Mock private lateinit var latencyTracker: LatencyTracker
-    @Mock private lateinit var liftToActivateListener: LiftToActivateListener
     @Mock private lateinit var telephonyManager: TelephonyManager
     @Mock private lateinit var falsingCollector: FalsingCollector
     @Mock private lateinit var emergencyButtonController: EmergencyButtonController
@@ -66,6 +67,8 @@ class KeyguardSimPukViewControllerTest : SysuiTestCase() {
     private lateinit var keyguardMessageAreaController:
         KeyguardMessageAreaController<BouncerKeyguardMessageArea>
     @Mock private lateinit var mUserActivityNotifier: UserActivityNotifier
+    @Mock private lateinit var inputManager: InputManager
+    @Mock private lateinit var lockPatternChecker: LockPatternCheckerWrapper
 
     private val kosmos = testKosmos()
 
@@ -95,7 +98,6 @@ class KeyguardSimPukViewControllerTest : SysuiTestCase() {
                 keyguardSecurityCallback,
                 messageAreaControllerFactory,
                 latencyTracker,
-                liftToActivateListener,
                 telephonyManager,
                 falsingCollector,
                 emergencyButtonController,
@@ -104,6 +106,8 @@ class KeyguardSimPukViewControllerTest : SysuiTestCase() {
                 keyguardKeyboardInteractor,
                 kosmos.bouncerHapticPlayer,
                 mUserActivityNotifier,
+                inputManager,
+                lockPatternChecker,
             )
         underTest.init()
     }

@@ -16,6 +16,9 @@
 
 package com.android.server.wm;
 
+import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
+import static android.window.TaskSnapshot.REFERENCE_NONE;
+
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_SCREENSHOT;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
@@ -26,18 +29,21 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.Trace;
 import android.util.ArraySet;
-import android.util.IntArray;
 import android.util.Slog;
 import android.view.Display;
-import android.window.ScreenCapture;
+import android.window.ScreenCapture.ScreenCaptureParams;
+import android.window.ScreenCaptureInternal;
 import android.window.TaskSnapshot;
+import android.window.TaskSnapshotManager;
 
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.policy.WindowManagerPolicy.ScreenOffListener;
 import com.android.server.wm.BaseAppSnapshotPersister.PersistInfoProvider;
+import com.android.window.flags.Flags;
 
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.function.Consumer;
 
 /**
  * When an app token becomes invisible, we take a snapshot (bitmap) of the corresponding task and
@@ -56,24 +62,30 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
     static final String SNAPSHOTS_DIRNAME = "snapshots";
 
     private final TaskSnapshotPersister mPersister;
-    private final IntArray mSkipClosingAppSnapshotTasks = new IntArray();
     private final ArraySet<Task> mTmpTasks = new ArraySet<>();
     private final Handler mHandler = new Handler();
 
     private final PersistInfoProvider mPersistInfoProvider;
+    final boolean mOnlyCacheLowResSnapshot;
 
     TaskSnapshotController(WindowManagerService service, SnapshotPersistQueue persistQueue) {
         super(service);
-        mPersistInfoProvider = createPersistInfoProvider(service,
-                Environment::getDataSystemCeDirectory);
-        mPersister = new TaskSnapshotPersister(persistQueue, mPersistInfoProvider);
-
-        initialize(new TaskSnapshotCache(new AppSnapshotLoader(mPersistInfoProvider)));
         final boolean snapshotEnabled =
                 !service.mContext
                         .getResources()
                         .getBoolean(com.android.internal.R.bool.config_disableTaskSnapshots);
         setSnapshotEnabled(snapshotEnabled);
+        mPersistInfoProvider = createPersistInfoProvider(service,
+                Environment::getDataSystemCeDirectory);
+
+        mPersister = new TaskSnapshotPersister(
+                persistQueue,
+                mPersistInfoProvider,
+                shouldDisableSnapshots());
+        initialize(new TaskSnapshotCache(new AppSnapshotLoader(mPersistInfoProvider)));
+        mOnlyCacheLowResSnapshot = Flags.reduceTaskSnapshotMemoryUsage()
+                && Flags.respectRequestedTaskSnapshotResolution()
+                && mPersistInfoProvider.enableLowResSnapshots();
     }
 
     static PersistInfoProvider createPersistInfoProvider(WindowManagerService service,
@@ -108,42 +120,6 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
                 enableLowResSnapshots, lowResScaleFactor, use16BitFormat);
     }
 
-    // Still needed for legacy transition.(AppTransitionControllerTest)
-    void handleClosingApps(ArraySet<ActivityRecord> closingApps) {
-        if (shouldDisableSnapshots()) {
-            return;
-        }
-        // We need to take a snapshot of the task if and only if all activities of the task are
-        // either closing or hidden.
-        mTmpTasks.clear();
-        for (int i = closingApps.size() - 1; i >= 0; i--) {
-            final ActivityRecord activity = closingApps.valueAt(i);
-            if (activity.isActivityTypeHome()) continue;
-            final Task task = activity.getTask();
-            if (task == null) continue;
-
-            getClosingTasksInner(task, mTmpTasks);
-        }
-        snapshotTasks(mTmpTasks);
-        mTmpTasks.clear();
-        mSkipClosingAppSnapshotTasks.clear();
-    }
-
-    /**
-     * Adds the given {@param tasks} to the list of tasks which should not have their snapshots
-     * taken upon the next processing of the set of closing apps. The caller is responsible for
-     * calling {@link #snapshotTasks} to ensure that the task has an up-to-date snapshot.
-     */
-    @VisibleForTesting
-    void addSkipClosingAppSnapshotTasks(Set<Task> tasks) {
-        if (shouldDisableSnapshots()) {
-            return;
-        }
-        for (Task task : tasks) {
-            mSkipClosingAppSnapshotTasks.add(task.mTaskId);
-        }
-    }
-
     void snapshotTasks(ArraySet<Task> tasks) {
         for (int i = tasks.size() - 1; i >= 0; i--) {
             recordSnapshot(tasks.valueAt(i));
@@ -154,6 +130,8 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
      * The attributes of task snapshot are based on task configuration. But sometimes the
      * configuration may have been changed during a transition, so supply the ChangeInfo that
      * stored the previous appearance of the closing task.
+     *
+     * The snapshot won't be created immediately if it should be captured as fake snapshot.
      */
     void recordSnapshot(Task task, Transition.ChangeInfo changeInfo) {
         mCurrentChangeInfo = changeInfo;
@@ -164,24 +142,172 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
         }
     }
 
-    TaskSnapshot recordSnapshot(Task task) {
-        final TaskSnapshot snapshot = recordSnapshotInner(task);
-        if (snapshot != null && !task.isActivityTypeHome()) {
-            mPersister.persistSnapshot(task.mTaskId, task.mUserId, snapshot);
-            task.onSnapshotChanged(snapshot);
+    void recordSnapshot(Task task) {
+        if (shouldDisableSnapshots()) {
+            return;
         }
-        return snapshot;
+        final SnapshotSupplier supplier = getRecordSnapshotSupplier(task, REFERENCE_NONE);
+        if (supplier == null) {
+            return;
+        }
+        final int mode = getSnapshotMode(task);
+        if (mode == SNAPSHOT_MODE_APP_THEME) {
+            mService.mH.post(supplier::handleSnapshot);
+        } else {
+            supplier.handleSnapshot();
+        }
     }
 
     /**
-     * Retrieves a snapshot. If {@param restoreFromDisk} equals {@code true}, DO NOT HOLD THE WINDOW
-     * MANAGER LOCK WHEN CALLING THIS METHOD!
+     * Note that the snapshot is not created immediately, if the returned supplier is non-null, the
+     * caller must call {@link AbsAppSnapshotController.SnapshotSupplier#get} or
+     * {@link AbsAppSnapshotController.SnapshotSupplier#handleSnapshot} to complete the entire
+     * record request.
+     */
+    SnapshotSupplier getRecordSnapshotSupplier(Task task,
+            @TaskSnapshot.ReferenceFlags int initialUsage) {
+        return recordSnapshotInner(task, true /* allowAppTheme */, snapshot -> {
+            if (initialUsage != REFERENCE_NONE) {
+                snapshot.addReference(initialUsage);
+            }
+            if (!task.isActivityTypeHome()) {
+                final var updateCacheFunction = mOnlyCacheLowResSnapshot
+                        ? updateLowResToCacheFunction(task, snapshot.getId()) : null;
+                mPersister.persistSnapshotAndConvert(
+                        task.mTaskId, task.mUserId, snapshot, updateCacheFunction);
+                task.onSnapshotChanged(snapshot);
+            }
+        });
+    }
+
+    private Consumer<BaseAppSnapshotPersister.LowResSnapshotSupplier> updateLowResToCacheFunction(
+            Task task, long snapshotId) {
+        return supplier -> mHandler.post(() -> {
+            boolean abort = false;
+            synchronized (mService.mGlobalLock) {
+                if (!task.isAttached()) {
+                    abort = true;
+                } else {
+                    final TaskSnapshot previous = mCache.getSnapshot(task.mTaskId,
+                            TaskSnapshotManager.RESOLUTION_ANY, TaskSnapshot.REFERENCE_NONE);
+                    if (previous == null || previous.isLowResolution()
+                            || previous.getId() != snapshotId) {
+                        abort = true;
+                    }
+                }
+            }
+            if (abort) {
+                supplier.abort();
+                return;
+            }
+            try {
+                Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "updateLowSnapshotToCache");
+                final TaskSnapshot converted = supplier.getLowResSnapshot();
+                if (converted == null) {
+                    return;
+                }
+                synchronized (mService.mGlobalLock) {
+                    if (!task.isAttached()
+                            || !updateCacheWithLowResSnapshotIfNeeded(task, converted)) {
+                        converted.closeBuffer();
+                    }
+                }
+            } finally {
+                Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
+            }
+        });
+    }
+
+    /**
+     * Updates the cache with the low-resolution snapshot if the existing snapshot in the cache
+     * is a high-resolution snapshot with the same id.
+     *
+     * @param task The task associated with the snapshot.
+     * @param lowSnapshot The low-resolution snapshot to update the cache with.
+     * @return {@code true} if the cache was updated, {@code false} otherwise.
+     */
+    boolean updateCacheWithLowResSnapshotIfNeeded(Task task, TaskSnapshot lowSnapshot) {
+        final TaskSnapshot tmp = getSnapshot(
+                task.mTaskId, TaskSnapshotManager.RESOLUTION_ANY);
+        if (tmp != null && !tmp.isLowResolution() && tmp.getId() == lowSnapshot.getId()) {
+            mCache.putSnapshot(task, lowSnapshot);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Retrieves a snapshot from cache.
+     * @deprecated Use {@link #getSnapshot(int, int)}
+     */
+    @Deprecated
+    @Nullable
+    TaskSnapshot getSnapshot(int taskId, boolean isLowResolution) {
+        return getSnapshot(taskId, false /* isLowResolution */, REFERENCE_NONE);
+    }
+
+    /**
+     * Retrieves a snapshot from cache.
      */
     @Nullable
-    TaskSnapshot getSnapshot(int taskId, int userId, boolean restoreFromDisk,
-            boolean isLowResolution) {
-        return mCache.getSnapshot(taskId, userId, restoreFromDisk, isLowResolution
-                && mPersistInfoProvider.enableLowResSnapshots());
+    TaskSnapshot getSnapshot(int taskId,
+            @TaskSnapshotManager.Resolution int retrieveResolution) {
+        return getSnapshot(taskId, retrieveResolution /* retrieveResolution */,
+                TaskSnapshot.REFERENCE_NONE);
+    }
+
+    /**
+     * Retrieves a snapshot from cache.
+     * @deprecated Use {@link #getSnapshot(int, int, int)}
+     */
+    @Deprecated
+    @Nullable
+    TaskSnapshot getSnapshot(int taskId, boolean isLowResolution,
+            @TaskSnapshot.ReferenceFlags int usage) {
+        return mCache.getSnapshot(taskId, isLowResolution
+                && mPersistInfoProvider.enableLowResSnapshots(), usage);
+    }
+
+    /**
+     * Retrieves a snapshot from cache.
+     */
+    @Nullable
+    TaskSnapshot getSnapshot(int taskId,
+            @TaskSnapshotManager.Resolution int retrieveResolution,
+            @TaskSnapshot.ReferenceFlags int usage) {
+        if (retrieveResolution == TaskSnapshotManager.RESOLUTION_LOW
+                && !mPersistInfoProvider.enableLowResSnapshots()) {
+            retrieveResolution = TaskSnapshotManager.RESOLUTION_HIGH;
+        }
+        return mCache.getSnapshot(taskId, retrieveResolution, usage);
+    }
+
+    /**
+     * Retrieves a snapshot from disk.
+     * DO NOT HOLD THE WINDOW MANAGER LOCK WHEN CALLING THIS METHOD!
+     */
+    @Nullable
+    TaskSnapshot getSnapshotFromDisk(int taskId, int userId,
+            boolean isLowResolution, @TaskSnapshot.ReferenceFlags int usage) {
+        return mCache.getSnapshotFromDisk(taskId, userId, isLowResolution
+                && mPersistInfoProvider.enableLowResSnapshots(), usage);
+    }
+
+    /**
+     * Creates a low-resolution snapshot from a given high-resolution snapshot.
+     * This is only valid if persisting low-resolution snapshots is enabled.
+     *
+     * @param inCacheSnapshot The high-resolution snapshot from cache which to create the
+     *                        low-resolution version.
+     * @return The low-resolution snapshot, or {@code null} if persisting low-resolution snapshots
+     *         is not enabled.
+     */
+    TaskSnapshot createLowResSnapshot(TaskSnapshot inCacheSnapshot) {
+        if (!mPersistInfoProvider.enableLowResSnapshots()) {
+            return null;
+        }
+        return TaskSnapshotConvertUtil.convertSnapshotToLowRes(
+                inCacheSnapshot, mPersistInfoProvider.lowResScaleFactor());
     }
 
     /**
@@ -189,7 +315,13 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
      * last taken, or -1 if no such snapshot exists for that task.
      */
     long getSnapshotCaptureTime(int taskId) {
-        final TaskSnapshot snapshot = mCache.getSnapshot(taskId);
+        final TaskSnapshot snapshot;
+        if (Flags.reduceTaskSnapshotMemoryUsage()) {
+            snapshot = mCache.getSnapshot(taskId, TaskSnapshotManager.RESOLUTION_ANY,
+                    TaskSnapshot.REFERENCE_NONE);
+        } else {
+            snapshot = mCache.getSnapshot(taskId, false /* isLowResolution */);
+        }
         if (snapshot != null) {
             return snapshot.getCaptureTime();
         }
@@ -219,46 +351,48 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
     }
 
     @Nullable
-    private ScreenCapture.ScreenshotHardwareBuffer createImeSnapshot(@NonNull Task task,
-            int pixelFormat) {
+    private ScreenCaptureInternal.ScreenshotHardwareBuffer createImeScreenshot(
+            @NonNull Task task, @PixelFormat.Format int pixelFormat) {
         if (task.getSurfaceControl() == null) {
             if (DEBUG_SCREENSHOT) {
-                Slog.w(TAG_WM, "Failed to take screenshot. No surface control for " + task);
+                Slog.w(TAG_WM, "Failed to create IME screenshot. No surface control for " + task);
             }
             return null;
         }
         final WindowState imeWindow = task.getDisplayContent().mInputMethodWindow;
-        ScreenCapture.ScreenshotHardwareBuffer imeBuffer = null;
         if (imeWindow != null && imeWindow.isVisible()) {
             final Rect bounds = imeWindow.getParentFrame();
             bounds.offsetTo(0, 0);
-            ScreenCapture.LayerCaptureArgs captureArgs = new ScreenCapture.LayerCaptureArgs.Builder(
-                    imeWindow.getSurfaceControl())
-                    .setSourceCrop(bounds)
-                    .setFrameScale(1.0f)
-                    .setPixelFormat(pixelFormat)
-                    .setCaptureSecureLayers(true)
-                    .build();
-            imeBuffer = ScreenCapture.captureLayers(captureArgs);
+            final var captureArgs =
+                    new ScreenCaptureInternal.LayerCaptureArgs.Builder(
+                                    imeWindow.getSurfaceControl())
+                            .setSourceCrop(bounds)
+                            .setFrameScale(1.0f)
+                            .setPixelFormat(pixelFormat)
+                            .setSecureContentPolicy(
+                                    ScreenCaptureParams.SECURE_CONTENT_POLICY_CAPTURE)
+                            .build();
+            return ScreenCaptureInternal.captureLayers(captureArgs);
         }
-        return imeBuffer;
+        return null;
     }
 
     /**
-     * Create the snapshot of the IME surface on the task which used for placing on the closing
-     * task to keep IME visibility while app transitioning.
+     * Captures the screenshot of the IME surface on the task. This will be placed on the closing
+     * task snapshot, to maintain the IME visibility while transitioning to a different task.
      */
     @Nullable
-    ScreenCapture.ScreenshotHardwareBuffer snapshotImeFromAttachedTask(@NonNull Task task) {
-        // Check if the IME targets task ready to take the corresponding IME snapshot, if not,
-        // means the task is not yet visible for some reasons and no need to snapshot IME surface.
-        if (checkIfReadyToSnapshot(task) == null) {
+    ScreenCaptureInternal.ScreenshotHardwareBuffer screenshotImeFromAttachedTask(
+            @NonNull Task task) {
+        // Check if the IME target task is ready to capture the IME screenshot. If not, this means
+        // the task is not yet visible for some reason, so it doesn't need the screenshot.
+        if (checkIfReadyToScreenshot(task) == null) {
             return null;
         }
         final int pixelFormat = mPersistInfoProvider.use16BitFormat()
                     ? PixelFormat.RGB_565
                     : PixelFormat.RGBA_8888;
-        return createImeSnapshot(task, pixelFormat);
+        return createImeScreenshot(task, pixelFormat);
     }
 
     @Override
@@ -274,20 +408,6 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
     @Override
     protected Rect getLetterboxInsets(ActivityRecord topActivity) {
         return topActivity.getLetterboxInsets();
-    }
-
-    void getClosingTasksInner(Task task, ArraySet<Task> outClosingTasks) {
-        // Since RecentsAnimation will handle task snapshot while switching apps with the
-        // best capture timing (e.g. IME window capture),
-        // No need additional task capture while task is controlled by RecentsAnimation.
-        if (isAnimatingByRecents(task)) {
-            mSkipClosingAppSnapshotTasks.add(task.mTaskId);
-        }
-        // If the task of the app is not visible anymore, it means no other app in that task
-        // is opening. Thus, the task is closing.
-        if (!task.isVisible() && mSkipClosingAppSnapshotTasks.indexOf(task.mTaskId) < 0) {
-            outClosingTasks.add(task);
-        }
     }
 
     void removeAndDeleteSnapshot(int taskId, int userId) {
@@ -310,29 +430,34 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
      * Record task snapshots before shutdown.
      */
     void prepareShutdown() {
-        if (!com.android.window.flags.Flags.recordTaskSnapshotsBeforeShutdown()) {
-            return;
-        }
-        // Make write items run in a batch.
-        mPersister.mSnapshotPersistQueue.setPaused(true);
-        mPersister.mSnapshotPersistQueue.prepareShutdown();
-        for (int i = 0; i < mService.mRoot.getChildCount(); i++) {
-            mService.mRoot.getChildAt(i).forAllLeafTasks(task -> {
-                if (task.isVisible() && !task.isActivityTypeHome()) {
-                    final TaskSnapshot snapshot = captureSnapshot(task);
-                    if (snapshot != null) {
-                        mPersister.persistSnapshot(task.mTaskId, task.mUserId, snapshot);
+        final ArrayList<SnapshotSupplier> supplierArrayList = new ArrayList<>();
+        synchronized (mService.mGlobalLock) {
+            // Make write items run in a batch.
+            mPersister.mSnapshotPersistQueue.setPaused(true);
+            mPersister.mSnapshotPersistQueue.prepareShutdown();
+            for (int i = 0; i < mService.mRoot.getChildCount(); i++) {
+                mService.mRoot.getChildAt(i).forAllLeafTasks(task -> {
+                    if (task.isVisible() && !task.isActivityTypeHome()) {
+                        final SnapshotSupplier supplier = captureSnapshot(task,
+                                true /* allowAppTheme */);
+                        if (supplier != null) {
+                            supplier.setConsumer(t ->
+                                    mPersister.persistSnapshot(task.mTaskId, task.mUserId, t));
+                            supplierArrayList.add(supplier);
+                        }
                     }
-                }
-            }, true /* traverseTopToBottom */);
+                }, true /* traverseTopToBottom */);
+            }
         }
-        mPersister.mSnapshotPersistQueue.setPaused(false);
+        for (int i = supplierArrayList.size() - 1; i >= 0; --i) {
+            supplierArrayList.get(i).handleSnapshot();
+        }
+        synchronized (mService.mGlobalLock) {
+            mPersister.mSnapshotPersistQueue.setPaused(false);
+        }
     }
 
     void waitFlush(long timeout) {
-        if (!com.android.window.flags.Flags.recordTaskSnapshotsBeforeShutdown()) {
-            return;
-        }
         mPersister.mSnapshotPersistQueue.waitFlush(timeout);
     }
 
@@ -378,7 +503,7 @@ class TaskSnapshotController extends AbsAppSnapshotController<Task, TaskSnapshot
             // Since RecentsAnimation will handle task snapshot while switching apps with the best
             // capture timing (e.g. IME window capture), No need additional task capture while task
             // is controlled by RecentsAnimation.
-            if (task.isVisible() && !isAnimatingByRecents(task)) {
+            if (task.isVisible() && !task.isAnimatingByRecents()) {
                 mTmpTasks.add(task);
             }
         }, true /* traverseTopToBottom */);

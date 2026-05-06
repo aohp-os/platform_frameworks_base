@@ -181,7 +181,8 @@ public final class LocationRequest implements Parcelable {
     public static final int POWER_HIGH = 203;
 
     private static final long IMPLICIT_MIN_UPDATE_INTERVAL = -1;
-    private static final double IMPLICIT_MIN_UPDATE_INTERVAL_FACTOR = 1D / 6D;
+    private static final double LEGACY_IMPLICIT_MIN_UPDATE_INTERVAL_FACTOR = 1D / 6D;
+    private static final double IMPLICIT_MIN_UPDATE_INTERVAL_FACTOR = 1D / 2D;
 
     private @Nullable String mProvider;
     private @Quality int mQuality;

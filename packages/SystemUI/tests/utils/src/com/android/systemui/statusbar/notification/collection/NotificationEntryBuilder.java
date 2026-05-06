@@ -56,7 +56,7 @@ public class NotificationEntryBuilder {
     private StatusBarNotification mSbn = null;
 
     /* ListEntry properties */
-    private GroupEntry mParent;
+    private PipelineEntry mParent;
     private NotifSection mNotifSection;
 
     /* If set, use this creation time instead of mClock.uptimeMillis */
@@ -65,6 +65,11 @@ public class NotificationEntryBuilder {
 
     public NotificationEntryBuilder() {
         mSbnBuilder = new SbnBuilder();
+        mRankingBuilder = new RankingBuilder();
+    }
+
+    public NotificationEntryBuilder(Context context) {
+        mSbnBuilder = new SbnBuilder(context);
         mRankingBuilder = new RankingBuilder();
     }
 
@@ -91,7 +96,7 @@ public class NotificationEntryBuilder {
     }
 
     /** Update an the parent on an existing entry */
-    public static void setNewParent(NotificationEntry entry, GroupEntry parent) {
+    public static void setNewParent(NotificationEntry entry, PipelineEntry parent) {
         entry.setParent(parent);
     }
 
@@ -135,7 +140,7 @@ public class NotificationEntryBuilder {
     /**
      * Sets the parent.
      */
-    public NotificationEntryBuilder setParent(@Nullable GroupEntry parent) {
+    public NotificationEntryBuilder setParent(@Nullable PipelineEntry parent) {
         mParent = parent;
         return this;
     }

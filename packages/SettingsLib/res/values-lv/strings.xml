@@ -86,7 +86,9 @@
     <string name="bluetooth_disconnecting" msgid="7638892134401574338">"Notiek atvienošana..."</string>
     <string name="bluetooth_connecting" msgid="5871702668260192755">"Notiek savienojuma izveide…"</string>
     <string name="bluetooth_connected" msgid="8065345572198502293">"Savienojums izveidots: <xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
-    <string name="bluetooth_pairing" msgid="4269046942588193600">"Notiek pāra izveide..."</string>
+    <string name="bluetooth_pairing" msgid="4269046942588193600">"Notiek savienošana pārī..."</string>
+    <string name="bluetooth_pairing_failure" msgid="6914444518793157913">"Nevar izveidot savienojumu pārī"</string>
+    <string name="bluetooth_connection_failure" msgid="384203214661155324">"Nevar izveidot savienojumu"</string>
     <string name="bluetooth_connected_no_headset" msgid="2224101138659967604">"Savienojums izveidots (nav tālrunis): <xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
     <string name="bluetooth_connected_no_a2dp" msgid="8566874395813947092">"Savienojums izveidots (nav multivide): <xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
     <string name="bluetooth_connected_no_headset_no_a2dp" msgid="2893204819854215433">"Savienots (nav tālrunis vai multivide): <xliff:g id="ACTIVE_DEVICE">%1$s</xliff:g>"</string>
@@ -103,6 +105,11 @@
     <string name="bluetooth_battery_level_untethered" msgid="1616774716076301755">"Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
     <string name="bluetooth_battery_level_untethered_left" msgid="5725764679536058365">"Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="bluetooth_battery_level_untethered_right" msgid="8377995536997790142">"Akumulatora uzlādes līmenis labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_battery_level_untethered_case" msgid="6783758530890124772">"Akumulatora uzlādes līmenis: futrālis — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_case" msgid="7676759299091682229">"Akumulatora uzlādes līmenis: kreisā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>; futrālis — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_right_case" msgid="1299184574560442389">"Akumulatora uzlādes līmenis: labā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>; futrālis — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_right" msgid="6953449613092012043">"Akumulatora uzlādes līmenis: kreisā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>; labā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>"</string>
+    <string name="bluetooth_battery_level_untethered_left_case_right" msgid="5434524614259536880">"Akumulatora uzlādes līmenis: kreisā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>; futrālis — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>; labā austiņa — <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_2">%3$s</xliff:g>"</string>
     <string name="tv_bluetooth_battery_level_untethered_left" msgid="337629670583744410">"Kreisā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="tv_bluetooth_battery_level_untethered_right" msgid="8610019317279155595">"Labā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>"</string>
     <string name="bluetooth_active_no_battery_level" msgid="4155462233006205630">"Aktīvs"</string>
@@ -110,15 +117,28 @@
     <string name="bluetooth_hearing_aid_left_active" msgid="8330226430756799572">"Ierīce aktīva (tikai kreisā auss)"</string>
     <string name="bluetooth_hearing_aid_right_active" msgid="2244728507170385397">"Ierīce aktīva (tikai labā auss)"</string>
     <string name="bluetooth_hearing_aid_left_and_right_active" msgid="4294571497939983181">"Ierīces aktīvas (kreisā un labā auss)"</string>
+    <string name="bluetooth_hearing_device_ambient_error" msgid="6035857289108813878">"Nevarēja atjaunināt apkārtnes skaņas"</string>
+    <string name="bluetooth_hearing_aids_presets_error" msgid="4523942574698610976">"Nevarēja atjaunināt pirmsiestatījumu."</string>
+    <string name="hearing_device_spinner_item_selected" msgid="3884049360428514878">"Atlasīts"</string>
     <string name="bluetooth_active_media_only_battery_level" msgid="7772517511061834073">"Aktīvs (tikai multividei). Akumulatora uzlādes līmenis: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
     <string name="bluetooth_active_media_only_battery_level_untethered" msgid="7444753133664620926">"Aktīvs (tikai multividei). Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
+    <string name="bluetooth_guest_battery_level" msgid="2820003593899467676">"Viesa ierīce. Akumulatora uzlādes līmenis: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_battery_level_untethered" msgid="5404013822067644960">"Viesa ierīce. Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
+    <string name="bluetooth_guest_media_only_battery_level" msgid="7928347900623812299">"Viesa ierīce (tikai multividei). Akumulatora uzlādes līmenis: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_media_only_battery_level_untethered" msgid="4458143141394300892">"Viesa ierīce (tikai multividei). Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
     <string name="bluetooth_battery_level_lea_support" msgid="5968584103507988820">"Izveidots savienojums (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
     <string name="bluetooth_battery_level_untethered_lea_support" msgid="803110681688633362">"Izveidots savienojums (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
     <string name="bluetooth_battery_level_untethered_left_lea_support" msgid="7707464334346454950">"Izveidots savienojums (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
     <string name="bluetooth_battery_level_untethered_right_lea_support" msgid="8941549024377771038">"Izveidots savienojums (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
     <string name="bluetooth_no_battery_level_lea_support" msgid="5721725041048434075">"Izveidots savienojums (atbalsta audio kopīgošanu)"</string>
+    <string name="bluetooth_guest_battery_level_lea_support" msgid="8098327939585013928">"Viesa ierīce (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE">%1$s</xliff:g>."</string>
+    <string name="bluetooth_guest_battery_level_untethered_lea_support" msgid="3701035025565668360">"Viesa ierīce (atbalsta audio kopīgošanu). Akumulatora uzlādes līmenis kreisajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_0">%1$s</xliff:g>, labajā austiņā: <xliff:g id="BATTERY_LEVEL_AS_PERCENTAGE_1">%2$s</xliff:g>."</string>
+    <string name="bluetooth_guest_no_battery_level_lea_support" msgid="2977038548753103470">"Viesa ierīce (atbalsta audio kopīgošanu)"</string>
     <string name="bluetooth_active_media_only_no_battery_level" msgid="71106861912593126">"Aktīvs (tikai multividei)"</string>
+    <string name="bluetooth_guest_no_battery_level" msgid="9122974160381136920">"Viesa ierīce"</string>
+    <string name="bluetooth_guest_media_only_no_battery_level" msgid="7666347601796705721">"Viesa ierīce (tikai multividei)"</string>
     <string name="bluetooth_saved_device_lea_support" msgid="7231323139968285768">"Atbalsta audio kopīgošanu"</string>
+    <string name="bluetooth_guest_saved_device_lea_support" msgid="5621291599518569876">"Viesa ierīce. Atbalsta audio kopīgošanu"</string>
     <string name="bluetooth_hearing_aid_media_only_left_active" msgid="1632152540901488645">"Aktīvs (tikai multivide), tikai kreisās puses aparāts"</string>
     <string name="bluetooth_hearing_aid_media_only_right_active" msgid="3854140683042617230">"Aktīvs (tikai multivide), tikai labās puses aparāts"</string>
     <string name="bluetooth_hearing_aid_media_only_left_and_right_active" msgid="1299913413062528417">"Aktīvs (tikai multivide), kreisās un labās puses aparāts"</string>
@@ -196,7 +216,7 @@
     <string name="launch_defaults_some" msgid="3631650616557252926">"Iestatīti daži noklusējumi"</string>
     <string name="launch_defaults_none" msgid="8049374306261262709">"Nav iestatīti noklusējumi"</string>
     <string name="tts_settings" msgid="8130616705989351312">"Teksta-runas iestatījumi"</string>
-    <string name="tts_settings_title" msgid="7602210956640483039">"Teksta-runas izvade"</string>
+    <string name="tts_settings_title" msgid="7602210956640483039">"Teksta pārvēršanas runā izvade"</string>
     <string name="tts_default_rate_title" msgid="3964187817364304022">"Runas ātrums"</string>
     <string name="tts_default_rate_summary" msgid="3781937042151716987">"Teksta ierunāšanas ātrums"</string>
     <string name="tts_default_pitch_title" msgid="6988592215554485479">"Tonis"</string>
@@ -317,7 +337,7 @@
     <string name="bluetooth_select_a2dp_codec_ldac_playback_quality_dialog_title" msgid="7274396574659784285">"Aktivizēt Bluetooth audio LDAC\nkodeka atlasi: atskaņošanas kvalitāte"</string>
     <string name="bluetooth_select_a2dp_codec_streaming_label" msgid="2040810756832027227">"Straumēšana: <xliff:g id="STREAMING_PARAMETER">%1$s</xliff:g>"</string>
     <string name="select_private_dns_configuration_title" msgid="7887550926056143018">"Privāts DNS"</string>
-    <string name="select_private_dns_configuration_dialog_title" msgid="3731422918335951912">"Atlasiet privāta DNS režīmu"</string>
+    <string name="select_private_dns_configuration_dialog_title" msgid="3731422918335951912">"Atlasiet privātā DNS režīmu"</string>
     <string name="private_dns_mode_off" msgid="7065962499349997041">"Izslēgts"</string>
     <string name="private_dns_mode_opportunistic" msgid="1947864819060442354">"Automātiski"</string>
     <string name="private_dns_mode_provider" msgid="3619040641762557028">"Privātā DNS pakalpojumu sniedzēja saimniekdatora nosaukums"</string>
@@ -329,7 +349,7 @@
     <string name="wifi_non_persistent_mac_randomization_summary" msgid="2159794543105053930">"Ja šis režīms ir iespējots, šīs ierīces MAC adrese var mainīties ikreiz, kad ierīcē tiek izveidots savienojums ar tīklu, kurā ir iespējota MAC adrešu nejauša izveide."</string>
     <string name="wifi_metered_label" msgid="8737187690304098638">"Maksas"</string>
     <string name="wifi_unmetered_label" msgid="6174142840934095093">"Bezmaksas"</string>
-    <string name="select_logd_size_title" msgid="1604578195914595173">"Reģistrētāja buferu lielumi"</string>
+    <string name="select_logd_size_title" msgid="4393502933789367691">"Reģistrētāja bufera lielums"</string>
     <string name="select_logd_size_dialog_title" msgid="2105401994681013578">"Atlasīt reģistrētāja bufera liel."</string>
     <string name="dev_logpersist_clear_warning_title" msgid="8631859265777337991">"Vai notīrīt reģistrētāja pastāvīgo krātuvi?"</string>
     <string name="dev_logpersist_clear_warning_message" msgid="6447590867594287413">"Kad uzraudzībai vairs neizmantojam pastāvīgo reģistrētāju, mums ir jāizdzēš reģistrētāja dati, kas tiek glabāti jūsu ierīcē."</string>
@@ -375,6 +395,7 @@
     <string name="debug_hw_drawing_category" msgid="5830815169336975162">"Aparatūras paātrinātā atveidošana"</string>
     <string name="media_category" msgid="8122076702526144053">"Multivide"</string>
     <string name="debug_monitoring_category" msgid="1597387133765424994">"Pārraudzība"</string>
+    <string name="window_management_category" msgid="2015535427098365170">"Logu pārvaldība"</string>
     <string name="strict_mode" msgid="889864762140862437">"Precīzais rež. ir iespēj."</string>
     <string name="strict_mode_summary" msgid="1838248687233554654">"Zibsnīt ekrānu, ja liet. ilgi darbojas galv. pav."</string>
     <string name="pointer_location" msgid="7516929526199520173">"Rādītāja atrašanās vieta"</string>
@@ -423,6 +444,7 @@
     <string name="transition_animation_scale_title" msgid="1278477690695439337">"Pārejas animācijas mērogs"</string>
     <string name="animator_duration_scale_title" msgid="7082913931326085176">"Animācijas ilguma mērogs"</string>
     <string name="overlay_display_devices_title" msgid="5411894622334469607">"Simulēt sekundāros ekr."</string>
+    <string name="shade_display_awareness_title" msgid="8000009404669495876">"Ēnas parādīšanas pozīcija"</string>
     <string name="debug_applications_category" msgid="5394089406638954196">"Lietotnes"</string>
     <string name="immediately_destroy_activities" msgid="1826287490705167403">"Nesaglabāt darbības"</string>
     <string name="immediately_destroy_activities_summary" msgid="6289590341144557614">"Iznīcināt katru darbību, kad lietotājs to pārtrauc"</string>
@@ -468,6 +490,9 @@
     <string name="select_webview_provider_title" msgid="3917815648099445503">"WebView ieviešana"</string>
     <string name="select_webview_provider_dialog_title" msgid="2444261109877277714">"Iestatīt WebView ieviešanu"</string>
     <string name="select_webview_provider_toast_text" msgid="8512254949169359848">"Šī iespēja vairs nav derīga. Mēģiniet vēlreiz."</string>
+    <string name="webview_launch_devtools_title" msgid="8009687433555367112">"WebView izstrādātāja rīki"</string>
+    <string name="webview_launch_devtools_no_package" msgid="3182544553665113721">"WebView pakotne netika atrasta."</string>
+    <string name="webview_launch_devtools_no_activity" msgid="4066006313619617140">"Nevarēja palaist izstrādātāja rīkus."</string>
     <string name="picture_color_mode" msgid="1013807330552931903">"Attēla krāsu režīms"</string>
     <string name="picture_color_mode_desc" msgid="151780973768136200">"Izmantot sRGB"</string>
     <string name="daltonizer_mode_disabled" msgid="403424372812399228">"Atspējota"</string>
@@ -491,7 +516,7 @@
     <string name="power_discharge_by_only_enhanced" msgid="3268796172652988877">"Ņemot vērā lietojumu, darbosies aptuveni līdz <xliff:g id="TIME">%1$s</xliff:g>"</string>
     <string name="power_discharge_by" msgid="4113180890060388350">"Darbosies aptuveni līdz <xliff:g id="TIME">%1$s</xliff:g> (<xliff:g id="LEVEL">%2$s</xliff:g>)"</string>
     <string name="power_discharge_by_only" msgid="92545648425937000">"Darbosies aptuveni līdz <xliff:g id="TIME">%1$s</xliff:g>"</string>
-    <string name="power_discharge_by_only_short" msgid="5883041507426914446">"līdz <xliff:g id="TIME">%1$s</xliff:g>"</string>
+    <string name="power_discharge_by_only_short" msgid="5883041507426914446">"Līdz <xliff:g id="TIME">%1$s</xliff:g>"</string>
     <string name="power_suggestion_battery_run_out" msgid="6332089307827787087">"Iespējams, akumulators izlādēsies līdz <xliff:g id="TIME">%1$s</xliff:g>"</string>
     <string name="power_remaining_less_than_duration_only" msgid="8956656616031395152">"Atlicis: mazāk nekā <xliff:g id="THRESHOLD">%1$s</xliff:g>"</string>
     <string name="power_remaining_less_than_duration" msgid="318215464914990578">"Atlicis: mazāk nekā <xliff:g id="THRESHOLD">%1$s</xliff:g> (<xliff:g id="LEVEL">%2$s</xliff:g>)"</string>
@@ -521,7 +546,9 @@
     <string name="battery_info_status_charging_fast_v2" msgid="1825439848151256589">"Ātrā uzlāde"</string>
     <string name="disabled_by_admin_summary_text" msgid="5343911767402923057">"Kontrolē administrators"</string>
     <string name="disabled_by_app_ops_text" msgid="8373595926549098012">"Kontrolē ierobežots iestatījums"</string>
+    <string name="disabled_in_phone_call_text" msgid="6568931334337318320">"Ierīce nav pieejama zvanu laikā"</string>
     <string name="disabled" msgid="8017887509554714950">"Atspējots"</string>
+    <string name="enabled" msgid="3997122818554810678">"Iespējots"</string>
     <string name="external_source_trusted" msgid="1146522036773132905">"Atļauts"</string>
     <string name="external_source_untrusted" msgid="5037891688911672227">"Nav atļauts"</string>
     <string name="install_other_apps" msgid="3232595082023199454">"Nezināmu lietotņu instalēšana"</string>
@@ -533,11 +560,15 @@
   </string-array>
     <string name="charge_length_format" msgid="6941645744588690932">"Pirms šāda laika: <xliff:g id="ID_1">%1$s</xliff:g>"</string>
     <string name="remaining_length_format" msgid="4310625772926171089">"Atlikušais laiks: <xliff:g id="ID_1">%1$s</xliff:g>"</string>
+    <string name="screen_zoom_summary_smallest" msgid="1042159093382395789">"Vismazākais"</string>
+    <string name="screen_zoom_summary_smaller" msgid="7452722393802683776">"Mazāks"</string>
     <string name="screen_zoom_summary_small" msgid="6050633151263074260">"Mazs"</string>
     <string name="screen_zoom_summary_default" msgid="1888865694033865408">"Noklusējuma"</string>
     <string name="screen_zoom_summary_large" msgid="4706951482598978984">"Liels"</string>
-    <string name="screen_zoom_summary_very_large" msgid="7317423942896999029">"Lielāks"</string>
-    <string name="screen_zoom_summary_extremely_large" msgid="1438045624562358554">"Vislielākais"</string>
+    <string name="screen_zoom_summary_larger" msgid="7346406528348409139">"Lielāks"</string>
+    <string name="screen_zoom_summary_very_large" msgid="6853699118427019538">"Ļoti liels"</string>
+    <string name="screen_zoom_summary_extra_large" msgid="4898389280769475551">"Īpaši liels"</string>
+    <string name="screen_zoom_summary_largest" msgid="5120290329622591371">"Vislielākais"</string>
     <string name="screen_zoom_summary_custom" msgid="3468154096832912210">"Pielāgots (<xliff:g id="DENSITYDPI">%d</xliff:g>)"</string>
     <string name="content_description_menu_button" msgid="6254844309171779931">"Izvēlne"</string>
     <string name="retail_demo_reset_message" msgid="5392824901108195463">"Iev. paroli, lai atiest. rūpnīcas iest. dem. režīmā"</string>
@@ -556,6 +587,7 @@
     <string name="wifi_tether_connected_summary" msgid="5100712926640492336">"{count,plural, =1{Pievienota 1 ierīce.}zero{Pievienotas # ierīces.}one{Pievienota # ierīce.}other{Pievienotas # ierīces.}}"</string>
     <string name="accessibility_manual_zen_more_time" msgid="5141801092071134235">"Vairāk laika."</string>
     <string name="accessibility_manual_zen_less_time" msgid="6828877595848229965">"Mazāk laika."</string>
+    <string name="accessibility_screen_magnification_title" msgid="4981096059561256342">"Palielinājums"</string>
     <string name="cancel" msgid="5665114069455378395">"Atcelt"</string>
     <string name="next" msgid="2699398661093607009">"Tālāk"</string>
     <string name="back" msgid="5554327870352703710">"Atpakaļ"</string>
@@ -609,6 +641,7 @@
     <string name="tv_media_transfer_internal_speakers" msgid="4662765121700213785">"Iebūvēts skaļrunis"</string>
     <string name="tv_media_transfer_hdmi_title" msgid="6715658310934507444">"Televizora audio"</string>
     <string name="profile_connect_timeout_subtext" msgid="4043408193005851761">"Radās problēma ar savienojuma izveidi. Izslēdziet un atkal ieslēdziet ierīci."</string>
+    <string name="bluetooth_key_missing_subtext" msgid="1003639333895028298">"Nevar izveidot savienojumu"</string>
     <string name="media_transfer_wired_device_name" msgid="4447880899964056007">"Vadu audioierīce"</string>
     <string name="help_label" msgid="3528360748637781274">"Palīdzība un atsauksmes"</string>
     <string name="storage_category" msgid="2287342585424631813">"Krātuve"</string>
@@ -735,9 +768,6 @@
     <string name="bt_le_audio_broadcast_dialog_sub_title" msgid="268234802198852753">"Ja sāksiet lietotnes <xliff:g id="SWITCHAPP">%1$s</xliff:g> apraidīšanu vai mainīsiet izvadi, pašreizējā apraide tiks apturēta"</string>
     <string name="bt_le_audio_broadcast_dialog_switch_app" msgid="5749813313369517812">"Lietotnes <xliff:g id="SWITCHAPP">%1$s</xliff:g> apraide"</string>
     <string name="bt_le_audio_broadcast_dialog_different_output" msgid="2638402023060391333">"Izvades maiņa"</string>
-    <string name="back_navigation_animation" msgid="8105467568421689484">"Animāciju prognozēšana pāriešanai atpakaļ"</string>
-    <string name="back_navigation_animation_summary" msgid="741292224121599456">"Iespējot sistēmas animācijas prognozētam žestam pāriešanai atpakaļ."</string>
-    <string name="back_navigation_animation_dialog" msgid="8696966520944625596">"Šis iestatījums iespējo sistēmas animācijas prognozēto žestu animācijām. Lai to varētu izmantot, parametram “enableOnBackInvokedCallback” lietotnes manifesta failā jāiestata vērtība “true”."</string>
     <string name="font_scale_percentage" msgid="2624057443622817886">"<xliff:g id="PERCENTAGE">%1$d</xliff:g>%%"</string>
     <string name="not_specified" msgid="5423502443185110328">"Nav norādīta"</string>
     <string name="neuter" msgid="2075249330106127310">"Nekatrā dzimte"</string>

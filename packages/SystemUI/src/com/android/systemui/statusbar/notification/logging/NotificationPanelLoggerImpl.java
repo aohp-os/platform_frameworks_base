@@ -19,14 +19,13 @@ package com.android.systemui.statusbar.notification.logging;
 import static com.android.systemui.statusbar.notification.logging.NotificationPanelLogger.NotificationPanelEvent.NOTIFICATION_DRAG;
 
 import com.android.systemui.shared.system.SysUiStatsLog;
+import com.android.systemui.statusbar.notification.collection.EntryAdapter;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.logging.nano.Notifications;
-import com.android.systemui.statusbar.notification.shared.NotificationsLiveDataStoreRefactor;
 
 import com.google.protobuf.nano.MessageNano;
 
 import java.util.Collections;
-import java.util.List;
 
 /**
  * Normal implementation of NotificationPanelLogger.
@@ -42,20 +41,19 @@ public class NotificationPanelLoggerImpl implements NotificationPanelLogger {
     }
 
     @Override
-    public void logPanelShown(boolean isLockscreen,
-            List<NotificationEntry> visibleNotifications) {
-        NotificationsLiveDataStoreRefactor.assertInLegacyMode();
+    public void logNotificationDrag(NotificationEntry draggedNotification) {
         final Notifications.NotificationList proto = NotificationPanelLogger.toNotificationProto(
-                visibleNotifications);
+                Collections.singletonList(draggedNotification));
         SysUiStatsLog.write(SysUiStatsLog.NOTIFICATION_PANEL_REPORTED,
-                /* event_id = */ NotificationPanelEvent.fromLockscreen(isLockscreen).getId(),
+                /* event_id = */ NOTIFICATION_DRAG.getId(),
                 /* num_notifications = */ proto.notifications.length,
                 /* notifications = */ MessageNano.toByteArray(proto));
     }
 
     @Override
-    public void logNotificationDrag(NotificationEntry draggedNotification) {
-        final Notifications.NotificationList proto = NotificationPanelLogger.toNotificationProto(
+    public void logNotificationDrag(EntryAdapter draggedNotification) {
+        final Notifications.NotificationList proto =
+                NotificationPanelLogger.adapterToNotificationProto(
                 Collections.singletonList(draggedNotification));
         SysUiStatsLog.write(SysUiStatsLog.NOTIFICATION_PANEL_REPORTED,
                 /* event_id = */ NOTIFICATION_DRAG.getId(),

@@ -28,6 +28,7 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.hardware.HardwareBuffer;
 import android.util.TypedValue;
 import android.view.SurfaceControl;
 import android.window.TaskSnapshot;
@@ -142,13 +143,25 @@ public abstract class PipContentOverlay {
 
         @Override
         public void attach(SurfaceControl.Transaction tx, SurfaceControl parentLeash) {
-            final float taskSnapshotScaleX = (float) mSnapshot.getTaskSize().x
-                    / mSnapshot.getHardwareBuffer().getWidth();
-            final float taskSnapshotScaleY = (float) mSnapshot.getTaskSize().y
-                    / mSnapshot.getHardwareBuffer().getHeight();
+            final float taskSnapshotScaleX;
+            final float taskSnapshotScaleY;
+            if (com.android.window.flags.Flags.reduceTaskSnapshotMemoryUsage()) {
+                taskSnapshotScaleX = (float) mSnapshot.getTaskSize().x
+                        / mSnapshot.getHardwareBufferWidth();
+                taskSnapshotScaleY = (float) mSnapshot.getTaskSize().y
+                        / mSnapshot.getHardwareBufferHeight();
+                mSnapshot.setBufferToSurface(tx, mLeash);
+            } else {
+                final HardwareBuffer hw = mSnapshot.getHardwareBuffer();
+                taskSnapshotScaleX = (float) mSnapshot.getTaskSize().x
+                        / hw.getWidth();
+                taskSnapshotScaleY = (float) mSnapshot.getTaskSize().y
+                        / hw.getHeight();
+                tx.setBuffer(mLeash, hw);
+            }
+
             tx.show(mLeash);
             tx.setLayer(mLeash, Integer.MAX_VALUE);
-            tx.setBuffer(mLeash, mSnapshot.getHardwareBuffer());
             // Relocate the content to parentLeash's coordinates.
             tx.setPosition(mLeash, -mSourceRectHint.left, -mSourceRectHint.top);
             tx.setScale(mLeash, taskSnapshotScaleX, taskSnapshotScaleY);
@@ -225,12 +238,17 @@ public abstract class PipContentOverlay {
 
         @Override
         public void attach(SurfaceControl.Transaction tx, SurfaceControl parentLeash) {
+            final HardwareBuffer buffer = mBitmap.getHardwareBuffer();
             tx.show(mLeash);
             tx.setLayer(mLeash, Integer.MAX_VALUE);
-            tx.setBuffer(mLeash, mBitmap.getHardwareBuffer());
+            tx.setBuffer(mLeash, buffer);
             tx.setAlpha(mLeash, 0f);
             tx.reparent(mLeash, parentLeash);
             tx.apply();
+            // Cleanup the bitmap and buffer after setting up the leash
+            mBitmap.recycle();
+            mBitmap = null;
+            buffer.close();
         }
 
         @Override
@@ -251,14 +269,6 @@ public abstract class PipContentOverlay {
             mTmpTransform.postScale(scale, scale, appBoundsCenterX, appBoundsCenterY);
             atomicTx.setMatrix(mLeash, mTmpTransform, mTmpFloat9)
                     .setAlpha(mLeash, fraction < 0.5f ? 0 : (fraction - 0.5f) * 2);
-        }
-
-        @Override
-        public void detach(SurfaceControl.Transaction tx) {
-            super.detach(tx);
-            if (mBitmap != null && !mBitmap.isRecycled()) {
-                mBitmap.recycle();
-            }
         }
 
         private void prepareAppIconOverlay(Drawable appIcon) {
@@ -282,7 +292,9 @@ public abstract class PipContentOverlay {
                     mOverlayHalfSize + mAppIconSizePx / 2);
             appIcon.setBounds(appIconBounds);
             appIcon.draw(canvas);
+            Bitmap oldBitmap = mBitmap;
             mBitmap = mBitmap.copy(Bitmap.Config.HARDWARE, false /* mutable */);
+            oldBitmap.recycle();
         }
     }
 }

@@ -45,6 +45,8 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Spy;
 
+import java.util.ArrayList;
+
 @MediumTest
 @Presubmit
 @RunWith(AndroidJUnit4.class)
@@ -67,7 +69,7 @@ public class AudioDeviceInventoryTest {
 
         mMockAudioService = mock(AudioService.class);
         mSpyAudioSystem = spy(new NoOpAudioSystemAdapter());
-        mDevInventory = new AudioDeviceInventory(mSpyAudioSystem);
+        mDevInventory = new AudioDeviceInventory(mSpyAudioSystem, new ArrayList<>());
         mSystemServer = new NoOpSystemServerAdapter();
         mSpyAudioDeviceBroker = spy(new AudioDeviceBroker(context, mMockAudioService, mDevInventory,
                 mSystemServer, mSpyAudioSystem));
@@ -103,7 +105,7 @@ public class AudioDeviceInventoryTest {
         // NOTE: for now this is only when flag asDeviceConnectionFailure is true
         if (asDeviceConnectionFailure()) {
             when(mSpyAudioSystem.setDeviceConnectionState(ada, AudioSystem.DEVICE_STATE_AVAILABLE,
-                    AudioSystem.AUDIO_FORMAT_DEFAULT))
+                    AudioSystem.AUDIO_FORMAT_DEFAULT, false /*deviceSwitch*/))
                     .thenReturn(AudioSystem.AUDIO_STATUS_ERROR);
             runWithBluetoothPrivilegedPermission(
                     () ->  mDevInventory.onSetBtActiveDevice(/*btInfo*/ btInfo,
@@ -115,7 +117,7 @@ public class AudioDeviceInventoryTest {
         // test that the device is added when AudioSystem returns AUDIO_STATUS_OK
         // when setDeviceConnectionState is called for the connection
         when(mSpyAudioSystem.setDeviceConnectionState(ada, AudioSystem.DEVICE_STATE_AVAILABLE,
-                AudioSystem.AUDIO_FORMAT_DEFAULT))
+                AudioSystem.AUDIO_FORMAT_DEFAULT, false /*deviceSwitch*/))
                 .thenReturn(AudioSystem.AUDIO_STATUS_OK);
         runWithBluetoothPrivilegedPermission(
                 () ->  mDevInventory.onSetBtActiveDevice(/*btInfo*/ btInfo,

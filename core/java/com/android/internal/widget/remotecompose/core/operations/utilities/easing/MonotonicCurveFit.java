@@ -22,11 +22,11 @@ import java.util.Arrays;
 /** This performs a spline interpolation in multiple dimensions */
 public class MonotonicCurveFit {
     private static final String TAG = "MonotonicCurveFit";
-    @NonNull private final double[] mT;
-    @NonNull private final double[][] mY;
-    @NonNull private final double[][] mTangent;
+    private final @NonNull double [] mT;
+    private final @NonNull double [][] mY;
+    private final @NonNull double [][] mTangent;
     private boolean mExtrapolate = true;
-    @NonNull final double[] mSlopeTemp;
+    final @NonNull double [] mSlopeTemp;
 
     /**
      * create a collection of curves
@@ -34,7 +34,7 @@ public class MonotonicCurveFit {
      * @param time the point along the curve
      * @param y the parameter at those points
      */
-    public MonotonicCurveFit(@NonNull double[] time, @NonNull double[][] y) {
+    public MonotonicCurveFit(@NonNull double [] time, @NonNull double [][] y) {
         final int n = time.length;
         final int dim = y[0].length;
         mSlopeTemp = new double[dim];
@@ -76,12 +76,12 @@ public class MonotonicCurveFit {
     }
 
     /**
-     * Get the position of all curves at time t
+     * Get the position of all curves at position t
      *
-     * @param t
-     * @param v
+     * @param t the point on the spline
+     * @param v the array to fill (for multiple curves)
      */
-    public void getPos(double t, @NonNull double[] v) {
+    public void getPos(double t, @NonNull double [] v) {
         final int n = mT.length;
         final int dim = mY[0].length;
         if (mExtrapolate) {
@@ -136,12 +136,12 @@ public class MonotonicCurveFit {
     }
 
     /**
-     * Get the position of all curves at time t
+     * Get the position of all curves at position t
      *
-     * @param t
-     * @param v
+     * @param t the point on the spline
+     * @param v the array to fill
      */
-    public void getPos(double t, @NonNull float[] v) {
+    public void getPos(double t, @NonNull float [] v) {
         final int n = mT.length;
         final int dim = mY[0].length;
         if (mExtrapolate) {
@@ -196,11 +196,11 @@ public class MonotonicCurveFit {
     }
 
     /**
-     * Get the position of the jth curve at time t
+     * Get the position of the jth curve at position t
      *
-     * @param t
-     * @param j
-     * @return
+     * @param t the position
+     * @param j the curve to get
+     * @return the position
      */
     public double getPos(double t, int j) {
         final int n = mT.length;
@@ -240,10 +240,10 @@ public class MonotonicCurveFit {
     /**
      * Get the slope of all the curves at position t
      *
-     * @param t
-     * @param v
+     * @param t the position
+     * @param v the array to fill
      */
-    public void getSlope(double t, @NonNull double[] v) {
+    public void getSlope(double t, @NonNull double [] v) {
         final int n = mT.length;
         int dim = mY[0].length;
         if (t <= mT[0]) {
@@ -271,9 +271,9 @@ public class MonotonicCurveFit {
     /**
      * Get the slope of the j curve at position t
      *
-     * @param t
-     * @param j
-     * @return
+     * @param t the position
+     * @param j the curve to get the value at
+     * @return the slope
      */
     public double getSlope(double t, int j) {
         final int n = mT.length;
@@ -297,7 +297,12 @@ public class MonotonicCurveFit {
         return 0; // should never reach here
     }
 
-    public @NonNull double[] getTimePoints() {
+    /**
+     * Get the time point used to create the curve
+     *
+     * @return the time points used to create the curve
+     */
+    public @NonNull double [] getTimePoints() {
         return mT;
     }
 
@@ -332,7 +337,12 @@ public class MonotonicCurveFit {
                 + h * t1;
     }
 
-    /** This builds a monotonic spline to be used as a wave function */
+    /**
+     * This builds a monotonic spline to be used as a wave function
+     *
+     * @param configString the configuration string
+     * @return the curve
+     */
     @NonNull
     public static MonotonicCurveFit buildWave(@NonNull String configString) {
         // done this way for efficiency
@@ -354,7 +364,7 @@ public class MonotonicCurveFit {
     }
 
     @NonNull
-    private static MonotonicCurveFit buildWave(@NonNull double[] values) {
+    private static MonotonicCurveFit buildWave(@NonNull double [] values) {
         int length = values.length * 3 - 2;
         int len = values.length - 1;
         double gap = 1.0 / len;

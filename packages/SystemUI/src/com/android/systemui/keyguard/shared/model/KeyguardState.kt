@@ -16,8 +16,9 @@
 package com.android.systemui.keyguard.shared.model
 
 import android.util.Log
-import com.android.compose.animation.scene.SceneKey
+import com.android.compose.animation.scene.ContentKey
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 
 /** List of all possible states to transition to/from */
@@ -96,6 +97,11 @@ enum class KeyguardState {
      */
     UNDEFINED,
     /** An activity is displaying over the keyguard. */
+    @Deprecated(
+        "This state won't exist anymore when scene container gets enabled. If you are " +
+            "writing prod code today, make sure to either use flag aware APIs in " +
+            "[KeyguardTransitionInteractor] or flag appropriately with [SceneContainerFlag]."
+    )
     OCCLUDED;
 
     fun checkValidState() {
@@ -121,27 +127,27 @@ enum class KeyguardState {
             DREAMING,
             AOD,
             ALTERNATE_BOUNCER,
-            OCCLUDED,
             LOCKSCREEN -> this
             GLANCEABLE_HUB,
             PRIMARY_BOUNCER,
             GONE,
+            OCCLUDED,
             UNDEFINED -> UNDEFINED
         }
     }
 
-    fun mapToSceneContainerScene(): SceneKey? {
+    fun mapToSceneContainerContent(): ContentKey? {
         return when (this) {
             OFF,
             DOZING,
             DREAMING,
             AOD,
             ALTERNATE_BOUNCER,
-            OCCLUDED,
             LOCKSCREEN -> Scenes.Lockscreen
             GLANCEABLE_HUB -> Scenes.Communal
-            PRIMARY_BOUNCER -> Scenes.Bouncer
+            PRIMARY_BOUNCER -> Overlays.Bouncer
             GONE -> Scenes.Gone
+            OCCLUDED -> Scenes.Occluded
             UNDEFINED -> null
         }
     }

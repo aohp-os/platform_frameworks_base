@@ -28,10 +28,10 @@
 #include "HWUIProperties.sysprop.h"
 #include "src/core/SkTraceEventCommon.h"
 
-#ifdef __ANDROID__
+#ifdef __linux__
 #include <com_android_graphics_hwui_flags.h>
 namespace hwui_flags = com::android::graphics::hwui::flags;
-#else
+#else // __linux__
 namespace hwui_flags {
 constexpr bool clip_surfaceviews() {
     return false;
@@ -50,12 +50,8 @@ constexpr bool skip_eglmanager_telemetry() {
 constexpr bool resample_gainmap_regions() {
     return false;
 }
-
-constexpr bool query_global_priority() {
-    return false;
-}
 }  // namespace hwui_flags
-#endif
+#endif // __linux__
 
 namespace android {
 namespace uirenderer {
@@ -107,13 +103,13 @@ bool Properties::enableWebViewOverlays = true;
 bool Properties::isHighEndGfx = true;
 bool Properties::isLowRam = false;
 bool Properties::isSystemOrPersistent = false;
+bool Properties::isForceInvertEnabled = false;
 
 float Properties::maxHdrHeadroomOn8bit = 5.f;  // TODO: Refine this number
 
 bool Properties::clipSurfaceViews = false;
 bool Properties::hdr10bitPlus = false;
 bool Properties::skipTelemetry = false;
-bool Properties::queryGlobalPriority = false;
 
 int Properties::timeoutMultiplier = 1;
 
@@ -189,7 +185,6 @@ bool Properties::load() {
     clipSurfaceViews =
             base::GetBoolProperty("debug.hwui.clip_surfaceviews", hwui_flags::clip_surfaceviews());
     hdr10bitPlus = hwui_flags::hdr_10bit_plus();
-    queryGlobalPriority = hwui_flags::query_global_priority();
 
     timeoutMultiplier = android::base::GetIntProperty("ro.hw_timeout_multiplier", 1);
     skipTelemetry = base::GetBoolProperty(PROPERTY_SKIP_EGLMANAGER_TELEMETRY,

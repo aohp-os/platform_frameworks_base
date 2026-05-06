@@ -23,6 +23,7 @@ import static android.view.WindowManager.TRANSIT_PIP;
 import static com.android.wm.shell.pip.PipAnimationController.TRANSITION_DIRECTION_REMOVE_STACK;
 import static com.android.wm.shell.pip.PipAnimationController.isInPipDirection;
 
+import android.annotation.IntDef;
 import android.annotation.Nullable;
 import android.app.ActivityTaskManager;
 import android.app.Flags;
@@ -39,7 +40,6 @@ import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
-import android.window.WindowContainerToken;
 import android.window.WindowContainerTransaction;
 
 import androidx.annotation.NonNull;
@@ -55,6 +55,8 @@ import com.android.wm.shell.transition.DefaultMixedHandler;
 import com.android.wm.shell.transition.Transitions;
 
 import java.io.PrintWriter;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -72,6 +74,17 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     private final Map<PipTransitionCallback, Executor> mPipTransitionCallbacks = new HashMap<>();
     protected PipTaskOrganizer mPipOrganizer;
     protected DefaultMixedHandler mMixedHandler;
+
+    public static final int ANIM_TYPE_BOUNDS = 0;
+    public static final int ANIM_TYPE_ALPHA = 1;
+
+    @IntDef(prefix = { "ANIM_TYPE_" }, value = {
+            ANIM_TYPE_BOUNDS,
+            ANIM_TYPE_ALPHA
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface AnimationType {}
+
 
     protected final PipAnimationController.PipAnimationCallback mPipAnimationCallback =
             new PipAnimationController.PipAnimationCallback() {
@@ -129,11 +142,26 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     }
 
     /**
-     * Called when the Shell wants to start resizing Pip transition/animation.
-     *
-     * @param duration the suggested duration for resize animation.
+     * Called when the Shell wants to start an exit-via-expand from Pip transition/animation.
      */
-    public void startResizeTransition(WindowContainerTransaction wct, int duration) {
+    public void startExpandTransition(
+            WindowContainerTransaction wct, boolean toSplit, boolean hasFirstHandler) {
+        // Default implementation does nothing.
+    }
+
+    /**
+     * Called when the Shell wants to start a remove Pip transition/animation.
+     */
+    public void startRemoveTransition(WindowContainerTransaction wct, boolean withFadeout) {
+        // Default implementation does nothing.
+    }
+
+    /**
+     * Called when the Shell wants to start changing the Pip bounds transition/animation.
+     *
+     * @param duration the suggested duration for bounds change animation.
+     */
+    public void startPipBoundsChangeTransition(WindowContainerTransaction wct, int duration) {
         // Default implementation does nothing.
     }
 
@@ -163,9 +191,7 @@ public abstract class PipTransitionController implements Transitions.TransitionH
         mShellTaskOrganizer = shellTaskOrganizer;
         mPipBoundsAlgorithm = pipBoundsAlgorithm;
         mTransitions = transitions;
-        if (Transitions.ENABLE_SHELL_TRANSITIONS) {
-            shellInit.addInitCallback(this::onInit, this);
-        }
+        shellInit.addInitCallback(this::onInit, this);
     }
 
     protected void onInit() {
@@ -313,25 +339,14 @@ public abstract class PipTransitionController implements Transitions.TransitionH
         return false;
     }
 
-    /**
-     * @return a change representing a config-at-end activity for a given parent.
-     */
-    @Nullable
-    public TransitionInfo.Change getDeferConfigActivityChange(TransitionInfo info,
-            @android.annotation.NonNull WindowContainerToken parent) {
-        for (TransitionInfo.Change change : info.getChanges()) {
-            if (change.getTaskInfo() == null
-                    && change.hasFlags(TransitionInfo.FLAG_CONFIG_AT_END)
-                    && change.getParent() != null && change.getParent().equals(parent)) {
-                return change;
-            }
-        }
-        return null;
-    }
-
-
     /** Whether a particular package is same as current pip package. */
     public boolean isPackageActiveInPip(@Nullable String packageName) {
+        // No-op, to be handled differently in PIP1 and PIP2
+        return false;
+    }
+
+    /** Whether a particular task id the current pip task id. */
+    public boolean isTaskActiveInPip(int taskId) {
         // No-op, to be handled differently in PIP1 and PIP2
         return false;
     }
@@ -343,7 +358,7 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     }
 
     /** Sets the type of animation when a PiP task appears. */
-    public void setEnterAnimationType(@PipAnimationController.AnimationType int type) {
+    public void setEnterAnimationType(@AnimationType int type) {
     }
 
     /** Play a transition animation for entering PiP on a specific PiP change. */
@@ -391,12 +406,26 @@ public abstract class PipTransitionController implements Transitions.TransitionH
     }
 
     /**
+     * Callback when the transition is aborted.
+     */
+    public void onTransitionAborted() {
+    }
+
+    /**
      * End the currently-playing PiP animation.
      *
      * @param onTransitionEnd callback to run upon finishing the playing transition.
      */
     public void end(@Nullable Runnable onTransitionEnd) {
     }
+
+    /**
+     * Clean up stored PIP state.
+     * <p>
+     * Should only be called after a task has exited due to external reasons. Does not modify the
+     * task itself or move it out of PIP.
+     */
+    public void cleanUpState() {}
 
     /** Starts the {@link android.window.SystemPerformanceHinter.HighPerfSession}. */
     public void startHighPerfSession() {}

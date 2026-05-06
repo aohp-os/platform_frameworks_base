@@ -60,8 +60,11 @@ public class PrepareGetRequestSession extends GetRequestSession {
         int numTypes = (request.getCredentialOptions().stream()
                 .map(CredentialOption::getType).collect(
                         Collectors.toSet())).size(); // Dedupe type strings
-        mRequestSessionMetric.collectGetFlowInitialMetricInfo(request);
+        mRequestSessionMetric.collectGetFlowInitialMetricInfo(request,
+                    /*isApiPrepared=*/ true);
         mPrepareGetCredentialCallback = prepareGetCredentialCallback;
+
+        Slog.i(TAG, "PrepareGetRequestSession constructed.");
     }
 
     @Override

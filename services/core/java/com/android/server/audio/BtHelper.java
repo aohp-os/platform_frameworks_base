@@ -25,7 +25,8 @@ import static android.media.AudioManager.AUDIO_DEVICE_CATEGORY_RECEIVER;
 import static android.media.AudioManager.AUDIO_DEVICE_CATEGORY_SPEAKER;
 import static android.media.AudioManager.AUDIO_DEVICE_CATEGORY_UNKNOWN;
 import static android.media.AudioManager.AUDIO_DEVICE_CATEGORY_WATCH;
-import static android.media.audio.Flags.automaticBtDeviceType;
+
+import static com.android.media.audio.Flags.optimizeBtDeviceSwitch;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -394,8 +395,11 @@ public class BtHelper {
                                 + "received with null profile proxy for device: "
                                 + btDevice)).printLog(TAG));
                 return;
+
             }
-            onSetBtScoActiveDevice(btDevice);
+            boolean deviceSwitch = optimizeBtDeviceSwitch()
+                    && btDevice != null && mBluetoothHeadsetDevice != null;
+            mDeviceBroker.onSetBtScoActiveDevice(btDevice, deviceSwitch);
         } else if (action.equals(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)) {
             int btState = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1);
             onScoAudioStateChanged(btState);
@@ -815,7 +819,7 @@ public class BtHelper {
                 if (device == null) {
                     continue;
                 }
-                onSetBtScoActiveDevice(device);
+                onSetBtScoActiveDevice(device, false /*deviceSwitch*/);
             }
         } else {
             Log.e(TAG, "onHeadsetProfileConnected: Null BluetoothAdapter");
@@ -908,7 +912,8 @@ public class BtHelper {
     }
 
     @GuardedBy("mDeviceBroker.mDeviceStateLock")
-    private boolean handleBtScoActiveDeviceChange(BluetoothDevice btDevice, boolean isActive) {
+    private boolean handleBtScoActiveDeviceChange(BluetoothDevice btDevice, boolean isActive,
+            boolean deviceSwitch) {
         if (btDevice == null) {
             return true;
         }
@@ -920,12 +925,12 @@ public class BtHelper {
         if (isActive) {
             audioDevice = btHeadsetDeviceToAudioDevice(btDevice);
             result = mDeviceBroker.handleDeviceConnection(
-                    audioDevice, true /*connect*/, btDevice);
+                    audioDevice, true /*connect*/, btDevice, false /*deviceSwitch*/);
         } else {
             AudioDeviceAttributes ada = mResolvedScoAudioDevices.get(btDevice);
             if (ada != null) {
                 result = mDeviceBroker.handleDeviceConnection(
-                    ada, false /*connect*/, btDevice);
+                    ada, false /*connect*/, btDevice, deviceSwitch);
             } else {
                 // Disconnect all possible audio device types if the disconnected device type is
                 // unknown
@@ -936,7 +941,8 @@ public class BtHelper {
                 };
                 for (int outDeviceType : outDeviceTypes) {
                     result |= mDeviceBroker.handleDeviceConnection(new AudioDeviceAttributes(
-                            outDeviceType, address, name), false /*connect*/, btDevice);
+                            outDeviceType, address, name), false /*connect*/, btDevice,
+                            deviceSwitch);
                 }
             }
         }
@@ -945,7 +951,7 @@ public class BtHelper {
         // handleDeviceConnection() && result to make sure the method get executed
         result = mDeviceBroker.handleDeviceConnection(new AudioDeviceAttributes(
                         inDevice, address, name),
-                isActive, btDevice) && result;
+                isActive, btDevice, deviceSwitch) && result;
         if (result) {
             if (isActive) {
                 mResolvedScoAudioDevices.put(btDevice, audioDevice);
@@ -962,24 +968,27 @@ public class BtHelper {
     }
 
     @GuardedBy("mDeviceBroker.mDeviceStateLock")
-    /*package */ void onSetBtScoActiveDevice(BluetoothDevice btDevice) {
+    /*package */ void onSetBtScoActiveDevice(BluetoothDevice btDevice, boolean deviceSwitch) {
         Log.i(TAG, "onSetBtScoActiveDevice: " + getAnonymizedAddress(mBluetoothHeadsetDevice)
-                + " -> " + getAnonymizedAddress(btDevice));
+                + " -> " + getAnonymizedAddress(btDevice) + ", deviceSwitch: " + deviceSwitch);
         final BluetoothDevice previousActiveDevice = mBluetoothHeadsetDevice;
         if (Objects.equals(btDevice, previousActiveDevice)) {
             return;
         }
-        if (!handleBtScoActiveDeviceChange(previousActiveDevice, false)) {
+        if (!handleBtScoActiveDeviceChange(previousActiveDevice, false, deviceSwitch)) {
             Log.w(TAG, "onSetBtScoActiveDevice() failed to remove previous device "
                     + getAnonymizedAddress(previousActiveDevice));
         }
-        if (!handleBtScoActiveDeviceChange(btDevice, true)) {
+        // mBluetoothHeadsetDevice must correspond to previous device until now and new device from
+        // now on for SCO activation/deactivation requests made by
+        // AudioDeviceBroker.onUpdateCommunicationRouteClient() to succeed.
+        mBluetoothHeadsetDevice = btDevice;
+        if (!handleBtScoActiveDeviceChange(btDevice, true, false /*deviceSwitch*/)) {
             Log.e(TAG, "onSetBtScoActiveDevice() failed to add new device "
                     + getAnonymizedAddress(btDevice));
             // set mBluetoothHeadsetDevice to null when failing to add new device
-            btDevice = null;
+            mBluetoothHeadsetDevice = null;
         }
-        mBluetoothHeadsetDevice = btDevice;
         if (mBluetoothHeadsetDevice == null) {
             resetBluetoothSco();
         }
@@ -1228,11 +1237,15 @@ public class BtHelper {
         return result;
     }
 
-    /*package*/ synchronized int getLeAudioDeviceGroupId(BluetoothDevice device) {
+    /*package*/ synchronized int getLeAudioDeviceGroupId(BluetoothDevice device, int profile) {
         if (mLeAudio == null || device == null) {
             return BluetoothLeAudio.GROUP_ID_INVALID;
         }
-        return mLeAudio.getGroupId(device);
+        if (profile == BluetoothProfile.LE_AUDIO) {
+            return mLeAudio.getGroupId(device);
+        } else {
+            return mLeAudio.getBroadcastToUnicastFallbackGroup();
+        }
     }
 
     /**
@@ -1241,15 +1254,24 @@ public class BtHelper {
      * @return A List of Pair(String main_address, String identity_address). Note that the
      * addresses returned by BluetoothDevice can be null.
      */
-    /*package*/ synchronized List<Pair<String, String>> getLeAudioGroupAddresses(int groupId) {
+    /*package*/ synchronized List<Pair<String, String>> getLeAudioGroupAddresses(
+                int groupId, int profile) {
         List<Pair<String, String>> addresses = new ArrayList<>();
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null || mLeAudio == null) {
             return addresses;
         }
-        List<BluetoothDevice> activeDevices = adapter.getActiveDevices(BluetoothProfile.LE_AUDIO);
-        for (BluetoothDevice device : activeDevices) {
-            if (device != null && mLeAudio.getGroupId(device) == groupId) {
+        if (profile == BluetoothProfile.LE_AUDIO) {
+            List<BluetoothDevice> activeDevices = adapter.getActiveDevices(
+                    BluetoothProfile.LE_AUDIO);
+            for (BluetoothDevice device : activeDevices) {
+                if (device != null && mLeAudio.getGroupId(device) == groupId) {
+                    addresses.add(new Pair(device.getAddress(), device.getIdentityAddress()));
+                }
+            }
+        } else {
+            BluetoothDevice device = mLeAudio.getConnectedGroupLeadDevice(groupId);
+            if (device != null) {
                 addresses.add(new Pair(device.getAddress(), device.getIdentityAddress()));
             }
         }
@@ -1292,6 +1314,30 @@ public class BtHelper {
         return 0; // 0 is not a valid profile
     }
 
+    /*package */ static int getTypeFromProfile(
+            int profile, boolean isLeOutput, BluetoothDevice device) {
+        switch (profile) {
+            case BluetoothProfile.A2DP_SINK:
+                return AudioSystem.DEVICE_IN_BLUETOOTH_A2DP;
+            case BluetoothProfile.A2DP:
+                return AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP;
+            case BluetoothProfile.HEARING_AID:
+                return AudioSystem.DEVICE_OUT_HEARING_AID;
+            case BluetoothProfile.LE_AUDIO:
+                if (isLeOutput) {
+                    return AudioSystem.DEVICE_OUT_BLE_HEADSET;
+                } else {
+                    return AudioSystem.DEVICE_IN_BLE_HEADSET;
+                }
+            case BluetoothProfile.LE_AUDIO_BROADCAST:
+                return AudioSystem.DEVICE_OUT_BLE_BROADCAST;
+            case BluetoothProfile.HEADSET:
+                return btHeadsetDeviceToAudioDevice(device).getInternalType();
+            default:
+                throw new IllegalArgumentException("Invalid profile " + profile);
+        }
+    }
+
     /*package */ static Bundle getPreferredAudioProfiles(String address) {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         return adapter.getPreferredAudioProfiles(adapter.getRemoteDevice(address));
@@ -1309,10 +1355,6 @@ public class BtHelper {
 
     @AudioDeviceCategory
     /*package*/ static int getBtDeviceCategory(String address) {
-        if (!automaticBtDeviceType()) {
-            return AUDIO_DEVICE_CATEGORY_UNKNOWN;
-        }
-
         BluetoothDevice device = BtHelper.getBluetoothDevice(address);
         if (device == null) {
             return AUDIO_DEVICE_CATEGORY_UNKNOWN;

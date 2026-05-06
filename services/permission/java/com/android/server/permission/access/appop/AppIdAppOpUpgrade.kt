@@ -34,7 +34,7 @@ class AppIdAppOpUpgrade(private val policy: AppIdAppOpPolicy) {
                     packageState.appId,
                     userId,
                     AppOpsManager.OPSTR_RUN_ANY_IN_BACKGROUND,
-                    appOpMode
+                    appOpMode,
                 )
             }
         }
@@ -46,7 +46,7 @@ class AppIdAppOpUpgrade(private val policy: AppIdAppOpPolicy) {
                         getAppOpMode(
                             packageState.appId,
                             userId,
-                            AppOpsManager.OPSTR_SCHEDULE_EXACT_ALARM
+                            AppOpsManager.OPSTR_SCHEDULE_EXACT_ALARM,
                         )
                     val defaultAppOpMode =
                         AppOpsManager.opToDefaultMode(AppOpsManager.OP_SCHEDULE_EXACT_ALARM)
@@ -55,7 +55,7 @@ class AppIdAppOpUpgrade(private val policy: AppIdAppOpPolicy) {
                             packageState.appId,
                             userId,
                             AppOpsManager.OPSTR_SCHEDULE_EXACT_ALARM,
-                            AppOpsManager.MODE_ALLOWED
+                            AppOpsManager.MODE_ALLOWED,
                         )
                     }
                 }

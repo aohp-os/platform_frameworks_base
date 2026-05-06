@@ -99,6 +99,7 @@ final class BroadcastRecord extends Binder {
 
     final int originalStickyCallingUid;
             // if this is a sticky broadcast, the Uid of the original sender
+    final int realCallingUid; // the UID of the actual process triggering the broadcast
     final boolean callerInstantApp; // caller is an Instant App?
     final boolean callerInstrumented; // caller is being instrumented?
     final boolean ordered;  // serialize the send to receivers?
@@ -167,6 +168,12 @@ final class BroadcastRecord extends Binder {
     @Nullable
     private ArrayMap<BroadcastRecord, Boolean> mMatchingRecordsCache;
 
+    // Stores the {@link BroadcastProcessedEventRecord} for each process associated with this
+    // record.
+    @NonNull
+    private ArrayMap<String, BroadcastProcessedEventRecord> mBroadcastProcessedRecords =
+            new ArrayMap<>();
+
     private @Nullable String mCachedToString;
     private @Nullable String mCachedToShortString;
 
@@ -175,7 +182,7 @@ final class BroadcastRecord extends Binder {
      * treat {@link BroadcastOptions#DEFERRAL_POLICY_DEFAULT} as
      * {@link BroadcastOptions#DEFERRAL_POLICY_UNTIL_ACTIVE}.
      */
-    static boolean CORE_DEFER_UNTIL_ACTIVE = false;
+    static boolean CORE_DEFER_UNTIL_ACTIVE = true;
 
     /** Empty immutable list of receivers */
     static final List<Object> EMPTY_RECEIVERS = List.of();
@@ -289,7 +296,8 @@ final class BroadcastRecord extends Binder {
         pw.print(prefix); pw.print("caller="); pw.print(callerPackage); pw.print(" ");
                 pw.print(callerApp != null ? callerApp.toShortString() : "null");
                 pw.print(" pid="); pw.print(callingPid);
-                pw.print(" uid="); pw.println(callingUid);
+                pw.print(" uid="); pw.print(callingUid);
+                pw.print(" realCallingUid="); pw.println(realCallingUid);
         if ((requiredPermissions != null && requiredPermissions.length > 0)
                 || appOp != AppOpsManager.OP_NONE) {
             pw.print(prefix); pw.print("requiredPermissions=");
@@ -433,8 +441,8 @@ final class BroadcastRecord extends Binder {
                 callingUid, callerInstantApp, resolvedType, requiredPermissions,
                 excludedPermissions, excludedPackages, appOp, options, receivers, resultToApp,
                 resultTo, resultCode, resultData, resultExtras, serialized, sticky,
-                initialSticky, userId, -1, backgroundStartPrivileges, timeoutExempt,
-                filterExtrasForReceiver, callerAppProcessState, platformCompat);
+                initialSticky, userId, -1, -1, backgroundStartPrivileges,
+                timeoutExempt, filterExtrasForReceiver, callerAppProcessState, platformCompat);
     }
 
     BroadcastRecord(BroadcastQueue _queue,
@@ -446,7 +454,7 @@ final class BroadcastRecord extends Binder {
             BroadcastOptions _options, List _receivers,
             ProcessRecord _resultToApp, IIntentReceiver _resultTo, int _resultCode,
             String _resultData, Bundle _resultExtras, boolean _serialized, boolean _sticky,
-            boolean _initialSticky, int _userId, int originalStickyCallingUid,
+            boolean _initialSticky, int _userId, int originalStickyCallingUid, int realCallingUid,
             @NonNull BackgroundStartPrivileges backgroundStartPrivileges,
             boolean timeoutExempt,
             @Nullable BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver,
@@ -502,6 +510,7 @@ final class BroadcastRecord extends Binder {
         shareIdentity = options != null && options.isShareIdentityEnabled();
         this.filterExtrasForReceiver = filterExtrasForReceiver;
         this.originalStickyCallingUid = originalStickyCallingUid;
+        this.realCallingUid = realCallingUid;
     }
 
     /**
@@ -568,6 +577,7 @@ final class BroadcastRecord extends Binder {
         urgent = from.urgent;
         filterExtrasForReceiver = from.filterExtrasForReceiver;
         originalStickyCallingUid = from.originalStickyCallingUid;
+        realCallingUid = from.realCallingUid;
     }
 
     /**
@@ -648,6 +658,17 @@ final class BroadcastRecord extends Binder {
             case DELIVERY_DELIVERED:
             case DELIVERY_TIMEOUT:
             case DELIVERY_FAILURE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    boolean wasDelivered(int index) {
+        final int deliveryState = getDeliveryState(index);
+        switch (deliveryState) {
+            case DELIVERY_DELIVERED:
+            case DELIVERY_TIMEOUT:
                 return true;
             default:
                 return false;
@@ -777,84 +798,62 @@ final class BroadcastRecord extends Binder {
                 blockedUntilBeyondCount[i] = i;
             }
         } else {
-            if (Flags.limitPriorityScope()) {
-                final boolean[] changeEnabled = calculateChangeStateForReceivers(
-                        receivers, LIMIT_PRIORITY_SCOPE, platformCompat);
+            final boolean[] changeEnabled = calculateChangeStateForReceivers(
+                    receivers, LIMIT_PRIORITY_SCOPE, platformCompat);
 
-                // Priority of the previous tranche
-                int lastTranchePriority = 0;
-                // Priority of the current tranche
-                int currentTranchePriority = 0;
-                // Index of the last receiver in the previous tranche
-                int lastTranchePriorityIndex = -1;
-                // Index of the last receiver with change disabled in the previous tranche
-                int lastTrancheChangeDisabledIndex = -1;
-                // Index of the last receiver with change disabled in the current tranche
-                int currentTrancheChangeDisabledIndex = -1;
+            // Priority of the previous tranche
+            int lastTranchePriority = 0;
+            // Priority of the current tranche
+            int currentTranchePriority = 0;
+            // Index of the last receiver in the previous tranche
+            int lastTranchePriorityIndex = -1;
+            // Index of the last receiver with change disabled in the previous tranche
+            int lastTrancheChangeDisabledIndex = -1;
+            // Index of the last receiver with change disabled in the current tranche
+            int currentTrancheChangeDisabledIndex = -1;
 
-                for (int i = 0; i < N; i++) {
-                    final int thisPriority = getReceiverPriority(receivers.get(i));
-                    if (i == 0) {
-                        currentTranchePriority = thisPriority;
-                        if (!changeEnabled[i]) {
-                            currentTrancheChangeDisabledIndex = i;
-                        }
-                        continue;
-                    }
-
-                    // Check if a new priority tranche has started
-                    if (thisPriority != currentTranchePriority) {
-                        // Update tranche boundaries and reset the disabled index.
-                        if (currentTrancheChangeDisabledIndex != -1) {
-                            lastTrancheChangeDisabledIndex = currentTrancheChangeDisabledIndex;
-                        }
-                        lastTranchePriority = currentTranchePriority;
-                        lastTranchePriorityIndex = i - 1;
-                        currentTranchePriority = thisPriority;
-                        currentTrancheChangeDisabledIndex = -1;
-                    }
+            for (int i = 0; i < N; i++) {
+                final int thisPriority = getReceiverPriority(receivers.get(i));
+                if (i == 0) {
+                    currentTranchePriority = thisPriority;
                     if (!changeEnabled[i]) {
                         currentTrancheChangeDisabledIndex = i;
+                    }
+                    continue;
+                }
 
-                        // Since the change is disabled, block the current receiver until the
-                        // last receiver in the previous tranche.
-                        blockedUntilBeyondCount[i] = lastTranchePriorityIndex + 1;
-                    } else if (thisPriority != lastTranchePriority) {
-                        // If the changeId was disabled for an earlier receiver and the current
-                        // receiver has a different priority, block the current receiver
-                        // until that earlier receiver.
-                        if (lastTrancheChangeDisabledIndex != -1) {
-                            blockedUntilBeyondCount[i] = lastTrancheChangeDisabledIndex + 1;
-                        }
+                // Check if a new priority tranche has started
+                if (thisPriority != currentTranchePriority) {
+                    // Update tranche boundaries and reset the disabled index.
+                    if (currentTrancheChangeDisabledIndex != -1) {
+                        lastTrancheChangeDisabledIndex = currentTrancheChangeDisabledIndex;
+                    }
+                    lastTranchePriority = currentTranchePriority;
+                    lastTranchePriorityIndex = i - 1;
+                    currentTranchePriority = thisPriority;
+                    currentTrancheChangeDisabledIndex = -1;
+                }
+                if (!changeEnabled[i]) {
+                    currentTrancheChangeDisabledIndex = i;
+
+                    // Since the change is disabled, block the current receiver until the
+                    // last receiver in the previous tranche.
+                    blockedUntilBeyondCount[i] = lastTranchePriorityIndex + 1;
+                } else if (thisPriority != lastTranchePriority) {
+                    // If the changeId was disabled for an earlier receiver and the current
+                    // receiver has a different priority, block the current receiver
+                    // until that earlier receiver.
+                    if (lastTrancheChangeDisabledIndex != -1) {
+                        blockedUntilBeyondCount[i] = lastTrancheChangeDisabledIndex + 1;
                     }
                 }
-                // If the entire list is in the same priority tranche or no receivers had
-                // changeId disabled, mark as -1 to indicate that none of them need to wait
-                if (N > 0 && (lastTranchePriorityIndex == -1
-                        || (lastTrancheChangeDisabledIndex == -1
-                                && currentTrancheChangeDisabledIndex == -1))) {
-                    Arrays.fill(blockedUntilBeyondCount, -1);
-                }
-            } else {
-                // When sending a prioritized broadcast, we only need to wait
-                // for the previous tranche of receivers to be terminated
-                int lastPriority = 0;
-                int lastPriorityIndex = 0;
-                for (int i = 0; i < N; i++) {
-                    final int thisPriority = getReceiverPriority(receivers.get(i));
-                    if ((i == 0) || (thisPriority != lastPriority)) {
-                        lastPriority = thisPriority;
-                        lastPriorityIndex = i;
-                        blockedUntilBeyondCount[i] = i;
-                    } else {
-                        blockedUntilBeyondCount[i] = lastPriorityIndex;
-                    }
-                }
-                // If the entire list is in the same priority tranche, mark as -1 to
-                // indicate that none of them need to wait
-                if (N > 0 && blockedUntilBeyondCount[N - 1] == 0) {
-                    Arrays.fill(blockedUntilBeyondCount, -1);
-                }
+            }
+            // If the entire list is in the same priority tranche or no receivers had
+            // changeId disabled, mark as -1 to indicate that none of them need to wait
+            if (N > 0 && (lastTranchePriorityIndex == -1
+                    || (lastTrancheChangeDisabledIndex == -1
+                            && currentTrancheChangeDisabledIndex == -1))) {
+                Arrays.fill(blockedUntilBeyondCount, -1);
             }
         }
         return blockedUntilBeyondCount;
@@ -1285,34 +1284,90 @@ final class BroadcastRecord extends Binder {
     }
 
     @Override
+    @NonNull
     public String toString() {
         if (mCachedToString == null) {
-            String label = intent.getAction();
-            if (label == null) {
-                label = intent.toString();
-            }
             mCachedToString = "BroadcastRecord{" + toShortString() + "}";
         }
         return mCachedToString;
     }
 
+    @NonNull
     public String toShortString() {
         if (mCachedToShortString == null) {
-            String label = intent.getAction();
-            if (label == null) {
-                label = intent.toString();
-            }
+            final String label = intentToString(intent);
             mCachedToShortString = Integer.toHexString(System.identityHashCode(this))
                     + " " + label + "/u" + userId;
         }
         return mCachedToShortString;
     }
 
+    @NonNull
+    public static String intentToString(@NonNull Intent intent) {
+        String label = intent.getAction();
+        if (label == null) {
+            label = intent.toString();
+        }
+        return label;
+    }
+
+    public boolean debugLog() {
+        return debugLog(options);
+    }
+
+    public static boolean debugLog(@Nullable BroadcastOptions options) {
+        return options != null && options.isDebugLogEnabled();
+    }
+
     @NeverCompile
-    public void dumpDebug(ProtoOutputStream proto, long fieldId) {
+    public void dumpDebug(@NonNull ProtoOutputStream proto, long fieldId) {
         long token = proto.start(fieldId);
         proto.write(BroadcastRecordProto.USER_ID, userId);
         proto.write(BroadcastRecordProto.INTENT_ACTION, intent.getAction());
         proto.end(token);
+    }
+
+    /**
+     * Uses the {@link BroadcastProcessedEventRecord} pojo to store the logging information related
+     * to {@param receiver} object.
+     */
+    public void updateBroadcastProcessedEventRecord(@NonNull Object receiver, long timeMillis) {
+        if (!Flags.logBroadcastProcessedEvent()) {
+            return;
+        }
+
+        final String receiverProcessName = getReceiverProcessName(receiver);
+        BroadcastProcessedEventRecord broadcastProcessedEventRecord =
+                mBroadcastProcessedRecords.get(receiverProcessName);
+        if (broadcastProcessedEventRecord == null) {
+            broadcastProcessedEventRecord = new BroadcastProcessedEventRecord()
+                    .setBroadcastTypes(calculateTypesForLogging())
+                    .setIntentAction(intent.getAction())
+                    .setReceiverProcessName(receiverProcessName)
+                    .setReceiverUid(getReceiverUid(receiver))
+                    .setSenderUid(callingUid);
+
+            mBroadcastProcessedRecords.put(receiverProcessName, broadcastProcessedEventRecord);
+        }
+
+        broadcastProcessedEventRecord.addReceiverFinishTime(timeMillis);
+    }
+
+    public void logBroadcastProcessedEventRecord() {
+        if (!Flags.logBroadcastProcessedEvent()) {
+            return;
+        }
+
+        int size = mBroadcastProcessedRecords.size();
+        for (int i = 0; i < size; i++) {
+            mBroadcastProcessedRecords.valueAt(i).logToStatsD();
+        }
+        mBroadcastProcessedRecords.clear();
+    }
+
+    @VisibleForTesting
+    @NonNull
+    ArrayMap<String, BroadcastProcessedEventRecord> getBroadcastProcessedRecordsForTest() {
+        return mBroadcastProcessedRecords;
     }
 }

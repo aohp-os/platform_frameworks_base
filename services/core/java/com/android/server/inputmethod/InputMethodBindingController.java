@@ -46,6 +46,7 @@ import android.util.EventLog;
 import android.util.Slog;
 import android.view.Display;
 import android.view.WindowManager;
+import android.view.inputmethod.Flags;
 import android.view.inputmethod.InputMethod;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -95,6 +96,7 @@ final class InputMethodBindingController {
     @GuardedBy("ImfLock.class") private boolean mVisibleBound;
     @GuardedBy("ImfLock.class") private boolean mSupportsStylusHw;
     @GuardedBy("ImfLock.class") private boolean mSupportsConnectionlessStylusHw;
+    @GuardedBy("ImfLock.class") @Nullable private String mImeIdToRestoreOnNextSession;
 
     /** The display id for which the latest startInput was called. */
     @GuardedBy("ImfLock.class") private int mDisplayIdToShowIme = INVALID_DISPLAY;
@@ -120,12 +122,21 @@ final class InputMethodBindingController {
      * Binding flags for establishing connection to the {@link InputMethodService}.
      */
     @VisibleForTesting
-    static final int IME_CONNECTION_BIND_FLAGS =
-            Context.BIND_AUTO_CREATE
+    static final int IME_CONNECTION_BIND_FLAGS;
+    static {
+        if (android.view.inputmethod.Flags.lowerImeOomImportance()) {
+            IME_CONNECTION_BIND_FLAGS = Context.BIND_AUTO_CREATE
+                    | Context.BIND_ALMOST_PERCEPTIBLE
+                    | Context.BIND_IMPORTANT_BACKGROUND
+                    | Context.BIND_SCHEDULE_LIKE_TOP_APP;
+        } else {
+            IME_CONNECTION_BIND_FLAGS = Context.BIND_AUTO_CREATE
                     | Context.BIND_NOT_VISIBLE
                     | Context.BIND_NOT_FOREGROUND
                     | Context.BIND_IMPORTANT_BACKGROUND
                     | Context.BIND_SCHEDULE_LIKE_TOP_APP;
+        }
+    }
 
     private final int mImeConnectionBindFlags;
 
@@ -369,6 +380,12 @@ final class InputMethodBindingController {
     @GuardedBy("ImfLock.class")
     private final ServiceConnection mMainConnection = new ServiceConnection() {
         @Override
+        public void onBindingDied(ComponentName name) {
+            synchronized (ImfLock.class) {
+                unbindCurrentMethod();
+            }
+        }
+        @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMMS.onServiceConnected");
             synchronized (ImfLock.class) {
@@ -492,8 +509,8 @@ final class InputMethodBindingController {
         }
 
         if (getCurToken() != null) {
-            removeCurrentToken();
             mService.resetSystemUiLocked(this);
+            removeCurrentToken();
             mAutofillController.onResetSystemUi();
         }
 
@@ -503,6 +520,10 @@ final class InputMethodBindingController {
 
     @GuardedBy("ImfLock.class")
     private void clearCurMethodAndSessions() {
+        if (Flags.reportAnimatingInsetsTypes()) {
+            final var userData = mService.getUserData(mUserId);
+            userData.mVisibilityStateComputer.setInputShown(false);
+        }
         mService.clearClientSessionsLocked(this);
         mCurMethod = null;
         mCurMethodUid = Process.INVALID_UID;
@@ -656,6 +677,24 @@ final class InputMethodBindingController {
         if (isVisibleBound()) {
             unbindVisibleConnection();
         }
+    }
+
+    /**
+     * IMMS may temporarily set a different IME based on device policy of the editor. Original IME
+     * will be restored in next startInput.
+     * @param methodId
+     */
+    @GuardedBy("ImfLock.class")
+    void setImeIdToRestoreOnNextSession(@Nullable String methodId) {
+        mImeIdToRestoreOnNextSession = methodId;
+    }
+
+    /**
+     * @see #setImeIdToRestoreOnNextSession(String)
+     */
+    @GuardedBy("ImfLock.class")
+    @Nullable String getImeIdToRestoreOnNextSession() {
+        return mImeIdToRestoreOnNextSession;
     }
 
     /**

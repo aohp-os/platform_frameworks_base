@@ -16,28 +16,82 @@
 
 package com.android.server.companion.utils;
 
+import static android.Manifest.permission.ADD_MIRROR_DISPLAY;
+import static android.Manifest.permission.ADD_TRUSTED_DISPLAY;
+import static android.Manifest.permission.ACCESS_COMPANION_INFO;
+import static android.Manifest.permission.ADD_VOICEMAIL;
+import static android.Manifest.permission.ANSWER_PHONE_CALLS;
+import static android.Manifest.permission.BLUETOOTH_ADVERTISE;
 import static android.Manifest.permission.BLUETOOTH_CONNECT;
 import static android.Manifest.permission.BLUETOOTH_SCAN;
+import static android.Manifest.permission.CALL_PHONE;
+import static android.Manifest.permission.CREATE_VIRTUAL_DEVICE;
+import static android.Manifest.permission.GET_ACCOUNTS;
 import static android.Manifest.permission.INTERACT_ACROSS_USERS;
 import static android.Manifest.permission.MANAGE_COMPANION_DEVICES;
+import static android.Manifest.permission.NEARBY_WIFI_DEVICES;
+import static android.Manifest.permission.POST_NOTIFICATIONS;
+import static android.Manifest.permission.PROCESS_OUTGOING_CALLS;
+import static android.Manifest.permission.READ_CALENDAR;
+import static android.Manifest.permission.READ_CALL_LOG;
+import static android.Manifest.permission.READ_CELL_BROADCASTS;
+import static android.Manifest.permission.READ_CONTACTS;
+import static android.Manifest.permission.READ_EXTERNAL_STORAGE;
+import static android.Manifest.permission.READ_MEDIA_AUDIO;
+import static android.Manifest.permission.READ_MEDIA_IMAGES;
+import static android.Manifest.permission.READ_MEDIA_VIDEO;
+import static android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED;
+import static android.Manifest.permission.READ_PHONE_STATE;
+import static android.Manifest.permission.READ_SMS;
+import static android.Manifest.permission.READ_VOICEMAIL;
+import static android.Manifest.permission.RECEIVE_MMS;
+import static android.Manifest.permission.RECEIVE_SMS;
+import static android.Manifest.permission.RECEIVE_WAP_PUSH;
+import static android.Manifest.permission.RECORD_AUDIO;
 import static android.Manifest.permission.REQUEST_COMPANION_SELF_MANAGED;
 import static android.Manifest.permission.REQUEST_OBSERVE_DEVICE_UUID_PRESENCE;
+import static android.Manifest.permission.SEND_SMS;
+import static android.Manifest.permission.USE_SIP;
+import static android.Manifest.permission.WRITE_CALENDAR;
+import static android.Manifest.permission.WRITE_CALL_LOG;
+import static android.Manifest.permission.WRITE_CONTACTS;
+import static android.Manifest.permission.WRITE_EXTERNAL_STORAGE;
+import static android.Manifest.permission.WRITE_VOICEMAIL;
 import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_APP_STREAMING;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_AUTOMOTIVE_PROJECTION;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_COMPUTER;
+import static android.companion.AssociationRequest.DEVICE_PROFILE_FITNESS_TRACKER;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_GLASSES;
+import static android.companion.AssociationRequest.DEVICE_PROFILE_MEDICAL;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_NEARBY_DEVICE_STREAMING;
+import static android.companion.AssociationRequest.DEVICE_PROFILE_VIRTUAL_DEVICE;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_WATCH;
+import static android.companion.AssociationRequest.DEVICE_PROFILE_WEARABLE_SENSING;
+import static android.companion.CompanionResources.PERMISSION_ADD_MIRROR_DISPLAY;
+import static android.companion.CompanionResources.PERMISSION_ADD_TRUSTED_DISPLAY;
+import static android.companion.CompanionResources.PERMISSION_CALENDAR;
+import static android.companion.CompanionResources.PERMISSION_CALL_LOGS;
+import static android.companion.CompanionResources.PERMISSION_CONTACTS;
+import static android.companion.CompanionResources.PERMISSION_CREATE_VIRTUAL_DEVICE;
+import static android.companion.CompanionResources.PERMISSION_MICROPHONE;
+import static android.companion.CompanionResources.PERMISSION_NEARBY_DEVICES;
+import static android.companion.CompanionResources.PERMISSION_PHONE;
+import static android.companion.CompanionResources.PERMISSION_POST_NOTIFICATIONS;
+import static android.companion.CompanionResources.PERMISSION_SMS;
+import static android.companion.CompanionResources.PERMISSION_STORAGE;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.Binder.getCallingPid;
 import static android.os.Binder.getCallingUid;
+import static android.os.Process.ROOT_UID;
+import static android.os.Process.SHELL_UID;
 import static android.os.Process.SYSTEM_UID;
 import static android.os.UserHandle.getCallingUserId;
 
 import static com.android.server.companion.utils.RolesUtils.isRoleHolder;
 
 import static java.util.Collections.unmodifiableMap;
+import static java.util.Collections.unmodifiableSet;
 
 import android.Manifest;
 import android.annotation.NonNull;
@@ -50,10 +104,13 @@ import android.os.Binder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.ArrayMap;
+import android.util.ArraySet;
 
 import com.android.internal.app.IAppOpsService;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Utility methods for checking permissions required for accessing {@link CompanionDeviceManager}
@@ -63,18 +120,50 @@ import java.util.Map;
  */
 public final class PermissionsUtils {
 
+    public static final Map<Integer, List<String>> PERM_SET_TO_PERMS = Map.ofEntries(
+            Map.entry(PERMISSION_CALENDAR, List.of(READ_CALENDAR, WRITE_CALENDAR)),
+            Map.entry(PERMISSION_CALL_LOGS, List.of(READ_CALL_LOG, WRITE_CALL_LOG)),
+            Map.entry(PERMISSION_CONTACTS, List.of(READ_CONTACTS, WRITE_CONTACTS, GET_ACCOUNTS)),
+            Map.entry(PERMISSION_MICROPHONE, List.of(RECORD_AUDIO)),
+            Map.entry(PERMISSION_NEARBY_DEVICES, List.of(BLUETOOTH_ADVERTISE, BLUETOOTH_CONNECT,
+                    BLUETOOTH_SCAN, NEARBY_WIFI_DEVICES)),
+            Map.entry(PERMISSION_POST_NOTIFICATIONS, List.of(POST_NOTIFICATIONS)),
+            Map.entry(PERMISSION_PHONE, List.of(READ_PHONE_STATE, CALL_PHONE, ADD_VOICEMAIL,
+                    READ_VOICEMAIL, WRITE_VOICEMAIL, USE_SIP, PROCESS_OUTGOING_CALLS,
+                    ANSWER_PHONE_CALLS)),
+            Map.entry(PERMISSION_SMS, List.of(SEND_SMS, RECEIVE_SMS, READ_SMS, RECEIVE_WAP_PUSH,
+                    RECEIVE_MMS, READ_CELL_BROADCASTS)),
+            Map.entry(PERMISSION_STORAGE, List.of(READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE,
+                    READ_MEDIA_AUDIO, READ_MEDIA_VIDEO, READ_MEDIA_IMAGES,
+                    READ_MEDIA_VISUAL_USER_SELECTED)),
+            Map.entry(PERMISSION_CREATE_VIRTUAL_DEVICE, List.of(CREATE_VIRTUAL_DEVICE)),
+            Map.entry(PERMISSION_ADD_MIRROR_DISPLAY, List.of(ADD_MIRROR_DISPLAY)),
+            Map.entry(PERMISSION_ADD_TRUSTED_DISPLAY, List.of(ADD_TRUSTED_DISPLAY)));
+
+    private static final Set<String> SYSTEM_ONLY_DEVICE_PROFILES;
+    static {
+        final Set<String> set = new ArraySet<>();
+        set.add(DEVICE_PROFILE_WEARABLE_SENSING);
+        SYSTEM_ONLY_DEVICE_PROFILES = unmodifiableSet(set);
+    }
+
     private static final Map<String, String> DEVICE_PROFILE_TO_PERMISSION;
     static {
         final Map<String, String> map = new ArrayMap<>();
         map.put(DEVICE_PROFILE_WATCH, Manifest.permission.REQUEST_COMPANION_PROFILE_WATCH);
+        map.put(DEVICE_PROFILE_FITNESS_TRACKER,
+                Manifest.permission.REQUEST_COMPANION_PROFILE_WATCH);
         map.put(DEVICE_PROFILE_APP_STREAMING,
                 Manifest.permission.REQUEST_COMPANION_PROFILE_APP_STREAMING);
         map.put(DEVICE_PROFILE_AUTOMOTIVE_PROJECTION,
                 Manifest.permission.REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION);
         map.put(DEVICE_PROFILE_COMPUTER, Manifest.permission.REQUEST_COMPANION_PROFILE_COMPUTER);
         map.put(DEVICE_PROFILE_GLASSES, Manifest.permission.REQUEST_COMPANION_PROFILE_GLASSES);
+        map.put(DEVICE_PROFILE_MEDICAL, Manifest.permission.REQUEST_COMPANION_PROFILE_MEDICAL);
         map.put(DEVICE_PROFILE_NEARBY_DEVICE_STREAMING,
                 Manifest.permission.REQUEST_COMPANION_PROFILE_NEARBY_DEVICE_STREAMING);
+        map.put(DEVICE_PROFILE_VIRTUAL_DEVICE,
+                Manifest.permission.REQUEST_COMPANION_PROFILE_VIRTUAL_DEVICE);
 
         DEVICE_PROFILE_TO_PERMISSION = unmodifiableMap(map);
     }
@@ -99,12 +188,18 @@ public final class PermissionsUtils {
         // Device profile can be null.
         if (deviceProfile == null) return;
 
-        if (!DEVICE_PROFILE_TO_PERMISSION.containsKey(deviceProfile)) {
+        if (!DEVICE_PROFILE_TO_PERMISSION.containsKey(deviceProfile)
+                && !SYSTEM_ONLY_DEVICE_PROFILES.contains(deviceProfile)) {
             throw new IllegalArgumentException("Unsupported device profile: " + deviceProfile);
         }
 
-        final String permission = DEVICE_PROFILE_TO_PERMISSION.get(deviceProfile);
-        if (context.checkPermission(permission, getCallingPid(), packageUid)
+        if (SYSTEM_ONLY_DEVICE_PROFILES.contains(deviceProfile) && getCallingUid() != SYSTEM_UID) {
+            throw new SecurityException("Caller must be system to associate with a device with "
+                    + deviceProfile + " profile.");
+        }
+
+        final String permission = DEVICE_PROFILE_TO_PERMISSION.getOrDefault(deviceProfile, null);
+        if (permission != null && context.checkPermission(permission, getCallingPid(), packageUid)
                 != PERMISSION_GRANTED) {
             throw new SecurityException("Application must hold " + permission + " to associate "
                     + "with a device with " + deviceProfile + " profile.");
@@ -212,6 +307,29 @@ public final class PermissionsUtils {
             throw new SecurityException("Caller (uid=" + getCallingUid() + ") does not have "
                     + "permissions to request observing device presence base on the UUID");
         }
+    }
+
+    /**
+     * Require the caller to hold necessary permission to observe device presence by device id.
+     */
+    public static void enforceCallerCanObserveDevicePresenceByDeviceId(@NonNull Context context) {
+        boolean hasRequirePermissions =
+                context.checkCallingPermission(ACCESS_COMPANION_INFO) == PERMISSION_GRANTED;
+
+        if (!hasRequirePermissions) {
+            throw new SecurityException("Caller (uid=" + getCallingUid() + ") does not have "
+                    + "permissions to request observing device presence base on the device id");
+        }
+    }
+
+    /**
+     * Require the caller to be Shell or Root.
+     */
+    public static void enforceCallerShellOrRoot() {
+        final int callingUid = Binder.getCallingUid();
+        if (callingUid == SHELL_UID || callingUid == ROOT_UID) return;
+
+        throw new SecurityException("Caller is neither Shell nor Root");
     }
 
     private static boolean checkPackage(@UserIdInt int uid, @NonNull String packageName) {

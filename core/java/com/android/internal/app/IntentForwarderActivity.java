@@ -41,7 +41,6 @@ import android.app.admin.DevicePolicyManager;
 import android.app.admin.ManagedSubscriptionsPolicy;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.IPackageManager;
@@ -170,8 +169,9 @@ public class IntentForwarderActivity extends Activity  {
         }
 
         final int callingUserId = getUserId();
+        String resolvedType = intentReceived.resolveTypeIfNeeded(getContentResolver());
         final Intent newIntent = canForward(intentReceived, getUserId(), targetUserId,
-                mInjector.getIPackageManager(), getContentResolver());
+                mInjector.getIPackageManager(), resolvedType);
 
         if (newIntent == null) {
             Slog.wtf(TAG, "the intent: " + intentReceived + " cannot be forwarded from user "
@@ -182,7 +182,11 @@ public class IntentForwarderActivity extends Activity  {
 
         newIntent.prepareToLeaveUser(callingUserId);
         final CompletableFuture<ResolveInfo> targetResolveInfoFuture =
-                mInjector.resolveActivityAsUser(newIntent, MATCH_DEFAULT_ONLY, targetUserId);
+                mInjector.resolveActivityAsUser(
+                        newIntent,
+                        resolvedType,
+                        MATCH_DEFAULT_ONLY,
+                        targetUserId);
 
         if (isPrivateProfile(callingUserId)) {
             buildAndExecuteForPrivateProfile(intentReceived, className, newIntent, callingUserId,
@@ -245,7 +249,7 @@ public class IntentForwarderActivity extends Activity  {
         }
 
         int targetUserId = managedProfile == null ? UserHandle.USER_NULL : managedProfile.id;
-        String callingPackage = getCallingPackage();
+        String callingPackage = getLaunchedFromPackage();
         boolean privilegedCallerAskedToSkipUserConsent =
                 launchIntent.getBooleanExtra(
                         EXTRA_SKIP_USER_CONFIRMATION, /* defaultValue= */ false)
@@ -524,6 +528,9 @@ public class IntentForwarderActivity extends Activity  {
                 ? targetUserId : callingUserId;
         int selectedProfile = findSelectedProfile(className);
         sanitizeIntent(intentReceived);
+        if (intentReceived.getSelector() != null) {
+            sanitizeIntent(intentReceived.getSelector());
+        }
         intentReceived.putExtra(EXTRA_SELECTED_PROFILE, selectedProfile);
         intentReceived.putExtra(EXTRA_CALLING_USER, UserHandle.of(callingUserId));
         if (singleTabOnly) {
@@ -593,30 +600,40 @@ public class IntentForwarderActivity extends Activity  {
      * forwarding if it can be forwarded, {@code null} otherwise.
      */
     static Intent canForward(Intent incomingIntent, int sourceUserId, int targetUserId,
-            IPackageManager packageManager, ContentResolver contentResolver)  {
+            IPackageManager packageManager, String resolvedType)  {
         Intent forwardIntent = new Intent(incomingIntent);
         forwardIntent.addFlags(
                 Intent.FLAG_ACTIVITY_FORWARD_RESULT | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
         sanitizeIntent(forwardIntent);
 
-        Intent intentToCheck = forwardIntent;
-        if (Intent.ACTION_CHOOSER.equals(forwardIntent.getAction())) {
+        if (!canForwardInner(forwardIntent, sourceUserId, targetUserId, packageManager,
+                resolvedType)) {
             return null;
         }
         if (forwardIntent.getSelector() != null) {
-            intentToCheck = forwardIntent.getSelector();
+            sanitizeIntent(forwardIntent.getSelector());
+            if (!canForwardInner(forwardIntent.getSelector(), sourceUserId, targetUserId,
+                    packageManager, resolvedType)) {
+                return null;
+            }
         }
-        String resolvedType = intentToCheck.resolveTypeIfNeeded(contentResolver);
-        sanitizeIntent(intentToCheck);
+        return forwardIntent;
+    }
+
+    private static boolean canForwardInner(Intent intent, int sourceUserId, int targetUserId,
+            IPackageManager packageManager, String resolvedType) {
+        if (Intent.ACTION_CHOOSER.equals(intent.getAction())) {
+            return false;
+        }
         try {
             if (packageManager.canForwardTo(
-                    intentToCheck, resolvedType, sourceUserId, targetUserId)) {
-                return forwardIntent;
+                    intent, resolvedType, sourceUserId, targetUserId)) {
+                return true;
             }
         } catch (RemoteException e) {
             Slog.e(TAG, "PackageManagerService is dead?");
         }
-        return null;
+        return false;
     }
 
     /**
@@ -724,6 +741,15 @@ public class IntentForwarderActivity extends Activity  {
 
         @Override
         @Nullable
+        public CompletableFuture<ResolveInfo> resolveActivityAsUser(Intent intent,
+                String resolvedType, int flags, int userId) {
+            return CompletableFuture.supplyAsync(
+                    () -> getPackageManager().resolveActivityAsUser(intent,
+                            resolvedType, flags, userId));
+        }
+
+        @Override
+        @Nullable
         public CompletableFuture<ResolveInfo> resolveActivityAsUser(
                 Intent intent, int flags, int userId) {
             return CompletableFuture.supplyAsync(
@@ -742,6 +768,9 @@ public class IntentForwarderActivity extends Activity  {
         UserManager getUserManager();
 
         PackageManager getPackageManager();
+
+        CompletableFuture<ResolveInfo> resolveActivityAsUser(Intent intent,
+                String resolvedType, int flags, int userId);
 
         CompletableFuture<ResolveInfo> resolveActivityAsUser(Intent intent, int flags, int userId);
 

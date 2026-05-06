@@ -60,13 +60,8 @@ namespace android {
 // ----------------------------------------------------------------------------
 
 static struct typedvalue_offsets_t {
-  jfieldID mType;
-  jfieldID mData;
-  jfieldID mString;
-  jfieldID mAssetCookie;
-  jfieldID mResourceId;
-  jfieldID mChangingConfigurations;
-  jfieldID mDensity;
+    jclass jClass;
+    jmethodID setFields;
 } gTypedValueOffsets;
 
 // This is also used by asset_manager.cpp.
@@ -129,15 +124,13 @@ constexpr inline static ApkAssetsCookie JavaCookieToApkAssetsCookie(jint cookie)
 
 static jint CopyValue(JNIEnv* env, const AssetManager2::SelectedValue& value,
                       jobject out_typed_value) {
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mType, value.type);
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mAssetCookie,
-                   ApkAssetsCookieToJavaCookie(value.cookie));
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mData, value.data);
-  env->SetObjectField(out_typed_value, gTypedValueOffsets.mString, nullptr);
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mResourceId, value.resid);
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mChangingConfigurations, value.flags);
-  env->SetIntField(out_typed_value, gTypedValueOffsets.mDensity, value.config.density);
-  return static_cast<jint>(ApkAssetsCookieToJavaCookie(value.cookie));
+    env->CallNonvirtualVoidMethod(out_typed_value, gTypedValueOffsets.jClass,
+                                  gTypedValueOffsets.setFields, value.type,
+                                  ApkAssetsCookieToJavaCookie(value.cookie), value.data,
+                                  value.resid, value.flags, value.config.density,
+                                  (value.entry_flags & ResTable_entry::FLAG_USES_FEATURE_FLAGS) !=
+                                          0);
+    return static_cast<jint>(ApkAssetsCookieToJavaCookie(value.cookie));
 }
 
 // ----------------------------------------------------------------------------
@@ -198,7 +191,7 @@ static jobject NativeGetOverlayableMap(JNIEnv* env, jclass /*clazz*/, jlong ptr,
   auto assetmanager = LockAndStartAssetManager(ptr);
   const ScopedUtfChars package_name_utf8(env, package_name);
   CHECK(package_name_utf8.c_str() != nullptr);
-  const std::string std_package_name(package_name_utf8.c_str());
+  const std::string_view std_package_name(package_name_utf8.c_str());
   const std::unordered_map<std::string, std::string>* map = nullptr;
 
   assetmanager->ForEachPackage([&](const std::string& this_package_name, uint8_t package_id) {
@@ -360,68 +353,76 @@ static void NativeSetConfiguration(JNIEnv* env, jclass /*clazz*/, jlong ptr, jin
                                    jint screen_height, jint smallest_screen_width_dp,
                                    jint screen_width_dp, jint screen_height_dp, jint screen_layout,
                                    jint ui_mode, jint color_mode, jint grammatical_gender,
-                                   jint major_version, jboolean force_refresh) {
-  ATRACE_NAME("AssetManager::SetConfiguration");
+                                   jint major_version, jint minor_version, jboolean force_refresh) {
+    ATRACE_NAME("AssetManager::SetConfiguration");
 
-  const jsize locale_count = (locales == NULL) ? 0 : env->GetArrayLength(locales);
+    const jsize locale_count = (locales == NULL) ? 0 : env->GetArrayLength(locales);
 
-  // Constants duplicated from Java class android.content.res.Configuration.
-  static const jint kScreenLayoutRoundMask = 0x300;
-  static const jint kScreenLayoutRoundShift = 8;
+    // Constants duplicated from Java class android.content.res.Configuration.
+    static const jint kScreenLayoutRoundMask = 0x300;
+    static const jint kScreenLayoutRoundShift = 8;
 
-  std::vector<ResTable_config> configs;
+    std::vector<ResTable_config> configs;
 
-  ResTable_config configuration;
-  memset(&configuration, 0, sizeof(configuration));
-  configuration.mcc = static_cast<uint16_t>(mcc);
-  configuration.mnc = static_cast<uint16_t>(mnc);
-  configuration.orientation = static_cast<uint8_t>(orientation);
-  configuration.touchscreen = static_cast<uint8_t>(touchscreen);
-  configuration.density = static_cast<uint16_t>(density);
-  configuration.keyboard = static_cast<uint8_t>(keyboard);
-  configuration.inputFlags = static_cast<uint8_t>(keyboard_hidden);
-  configuration.navigation = static_cast<uint8_t>(navigation);
-  configuration.screenWidth = static_cast<uint16_t>(screen_width);
-  configuration.screenHeight = static_cast<uint16_t>(screen_height);
-  configuration.smallestScreenWidthDp = static_cast<uint16_t>(smallest_screen_width_dp);
-  configuration.screenWidthDp = static_cast<uint16_t>(screen_width_dp);
-  configuration.screenHeightDp = static_cast<uint16_t>(screen_height_dp);
-  configuration.screenLayout = static_cast<uint8_t>(screen_layout);
-  configuration.uiMode = static_cast<uint8_t>(ui_mode);
-  configuration.colorMode = static_cast<uint8_t>(color_mode);
-  configuration.grammaticalInflection = static_cast<uint8_t>(grammatical_gender);
-  configuration.sdkVersion = static_cast<uint16_t>(major_version);
-  // In Java, we use a 32bit integer for screenLayout, while we only use an 8bit integer
-  // in C++. We must extract the round qualifier out of the Java screenLayout and put it
-  // into screenLayout2.
-  configuration.screenLayout2 =
-          static_cast<uint8_t>((screen_layout & kScreenLayoutRoundMask) >> kScreenLayoutRoundShift);
+    ResTable_config configuration;
+    memset(&configuration, 0, sizeof(configuration));
+    configuration.mcc = static_cast<uint16_t>(mcc);
+    configuration.mnc = static_cast<uint16_t>(mnc);
+    configuration.orientation = static_cast<uint8_t>(orientation);
+    configuration.touchscreen = static_cast<uint8_t>(touchscreen);
+    configuration.density = static_cast<uint16_t>(density);
+    configuration.keyboard = static_cast<uint8_t>(keyboard);
+    configuration.inputFlags = static_cast<uint8_t>(keyboard_hidden);
+    configuration.navigation = static_cast<uint8_t>(navigation);
+    configuration.screenWidth = static_cast<uint16_t>(screen_width);
+    configuration.screenHeight = static_cast<uint16_t>(screen_height);
+    configuration.smallestScreenWidthDp = static_cast<uint16_t>(smallest_screen_width_dp);
+    configuration.screenWidthDp = static_cast<uint16_t>(screen_width_dp);
+    configuration.screenHeightDp = static_cast<uint16_t>(screen_height_dp);
+    configuration.screenLayout = static_cast<uint8_t>(screen_layout);
+    configuration.uiMode = static_cast<uint8_t>(ui_mode);
+    configuration.colorMode = static_cast<uint8_t>(color_mode);
+    configuration.grammaticalInflection = static_cast<uint8_t>(grammatical_gender);
+    configuration.sdkVersion = static_cast<uint16_t>(major_version);
+    configuration.minorVersion = static_cast<uint16_t>(minor_version);
+    // In Java, we use a 32bit integer for screenLayout, while we only use an 8bit integer
+    // in C++. We must extract the round qualifier out of the Java screenLayout and put it
+    // into screenLayout2.
+    configuration.screenLayout2 = static_cast<uint8_t>((screen_layout & kScreenLayoutRoundMask) >>
+                                                       kScreenLayoutRoundShift);
 
-  if (locale_count > 0) {
-    configs.resize(locale_count, configuration);
-    for (int i = 0; i < locale_count; i++) {
-      jstring locale = (jstring)(env->GetObjectArrayElement(locales, i));
-      ScopedUtfChars locale_utf8(env, locale);
-      CHECK(locale_utf8.c_str() != nullptr);
-      configs[i].setBcp47Locale(locale_utf8.c_str());
+    if (locale_count > 0) {
+        configs.resize(locale_count, configuration);
+        for (int i = 0; i < locale_count; i++) {
+            jstring locale = (jstring)(env->GetObjectArrayElement(locales, i));
+            ScopedUtfChars locale_utf8(env, locale);
+            CHECK(locale_utf8.c_str() != nullptr);
+            configs[i].setBcp47Locale(locale_utf8.c_str());
+        }
+    } else {
+        configs.push_back(configuration);
     }
-  } else {
-    configs.push_back(configuration);
-  }
 
-  uint32_t default_locale_int = 0;
-  if (default_locale != nullptr) {
-    ResTable_config config;
-    static_assert(std::is_same_v<decltype(config.locale), decltype(default_locale_int)>);
-    ScopedUtfChars locale_utf8(env, default_locale);
-    CHECK(locale_utf8.c_str() != nullptr);
-    config.setBcp47Locale(locale_utf8.c_str());
-    default_locale_int = config.locale;
-  }
+    std::optional<ResTable_config> default_locale_opt;
+    if (default_locale != nullptr) {
+        ScopedUtfChars locale_utf8(env, default_locale);
+        CHECK(locale_utf8.c_str() != nullptr);
+        default_locale_opt.emplace();
+        default_locale_opt->setBcp47Locale(locale_utf8.c_str());
+    }
 
-  auto assetmanager = LockAndStartAssetManager(ptr);
-  assetmanager->SetConfigurations(std::move(configs), force_refresh != JNI_FALSE);
-  assetmanager->SetDefaultLocale(default_locale_int);
+    auto assetmanager = LockAndStartAssetManager(ptr);
+    assetmanager->SetConfigurations(std::move(configs), force_refresh != JNI_FALSE);
+    assetmanager->SetDefaultLocale(default_locale_opt);
+}
+
+static void NativeSetOverlayConstraints(JNIEnv* /*env*/, jclass /*clazz*/, jlong ptr,
+                                        jint displayId, jint deviceId) {
+    ATRACE_NAME("AssetManager::SetDisplayIdAndDeviceId");
+
+    auto assetmanager = LockAndStartAssetManager(ptr);
+    assetmanager->SetOverlayConstraints(static_cast<int32_t>(displayId),
+                                        static_cast<int32_t>(deviceId));
 }
 
 static jobject NativeGetAssignedPackageIdentifiers(JNIEnv* env, jclass /*clazz*/, jlong ptr,
@@ -1067,8 +1068,8 @@ static jstring NativeGetLastResourceResolution(JNIEnv* env,
 static jobjectArray NativeGetLocales(JNIEnv* env, jclass /*class*/, jlong ptr,
                                      jboolean exclude_system) {
   auto assetmanager = LockAndStartAssetManager(ptr);
-  std::set<std::string> locales =
-      assetmanager->GetResourceLocales(exclude_system, true /*merge_equivalent_languages*/);
+  auto locales =
+          assetmanager->GetResourceLocales(exclude_system, true /*merge_equivalent_languages*/);
 
   jobjectArray array = env->NewObjectArray(locales.size(), g_stringClass, nullptr);
   if (array == nullptr) {
@@ -1552,8 +1553,9 @@ static const JNINativeMethod gAssetManagerMethods[] = {
         {"nativeCreate", "()J", (void*)NativeCreate},
         {"nativeDestroy", "(J)V", (void*)NativeDestroy},
         {"nativeSetApkAssets", "(J[Landroid/content/res/ApkAssets;ZZ)V", (void*)NativeSetApkAssets},
-        {"nativeSetConfiguration", "(JIILjava/lang/String;[Ljava/lang/String;IIIIIIIIIIIIIIIIZ)V",
+        {"nativeSetConfiguration", "(JIILjava/lang/String;[Ljava/lang/String;IIIIIIIIIIIIIIIIIZ)V",
          (void*)NativeSetConfiguration},
+        {"nativeSetOverlayConstraints", "(JII)V", (void*)NativeSetOverlayConstraints},
         {"nativeGetAssignedPackageIdentifiers", "(JZZ)Landroid/util/SparseArray;",
          (void*)NativeGetAssignedPackageIdentifiers},
 
@@ -1646,16 +1648,10 @@ int register_android_content_AssetManager(JNIEnv* env) {
   jclass apk_assets_class = FindClassOrDie(env, "android/content/res/ApkAssets");
   gApkAssetsFields.native_ptr = GetFieldIDOrDie(env, apk_assets_class, "mNativePtr", "J");
 
-  jclass typedValue = FindClassOrDie(env, "android/util/TypedValue");
-  gTypedValueOffsets.mType = GetFieldIDOrDie(env, typedValue, "type", "I");
-  gTypedValueOffsets.mData = GetFieldIDOrDie(env, typedValue, "data", "I");
-  gTypedValueOffsets.mString =
-      GetFieldIDOrDie(env, typedValue, "string", "Ljava/lang/CharSequence;");
-  gTypedValueOffsets.mAssetCookie = GetFieldIDOrDie(env, typedValue, "assetCookie", "I");
-  gTypedValueOffsets.mResourceId = GetFieldIDOrDie(env, typedValue, "resourceId", "I");
-  gTypedValueOffsets.mChangingConfigurations =
-      GetFieldIDOrDie(env, typedValue, "changingConfigurations", "I");
-  gTypedValueOffsets.mDensity = GetFieldIDOrDie(env, typedValue, "density", "I");
+  gTypedValueOffsets.jClass =
+          jclass(env->NewGlobalRef(FindClassOrDie(env, "android/util/TypedValue")));
+  gTypedValueOffsets.setFields =
+          GetMethodIDOrDie(env, gTypedValueOffsets.jClass, "setFields", "(IIIIIIZ)V");
 
   jclass assetManager = FindClassOrDie(env, "android/content/res/AssetManager");
   gAssetManagerOffsets.mObject = GetFieldIDOrDie(env, assetManager, "mObject", "J");

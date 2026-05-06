@@ -10,6 +10,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
 import android.content.pm.UserInfo;
 import android.content.res.ColorStateList;
@@ -32,6 +33,7 @@ import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.TetheringManager;
+import android.net.Uri;
 import android.net.vcn.VcnUtils;
 import android.net.wifi.WifiInfo;
 import android.os.BatteryManager;
@@ -79,11 +81,14 @@ public class Utils {
     @VisibleForTesting
     static final String STORAGE_MANAGER_ENABLED_PROPERTY = "ro.storage_manager.enabled";
 
+    private static final String PACKAGE_MIME_TYPE = "application/vnd.android.package-archive";
+
     private static Signature[] sSystemSignature;
     private static String sPermissionControllerPackageName;
     private static String sServicesSystemSharedLibPackageName;
     private static String sSharedSystemSharedLibPackageName;
     private static String sDefaultWebViewPackageName;
+    private static String sPackageInstallerPackageName;
 
     static final int[] WIFI_PIE = {
         com.android.internal.R.drawable.ic_wifi_signal_0,
@@ -496,7 +501,27 @@ public class Utils {
                 || packageName.equals(sSharedSystemSharedLibPackageName)
                 || packageName.equals(PrintManager.PRINT_SPOOLER_PACKAGE_NAME)
                 || packageName.equals(getDefaultWebViewPackageName(pm))
+                || packageName.equals(getPackageInstallerPackageName(pm))
                 || isDeviceProvisioningPackage(resources, packageName);
+    }
+
+    /** Return the package name of the installer */
+    private static String getPackageInstallerPackageName(PackageManager pm) {
+        if (sPackageInstallerPackageName != null) {
+            return sPackageInstallerPackageName;
+        }
+        final Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.setDataAndType(Uri.parse("content://com.example/foo.apk"), PACKAGE_MIME_TYPE);
+        final List<ResolveInfo> matches =
+                pm.queryIntentActivities(intent, PackageManager.GET_META_DATA);
+        if (matches.size() == 1) {
+            final ResolveInfo resolveInfo = matches.get(0);
+            if (resolveInfo.activityInfo.applicationInfo.isPrivilegedApp()) {
+                sPackageInstallerPackageName = resolveInfo.getComponentInfo().packageName;
+            }
+        }
+        return sPackageInstallerPackageName;
     }
 
     /**
@@ -674,8 +699,10 @@ public class Utils {
         return networkRegWwan.isInService();
     }
 
-    /** Get the corresponding adaptive icon drawable. */
-    public static Drawable getBadgedIcon(Context context, Drawable icon, UserHandle user) {
+    /** Get the UserIconInfo required to badge an icon by looking up the UserInfo. */
+    @NonNull
+    public static UserIconInfo fetchUserIconInfo(@NonNull Context context,
+            @NonNull UserHandle user) {
         int userType = UserIconInfo.TYPE_MAIN;
         try {
             UserInfo ui =
@@ -692,10 +719,17 @@ public class Utils {
         } catch (Exception e) {
             // Ignore
         }
+        return new UserIconInfo(user, userType);
+    }
+
+    /** Get the corresponding adaptive icon drawable. */
+    @NonNull
+    public static Drawable getBadgedIcon(@NonNull Context context, @NonNull Drawable icon,
+            @NonNull UserHandle user) {
         try (IconFactory iconFactory = IconFactory.obtain(context)) {
             return iconFactory
                     .createBadgedIconBitmap(
-                            icon, new IconOptions().setUser(new UserIconInfo(user, userType)))
+                            icon, new IconOptions().setUser(fetchUserIconInfo(context, user)))
                     .newIcon(context);
         }
     }

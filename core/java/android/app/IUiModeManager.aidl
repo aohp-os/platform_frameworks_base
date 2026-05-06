@@ -24,10 +24,16 @@ import android.app.IUiModeManagerCallback;
  * @hide
  */
 interface IUiModeManager {
+
     /**
      * @hide
      */
-    void addCallback(IUiModeManagerCallback callback);
+    void addCallback(IUiModeManagerCallback callback, int userId);
+
+    /**
+     * @hide
+     */
+    void removeCallback(IUiModeManagerCallback callback, int userId);
 
     /**
      * Enables the car mode. Only the system can do this.
@@ -48,10 +54,10 @@ interface IUiModeManager {
     void disableCarModeByCallingPackage(int flags, String callingPackage);
 
     /**
-     * Return the current running mode.
+     * Returns the current running mode on the given display.
      */
-    int getCurrentModeType();
-    
+    int getCurrentModeType(int displayId);
+
     /**
      * Sets the night mode.
      * <p>
@@ -63,14 +69,14 @@ interface IUiModeManager {
     void setNightMode(int mode);
 
     /**
-     * Gets the currently configured night mode.
+     * Returns the currently configured night mode on the given display.
      * <p>
      * Returns
      * <ol>notnight mode</ol>
      * <ol>night mode</ol>
      * <ol>custom schedule mode switching</ol>
      */
-    int getNightMode();
+    int getNightMode(int displayId);
 
     /**
      * Sets the current night mode to {@link #MODE_NIGHT_CUSTOM} with the custom night mode type
@@ -161,61 +167,75 @@ interface IUiModeManager {
     boolean setNightModeActivated(boolean active);
 
     /**
-    * Returns custom start clock time
-    */
+     * Returns custom start clock time
+     */
     long getCustomNightModeStart();
 
     /**
-    * Sets custom start clock time
-    */
+     * Sets custom start clock time
+     */
     void setCustomNightModeStart(long time);
 
     /**
-    * Returns custom end clock time
-    */
+     * Returns custom end clock time
+     */
     long getCustomNightModeEnd();
 
     /**
-    * Sets custom end clock time
-    */
+     * Sets custom end clock time
+     */
     void setCustomNightModeEnd(long time);
 
     /**
-    * Sets projection state for the caller for the given projection type.
-    */
+     * Sets projection state for the caller for the given projection type.
+     */
     boolean requestProjection(in IBinder binder, int projectionType, String callingPackage);
 
     /**
-    * Releases projection state for the caller for the given projection type.
-    */
+     * Releases projection state for the caller for the given projection type.
+     */
     boolean releaseProjection(int projectionType, String callingPackage);
 
     /**
-    * Registers a listener for changes to projection state.
-    */
+     * Registers a listener for changes to projection state.
+     */
     @EnforcePermission("READ_PROJECTION_STATE")
     void addOnProjectionStateChangedListener(in IOnProjectionStateChangedListener listener, int projectionType);
 
     /**
-    * Unregisters a listener for changes to projection state.
-    */
+     * Unregisters a listener for changes to projection state.
+     */
     @EnforcePermission("READ_PROJECTION_STATE")
     void removeOnProjectionStateChangedListener(in IOnProjectionStateChangedListener listener);
 
     /**
-    * Returns packages that have currently set the given projection type.
-    */
+     * Returns packages that have currently set the given projection type.
+     */
     @EnforcePermission("READ_PROJECTION_STATE")
     List<String> getProjectingPackages(int projectionType);
 
     /**
-    * Returns currently set projection types.
-    */
+     * Returns currently set projection types.
+     */
     @EnforcePermission("READ_PROJECTION_STATE")
     int getActiveProjectionTypes();
 
     /**
-    * Returns the contrast for the current user
-    */
-    float getContrast();
+     * Returns the contrast for the given user.
+     */
+    float getContrast(int userId);
+
+    /**
+     * Returns the force invert state for the given user.
+     *
+     * @hide
+     */
+    int getForceInvertState(int userId);
+
+    /**
+     * Returns the force invert override state for the given package.
+     *
+     * @hide
+     */
+    int getForceInvertOverrideState(int userId, String packageName);
 }

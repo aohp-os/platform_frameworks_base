@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.statusbar.notification
 
 import android.testing.TestableLooper.RunWithLooper
@@ -23,16 +21,19 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.flags.Flags
 import com.android.systemui.flags.fakeFeatureFlagsClassic
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.shared.model.StatusBarState
-import com.android.systemui.kosmos.testScope
+import com.android.systemui.kosmos.collectLastValue
+import com.android.systemui.kosmos.runTest
 import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.scene.shared.model.fakeSceneDataSource
+import com.android.systemui.shade.domain.interactor.enableDualShade
+import com.android.systemui.shade.domain.interactor.enableSingleShade
 import com.android.systemui.statusbar.notification.stack.shared.model.ShadeScrimBounds
 import com.android.systemui.statusbar.notification.stack.shared.model.ShadeScrimShape
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.NotificationTransitionThresholds.EXPANSION_FOR_DELAYED_STACK_FADE_IN
@@ -41,11 +42,8 @@ import com.android.systemui.statusbar.notification.stack.ui.viewmodel.notificati
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.notificationsPlaceholderViewModel
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -62,22 +60,20 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
                 set(Flags.NSSL_DEBUG_LINES, false)
             }
         }
-    private val testScope = kosmos.testScope
-    private val placeholderViewModel by lazy { kosmos.notificationsPlaceholderViewModel }
-    private val scrollViewModel by lazy { kosmos.notificationScrollViewModel }
-    private val sceneInteractor by lazy { kosmos.sceneInteractor }
-    private val fakeKeyguardRepository by lazy { kosmos.fakeKeyguardRepository }
-    private val fakeSceneDataSource by lazy { kosmos.fakeSceneDataSource }
 
     @Test
-    fun updateBounds() =
-        testScope.runTest {
+    fun updateBoundsWithSingleShade() =
+        kosmos.runTest {
+            enableSingleShade()
             val radius = MutableStateFlow(32)
             val leftOffset = MutableStateFlow(0)
-            val shape by collectLastValue(scrollViewModel.shadeScrimShape(radius, leftOffset))
+            val shape by
+                collectLastValue(
+                    notificationScrollViewModel.notificationScrimShape(radius, leftOffset)
+                )
 
             // When: receive scrim bounds
-            placeholderViewModel.onScrimBoundsChanged(
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(
                 ShadeScrimBounds(left = 0f, top = 200f, right = 100f, bottom = 550f)
             )
             // Then: shape is updated
@@ -87,14 +83,14 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
                         bounds =
                             ShadeScrimBounds(left = 0f, top = 200f, right = 100f, bottom = 550f),
                         topRadius = 32,
-                        bottomRadius = 0
+                        bottomRadius = 0,
                     )
                 )
 
             // When: receive new scrim bounds
             leftOffset.value = 200
             radius.value = 24
-            placeholderViewModel.onScrimBoundsChanged(
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(
                 ShadeScrimBounds(left = 210f, top = 200f, right = 300f, bottom = 550f)
             )
             // Then: shape is updated
@@ -104,11 +100,11 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
                         bounds =
                             ShadeScrimBounds(left = 10f, top = 200f, right = 100f, bottom = 550f),
                         topRadius = 24,
-                        bottomRadius = 0
+                        bottomRadius = 0,
                     )
                 )
 
-            // When: QuickSettings shows up full screen
+            // When: QuickSettings shows up full screen on single shade.
             fakeKeyguardRepository.setStatusBarState(StatusBarState.SHADE)
             val transitionState =
                 MutableStateFlow<ObservableTransitionState>(
@@ -120,31 +116,125 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
         }
 
     @Test
+    fun updateBoundsWithDualShade() =
+        kosmos.runTest {
+            enableDualShade()
+            val radius = MutableStateFlow(32)
+            val leftOffset = MutableStateFlow(0)
+            val shape by
+                collectLastValue(
+                    notificationScrollViewModel.notificationScrimShape(radius, leftOffset)
+                )
+
+            // When: receive scrim bounds
+            val fullyOpenScrimBounds =
+                ShadeScrimBounds(left = 0f, top = 200f, right = 100f, bottom = 550f)
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(fullyOpenScrimBounds)
+            // Then: shape is updated
+            assertThat(shape)
+                .isEqualTo(
+                    ShadeScrimShape(
+                        bounds = fullyOpenScrimBounds,
+                        topRadius = 32,
+                        bottomRadius = 32,
+                    )
+                )
+
+            // When: receive new scrim bounds with an offset
+            val offset = 200
+            val shortScrimBounds = fullyOpenScrimBounds.copy(bottom = 300f)
+            leftOffset.value = offset
+            radius.value = 24
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(shortScrimBounds)
+            // Then: shape is updated
+            assertThat(shape)
+                .isEqualTo(
+                    ShadeScrimShape(
+                        bounds = shortScrimBounds.minus(leftOffset = offset),
+                        topRadius = 24,
+                        bottomRadius = 24,
+                    )
+                )
+
+            // When: Idle on the Lockscreen
+            fakeKeyguardRepository.setStatusBarState(StatusBarState.KEYGUARD)
+            sceneInteractor.setTransitionState(
+                flowOf(ObservableTransitionState.Idle(Scenes.Lockscreen))
+            )
+            // And: The Scrim disappears.
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(null)
+            // Then: shape is null
+            assertThat(shape).isNull()
+
+            // When: Shade starts to open over Lockscreen
+            sceneInteractor.setTransitionState(
+                flowOf(
+                    ObservableTransitionState.Transition.showOverlay(
+                        overlay = Overlays.NotificationsShade,
+                        fromScene = Scenes.Lockscreen,
+                        currentOverlays = flowOf(emptySet()),
+                        isInitiatedByUserInput = true,
+                        isUserInputOngoing = flowOf(true),
+                        progress = flowOf(0.5f),
+                    )
+                )
+            )
+            // And: the scrim starts to show
+            val halfOpenScrimBounds =
+                ShadeScrimBounds(left = 0f, top = 200f, right = 100f, bottom = 200f)
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(halfOpenScrimBounds)
+            // Then: shape is null
+            assertThat(shape).isNull()
+
+            // When: shade is fully open over lockscreen
+            sceneInteractor.setTransitionState(
+                flowOf(
+                    ObservableTransitionState.Idle(
+                        currentScene = Scenes.Lockscreen,
+                        currentOverlays = setOf(Overlays.NotificationsShade),
+                    )
+                )
+            )
+            // And: the full scrim shows
+            notificationsPlaceholderViewModel.onScrimBoundsChanged(fullyOpenScrimBounds)
+            // Then: shape clips again
+            assertThat(shape)
+                .isEqualTo(
+                    ShadeScrimShape(
+                        bounds = fullyOpenScrimBounds.minus(leftOffset = offset),
+                        topRadius = 24,
+                        bottomRadius = 24,
+                    )
+                )
+        }
+
+    @Test
     fun brightnessMirrorAlpha_updatesViewModel() =
-        testScope.runTest {
-            val maxAlpha by collectLastValue(scrollViewModel.maxAlpha)
+        kosmos.runTest {
+            val maxAlpha by collectLastValue(notificationScrollViewModel.maxAlpha)
             assertThat(maxAlpha).isEqualTo(1f)
-            placeholderViewModel.setAlphaForBrightnessMirror(0.33f)
+            notificationsPlaceholderViewModel.setAlphaForBrightnessMirror(0.33f)
             assertThat(maxAlpha).isEqualTo(0.33f)
-            placeholderViewModel.setAlphaForBrightnessMirror(0f)
+            notificationsPlaceholderViewModel.setAlphaForBrightnessMirror(0f)
             assertThat(maxAlpha).isEqualTo(0f)
-            placeholderViewModel.setAlphaForBrightnessMirror(1f)
+            notificationsPlaceholderViewModel.setAlphaForBrightnessMirror(1f)
             assertThat(maxAlpha).isEqualTo(1f)
         }
 
     @Test
     fun shadeExpansion_goneToShade() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             val transitionState =
                 MutableStateFlow<ObservableTransitionState>(
                     ObservableTransitionState.Idle(currentScene = Scenes.Gone)
                 )
             sceneInteractor.setTransitionState(transitionState)
-            val expandFraction by collectLastValue(scrollViewModel.expandFraction)
+            val expandFraction by collectLastValue(notificationScrollViewModel.expandFraction)
             assertThat(expandFraction).isEqualTo(0f)
 
             fakeSceneDataSource.changeScene(toScene = Scenes.Gone)
-            val isScrollable by collectLastValue(scrollViewModel.isScrollable)
+            val isScrollable by collectLastValue(notificationScrollViewModel.isScrollable)
             assertThat(isScrollable).isFalse()
 
             fakeSceneDataSource.pause()
@@ -164,7 +254,6 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
             repeat(steps) { repetition ->
                 val progress = (1f / steps) * (repetition + 1)
                 transitionProgress.value = progress
-                runCurrent()
                 assertThat(expandFraction).isWithin(0.01f).of(progress)
             }
 
@@ -175,49 +264,47 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
 
     @Test
     fun shadeExpansion_idleOnLockscreen() =
-        testScope.runTest {
-            val transitionState =
-                MutableStateFlow<ObservableTransitionState>(
-                    ObservableTransitionState.Idle(currentScene = Scenes.Lockscreen)
-                )
-            sceneInteractor.setTransitionState(transitionState)
-            val expandFraction by collectLastValue(scrollViewModel.expandFraction)
+        kosmos.runTest {
+            sceneInteractor.setTransitionState(
+                flowOf(ObservableTransitionState.Idle(currentScene = Scenes.Lockscreen))
+            )
+            val expandFraction by collectLastValue(notificationScrollViewModel.expandFraction)
             assertThat(expandFraction).isEqualTo(1f)
 
             fakeSceneDataSource.changeScene(toScene = Scenes.Lockscreen)
-            val isScrollable by collectLastValue(scrollViewModel.isScrollable)
-            assertThat(isScrollable).isTrue()
+            val isScrollable by collectLastValue(notificationScrollViewModel.isScrollable)
+            assertThat(isScrollable).isFalse()
         }
 
     @Test
     fun shadeExpansion_idleOnQs() =
-        testScope.runTest {
-            val transitionState =
-                MutableStateFlow<ObservableTransitionState>(
-                    ObservableTransitionState.Idle(currentScene = Scenes.QuickSettings)
-                )
-            sceneInteractor.setTransitionState(transitionState)
-            val expandFraction by collectLastValue(scrollViewModel.expandFraction)
+        kosmos.runTest {
+            enableSingleShade()
+            sceneInteractor.setTransitionState(
+                flowOf(ObservableTransitionState.Idle(currentScene = Scenes.QuickSettings))
+            )
+            val expandFraction by collectLastValue(notificationScrollViewModel.expandFraction)
             assertThat(expandFraction).isEqualTo(1f)
 
             fakeSceneDataSource.changeScene(toScene = Scenes.QuickSettings)
-            val isScrollable by collectLastValue(scrollViewModel.isScrollable)
+            val isScrollable by collectLastValue(notificationScrollViewModel.isScrollable)
             assertThat(isScrollable).isFalse()
         }
 
     @Test
     fun shadeExpansion_shadeToQs() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             val transitionState =
                 MutableStateFlow<ObservableTransitionState>(
                     ObservableTransitionState.Idle(currentScene = Scenes.Shade)
                 )
             sceneInteractor.setTransitionState(transitionState)
-            val expandFraction by collectLastValue(scrollViewModel.expandFraction)
+            val expandFraction by collectLastValue(notificationScrollViewModel.expandFraction)
             assertThat(expandFraction).isEqualTo(1f)
 
             fakeSceneDataSource.changeScene(toScene = Scenes.Shade)
-            val isScrollable by collectLastValue(scrollViewModel.isScrollable)
+            val isScrollable by collectLastValue(notificationScrollViewModel.isScrollable)
             assertThat(isScrollable).isTrue()
 
             fakeSceneDataSource.pause()
@@ -237,7 +324,6 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
             repeat(steps) { repetition ->
                 val progress = (1f / steps) * (repetition + 1)
                 transitionProgress.value = progress
-                runCurrent()
                 assertThat(expandFraction).isEqualTo(1f)
             }
 
@@ -248,17 +334,18 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
 
     @Test
     fun shadeExpansion_goneToQs() =
-        testScope.runTest {
+        kosmos.runTest {
+            enableSingleShade()
             val transitionState =
                 MutableStateFlow<ObservableTransitionState>(
                     ObservableTransitionState.Idle(currentScene = Scenes.Gone)
                 )
             sceneInteractor.setTransitionState(transitionState)
-            val expandFraction by collectLastValue(scrollViewModel.expandFraction)
+            val expandFraction by collectLastValue(notificationScrollViewModel.expandFraction)
             assertThat(expandFraction).isEqualTo(0f)
 
             fakeSceneDataSource.changeScene(toScene = Scenes.Gone)
-            val isScrollable by collectLastValue(scrollViewModel.isScrollable)
+            val isScrollable by collectLastValue(notificationScrollViewModel.isScrollable)
             assertThat(isScrollable).isFalse()
 
             fakeSceneDataSource.pause()
@@ -278,7 +365,6 @@ class NotificationStackAppearanceIntegrationTest : SysuiTestCase() {
             repeat(steps) { repetition ->
                 val progress = (1f / steps) * (repetition + 1)
                 transitionProgress.value = progress
-                runCurrent()
                 assertThat(expandFraction)
                     .isEqualTo(
                         (progress / EXPANSION_FOR_MAX_SCRIM_ALPHA -

@@ -19,7 +19,6 @@ package com.android.systemui.keyguard.domain.interactor
 
 import com.android.keyguard.logging.KeyguardLogger
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor
-import com.android.systemui.bouncer.shared.flag.ComposeBouncerFlags
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.domain.interactor.DeviceUnlockedInteractor
@@ -36,7 +35,6 @@ import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -52,7 +50,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** Encapsulates business-logic for actions to run when the keyguard is dismissed. */
-@ExperimentalCoroutinesApi
 @SysUISingleton
 class KeyguardDismissActionInteractor
 @Inject
@@ -103,7 +100,7 @@ constructor(
                 .map {}
         } else {
             transitionInteractor
-                .isFinishedIn(scene = Scenes.Gone, stateWithoutSceneContainer = GONE)
+                .isFinishedIn(content = Scenes.Gone, stateWithoutSceneContainer = GONE)
                 .filter { it }
                 .map {}
         }
@@ -121,14 +118,6 @@ constructor(
                     isAnyExpanded && unlockStatus.isUnlocked
                 }
                 .distinctUntilChanged()
-        } else if (ComposeBouncerFlags.isOnlyComposeBouncerEnabled()) {
-            combine(
-                    shadeInteractor.get().isAnyExpanded,
-                    keyguardInteractor.get().isKeyguardDismissible,
-                ) { isAnyExpanded, keyguardDismissible ->
-                    isAnyExpanded && keyguardDismissible
-                }
-                .distinctUntilChanged()
         } else {
             flow {
                 error(
@@ -143,7 +132,7 @@ constructor(
     }
 
     fun runAfterKeyguardGone(runnable: Runnable) {
-        if (ComposeBouncerFlags.isUnexpectedlyInLegacyMode()) return
+        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return
         setDismissAction(
             DismissAction.RunAfterKeyguardGone(
                 dismissAction = { runnable.run() },
@@ -155,7 +144,7 @@ constructor(
     }
 
     fun setDismissAction(dismissAction: DismissAction) {
-        if (ComposeBouncerFlags.isUnexpectedlyInLegacyMode()) return
+        if (SceneContainerFlag.isUnexpectedlyInLegacyMode()) return
         repository.dismissAction.value.onCancelAction.run()
         repository.setDismissAction(dismissAction)
     }

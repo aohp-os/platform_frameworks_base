@@ -20,7 +20,10 @@ import com.android.keyguard.logging.scrimLogger
 import com.android.systemui.keyguard.data.lightRevealScrimRepository
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.applicationCoroutineScope
+import com.android.systemui.minmode.fakeMinModeManager
+import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.power.domain.interactor.powerInteractor
+import java.util.Optional
 
 val Kosmos.lightRevealScrimInteractor by
     Kosmos.Fixture {
@@ -30,5 +33,7 @@ val Kosmos.lightRevealScrimInteractor by
             applicationCoroutineScope,
             scrimLogger,
             { powerInteractor },
+            backgroundDispatcher = testDispatcher,
+            Optional.of(fakeMinModeManager),
         )
     }

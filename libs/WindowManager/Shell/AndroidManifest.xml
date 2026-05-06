@@ -26,13 +26,16 @@
     <uses-permission android:name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE" />
     <uses-permission android:name="android.permission.UPDATE_DOMAIN_VERIFICATION_USER_SELECTION" />
     <uses-permission android:name="android.permission.MANAGE_KEY_GESTURES" />
+    <uses-permission android:name="android.permission.MANAGE_DISPLAYS" />
 
     <application>
         <activity
             android:name=".desktopmode.DesktopWallpaperActivity"
             android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:theme="@style/DesktopWallpaperTheme" />
+            android:launchMode="singleInstancePerTask"
+            android:showForAllUsers="true"
+            android:theme="@style/DesktopWallpaperTheme"
+            android:taskAffinity="com.android.wm.shell.desktop_wallpaper"/>
 
         <activity
             android:name=".bubbles.shortcut.CreateBubbleShortcutActivity"

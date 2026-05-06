@@ -41,18 +41,19 @@ import java.util.Locale;
  * Utility class to aid in formatting common values that are not covered
  * by the {@link java.util.Formatter} class in {@link java.util}
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public final class Formatter {
 
-    /** {@hide} */
+    /** @hide */
     public static final int FLAG_SHORTER = 1 << 0;
-    /** {@hide} */
+    /** @hide */
     public static final int FLAG_CALCULATE_ROUNDED = 1 << 1;
-    /** {@hide} */
+    /** @hide */
     public static final int FLAG_SI_UNITS = 1 << 2;
-    /** {@hide} */
+    /** @hide */
     public static final int FLAG_IEC_UNITS = 1 << 3;
 
-    /** {@hide} */
+    /** @hide */
     public static class BytesResult {
         public final String value;
         public final String units;
@@ -178,7 +179,7 @@ public final class Formatter {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public static class RoundedBytesResult {
         public final float value;
         public final MeasureUnit units;
@@ -271,7 +272,7 @@ public final class Formatter {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     @UnsupportedAppUsage
     public static BytesResult formatBytes(Resources res, long sizeBytes, int flags) {
         final RoundedBytesResult rounded = RoundedBytesResult.roundBytes(sizeBytes, flags);

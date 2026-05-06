@@ -17,12 +17,12 @@
 package com.android.systemui.qs.tiles.impl.saver.domain
 
 import android.content.SharedPreferences
-import android.platform.test.annotations.EnabledOnRavenwood
 import android.testing.LeakCheck
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.R
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.shade.domain.interactor.FakeShadeDialogContextInteractor
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
@@ -37,7 +37,6 @@ import org.mockito.Mockito.verify
 
 /** Test [DataSaverDialogDelegate]. */
 @SmallTest
-@EnabledOnRavenwood
 @RunWith(AndroidJUnit4::class)
 class DataSaverDialogDelegateTest : SysuiTestCase() {
 
@@ -46,24 +45,27 @@ class DataSaverDialogDelegateTest : SysuiTestCase() {
     private lateinit var sysuiDialogFactory: SystemUIDialog.Factory
     private lateinit var sysuiDialog: SystemUIDialog
     private lateinit var dataSaverDialogDelegate: DataSaverDialogDelegate
+    private lateinit var contextInteractor: FakeShadeDialogContextInteractor
 
     @Before
     fun setup() {
         sysuiDialog = mock<SystemUIDialog>()
         sysuiDialogFactory = mock<SystemUIDialog.Factory>()
+        contextInteractor = FakeShadeDialogContextInteractor(context)
 
         dataSaverDialogDelegate =
             DataSaverDialogDelegate(
                 sysuiDialogFactory,
-                context,
+                contextInteractor,
                 EmptyCoroutineContext,
                 dataSaverController,
-                mock<SharedPreferences>()
+                mock<SharedPreferences>(),
             )
 
         whenever(sysuiDialogFactory.create(eq(dataSaverDialogDelegate), eq(context)))
             .thenReturn(sysuiDialog)
     }
+
     @Test
     fun delegateSetsDialogTitleCorrectly() {
         val expectedResId = R.string.data_saver_enable_title

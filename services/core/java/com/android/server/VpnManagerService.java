@@ -17,8 +17,10 @@
 package com.android.server;
 
 import static android.Manifest.permission.NETWORK_STACK;
+import static android.net.platform.flags.Flags.deleteVpnProfileWhenAppUninstalled;
 
 import static com.android.net.module.util.PermissionUtils.enforceAnyPermissionOf;
+import static com.android.net.module.util.PermissionUtils.enforceNetworkStackPermission;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -888,6 +890,11 @@ public class VpnManagerService extends IVpnManager.Stub {
                 log("Removing always-on VPN package " + packageName + " for user "
                         + userId);
                 vpn.setAlwaysOnPackage(null, false, null);
+            } else if (deleteVpnProfileWhenAppUninstalled()
+                    && TextUtils.equals(vpn.getPackage(), packageName)) {
+                log("Removing VPN package " + packageName + " for user "
+                        + userId);
+                vpn.deleteVpnProfileDueToAppRemoval(packageName, uid);
             }
 
             vpn.refreshPlatformVpnAppExclusionList();
@@ -1020,6 +1027,8 @@ public class VpnManagerService extends IVpnManager.Stub {
     @Override
     @Nullable
     public byte[] getFromVpnProfileStore(@NonNull String name) {
+        // TODO(b/307903113): Replace NETWORK_STACK permission and adopt proper permission
+        enforceNetworkStackPermission(mContext);
         return mVpnProfileStore.get(name);
     }
 
@@ -1037,6 +1046,8 @@ public class VpnManagerService extends IVpnManager.Stub {
      */
     @Override
     public boolean putIntoVpnProfileStore(@NonNull String name, @NonNull byte[] blob) {
+        // TODO(b/307903113): Replace NETWORK_STACK permission and adopt proper permission
+        enforceNetworkStackPermission(mContext);
         return mVpnProfileStore.put(name, blob);
     }
 
@@ -1052,6 +1063,8 @@ public class VpnManagerService extends IVpnManager.Stub {
      */
     @Override
     public boolean removeFromVpnProfileStore(@NonNull String name) {
+        // TODO(b/307903113): Replace NETWORK_STACK permission and adopt proper permission
+        enforceNetworkStackPermission(mContext);
         return mVpnProfileStore.remove(name);
     }
 
@@ -1069,6 +1082,8 @@ public class VpnManagerService extends IVpnManager.Stub {
     @Override
     @NonNull
     public String[] listFromVpnProfileStore(@NonNull String prefix) {
+        // TODO(b/307903113): Replace NETWORK_STACK permission and adopt proper permission
+        enforceNetworkStackPermission(mContext);
         return mVpnProfileStore.list(prefix);
     }
 

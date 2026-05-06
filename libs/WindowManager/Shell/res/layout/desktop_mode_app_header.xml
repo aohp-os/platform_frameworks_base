@@ -48,7 +48,6 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:maxWidth="130dp"
-            android:textAppearance="@android:style/TextAppearance.Material.Title"
             android:textSize="14sp"
             android:textFontWeight="500"
             android:lineHeight="20sp"
@@ -56,18 +55,30 @@
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:singleLine="true"
-            android:ellipsize="none"
-            android:requiresFadingEdge="horizontal"
-            android:fadingEdgeLength="28dp"
+            android:ellipsize="end"
             android:clickable="false"
             android:focusable="false"
             tools:text="Gmail"/>
+
+        <ImageView
+            android:id="@+id/expand_menu_error"
+            android:src="@drawable/expand_menu_error"
+            android:layout_width="@dimen/desktop_mode_header_expand_menu_error_image_width"
+            android:layout_height="@dimen/desktop_mode_header_expand_menu_error_image_width"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="@dimen/desktop_mode_header_expand_menu_error_image_margin"
+            android:clickable="false"
+            android:focusable="false"
+            android:screenReaderFocusable="false"
+            android:importantForAccessibility="no"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"/>
 
         <ImageButton
             android:id="@+id/expand_menu_button"
             android:layout_width="16dp"
             android:layout_height="16dp"
-            android:src="@drawable/ic_baseline_expand_more_24"
+            android:src="@drawable/ic_baseline_expand_more_16"
             android:background="@null"
             android:scaleType="fitCenter"
             android:clickable="false"
@@ -104,7 +115,7 @@
         android:layout_width="44dp"
         android:layout_height="40dp"
         android:layout_gravity="end"
-        android:layout_marginHorizontal="8dp"
+        android:layout_marginEnd="8dp"
         android:clickable="true"
         android:focusable="true"/>
 

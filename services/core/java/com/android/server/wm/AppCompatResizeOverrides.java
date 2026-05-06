@@ -18,13 +18,20 @@ package com.android.server.wm;
 
 import static android.content.pm.ActivityInfo.FORCE_NON_RESIZE_APP;
 import static android.content.pm.ActivityInfo.FORCE_RESIZE_APP;
+import static android.internal.perfetto.protos.Windowmanagerservice.ActivityRecordProto.SHOULD_OVERRIDE_FORCE_RESIZE_APP;
 import static android.view.WindowManager.PROPERTY_COMPAT_ALLOW_RESIZEABLE_ACTIVITY_OVERRIDES;
+import static android.view.WindowManager.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY;
 
 import static com.android.server.wm.AppCompatUtils.isChangeEnabled;
 
 import android.annotation.NonNull;
+import android.annotation.UserIdInt;
+import android.content.pm.PackageManager;
+import android.util.proto.ProtoOutputStream;
 
 import com.android.server.wm.utils.OptPropFactory;
+
+import java.util.function.BooleanSupplier;
 
 /**
  * Encapsulate app compat logic about resizability.
@@ -37,11 +44,42 @@ class AppCompatResizeOverrides {
     @NonNull
     private final OptPropFactory.OptProp mAllowForceResizeOverrideOptProp;
 
+    @NonNull
+    private final BooleanSupplier mAllowRestrictedResizability;
+
     AppCompatResizeOverrides(@NonNull ActivityRecord activityRecord,
+            @NonNull PackageManager packageManager,
             @NonNull OptPropFactory optPropBuilder) {
         mActivityRecord = activityRecord;
         mAllowForceResizeOverrideOptProp = optPropBuilder.create(
                 PROPERTY_COMPAT_ALLOW_RESIZEABLE_ACTIVITY_OVERRIDES);
+        mAllowRestrictedResizability = AppCompatUtils.asLazy(() -> {
+            // Application level.
+            if (allowRestrictedResizability(packageManager, mActivityRecord.packageName,
+                    mActivityRecord.mUserId)) {
+                return true;
+            }
+            // Activity level.
+            try {
+                return packageManager.getPropertyAsUser(
+                        PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY,
+                        mActivityRecord.mActivityComponent.getPackageName(),
+                        mActivityRecord.mActivityComponent.getClassName(),
+                        mActivityRecord.mUserId).getBoolean();
+            } catch (PackageManager.NameNotFoundException e) {
+                return false;
+            }
+        });
+    }
+
+    static boolean allowRestrictedResizability(@NonNull PackageManager pm,
+            @NonNull String packageName, @UserIdInt int userId) {
+        try {
+            return pm.getPropertyAsUser(PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY, packageName,
+                            null /* className */, userId).getBoolean();
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
     }
 
     /**
@@ -74,5 +112,14 @@ class AppCompatResizeOverrides {
     boolean shouldOverrideForceNonResizeApp() {
         return mAllowForceResizeOverrideOptProp.shouldEnableWithOptInOverrideAndOptOutProperty(
                 isChangeEnabled(mActivityRecord, FORCE_NON_RESIZE_APP));
+    }
+
+    /** @see android.view.WindowManager#PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY */
+    boolean allowRestrictedResizability() {
+        return mAllowRestrictedResizability.getAsBoolean();
+    }
+
+    public void dumpDebug(@NonNull ProtoOutputStream proto) {
+        proto.write(SHOULD_OVERRIDE_FORCE_RESIZE_APP, shouldOverrideForceResizeApp());
     }
 }

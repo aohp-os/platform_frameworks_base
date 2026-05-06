@@ -23,6 +23,8 @@
 
 #include <array>
 
+#include "core_jni_helpers.h"
+
 static constexpr const char* kNullReplacement = "(null)";
 
 namespace android {
@@ -69,7 +71,7 @@ static void android_os_Trace_nativeTraceBegin(JNIEnv* env, jclass,
     withString(env, nameStr, [tag](const char* str) { tracing_perfetto::traceBegin(tag, str); });
 }
 
-static void android_os_Trace_nativeTraceEnd(JNIEnv*, jclass, jlong tag) {
+static void android_os_Trace_nativeTraceEnd(CRITICAL_JNI_PARAMS_COMMA jlong tag) {
     tracing_perfetto::traceEnd(tag);
 }
 
@@ -131,10 +133,6 @@ static jboolean android_os_Trace_nativeIsTagEnabled(jlong tag) {
     return tracing_perfetto::isTagEnabled(tag);
 }
 
-static void android_os_Trace_nativeRegisterWithPerfetto(JNIEnv* env) {
-    tracing_perfetto::registerWithPerfetto();
-}
-
 static const JNINativeMethod gTraceMethods[] = {
         /* name, signature, funcPtr */
         {"nativeSetAppTracingAllowed", "(Z)V", (void*)android_os_Trace_nativeSetAppTracingAllowed},
@@ -145,7 +143,6 @@ static const JNINativeMethod gTraceMethods[] = {
         {"nativeTraceCounter", "(JLjava/lang/String;J)V",
          (void*)android_os_Trace_nativeTraceCounter},
         {"nativeTraceBegin", "(JLjava/lang/String;)V", (void*)android_os_Trace_nativeTraceBegin},
-        {"nativeTraceEnd", "(J)V", (void*)android_os_Trace_nativeTraceEnd},
         {"nativeAsyncTraceBegin", "(JLjava/lang/String;I)V",
          (void*)android_os_Trace_nativeAsyncTraceBegin},
         {"nativeAsyncTraceEnd", "(JLjava/lang/String;I)V",
@@ -157,10 +154,10 @@ static const JNINativeMethod gTraceMethods[] = {
         {"nativeInstant", "(JLjava/lang/String;)V", (void*)android_os_Trace_nativeInstant},
         {"nativeInstantForTrack", "(JLjava/lang/String;Ljava/lang/String;)V",
          (void*)android_os_Trace_nativeInstantForTrack},
-        {"nativeRegisterWithPerfetto", "()V", (void*)android_os_Trace_nativeRegisterWithPerfetto},
 
         // ----------- @CriticalNative  ----------------
         {"nativeIsTagEnabled", "(J)Z", (void*)android_os_Trace_nativeIsTagEnabled},
+        {"nativeTraceEnd", "(J)V", (void*)android_os_Trace_nativeTraceEnd},
 };
 
 int register_android_os_Trace(JNIEnv* env) {

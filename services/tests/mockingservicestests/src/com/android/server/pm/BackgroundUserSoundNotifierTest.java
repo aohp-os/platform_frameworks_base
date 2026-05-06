@@ -27,7 +27,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.testng.AssertJUnit.assertEquals;
 
@@ -41,12 +41,10 @@ import android.media.AudioManager;
 import android.media.AudioPlaybackConfiguration;
 import android.media.PlayerProxy;
 import android.media.audiopolicy.AudioPolicy;
-import android.multiuser.Flags;
 import android.os.Build;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.util.ArraySet;
@@ -128,7 +126,7 @@ public class BackgroundUserSoundNotifierTest {
                 AudioManager.AUDIOFOCUS_NONE, /* flags= */ 0, Build.VERSION.SDK_INT);
         clearInvocations(mNotificationManager);
         mBackgroundUserSoundNotifier.notifyForegroundUserAboutSoundIfNecessary(afi);
-        verifyZeroInteractions(mNotificationManager);
+        verifyNoMoreInteractions(mNotificationManager);
     }
 
     @Test
@@ -143,7 +141,7 @@ public class BackgroundUserSoundNotifierTest {
                 Build.VERSION.SDK_INT);
         clearInvocations(mNotificationManager);
         mBackgroundUserSoundNotifier.notifyForegroundUserAboutSoundIfNecessary(afi);
-        verifyZeroInteractions(mNotificationManager);
+        verifyNoMoreInteractions(mNotificationManager);
     }
 
     @Test
@@ -151,11 +149,8 @@ public class BackgroundUserSoundNotifierTest {
         final int fgUserId = mSpiedContext.getUserId();
         int bgUserId = fgUserId + 1;
         int bgUserUid = bgUserId * 100000;
-        if (Flags.multipleAlarmNotificationsSupport()) {
-            mBackgroundUserSoundNotifier.mNotificationClientUids.add(bgUserUid);
-        } else {
-            mBackgroundUserSoundNotifier.mNotificationClientUid = bgUserUid;
-        }
+        mBackgroundUserSoundNotifier.mNotificationClientUids.add(bgUserUid);
+
         AudioManager mockAudioManager = mock(AudioManager.class);
         when(mSpiedContext.getSystemService(AudioManager.class)).thenReturn(mockAudioManager);
 
@@ -277,7 +272,6 @@ public class BackgroundUserSoundNotifierTest {
                 notification.actions[0].title);
     }
 
-    @RequiresFlagsEnabled({Flags.FLAG_MULTIPLE_ALARM_NOTIFICATIONS_SUPPORT})
     @Test
     public void testMultipleAlarmsSameUid_OneNotificationCreated() throws RemoteException {
         assumeTrue(UserManager.supportsMultipleUsers());
@@ -308,7 +302,6 @@ public class BackgroundUserSoundNotifierTest {
                         eq(UserHandle.of(fgUserId)));
     }
 
-    @RequiresFlagsEnabled({Flags.FLAG_MULTIPLE_ALARM_NOTIFICATIONS_SUPPORT})
     @Test
     public void testMultipleAlarmsDifferentUsers_multipleNotificationsCreated()
             throws RemoteException {

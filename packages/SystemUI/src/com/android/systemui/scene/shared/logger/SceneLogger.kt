@@ -16,6 +16,7 @@
 
 package com.android.systemui.scene.shared.logger
 
+import com.android.compose.animation.scene.ContentKey
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.OverlayKey
 import com.android.compose.animation.scene.SceneKey
@@ -27,7 +28,7 @@ import javax.inject.Inject
 
 class SceneLogger @Inject constructor(@SceneFrameworkLog private val logBuffer: LogBuffer) {
 
-    fun logFrameworkEnabled(isEnabled: Boolean, reason: String? = null) {
+    fun logFrameworkEnabled(isEnabled: Boolean) {
         fun asWord(isEnabled: Boolean): String {
             return if (isEnabled) "enabled" else "disabled"
         }
@@ -35,33 +36,81 @@ class SceneLogger @Inject constructor(@SceneFrameworkLog private val logBuffer: 
         logBuffer.log(
             tag = TAG,
             level = if (isEnabled) LogLevel.INFO else LogLevel.WARNING,
-            messageInitializer = {
-                bool1 = isEnabled
-                str1 = reason
-            },
-            messagePrinter = {
-                "Scene framework is ${asWord(bool1)}${if (str1 != null) " $str1" else ""}"
-            },
+            messageInitializer = { bool1 = isEnabled },
+            messagePrinter = { "Scene framework is ${asWord(bool1)}" },
         )
     }
 
-    fun logSceneChanged(from: SceneKey, to: SceneKey, reason: String, isInstant: Boolean) {
+    fun logSceneChanged(
+        from: SceneKey,
+        to: SceneKey,
+        sceneState: Any?,
+        reason: String,
+        isInstant: Boolean,
+    ) {
         logBuffer.log(
             tag = TAG,
             level = LogLevel.INFO,
             messageInitializer = {
-                str1 = from.toString()
-                str2 = to.toString()
-                str3 = reason
+                str1 = "${from.debugName} → ${to.debugName}"
+                str2 = reason
+                str3 = sceneState?.toString()
                 bool1 = isInstant
             },
             messagePrinter = {
                 buildString {
-                    append("Scene changed: $str1 → $str2")
+                    append("Scene changed: $str1")
+                    str3?.let { append(" (sceneState=$it)") }
                     if (isInstant) {
                         append(" (instant)")
                     }
-                    append(", reason: $str3")
+                    append(", reason: $str2")
+                }
+            },
+        )
+    }
+
+    fun logSceneChangeCancellation(scene: SceneKey, sceneState: Any?) {
+        logBuffer.log(
+            tag = TAG,
+            level = LogLevel.INFO,
+            messageInitializer = {
+                str1 = scene.debugName
+                str2 = sceneState?.toString()
+            },
+            messagePrinter = { "CANCELED scene change. scene: $str1, sceneState: $str2" },
+        )
+    }
+
+    fun logSceneChangeRejection(
+        from: ContentKey?,
+        to: ContentKey?,
+        originalChangeReason: String?,
+        rejectionReason: String,
+    ) {
+        logBuffer.log(
+            tag = TAG,
+            level = LogLevel.INFO,
+            messageInitializer = {
+                str1 = "${from?.debugName ?: "<none>"} → ${to?.debugName ?: "<none>"}"
+                str2 = rejectionReason
+                str3 = originalChangeReason
+                bool1 = to is OverlayKey
+            },
+            messagePrinter = {
+                buildString {
+                    append("REJECTED ")
+                    append(
+                        if (bool1) {
+                            "overlay "
+                        } else {
+                            "scene "
+                        }
+                    )
+                    append("change $str1 because \"$str2\"")
+                    if (str3 != null) {
+                        append(" (original change reason: \"$str3\")")
+                    }
                 }
             },
         )
@@ -84,8 +133,11 @@ class SceneLogger @Inject constructor(@SceneFrameworkLog private val logBuffer: 
                 logBuffer.log(
                     tag = TAG,
                     level = LogLevel.INFO,
-                    messageInitializer = { str1 = transitionState.currentScene.toString() },
-                    messagePrinter = { "Scene transition idle on: $str1" },
+                    messageInitializer = {
+                        str1 = transitionState.currentScene.toString()
+                        str2 = transitionState.currentOverlays.joinToString()
+                    },
+                    messagePrinter = { "Scene transition idle on: $str1, overlays: $str2" },
                 )
             }
         }
@@ -133,6 +185,22 @@ class SceneLogger @Inject constructor(@SceneFrameworkLog private val logBuffer: 
                 str3 = reason
             },
             messagePrinter = { "$str1 → $str2, reason: $str3" },
+        )
+    }
+
+    fun logVisibilityRejection(to: Boolean, reason: String) {
+        fun asWord(isVisible: Boolean): String {
+            return if (isVisible) "visible" else "invisible"
+        }
+
+        logBuffer.log(
+            tag = TAG,
+            level = LogLevel.INFO,
+            messageInitializer = {
+                str1 = asWord(to)
+                str2 = reason
+            },
+            messagePrinter = { "REJECTED visibility change to $str1 with reason: $str2" },
         )
     }
 

@@ -1,10 +1,12 @@
 package com.android.systemui.statusbar.notification.stack
 
+import android.os.UserHandle
+import android.platform.test.annotations.EnableFlags
+import android.platform.test.flag.junit.FlagsParameterization
 import android.service.notification.StatusBarNotification
 import android.testing.TestableLooper.RunWithLooper
 import android.view.LayoutInflater
 import android.widget.FrameLayout
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.keyguard.BouncerPanelExpansionCalculator.aboutToShowBouncerProgress
 import com.android.systemui.SysuiTestCase
@@ -13,13 +15,18 @@ import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.flags.EnableSceneContainer
 import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.andSceneContainer
 import com.android.systemui.res.R
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.transition.LargeScreenShadeInterpolator
 import com.android.systemui.statusbar.NotificationShelf
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
+import com.android.systemui.statusbar.notification.shared.NotificationMinimalism
+import com.android.systemui.statusbar.notification.shelf.NotificationShelfIconContainer
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.StackScrollAlgorithmState
 import com.android.systemui.util.mockito.mock
 import junit.framework.Assert.assertEquals
@@ -30,14 +37,17 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.spy
 import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4
+import platform.test.runner.parameterized.Parameters
 
 /** Tests for {@link NotificationShelf}. */
 @SmallTest
-@RunWith(AndroidJUnit4::class)
+@RunWith(ParameterizedAndroidJunit4::class)
 @RunWithLooper
-open class NotificationShelfTest : SysuiTestCase() {
+open class NotificationShelfTest(flags: FlagsParameterization) : SysuiTestCase() {
 
     private val flags = FakeFeatureFlags()
 
@@ -49,6 +59,18 @@ open class NotificationShelfTest : SysuiTestCase() {
 
     private lateinit var shelf: NotificationShelf
 
+    companion object {
+        @JvmStatic
+        @Parameters(name = "{0}")
+        fun getParams(): List<FlagsParameterization> {
+            return FlagsParameterization.allCombinationsOf().andSceneContainer()
+        }
+    }
+
+    init {
+        mSetFlagsRule.setFlagsParameterization(flags)
+    }
+
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
@@ -59,7 +81,7 @@ open class NotificationShelfTest : SysuiTestCase() {
                 .inflate(
                     /* resource = */ R.layout.status_bar_notification_shelf,
                     /* root = */ root,
-                    /* attachToRoot = */ false
+                    /* attachToRoot = */ false,
                 ) as NotificationShelf
 
         whenever(ambientState.largeScreenShadeInterpolator).thenReturn(largeScreenShadeInterpolator)
@@ -128,6 +150,354 @@ open class NotificationShelfTest : SysuiTestCase() {
     }
 
     @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testAlignment_splitShade_LTR() {
+        // Given: LTR mode, split shade
+        val width = 100
+        val actualWidth = 40
+        val iconContainerPadding = 16f
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+                iconContainerPadding = iconContainerPadding,
+            )
+
+        // Then: shelf should align to end
+        assertTrue(shelfSpy.isAlignedToEnd)
+        assertTrue(shelfSpy.isAlignedToRight)
+        assertTrue(shelfSpy.mBackgroundNormal.alignToEnd)
+
+        // Then: icon container should align to end, right
+        val iconContainer = shelfSpy.shelfIcons as NotificationShelfIconContainer
+        assertTrue(iconContainer.alignToEnd)
+        assertTrue(iconContainer.isAlignedToRight)
+
+        // Then: icon container bounds are updated based on the widths and paddings
+        val actualPaddingStart = iconContainerPadding
+        val actualPaddingEnd = iconContainerPadding
+        val expectedLeftBound = width - actualWidth + actualPaddingStart
+        val expectedRightBound = width - actualPaddingEnd
+        assertEquals(expectedLeftBound, iconContainer.leftBound)
+        assertEquals(expectedRightBound, iconContainer.rightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testAlignment_nonSplitShade_LTR() {
+        // Given: LTR mode, non split shade
+        val width = 100
+        val actualWidth = 40
+        val iconContainerPadding = 16f
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+                iconContainerPadding = iconContainerPadding,
+            )
+
+        // Then: shelf should not align to end
+        // left bound of icon container should be 16f (actualPaddingStart)
+        // right bound of icon container should be 24f (actualWidth - actualPaddingEnd)
+        assertFalse(shelfSpy.isAlignedToEnd)
+        assertFalse(shelfSpy.isAlignedToRight)
+        assertFalse(shelfSpy.mBackgroundNormal.alignToEnd)
+
+        // Then: icon container should align to start, left
+
+        val iconContainer = shelfSpy.shelfIcons as NotificationShelfIconContainer
+        assertFalse(iconContainer.alignToEnd)
+        assertFalse(iconContainer.isAlignedToRight)
+
+        // Then: icon container bounds are updated based on the widths and paddings
+        val actualPaddingStart = iconContainerPadding
+        val actualPaddingEnd = iconContainerPadding
+        val expectedLeftBound = actualPaddingStart
+        val expectedRightBound = actualWidth - actualPaddingEnd
+        assertEquals(expectedLeftBound, iconContainer.leftBound)
+        assertEquals(expectedRightBound, iconContainer.rightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testAlignment_splitShade_RTL() {
+        // Given: RTL mode, split shade
+        val width = 100
+        val actualWidth = 40
+        val iconContainerPadding = 16f
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+                iconContainerPadding = iconContainerPadding,
+            )
+
+        // Then: shelf should align to end, but to left due to RTL
+        // left bound of icon container should be 16f (actualPaddingStart)
+        // right bound of icon container should be 24f (actualWidth - actualPaddingEnd)
+        assertTrue(shelfSpy.isAlignedToEnd)
+        assertFalse(shelfSpy.isAlignedToRight)
+        assertTrue(shelfSpy.mBackgroundNormal.alignToEnd)
+
+        // Then: icon container should align to end, left
+        val iconContainer = shelfSpy.shelfIcons as NotificationShelfIconContainer
+        assertTrue(iconContainer.alignToEnd)
+        assertFalse(iconContainer.isAlignedToRight)
+
+        // Then: icon container bounds are updated based on the widths and paddings
+        val actualPaddingStart = iconContainerPadding
+        val actualPaddingEnd = iconContainerPadding
+        val expectedLeftBound = actualPaddingStart
+        val expectedRightBound = actualWidth - actualPaddingEnd
+        assertEquals(expectedLeftBound, iconContainer.leftBound)
+        assertEquals(expectedRightBound, iconContainer.rightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testAlignment_nonSplitShade_RTL() {
+        // Given: RTL mode, non split shade
+        val width = 100
+        val actualWidth = 40
+        val iconContainerPadding = 16f
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+                iconContainerPadding = iconContainerPadding,
+            )
+
+        // Then: shelf should not align to end, but to right due to RTL
+        assertFalse(shelfSpy.isAlignedToEnd)
+        assertTrue(shelfSpy.isAlignedToRight)
+        assertFalse(shelfSpy.mBackgroundNormal.alignToEnd)
+
+        // Then: icon container should align to start, right
+        val iconContainer = shelfSpy.shelfIcons as NotificationShelfIconContainer
+        assertFalse(iconContainer.alignToEnd)
+        assertTrue(iconContainer.isAlignedToRight)
+
+        // Then: icon container bounds are updated based on the widths and paddings
+        val actualPaddingStart = iconContainerPadding
+        val actualPaddingEnd = iconContainerPadding
+        val expectedLeftBound = width - actualWidth + actualPaddingStart
+        val expectedRightBound = width - actualPaddingEnd
+        assertEquals(expectedLeftBound, iconContainer.leftBound)
+        assertEquals(expectedRightBound, iconContainer.rightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfLeftBound_splitShade_LTR() {
+        // Given: LTR mode, split shade
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // When: get the left bound of the shelf
+        val shelfLeftBound = shelfSpy.shelfLeftBound
+
+        // Then: should be equal to shelf's width - actual width
+        val expectedLeftBound = (width - actualWidth).toFloat()
+        assertEquals(expectedLeftBound, shelfLeftBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfRightBound_splitShade_LTR() {
+        // Given: LTR mode, split shade, width 100, actual width 40
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // Then: the right bound of the shelf should be equal to shelf's width
+        val expectedRightBound = width.toFloat()
+        assertEquals(expectedRightBound, shelfSpy.shelfRightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfLeftBound_nonSplitShade_LTR() {
+        // Given: LTR mode, non split shade
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // When: get the left bound of the shelf
+        val shelfLeftBound = shelfSpy.shelfLeftBound
+
+        // Then: should be equal to 0f
+        assertEquals(0f, shelfLeftBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfRightBound_nonSplitShade_LTR() {
+        // Given: LTR mode, non split shade, width 100, actual width 40
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = false,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // Then: the right bound of the shelf should be equal to shelf's actual width
+        assertEquals(actualWidth.toFloat(), shelfSpy.shelfRightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfLeftBound_splitShade_RTL() {
+        // Given: RTL mode, split shade
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // When: get the left bound of the shelf
+        val shelfLeftBound = shelfSpy.shelfLeftBound
+
+        // Then: should be equal to 0f
+        assertEquals(0f, shelfLeftBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfRightBound_splitShade_RTL() {
+        // Given: RTL mode, split shade, width 100, actual width 40
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = true,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // Then: the right bound of the shelf should be equal to shelf's actual width
+        assertEquals(actualWidth.toFloat(), shelfSpy.shelfRightBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfLeftBound_nonSplitShade_RTL() {
+        // Given: RTL mode, non split shade
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // When: get the left bound of the shelf
+        val shelfLeftBound = shelfSpy.shelfLeftBound
+
+        // Then: should be equal to shelf's width - actual width
+        val expectedLeftBound = (width - actualWidth).toFloat()
+        assertEquals(expectedLeftBound, shelfLeftBound)
+    }
+
+    @Test
+    @EnableFlags(NotificationMinimalism.FLAG_NAME)
+    fun testGetShelfRightBound_nonSplitShade_RTL() {
+        // Given: LTR mode, non split shade, width 100, actual width 40
+        val width = 100
+        val actualWidth = 40
+        val shelfSpy =
+            prepareShelfSpy(
+                shelf,
+                rtl = true,
+                splitShade = false,
+                width = width,
+                actualWidth = actualWidth,
+            )
+
+        // Then: the right bound of the shelf should be equal to shelf's width
+        assertEquals(width.toFloat(), shelfSpy.shelfRightBound)
+    }
+
+    private fun prepareShelfSpy(
+        shelf: NotificationShelf,
+        rtl: Boolean,
+        splitShade: Boolean,
+        width: Int,
+        actualWidth: Int,
+        iconContainerPadding: Float? = null,
+    ): NotificationShelf {
+        val shelfSpy = spy(shelf)
+        whenever(shelfSpy.isLayoutRtl).thenReturn(rtl)
+        whenever(ambientState.useSplitShade).thenReturn(splitShade)
+
+        // Ensure mAlignedToEnd is set when SceneContainerFlag is enabled.
+        if (SceneContainerFlag.isEnabled) {
+            shelfSpy.setAlignedToEnd(splitShade)
+        }
+
+        shelfSpy.layout(0, 0, width, 5)
+        shelfSpy.mShelfIcons.layout(0, 0, width, 5)
+        iconContainerPadding?.let {
+            shelfSpy.mShelfIcons.actualPaddingStart = it
+            shelfSpy.mShelfIcons.setActualPaddingEnd(it)
+        }
+        shelfSpy.setActualWidth(actualWidth.toFloat())
+
+        val iconContainerSpy = spy(shelf.mShelfIcons)
+        whenever(iconContainerSpy.isLayoutRtl).thenReturn(rtl)
+        whenever(shelfSpy.shelfIcons).thenReturn(iconContainerSpy)
+
+        return shelfSpy
+    }
+
+    @Test
     fun getAmountInShelf_lastViewBelowShelf_completelyInShelf() {
         val shelfClipStart = 0f
         val viewStart = 1f
@@ -152,7 +522,7 @@ open class NotificationShelfTest : SysuiTestCase() {
                 /* scrollingFast= */ false,
                 /* expandingAnimated= */ false,
                 /* isLastChild= */ true,
-                shelfClipStart
+                shelfClipStart,
             )
         assertEquals(1f, amountInShelf)
     }
@@ -182,7 +552,7 @@ open class NotificationShelfTest : SysuiTestCase() {
                 /* scrollingFast= */ false,
                 /* expandingAnimated= */ false,
                 /* isLastChild= */ true,
-                shelfClipStart
+                shelfClipStart,
             )
         assertEquals(1f, amountInShelf)
     }
@@ -212,7 +582,7 @@ open class NotificationShelfTest : SysuiTestCase() {
                 /* scrollingFast= */ false,
                 /* expandingAnimated= */ false,
                 /* isLastChild= */ true,
-                shelfClipStart
+                shelfClipStart,
             )
         assertEquals(0.5f, amountInShelf)
     }
@@ -241,7 +611,7 @@ open class NotificationShelfTest : SysuiTestCase() {
                 /* scrollingFast= */ false,
                 /* expandingAnimated= */ false,
                 /* isLastChild= */ true,
-                shelfClipStart
+                shelfClipStart,
             )
         assertEquals(0f, amountInShelf)
     }
@@ -250,7 +620,7 @@ open class NotificationShelfTest : SysuiTestCase() {
     fun updateState_expansionChanging_shelfTransparent() {
         updateState_expansionChanging_shelfAlphaUpdated(
             expansionFraction = 0.25f,
-            expectedAlpha = 0.0f
+            expectedAlpha = 0.0f,
         )
     }
 
@@ -260,7 +630,7 @@ open class NotificationShelfTest : SysuiTestCase() {
 
         updateState_expansionChanging_shelfAlphaUpdated(
             expansionFraction = 0.85f,
-            expectedAlpha = 0.0f
+            expectedAlpha = 0.0f,
         )
     }
 
@@ -281,7 +651,7 @@ open class NotificationShelfTest : SysuiTestCase() {
 
         updateState_expansionChanging_shelfAlphaUpdated(
             expansionFraction = expansionFraction,
-            expectedAlpha = 0.123f
+            expectedAlpha = 0.123f,
         )
     }
 
@@ -330,15 +700,15 @@ open class NotificationShelfTest : SysuiTestCase() {
                 /* scrollingFast= */ false,
                 /* expandingAnimated= */ false,
                 /* isLastChild= */ true,
-                shelfClipStart
+                shelfClipStart,
             )
         assertEquals(1f, amountInShelf)
     }
 
     @Test
     @EnableSceneContainer
-    fun updateState_withViewInShelf_showShelf() {
-        // GIVEN a view is scrolled into the shelf
+    fun updateState_withViewInShelf_notPulsing_showShelf() {
+        // GIVEN a view is scrolled into the shelf, no pulsing currently
         val stackTop = 200f
         val stackHeight = 800f
         whenever(ambientState.stackTop).thenReturn(stackTop)
@@ -349,6 +719,7 @@ open class NotificationShelfTest : SysuiTestCase() {
 
         whenever(ambientState.isShadeExpanded).thenReturn(true)
         whenever(ambientState.lastVisibleBackgroundChild).thenReturn(viewInShelf)
+        whenever(ambientState.isPulsing).thenReturn(false)
         whenever(viewInShelf.viewState).thenReturn(ExpandableViewState())
         whenever(viewInShelf.shelfIcon).thenReturn(mock(StatusBarIconView::class.java))
         whenever(viewInShelf.translationY).thenReturn(shelfTop)
@@ -369,6 +740,41 @@ open class NotificationShelfTest : SysuiTestCase() {
         assertEquals(false, shelfState.hidden)
         assertEquals(shelf.height, shelfState.height)
         assertEquals(shelfTop, shelfState.yTranslation)
+    }
+
+    @Test
+    @EnableSceneContainer
+    fun updateState_withViewInShelfAndPulsing_hideShelf() {
+        // GIVEN a view is scrolled into the shelf, and a notification is pulsing
+        val stackTop = 200f
+        val stackHeight = 800f
+        whenever(ambientState.stackTop).thenReturn(stackTop)
+        whenever(ambientState.interpolatedStackHeight).thenReturn(stackHeight)
+        val shelfTop = stackTop + stackHeight - shelf.height
+        val stackScrollAlgorithmState = StackScrollAlgorithmState()
+        val viewInShelf = mock(ExpandableView::class.java)
+
+        whenever(ambientState.isShadeExpanded).thenReturn(true)
+        whenever(ambientState.lastVisibleBackgroundChild).thenReturn(viewInShelf)
+        whenever(ambientState.isPulsing).thenReturn(true)
+        whenever(viewInShelf.viewState).thenReturn(ExpandableViewState())
+        whenever(viewInShelf.shelfIcon).thenReturn(mock(StatusBarIconView::class.java))
+        whenever(viewInShelf.translationY).thenReturn(shelfTop)
+        whenever(viewInShelf.actualHeight).thenReturn(10)
+        whenever(viewInShelf.isInShelf).thenReturn(true)
+        whenever(viewInShelf.minHeight).thenReturn(10)
+        whenever(viewInShelf.shelfTransformationTarget).thenReturn(null) // use translationY
+        whenever(viewInShelf.isInShelf).thenReturn(true)
+
+        stackScrollAlgorithmState.visibleChildren.add(viewInShelf)
+        stackScrollAlgorithmState.firstViewInShelf = viewInShelf
+
+        // WHEN Shelf's ViewState is updated
+        shelf.updateState(stackScrollAlgorithmState, ambientState)
+
+        // THEN the shelf is hidden
+        val shelfState = shelf.viewState as NotificationShelf.ShelfState
+        assertEquals(true, shelfState.hidden)
     }
 
     @Test
@@ -628,11 +1034,15 @@ open class NotificationShelfTest : SysuiTestCase() {
 
     private fun updateState_expansionChanging_shelfAlphaUpdated(
         expansionFraction: Float,
-        expectedAlpha: Float
+        expectedAlpha: Float,
     ) {
         val sbnMock: StatusBarNotification = mock()
         val mockEntry = mock<NotificationEntry>().apply { whenever(this.sbn).thenReturn(sbnMock) }
-        val row = ExpandableNotificationRow(mContext, null, mockEntry)
+        val row =
+            when (NotificationBundleUi.isEnabled) {
+                true -> ExpandableNotificationRow(mContext, null, UserHandle.CURRENT)
+                false -> ExpandableNotificationRow(mContext, null, mockEntry)
+            }
         whenever(ambientState.lastVisibleBackgroundChild).thenReturn(row)
         whenever(ambientState.isExpansionChanging).thenReturn(true)
         whenever(ambientState.expansionFraction).thenReturn(expansionFraction)

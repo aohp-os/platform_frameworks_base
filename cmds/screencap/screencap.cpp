@@ -37,10 +37,14 @@
 #include <ui/GraphicTypes.h>
 #include <ui/PixelFormat.h>
 
+#include "aidl/android/hardware/graphics/common/PixelFormat.h"
+#include "screencap_utils.h"
+#include "utils/Errors.h"
+
 using namespace android;
 
-#define COLORSPACE_UNKNOWN    0
-#define COLORSPACE_SRGB       1
+#define COLORSPACE_UNKNOWN 0
+#define COLORSPACE_SRGB 1
 #define COLORSPACE_DISPLAY_P3 2
 
 void usage(const char* pname, ftl::Optional<DisplayId> displayIdOpt) {
@@ -52,20 +56,21 @@ usage: %s [-ahp] [-d display-id] [FILENAME]
    -d: specify the display ID to capture%s
        see "dumpsys SurfaceFlinger --display-id" for valid display IDs.
    -p: outputs in png format.
-   --hint-for-seamless If set will use the hintForSeamless path in SF
+   --preserve-display-colors: Set to true to preserves the native display colorspace. Useful
+       for mixed HDR + SDR content, using identical processing as the display's
 
 If FILENAME ends with .png it will be saved as a png.
 If FILENAME is not given, the results will be printed to stdout.
 )",
             pname,
             displayIdOpt
-                .transform([](DisplayId id) {
-                    return std::string(ftl::Concat(
-                    " (If the id is not given, it defaults to ", id.value,')'
-                    ).str());
-                })
-                .value_or(std::string())
-                .c_str());
+                    .transform([](DisplayId id) {
+                        return std::string(ftl::Concat(" (If the id is not given, it defaults to ",
+                                                       id.value, ')')
+                                                   .str());
+                    })
+                    .value_or(std::string())
+                    .c_str());
 }
 
 // For options that only exist in long-form. Anything in the
@@ -73,29 +78,33 @@ If FILENAME is not given, the results will be printed to stdout.
 namespace LongOpts {
 enum {
     Reserved = 255,
-    HintForSeamless,
+    PreservedDisplayColors,
 };
 }
 
 static const struct option LONG_OPTIONS[] = {{"png", no_argument, nullptr, 'p'},
                                              {"jpeg", no_argument, nullptr, 'j'},
                                              {"help", no_argument, nullptr, 'h'},
-                                             {"hint-for-seamless", no_argument, nullptr,
-                                              LongOpts::HintForSeamless},
+                                             {"preserve-display-colors", no_argument, nullptr,
+                                              LongOpts::PreservedDisplayColors},
                                              {0, 0, 0, 0}};
 
-static int32_t flinger2bitmapFormat(PixelFormat f)
-{
+static int32_t flinger2bitmapFormat(aidl::android::hardware::graphics::common::PixelFormat f) {
     switch (f) {
-        case PIXEL_FORMAT_RGB_565:
+        case aidl::android::hardware::graphics::common::PixelFormat::RGB_565:
             return ANDROID_BITMAP_FORMAT_RGB_565;
+        case aidl::android::hardware::graphics::common::PixelFormat::RGBA_1010102:
+            return ANDROID_BITMAP_FORMAT_RGBA_1010102;
+        case aidl::android::hardware::graphics::common::PixelFormat::BGRA_1010102:
+            return ANDROID_BITMAP_FORMAT_BGRA_1010102;
+        case aidl::android::hardware::graphics::common::PixelFormat::BGRX_1010102:
+            return ANDROID_BITMAP_FORMAT_BGRX_1010102;
         default:
             return ANDROID_BITMAP_FORMAT_RGBA_8888;
     }
 }
 
-static uint32_t dataSpaceToInt(ui::Dataspace d)
-{
+static uint32_t dataSpaceToInt(ui::Dataspace d) {
     switch (d) {
         case ui::Dataspace::V0_SRGB:
             return COLORSPACE_SRGB;
@@ -109,25 +118,20 @@ static uint32_t dataSpaceToInt(ui::Dataspace d)
 static status_t notifyMediaScanner(const char* fileName) {
     std::string filePath("file://");
     filePath.append(fileName);
-    char *cmd[] = {
-        (char*) "am",
-        (char*) "broadcast",
-        (char*) "-a",
-        (char*) "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-        (char*) "-d",
-        &filePath[0],
-        nullptr
-    };
+    char* cmd[] = {(char*)"am", (char*)"broadcast",
+                   (char*)"-a", (char*)"android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                   (char*)"-d", &filePath[0],
+                   nullptr};
 
     int status;
     int pid = fork();
-    if (pid < 0){
+    if (pid < 0) {
         fprintf(stderr, "Unable to fork in order to send intent for media scanner.\n");
         return UNKNOWN_ERROR;
     }
-    if (pid == 0){
+    if (pid == 0) {
         int fd = open("/dev/null", O_WRONLY);
-        if (fd < 0){
+        if (fd < 0) {
             fprintf(stderr, "Unable to open /dev/null for media scanner stdout redirection.\n");
             exit(1);
         }
@@ -143,24 +147,6 @@ static status_t notifyMediaScanner(const char* fileName) {
         return UNKNOWN_ERROR;
     }
     return NO_ERROR;
-}
-
-status_t capture(const DisplayId displayId,
-            const gui::CaptureArgs& captureArgs,
-            ScreenCaptureResults& outResult) {
-    sp<SyncScreenCaptureListener> captureListener = new SyncScreenCaptureListener();
-    ScreenshotClient::captureDisplay(displayId, captureArgs, captureListener);
-
-    ScreenCaptureResults captureResults = captureListener->waitForResults();
-    if (!captureResults.fenceResult.ok()) {
-        fprintf(stderr, "Failed to take screenshot. Status: %d\n",
-                fenceStatus(captureResults.fenceResult));
-        return 1;
-    }
-
-    outResult = captureResults;
-
-    return 0;
 }
 
 status_t saveImage(const char* fn, std::optional<AndroidBitmapCompressFormat> format,
@@ -225,37 +211,26 @@ status_t saveImage(const char* fn, std::optional<AndroidBitmapCompressFormat> fo
 
     if (format) {
         AndroidBitmapInfo info;
-        info.format = flinger2bitmapFormat(buffer->getPixelFormat());
+        info.format = flinger2bitmapFormat(
+                static_cast<aidl::android::hardware::graphics::common::PixelFormat>(
+                        buffer->getPixelFormat()));
         info.flags = ANDROID_BITMAP_FLAGS_ALPHA_PREMUL;
         info.width = buffer->getWidth();
         info.height = buffer->getHeight();
         info.stride = buffer->getStride() * bytesPerPixel(buffer->getPixelFormat());
 
-        int result;
-
-        if (gainmapBase) {
-            result = ABitmap_compressWithGainmap(&info, static_cast<ADataSpace>(dataspace), base,
-                                                 gainmapBase, captureResults.hdrSdrRatio, *format,
-                                                 100, &fd,
-                                                 [](void* fdPtr, const void* data,
-                                                    size_t size) -> bool {
-                                                     int bytesWritten =
-                                                             write(*static_cast<int*>(fdPtr), data,
-                                                                   size);
-                                                     return bytesWritten == size;
-                                                 });
-        } else {
-            result = AndroidBitmap_compress(&info, static_cast<int32_t>(dataspace), base, *format,
-                                            100, &fd,
+        int bitmapResult =
+                ABitmap_compressWithGainmap(&info, static_cast<ADataSpace>(dataspace), base,
+                                            gainmapBase, captureResults.hdrSdrRatio, *format, 100,
+                                            &fd,
                                             [](void* fdPtr, const void* data, size_t size) -> bool {
                                                 int bytesWritten = write(*static_cast<int*>(fdPtr),
                                                                          data, size);
                                                 return bytesWritten == size;
                                             });
-        }
 
-        if (result != ANDROID_BITMAP_RESULT_SUCCESS) {
-            fprintf(stderr, "Failed to compress (error code: %d)\n", result);
+        if (bitmapResult != ANDROID_BITMAP_RESULT_SUCCESS) {
+            fprintf(stderr, "Failed to compress (error code: %d)\n", bitmapResult);
         }
 
         if (fn != NULL) {
@@ -273,9 +248,9 @@ status_t saveImage(const char* fn, std::optional<AndroidBitmapCompressFormat> fo
         write(fd, &f, 4);
         write(fd, &c, 4);
         size_t Bpp = bytesPerPixel(f);
-        for (size_t y=0 ; y<h ; y++) {
-            write(fd, base, w*Bpp);
-            base = (void *)((char *)base + s*Bpp);
+        for (size_t y = 0; y < h; y++) {
+            write(fd, base, w * Bpp);
+            base = (void*)((char*)base + s * Bpp);
         }
     }
     close(fd);
@@ -291,10 +266,9 @@ status_t saveImage(const char* fn, std::optional<AndroidBitmapCompressFormat> fo
     return 0;
 }
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
     const std::vector<PhysicalDisplayId> physicalDisplays =
-        SurfaceComposerClient::getPhysicalDisplayIds();
+            SurfaceComposerClient::getPhysicalDisplayIds();
 
     if (physicalDisplays.empty()) {
         fprintf(stderr, "Failed to get ID for any displays.\n");
@@ -344,8 +318,8 @@ int main(int argc, char** argv)
                 }
                 usage(pname, displayIdOpt);
                 return 1;
-            case LongOpts::HintForSeamless:
-                captureArgs.hintForSeamlessTransition = true;
+            case LongOpts::PreservedDisplayColors:
+                captureArgs.preserveDisplayColors = true;
                 break;
         }
     }
@@ -367,9 +341,9 @@ int main(int argc, char** argv)
     std::string suffix;
 
     if (argc == 1) {
-        std::string_view filename = { argv[0] };
+        std::string_view filename = {argv[0]};
         if (filename.ends_with(".png")) {
-            baseName = filename.substr(0, filename.size()-4);
+            baseName = filename.substr(0, filename.size() - 4);
             suffix = ".png";
             png = true;
         } else if (filename.ends_with(".jpeg")) {
@@ -416,7 +390,6 @@ int main(int argc, char** argv)
         format = ANDROID_BITMAP_COMPRESS_FORMAT_PNG;
     } else if (jpeg) {
         format = ANDROID_BITMAP_COMPRESS_FORMAT_JPEG;
-        captureArgs.attachGainmap = true;
     }
 
     // setThreadPoolMaxThreadCount(0) actually tells the kernel it's
@@ -428,15 +401,12 @@ int main(int argc, char** argv)
 
     std::vector<ScreenCaptureResults> results;
     const size_t numDisplays = displaysToCapture.size();
-    for (int i=0; i<numDisplays; i++) {
-        ScreenCaptureResults result;
-
+    for (int i = 0; i < numDisplays; i++) {
         // 1. Capture the screen
-        if (const status_t captureStatus =
-            capture(displaysToCapture[i], captureArgs, result) != 0) {
-
-            fprintf(stderr, "Capturing failed.\n");
-            return captureStatus;
+        auto captureResult = screencap::capture(displaysToCapture[i], captureArgs);
+        if (!captureResult.ok()) {
+            fprintf(stderr, "%sCapturing failed.\n", captureResult.error().message().c_str());
+            return 1;
         }
 
         // 2. Save the capture result as an image.
@@ -454,7 +424,7 @@ int main(int argc, char** argv)
         if (!filename.empty()) {
             fn = filename.c_str();
         }
-        if (const status_t saveImageStatus = saveImage(fn, format, result) != 0) {
+        if (const status_t saveImageStatus = saveImage(fn, format, captureResult.value()) != 0) {
             fprintf(stderr, "Saving image failed.\n");
             return saveImageStatus;
         }

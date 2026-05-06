@@ -29,6 +29,8 @@ import com.android.internal.widget.remotecompose.core.documentation.Documentatio
 import com.android.internal.widget.remotecompose.core.operations.layout.ActionOperation;
 import com.android.internal.widget.remotecompose.core.operations.layout.Component;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -49,17 +51,22 @@ public class ValueFloatChangeActionOperation extends Operation implements Action
         return "ValueFloatChangeActionOperation(" + mTargetValueId + ")";
     }
 
-    public String serializedName() {
+    /**
+     * The name of the operation used during serialization
+     *
+     * @return the operation serialized name
+     */
+    public @NonNull String serializedName() {
         return "VALUE_FLOAT_CHANGE";
     }
 
     @Override
-    public void serializeToString(int indent, StringSerializer serializer) {
+    public void serializeToString(int indent, @NonNull StringSerializer serializer) {
         serializer.append(indent, serializedName() + " = " + mTargetValueId + " -> " + mValue);
     }
 
     @Override
-    public void apply(RemoteContext context) {}
+    public void apply(@NonNull RemoteContext context) {}
 
     @NonNull
     @Override
@@ -68,32 +75,63 @@ public class ValueFloatChangeActionOperation extends Operation implements Action
     }
 
     @Override
-    public void write(WireBuffer buffer) {}
+    public void write(@NonNull WireBuffer buffer) {}
 
     @Override
     public void runAction(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         context.overrideFloat(mTargetValueId, mValue);
     }
 
-    public static void apply(WireBuffer buffer, int valueId, float value) {
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     * @param valueId the value id
+     * @param value the value to set
+     */
+    public static void apply(@NonNull WireBuffer buffer, int valueId, float value) {
         buffer.start(OP_CODE);
         buffer.writeInt(valueId);
         buffer.writeFloat(value);
     }
 
-    public static void read(WireBuffer buffer, List<Operation> operations) {
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read
+     * @param operations the list of operations that will be added to
+     */
+    public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         int valueId = buffer.readInt();
         float value = buffer.readFloat();
         operations.add(new ValueFloatChangeActionOperation(valueId, value));
     }
 
-    public static void documentation(DocumentationBuilder doc) {
+    /**
+     * Populate the documentation with a description of this operation
+     *
+     * @param doc to append the description to.
+     */
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Layout Operations", OP_CODE, "ValueFloatChangeActionOperation")
                 .description(
                         "ValueIntegerChange action. "
                                 + " This operation represents a value change for the given id")
                 .field(INT, "TARGET_VALUE_ID", "Value ID")
                 .field(FLOAT, "VALUE", "float value to be assigned to the target");
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER, SerializeTags.ACTION)
+                .addType("ValueFloatChangeActionOperation")
+                .add("targetValueId", mTargetValueId)
+                .add("value", mValue);
     }
 }

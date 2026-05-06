@@ -22,6 +22,7 @@ import android.os.ParcelDuration;
 import android.os.PowerSaveState;
 import android.os.WorkSource;
 import android.os.IWakeLockCallback;
+import android.os.IScreenTimeoutPolicyListener;
 
 /** @hide */
 
@@ -45,6 +46,10 @@ interface IPowerManager
     @UnsupportedAppUsage
     boolean isWakeLockLevelSupported(int level);
     boolean isWakeLockLevelSupportedWithDisplayId(int level, int displayId);
+    oneway void addScreenTimeoutPolicyListener(int displayId,
+        IScreenTimeoutPolicyListener listener);
+    oneway void removeScreenTimeoutPolicyListener(int displayId,
+        IScreenTimeoutPolicyListener listener);
 
     void userActivity(int displayId, long time, int event, int flags);
     void wakeUp(long time, int reason, String details, String opPackageName);
@@ -115,6 +120,8 @@ interface IPowerManager
     @UnsupportedAppUsage
     void reboot(boolean confirm, String reason, boolean wait);
     void rebootSafeMode(boolean confirm, boolean wait);
+
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.REBOOT)")
     void shutdown(boolean confirm, String reason, boolean wait);
     void crash(String message);
     int getLastShutdownReason();
@@ -141,6 +148,10 @@ interface IPowerManager
     boolean isAmbientDisplayAvailable();
     // suppresses the current ambient display configuration and disables ambient display.
     void suppressAmbientDisplay(String token, boolean suppress);
+    // suppresses the current ambient display configuration and disables ambient display based on
+    // the specified flags.
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.WRITE_DREAM_STATE)")
+    oneway void suppressAmbientDisplayBehavior(String token, int suppressionFlags);
     // returns whether ambient display is suppressed by the calling app with the given token.
     boolean isAmbientDisplaySuppressedForToken(String token);
     // returns whether ambient display is suppressed by any app with any token.

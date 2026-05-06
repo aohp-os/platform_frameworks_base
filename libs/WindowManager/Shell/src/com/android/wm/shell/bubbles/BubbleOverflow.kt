@@ -19,13 +19,9 @@ package com.android.wm.shell.bubbles
 import android.app.ActivityTaskManager.INVALID_TASK_ID
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
-import android.graphics.Matrix
-import android.graphics.Path
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.InsetDrawable
-import android.util.PathParser
 import android.view.LayoutInflater
 import android.view.View.VISIBLE
 import android.widget.FrameLayout
@@ -38,7 +34,6 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
     BubbleViewProvider {
 
     private lateinit var bitmap: Bitmap
-    private lateinit var dotPath: Path
 
     private var dotColor = 0
     private var showDot = false
@@ -74,18 +69,14 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
     fun initializeForBubbleBar(
         expandedViewManager: BubbleExpandedViewManager,
         positioner: BubblePositioner,
-        bubbleLogger: BubbleLogger,
     ) {
         createBubbleBarExpandedView()
             .initialize(
                 expandedViewManager,
                 positioner,
-                bubbleLogger,
                 /* isOverflow= */ true,
+                /* bubble= */ null,
                 /* bubbleTaskView= */ null,
-                /* mainExecutor= */ null,
-                /* backgroundExecutor= */ null,
-                /* regionSamplingProvider= */ null,
             )
     }
 
@@ -117,18 +108,8 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
         val res = context.resources
 
         // Set overflow button accent color, dot color
-
-        val typedArray =
-            context.obtainStyledAttributes(
-                intArrayOf(
-                    com.android.internal.R.attr.materialColorPrimaryFixed,
-                    com.android.internal.R.attr.materialColorOnPrimaryFixed
-                )
-            )
-
-        val colorAccent = typedArray.getColor(0, Color.WHITE)
-        val shapeColor = typedArray.getColor(1, Color.BLACK)
-        typedArray.recycle()
+        val colorAccent = context.getColor(com.android.internal.R.color.materialColorPrimaryFixed)
+        val shapeColor = context.getColor(com.android.internal.R.color.materialColorOnPrimaryFixed)
 
         dotColor = colorAccent
         overflowBtn?.iconDrawable?.setTint(shapeColor)
@@ -147,32 +128,8 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
 
         // Update bitmap
         val fg = InsetDrawable(overflowBtn?.iconDrawable, overflowIconInset)
-        bitmap =
-            iconFactory
-                .createBadgedIconBitmap(AdaptiveIconDrawable(ColorDrawable(colorAccent), fg))
-                .icon
-
-        // Update dot path
-        dotPath =
-            PathParser.createPathFromPathData(
-                res.getString(com.android.internal.R.string.config_icon_mask)
-            )
-        val scale =
-            iconFactory.normalizer.getScale(
-                iconView!!.iconDrawable,
-                null /* outBounds */,
-                null /* path */,
-                null /* outMaskShape */
-            )
-        val radius = BadgedImageView.DEFAULT_PATH_SIZE / 2f
-        val matrix = Matrix()
-        matrix.setScale(
-            scale /* x scale */,
-            scale /* y scale */,
-            radius /* pivot x */,
-            radius /* pivot y */
-        )
-        dotPath.transform(matrix)
+        val drawable = AdaptiveIconDrawable(ColorDrawable(colorAccent), fg)
+        bitmap = iconFactory.getBubbleBitmap(drawable)
 
         // Attach BubbleOverflow to BadgedImageView
         overflowBtn?.setRenderedBubble(this)
@@ -223,29 +180,15 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
 
     override fun getBubbleBarExpandedView(): BubbleBarExpandedView? = bubbleBarExpandedView
 
-    override fun getDotColor(): Int {
-        return dotColor
-    }
+    override fun getDotColor() = dotColor
 
-    override fun getAppBadge(): Bitmap? {
-        return null
-    }
+    override fun getAppBadge() = null
 
-    override fun getRawAppBadge(): Bitmap? {
-        return null
-    }
+    override fun getRawAppBadge() = null
 
-    override fun getBubbleIcon(): Bitmap {
-        return bitmap
-    }
+    override fun getBubbleIcon() = bitmap
 
-    override fun showDot(): Boolean {
-        return showDot
-    }
-
-    override fun getDotPath(): Path? {
-        return dotPath
-    }
+    override fun showDot() = showDot
 
     override fun setTaskViewVisibility(visible: Boolean) {
         // Overflow does not have a TaskView.
@@ -269,13 +212,9 @@ class BubbleOverflow(private val context: Context, private val positioner: Bubbl
         return overflowBtn
     }
 
-    override fun getKey(): String {
-        return KEY
-    }
+    override fun getKey() = KEY
 
-    override fun getTaskId(): Int {
-        return if (expandedView != null) expandedView!!.taskId else INVALID_TASK_ID
-    }
+    override fun getTaskId() = INVALID_TASK_ID
 
     companion object {
         const val KEY = "Overflow"

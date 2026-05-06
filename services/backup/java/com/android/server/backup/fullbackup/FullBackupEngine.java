@@ -17,16 +17,20 @@
 package com.android.server.backup.fullbackup;
 
 import static com.android.server.backup.BackupManagerService.DEBUG;
-import static com.android.server.backup.BackupManagerService.MORE_DEBUG;
 import static com.android.server.backup.BackupManagerService.TAG;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_MANIFEST_FILENAME;
 import static com.android.server.backup.UserBackupManagerService.BACKUP_METADATA_FILENAME;
+import static com.android.server.backup.UserBackupManagerService.CROSS_PLATFORM_MANIFEST_FILENAME;
 import static com.android.server.backup.UserBackupManagerService.SHARED_BACKUP_AGENT_PACKAGE;
+import static com.android.server.backup.crossplatform.PlatformConfigParser.PLATFORM_IOS;
 
 import android.annotation.UserIdInt;
 import android.app.ApplicationThreadConstants;
 import android.app.IBackupAgent;
+import android.app.backup.BackupAgent;
+import android.app.backup.BackupManagerMonitor;
 import android.app.backup.BackupTransport;
+import android.app.backup.FullBackup;
 import android.app.backup.FullBackupDataOutput;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
@@ -38,14 +42,17 @@ import android.util.Slog;
 import com.android.server.AppWidgetBackupBridge;
 import com.android.server.backup.BackupAgentTimeoutParameters;
 import com.android.server.backup.BackupRestoreTask;
+import com.android.server.backup.Flags;
 import com.android.server.backup.OperationStorage.OpType;
 import com.android.server.backup.UserBackupManagerService;
+import com.android.server.backup.crossplatform.CrossPlatformManifest;
 import com.android.server.backup.remote.RemoteCall;
 import com.android.server.backup.utils.BackupEligibilityRules;
 import com.android.server.backup.utils.BackupManagerMonitorEventSender;
 import com.android.server.backup.utils.FullBackupUtils;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Objects;
@@ -111,7 +118,7 @@ public class FullBackupEngine {
                         shouldWriteApk(mPackage.applicationInfo, mIncludeApks, isSharedStorage);
 
                 if (!isSharedStorage) {
-                    if (MORE_DEBUG) {
+                    if (DEBUG) {
                         Slog.d(TAG, "Writing manifest for " + packageName);
                     }
 
@@ -137,9 +144,13 @@ public class FullBackupEngine {
                     appMetadataBackupWriter.backupObb(mUserId, mPackage);
                 }
 
-                if (DEBUG) {
-                    Slog.d(TAG, "Calling doFullBackup() on " + packageName);
+                if (Flags.enableCrossPlatformTransfer()
+                        && (mTransportFlags & BackupAgent.FLAG_CROSS_PLATFORM_DATA_TRANSFER_IOS)
+                                != 0) {
+                    backupCrossPlatformManifest(output, mPackage.applicationInfo);
                 }
+
+                Slog.d(TAG, "Calling doFullBackup() on " + packageName);
 
                 long timeout =
                         isSharedStorage
@@ -183,6 +194,35 @@ public class FullBackupEngine {
                     && !isSharedStorage
                     && (!isSystemApp || isUpdatedSystemApp);
         }
+
+        /** Back up the app's cross platform manifest. */
+        private void backupCrossPlatformManifest(
+                FullBackupDataOutput output, ApplicationInfo applicationInfo) throws IOException {
+            CrossPlatformManifest manifest =
+                    CrossPlatformManifest.create(
+                            mPackage,
+                            PLATFORM_IOS,
+                            mBackupEligibilityRules.getPlatformSpecificParams(
+                                    applicationInfo, PLATFORM_IOS));
+            File manifestFile = new File(mFilesDir, CROSS_PLATFORM_MANIFEST_FILENAME);
+            try (FileOutputStream out = new FileOutputStream(manifestFile)) {
+                out.write(manifest.toByteArray());
+            }
+
+            // We want the manifest block in the archive stream to be constant each time we generate
+            // a backup stream for the app. However, the underlying TAR mechanism sees it as a file
+            // and will propagate its last modified time. We pin the last modified time to zero to
+            // prevent the TAR header from varying.
+            manifestFile.setLastModified(0);
+
+            FullBackup.backupToTar(
+                    mPackage.packageName,
+                    /* domain= */ null,
+                    /* linkdomain= */ null,
+                    mFilesDir.getAbsolutePath(),
+                    manifestFile.getAbsolutePath(),
+                    output);
+        }
     }
 
     public FullBackupEngine(
@@ -216,14 +256,14 @@ public class FullBackupEngine {
 
     public int preflightCheck() throws RemoteException {
         if (mPreflightHook == null) {
-            if (MORE_DEBUG) {
+            if (DEBUG) {
                 Slog.v(TAG, "No preflight check");
             }
             return BackupTransport.TRANSPORT_OK;
         }
         if (initializeAgent()) {
             int result = mPreflightHook.preflightFullBackup(mPkg, mAgent);
-            if (MORE_DEBUG) {
+            if (DEBUG) {
                 Slog.v(TAG, "preflight returned " + result);
             }
 
@@ -262,7 +302,7 @@ public class FullBackupEngine {
                 if (!backupManagerService.waitUntilOperationComplete(mOpToken)) {
                     Slog.e(TAG, "Full backup failed on package " + mPkg.packageName);
                 } else {
-                    if (MORE_DEBUG) {
+                    if (DEBUG) {
                         Slog.d(TAG, "Full package backup success: " + mPkg.packageName);
                     }
                     result = BackupTransport.TRANSPORT_OK;
@@ -271,6 +311,12 @@ public class FullBackupEngine {
                 mBackupManagerMonitorEventSender.monitorAgentLoggingResults(mPkg, mAgent);
             } catch (IOException e) {
                 Slog.e(TAG, "Error backing up " + mPkg.packageName + ": " + e.getMessage());
+                // This is likely due to the app process dying.
+                mBackupManagerMonitorEventSender.monitorEvent(
+                        BackupManagerMonitor.LOG_EVENT_ID_FULL_BACKUP_AGENT_PIPE_BROKEN,
+                        mPkg,
+                        BackupManagerMonitor.LOG_EVENT_CATEGORY_AGENT,
+                        /* extras= */ null);
                 result = BackupTransport.AGENT_ERROR;
             } finally {
                 try {
@@ -310,7 +356,7 @@ public class FullBackupEngine {
 
     private boolean initializeAgent() {
         if (mAgent == null) {
-            if (MORE_DEBUG) {
+            if (DEBUG) {
                 Slog.d(TAG, "Binding to full backup agent : " + mPkg.packageName);
             }
             mAgent =

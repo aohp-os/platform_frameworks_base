@@ -22,7 +22,6 @@ import android.provider.Settings
 import com.android.settingslib.notification.modes.TestModeBuilder
 import com.android.settingslib.notification.modes.ZenMode
 import java.time.Duration
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,8 +36,10 @@ class FakeZenModeRepository : ZenModeRepository {
     override val globalZenMode: StateFlow<Int>
         get() = mutableZenMode.asStateFlow()
 
-    private val mutableModesFlow: MutableStateFlow<List<ZenMode>> = MutableStateFlow(listOf())
-    override val modes: Flow<List<ZenMode>>
+    private val mutableModesFlow: MutableStateFlow<List<ZenMode>> by lazy {
+        MutableStateFlow(listOf(TestModeBuilder.MANUAL_DND))
+    }
+    override val modes: StateFlow<List<ZenMode>>
         get() = mutableModesFlow.asStateFlow()
 
     override fun getModes(): List<ZenMode> = mutableModesFlow.value
@@ -65,8 +66,11 @@ class FakeZenModeRepository : ZenModeRepository {
         mutableModesFlow.value += mode
     }
 
-    fun addMode(id: String, @AutomaticZenRule.Type type: Int = AutomaticZenRule.TYPE_UNKNOWN,
-        active: Boolean = false) {
+    fun addMode(
+        id: String,
+        @AutomaticZenRule.Type type: Int = AutomaticZenRule.TYPE_UNKNOWN,
+        active: Boolean = false,
+    ) {
         mutableModesFlow.value += newMode(id, type, active)
     }
 
@@ -109,14 +113,19 @@ class FakeZenModeRepository : ZenModeRepository {
         activeModesDurations.remove(id)
     }
 
-    // Update the active state while maintaining the mode's position in the list
+    /** Updates a [ZenMode]'s active state, preserving its position in the list. */
     private fun updateModeActiveState(id: String, isActive: Boolean) {
+        updateMode(id) { TestModeBuilder(it).setActive(isActive).build() }
+    }
+
+    /** Updates a [ZenMode], preserving its position in the list. */
+    fun updateMode(id: String, update: (original: ZenMode) -> ZenMode) {
         val modes = mutableModesFlow.value.toMutableList()
         val index = modes.indexOfFirst { it.id == id }
         if (index < 0) {
             throw IllegalArgumentException("mode $id not found")
         }
-        modes[index] = TestModeBuilder(modes[index]).setActive(isActive).build()
+        modes[index] = update(modes[index])
         mutableModesFlow.value = modes
     }
 }

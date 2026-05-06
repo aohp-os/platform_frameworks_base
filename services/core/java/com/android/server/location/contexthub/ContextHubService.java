@@ -117,7 +117,7 @@ public class ContextHubService extends IContextHubService.Stub {
 
     /**
      * Constants describing an async event from the Context Hub.
-     * {@hide}
+     * @hide
      */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = {"CONTEXT_HUB_EVENT_"}, value = {
@@ -256,12 +256,15 @@ public class ContextHubService extends IContextHubService.Stub {
         public void handleServiceRestart() {
             Log.i(TAG, "Recovering from Context Hub HAL restart...");
             initExistingCallbacks();
-            mHubInfoRegistry.onHalRestart();
-            resetSettings();
-            if (Flags.reconnectHostEndpointsAfterHalRestart()) {
-                mClientManager.forEachClientOfHub(mContextHubId,
-                        ContextHubClientBroker::sendHostEndpointConnectedEvent);
+            if (mHubInfoRegistry != null) {
+                mHubInfoRegistry.onHalRestart();
             }
+            if (mEndpointManager != null) {
+                mEndpointManager.onHalRestart();
+            }
+            resetSettings();
+            mClientManager.forEachClientOfHub(
+                    mContextHubId, ContextHubClientBroker::sendHostEndpointConnectedEvent);
             Log.i(TAG, "Finished recovering from Context Hub HAL restart");
         }
 
@@ -332,24 +335,27 @@ public class ContextHubService extends IContextHubService.Stub {
         if (Flags.offloadApi() && Flags.offloadImplementation()) {
             HubInfoRegistry registry;
             try {
-                registry = new HubInfoRegistry(mContextHubWrapper);
+                registry = new HubInfoRegistry(mContext, mContextHubWrapper);
                 mEndpointManager =
-                        new ContextHubEndpointManager(mContext, mContextHubWrapper, registry);
-                Log.i(TAG, "Enabling generic offload API");
-            } catch (UnsupportedOperationException e) {
+                        new ContextHubEndpointManager(
+                                mContext, mContextHubWrapper, registry, mTransactionManager);
+                mEndpointManager.init();
+                Log.d(TAG, "Enabling generic offload API");
+            } catch (InstantiationException | UnsupportedOperationException e) {
                 mEndpointManager = null;
                 registry = null;
-                Log.w(TAG, "Generic offload API not supported, disabling");
+                if (e instanceof UnsupportedOperationException) {
+                    Log.d(TAG, "Generic offload API not supported by HAL");
+                }
             }
             mHubInfoRegistry = registry;
         } else {
             mHubInfoRegistry = null;
             mEndpointManager = null;
-            Log.i(TAG, "Disabling generic offload API");
+            Log.d(TAG, "Disabling generic offload API due to flag config");
         }
 
         initDefaultClientMap();
-        initEndpointCallback();
 
         initLocationSettingNotifications();
         initWifiSettingNotifications();
@@ -480,15 +486,9 @@ public class ContextHubService extends IContextHubService.Stub {
         mContextHubInfoList = new ArrayList<>(mContextHubIdToInfoMap.values());
         mClientManager = new ContextHubClientManager(mContext, mContextHubWrapper);
 
-        if (Flags.reduceLockingContextHubTransactionManager()) {
-            mTransactionManager =
-                    new ContextHubTransactionManager(
-                            mContextHubWrapper, mClientManager, mNanoAppStateManager);
-        } else {
-            mTransactionManager =
-                    new ContextHubTransactionManagerOld(
-                            mContextHubWrapper, mClientManager, mNanoAppStateManager);
-        }
+        mTransactionManager =
+                new ContextHubTransactionManager(
+                        mContextHubWrapper, mClientManager, mNanoAppStateManager);
 
         mSensorPrivacyManagerInternal =
                 LocalServices.getService(SensorPrivacyManagerInternal.class);
@@ -526,18 +526,6 @@ public class ContextHubService extends IContextHubService.Stub {
             queryNanoAppsInternal(contextHubId);
         }
         mDefaultClientMap = Collections.unmodifiableMap(defaultClientMap);
-    }
-
-    private void initEndpointCallback() {
-        if (mHubInfoRegistry == null) {
-            return;
-        }
-        try {
-            mContextHubWrapper.registerEndpointCallback(
-                    new ContextHubHalEndpointCallback(mHubInfoRegistry, mEndpointManager));
-        } catch (RemoteException | UnsupportedOperationException e) {
-            Log.e(TAG, "Exception while registering IEndpointCallback", e);
-        }
     }
 
     /**
@@ -765,9 +753,7 @@ public class ContextHubService extends IContextHubService.Stub {
     @Override
     public List<HubInfo> getHubs() throws RemoteException {
         super.getHubs_enforcePermission();
-        if (mHubInfoRegistry == null) {
-            return Collections.emptyList();
-        }
+        checkHubDiscoveryPreconditions();
         return mHubInfoRegistry.getHubs();
     }
 
@@ -775,9 +761,7 @@ public class ContextHubService extends IContextHubService.Stub {
     @Override
     public List<HubEndpointInfo> findEndpoints(long endpointId) {
         super.findEndpoints_enforcePermission();
-        if (mHubInfoRegistry == null) {
-            return Collections.emptyList();
-        }
+        checkEndpointDiscoveryPreconditions();
         return mHubInfoRegistry.findEndpoints(endpointId);
     }
 
@@ -785,23 +769,29 @@ public class ContextHubService extends IContextHubService.Stub {
     @Override
     public List<HubEndpointInfo> findEndpointsWithService(String serviceDescriptor) {
         super.findEndpointsWithService_enforcePermission();
-        if (mHubInfoRegistry == null) {
-            return Collections.emptyList();
-        }
+        checkEndpointDiscoveryPreconditions();
         return mHubInfoRegistry.findEndpointsWithService(serviceDescriptor);
     }
 
     @android.annotation.EnforcePermission(android.Manifest.permission.ACCESS_CONTEXT_HUB)
     @Override
     public IContextHubEndpoint registerEndpoint(
-            HubEndpointInfo pendingHubEndpointInfo, IContextHubEndpointCallback callback)
+            HubEndpointInfo pendingHubEndpointInfo,
+            IContextHubEndpointCallback callback,
+            String packageName,
+            String attributionTag)
             throws RemoteException {
         super.registerEndpoint_enforcePermission();
         if (mEndpointManager == null) {
             Log.e(TAG, "Endpoint manager failed to initialize");
             throw new UnsupportedOperationException("Endpoint registration is not supported");
         }
-        return mEndpointManager.registerEndpoint(pendingHubEndpointInfo, callback);
+        if (callback == null) {
+            Log.e(TAG, "Endpoint callback is invalid");
+            throw new IllegalArgumentException("registerEndpoint must have a non-null callback");
+        }
+        return mEndpointManager.registerEndpoint(
+                pendingHubEndpointInfo, callback, packageName, attributionTag);
     }
 
     @android.annotation.EnforcePermission(android.Manifest.permission.ACCESS_CONTEXT_HUB)
@@ -832,10 +822,24 @@ public class ContextHubService extends IContextHubService.Stub {
         mHubInfoRegistry.unregisterEndpointDiscoveryCallback(callback);
     }
 
+    @android.annotation.EnforcePermission(android.Manifest.permission.ACCESS_CONTEXT_HUB)
+    @Override
+    public void onDiscoveryCallbackFinished() throws RemoteException {
+        super.onDiscoveryCallbackFinished_enforcePermission();
+        mHubInfoRegistry.onDiscoveryCallbackFinished();
+    }
+
     private void checkEndpointDiscoveryPreconditions() {
         if (mHubInfoRegistry == null) {
             Log.e(TAG, "Hub endpoint registry failed to initialize");
             throw new UnsupportedOperationException("Endpoint discovery is not supported");
+        }
+    }
+
+    private void checkHubDiscoveryPreconditions() {
+        if (mHubInfoRegistry == null) {
+            Log.e(TAG, "Hub registry failed to initialize");
+            throw new UnsupportedOperationException("Hub discovery is not supported");
         }
     }
 
@@ -1065,21 +1069,14 @@ public class ContextHubService extends IContextHubService.Stub {
      * @param message the message contents
      * @param nanoappPermissions the set of permissions the nanoapp holds
      * @param messagePermissions the set of permissions that should be used for attributing
-     *        permissions when this message is consumed by a client
+     *     permissions when this message is consumed by a client
      */
-    private void handleClientMessageCallback(int contextHubId, short hostEndpointId,
-            NanoAppMessage message, List<String> nanoappPermissions,
+    private void handleClientMessageCallback(
+            int contextHubId,
+            short hostEndpointId,
+            NanoAppMessage message,
+            List<String> nanoappPermissions,
             List<String> messagePermissions) {
-        if (!Flags.reliableMessageDuplicateDetectionService()) {
-            byte errorCode = mClientManager.onMessageFromNanoApp(contextHubId, hostEndpointId,
-                    message, nanoappPermissions, messagePermissions);
-            if (message.isReliable() && errorCode != ErrorCode.OK) {
-                sendMessageDeliveryStatusToContextHub(contextHubId,
-                        message.getMessageSequenceNumber(), errorCode);
-            }
-            return;
-        }
-
         if (!message.isReliable()) {
             mClientManager.onMessageFromNanoApp(
                     contextHubId, hostEndpointId, message,
@@ -1572,6 +1569,12 @@ public class ContextHubService extends IContextHubService.Stub {
         pw.println("");
         pw.println("=================== CLIENTS ====================");
         pw.println(mClientManager);
+
+        if (mEndpointManager != null) {
+            pw.println("");
+            pw.println("=================== ENDPOINTS ====================");
+            pw.println(mEndpointManager);
+        }
 
         pw.println("");
         pw.println("=================== TRANSACTIONS ====================");

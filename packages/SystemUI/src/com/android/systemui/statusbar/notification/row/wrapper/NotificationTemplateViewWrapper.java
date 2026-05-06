@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.row.wrapper;
 
+import static android.app.Flags.notificationsRedesignTemplates;
 import static android.view.View.VISIBLE;
 
 import static com.android.systemui.statusbar.notification.row.ExpandableNotificationRow.DEFAULT_HEADER_VISIBLE_AMOUNT;
@@ -37,7 +38,8 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import com.android.internal.annotations.VisibleForTesting;
+import androidx.annotation.VisibleForTesting;
+
 import com.android.internal.util.ContrastColorUtil;
 import com.android.internal.widget.NotificationActionListLayout;
 import com.android.systemui.Dependency;
@@ -50,6 +52,7 @@ import com.android.systemui.statusbar.notification.ImageTransformState;
 import com.android.systemui.statusbar.notification.TransformState;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.HybridNotificationView;
+import com.android.systemui.statusbar.notification.shared.NotificationBundleUi;
 
 import java.util.function.Consumer;
 
@@ -149,10 +152,15 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
                     }
 
                 }, TRANSFORMING_VIEW_TEXT);
-        mFullHeaderTranslation = ctx.getResources().getDimensionPixelSize(
-                com.android.internal.R.dimen.notification_content_margin)
-                - ctx.getResources().getDimensionPixelSize(
-                com.android.internal.R.dimen.notification_content_margin_top);
+        int contentMargin = ctx.getResources().getDimensionPixelSize(
+                com.android.internal.R.dimen.notification_content_margin);
+        int contentMarginTop =
+                notificationsRedesignTemplates()
+                        ? Notification.Builder.getContentMarginTop(ctx,
+                            com.android.internal.R.dimen.notification_2025_content_margin_top)
+                        : ctx.getResources().getDimensionPixelSize(
+                            com.android.internal.R.dimen.notification_content_margin_top);
+        mFullHeaderTranslation = contentMargin - contentMarginTop;
     }
 
     @MainThread
@@ -180,6 +188,7 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
         mActions = mView.findViewById(com.android.internal.R.id.actions);
         mRemoteInputHistory = mView.findViewById(
                 com.android.internal.R.id.notification_material_reply_container);
+
         updatePendingIntentCancellations();
     }
 
@@ -267,7 +276,9 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
     public void onContentUpdated(ExpandableNotificationRow row) {
         // Reinspect the notification. Before the super call, because the super call also updates
         // the transformation types and we need to have our values set by then.
-        resolveTemplateViews(row.getEntry().getSbn());
+        resolveTemplateViews(NotificationBundleUi.isEnabled()
+                ? row.getEntryAdapter().getSbn()
+                : row.getEntryLegacy().getSbn());
         super.onContentUpdated(row);
         // With the modern templates, a large icon visually overlaps the header, so we can't
         // hide the header, we must show it.
@@ -351,7 +362,8 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
     @Override
     public int getExtraMeasureHeight() {
         int extra = 0;
-        if (mActions != null) {
+        if (!notificationsRedesignTemplates() && mActions != null) {
+            // With the redesign, this should always be 0.
             extra = mActions.getExtraMeasureHeight();
         }
         if (mRemoteInputHistory != null && mRemoteInputHistory.getVisibility() != View.GONE) {
@@ -441,6 +453,11 @@ public class NotificationTemplateViewWrapper extends NotificationHeaderViewWrapp
                 sUiOffloadThread = Dependency.get(UiOffloadThread.class);
             }
             return sUiOffloadThread;
+        }
+
+        @VisibleForTesting(otherwise = VisibleForTesting.NONE)
+        static void resetUiOffloadThread() {
+            sUiOffloadThread = null;
         }
 
         private final View mView;

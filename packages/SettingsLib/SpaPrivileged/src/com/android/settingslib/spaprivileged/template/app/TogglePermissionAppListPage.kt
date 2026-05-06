@@ -128,6 +128,7 @@ internal fun <T : AppRecord> TogglePermissionAppListModel<T>.TogglePermissionApp
                 restrictionsProviderFactory = restrictionsProviderFactory,
             )
         },
+        showSystemAppsInitially = showSystemAppsInitially,
         appList = appList,
     )
 }
@@ -148,14 +149,15 @@ internal class TogglePermissionInternalAppListModel<T : AppRecord>(
     override fun getSummary(option: Int, record: T) = getSummary(record)
 
     @Composable
-    fun getSummary(record: T): () -> String {
+    fun getSummary(record: T): () -> CharSequence {
+        val allowed = listModel.isAllowed(record)
         val restrictions =
             listModel.getRestrictions(
                 userId = record.app.userId,
                 packageName = record.app.packageName,
+                allowed()
             )
         val restrictedMode by restrictionsProviderFactory.rememberRestrictedMode(restrictions)
-        val allowed = listModel.isAllowed(record)
         return RestrictedSwitchPreferenceModel.getSummary(
             context = context,
             summaryIfNoRestricted = { getSummaryIfNoRestricted(allowed()) },

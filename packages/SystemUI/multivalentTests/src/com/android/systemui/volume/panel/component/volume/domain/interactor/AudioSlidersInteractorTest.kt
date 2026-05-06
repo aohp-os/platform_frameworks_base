@@ -17,12 +17,10 @@
 package com.android.systemui.volume.panel.component.volume.domain.interactor
 
 import android.media.AudioManager
-import android.platform.test.annotations.EnableFlags
 import android.testing.TestableLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.settingslib.volume.shared.model.AudioStream
-import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.kosmos.Kosmos
@@ -32,14 +30,12 @@ import com.android.systemui.volume.data.repository.audioRepository
 import com.android.systemui.volume.data.repository.audioSystemRepository
 import com.android.systemui.volume.panel.component.volume.domain.model.SliderType
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
@@ -97,7 +93,6 @@ class AudioSlidersInteractorTest : SysuiTestCase() {
 
 
     @Test
-    @EnableFlags(Flags.FLAG_ONLY_SHOW_MEDIA_STREAM_SLIDER_IN_SINGLE_VOLUME_MODE)
     fun shouldAddMusicStreamOnly_singleVolumeMode() =
         with(kosmos) {
             testScope.runTest {

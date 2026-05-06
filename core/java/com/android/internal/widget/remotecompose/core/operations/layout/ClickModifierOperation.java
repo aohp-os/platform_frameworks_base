@@ -36,13 +36,19 @@ import com.android.internal.widget.remotecompose.core.operations.utilities.easin
 import com.android.internal.widget.remotecompose.core.operations.utilities.easing.FloatAnimation;
 import com.android.internal.widget.remotecompose.core.semantics.AccessibleComponent;
 import com.android.internal.widget.remotecompose.core.semantics.CoreSemantics;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Represents a click modifier + actions */
 public class ClickModifierOperation extends PaintOperation
-        implements ModifierOperation, DecoratorComponent, ClickHandler, AccessibleComponent {
+        implements Container,
+                ModifierOperation,
+                DecoratorComponent,
+                ClickHandler,
+                AccessibleComponent {
     private static final int OP_CODE = Operations.MODIFIER_CLICK;
 
     long mAnimateRippleStart = 0;
@@ -53,7 +59,7 @@ public class ClickModifierOperation extends PaintOperation
     float mWidth = 0;
     float mHeight = 0;
 
-    @NonNull public float[] locationInWindow = new float[2];
+    public @NonNull float [] locationInWindow = new float[2];
 
     @NonNull PaintBundle mPaint = new PaintBundle();
 
@@ -69,12 +75,19 @@ public class ClickModifierOperation extends PaintOperation
     }
 
     @Override
-    public CoreSemantics.Mode getMode() {
+    public @NonNull CoreSemantics.Mode getMode() {
         return CoreSemantics.Mode.MERGE;
     }
 
-    public void animateRipple(float x, float y) {
-        mAnimateRippleStart = System.currentTimeMillis();
+    /**
+     * Animate ripple
+     *
+     * @param x starting position x of the ripple
+     * @param y starting position y of the ripple
+     * @param timeStampMillis
+     */
+    public void animateRipple(float x, float y, long timeStampMillis) {
+        mAnimateRippleStart = timeStampMillis;
         mAnimateRippleX = x;
         mAnimateRippleY = y;
     }
@@ -82,6 +95,7 @@ public class ClickModifierOperation extends PaintOperation
     @NonNull public ArrayList<Operation> mList = new ArrayList<>();
 
     @NonNull
+    @Override
     public ArrayList<Operation> getList() {
         return mList;
     }
@@ -94,7 +108,13 @@ public class ClickModifierOperation extends PaintOperation
     @NonNull
     @Override
     public String toString() {
-        return "ClickModifier";
+        StringBuilder sb = new StringBuilder();
+        sb.append("ClickModifier");
+        for (Operation modifierOperation : mList) {
+            sb.append("\n        ");
+            sb.append(modifierOperation.toString());
+        }
+        return sb.toString();
     }
 
     @Override
@@ -124,7 +144,7 @@ public class ClickModifierOperation extends PaintOperation
         }
         context.needsRepaint();
 
-        float progress = (System.currentTimeMillis() - mAnimateRippleStart);
+        float progress = (context.getClock().millis() - mAnimateRippleStart);
         progress /= (float) mAnimateRippleDuration;
         if (progress > 1f) {
             mAnimateRippleStart = 0;
@@ -161,7 +181,10 @@ public class ClickModifierOperation extends PaintOperation
 
     @Override
     public void layout(
-            @NonNull RemoteContext context, Component component, float width, float height) {
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         mWidth = width;
         mHeight = height;
     }
@@ -189,7 +212,8 @@ public class ClickModifierOperation extends PaintOperation
         locationInWindow[0] = 0f;
         locationInWindow[1] = 0f;
         component.getLocationInWindow(locationInWindow);
-        animateRipple(x - locationInWindow[0], y - locationInWindow[1]);
+        animateRipple(
+                x - locationInWindow[0], y - locationInWindow[1], context.getClock().millis());
         for (Operation o : mList) {
             if (o instanceof ActionOperation) {
                 ((ActionOperation) o).runAction(context, document, component, x, y);
@@ -208,6 +232,11 @@ public class ClickModifierOperation extends PaintOperation
         return "ClickModifier";
     }
 
+    /**
+     * Write the operation on the buffer
+     *
+     * @param buffer
+     */
     public static void apply(@NonNull WireBuffer buffer) {
         buffer.start(OP_CODE);
     }
@@ -232,5 +261,10 @@ public class ClickModifierOperation extends PaintOperation
                 .description(
                         "Click modifier. This operation contains"
                                 + " a list of action executed on click");
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer.addTags(SerializeTags.MODIFIER).addType("ClickModifierOperation");
     }
 }

@@ -24,13 +24,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 class FakeAudioSharingRepository : AudioSharingRepository {
+    private var mutableIsProfilesReady: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
     private var mutableAvailable: Boolean = false
 
     private val mutableInAudioSharing: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
-    private val mutableAudioSourceStateUpdate = MutableSharedFlow<Unit>()
+    private val mutableAudioSourceStateUpdate = MutableSharedFlow<Unit>(replay = 1)
 
     var sourceAdded: Boolean = false
+        private set
+
+    var audioSharingStarted: Boolean = false
         private set
 
     private var profile: LocalBluetoothLeBroadcast? = null
@@ -42,6 +47,8 @@ class FakeAudioSharingRepository : AudioSharingRepository {
 
     override val inAudioSharing: StateFlow<Boolean> = mutableInAudioSharing
 
+    override val isAudioSharingProfilesReady: StateFlow<Boolean> = mutableIsProfilesReady
+
     override suspend fun audioSharingAvailable(): Boolean = mutableAvailable
 
     override suspend fun addSource() {
@@ -50,7 +57,13 @@ class FakeAudioSharingRepository : AudioSharingRepository {
 
     override suspend fun setActive(cachedBluetoothDevice: CachedBluetoothDevice) {}
 
-    override suspend fun startAudioSharing() {}
+    override suspend fun startAudioSharing() {
+        audioSharingStarted = true
+    }
+
+    override suspend fun stopAudioSharing() {
+        audioSharingStarted = false
+    }
 
     fun setAudioSharingAvailable(available: Boolean) {
         mutableAvailable = available
@@ -58,6 +71,10 @@ class FakeAudioSharingRepository : AudioSharingRepository {
 
     fun setInAudioSharing(state: Boolean) {
         mutableInAudioSharing.value = state
+    }
+
+    fun setIsAudioSharingProfilesReady(state: Boolean) {
+        mutableIsProfilesReady.value = state
     }
 
     fun setLeAudioBroadcastProfile(leAudioBroadcastProfile: LocalBluetoothLeBroadcast?) {

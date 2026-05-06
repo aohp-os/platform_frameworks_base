@@ -16,10 +16,7 @@
 
 package android.telephony.satellite;
 
-import android.annotation.FlaggedApi;
 import android.annotation.SystemApi;
-
-import com.android.internal.telephony.flags.Flags;
 
 /**
  * A callback class for monitoring satellite modem state change events.
@@ -27,13 +24,11 @@ import com.android.internal.telephony.flags.Flags;
  * @hide
  */
 @SystemApi
-@FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
 public interface SatelliteModemStateCallback {
     /**
      * Called when satellite modem state changes.
      * @param state The new satellite modem state.
      */
-    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     void onSatelliteModemStateChanged(@SatelliteManager.SatelliteModemState int state);
 
     /**
@@ -43,7 +38,6 @@ public interface SatelliteModemStateCallback {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN)
     default void onEmergencyModeChanged(boolean isEmergency) {};
 
     /**

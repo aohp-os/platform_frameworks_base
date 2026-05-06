@@ -16,6 +16,7 @@
 
 package com.android.systemui.communal.domain.interactor
 
+import android.content.res.Configuration
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.SceneKey
@@ -28,15 +29,17 @@ import com.android.systemui.communal.shared.model.CommunalScenes.toSceneContaine
 import com.android.systemui.communal.shared.model.EditModeState
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.kotlin.BooleanFlowOperators.allOf
 import com.android.systemui.util.kotlin.pairwiseBy
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,15 +54,16 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class CommunalSceneInteractor
 @Inject
 constructor(
     @Application private val applicationScope: CoroutineScope,
+    @Main private val mainImmediateDispatcher: CoroutineDispatcher,
     private val repository: CommunalSceneRepository,
     private val logger: CommunalSceneLogger,
     private val sceneInteractor: SceneInteractor,
+    private val keyguardStateController: KeyguardStateController,
 ) {
     private val _isLaunchingWidget = MutableStateFlow(false)
 
@@ -68,6 +72,30 @@ constructor(
 
     fun setIsLaunchingWidget(launching: Boolean) {
         _isLaunchingWidget.value = launching
+    }
+
+    /**
+     * Whether screen will be rotated to portrait if transitioned out of hub to keyguard screens.
+     */
+    var willRotateToPortrait: Flow<Boolean> =
+        repository.communalContainerOrientation
+            .map {
+                it == Configuration.ORIENTATION_LANDSCAPE &&
+                    !keyguardStateController.isKeyguardScreenRotationAllowed()
+            }
+            .distinctUntilChanged()
+
+    /** Whether communal container is rotated to portrait. Emits an initial value of false. */
+    val rotatedToPortrait: StateFlow<Boolean> =
+        repository.communalContainerOrientation
+            .pairwiseBy(initialValue = false) { old, new ->
+                old == Configuration.ORIENTATION_LANDSCAPE &&
+                    new == Configuration.ORIENTATION_PORTRAIT
+            }
+            .stateIn(applicationScope, SharingStarted.Eagerly, false)
+
+    fun setCommunalContainerOrientation(orientation: Int) {
+        repository.setCommunalContainerOrientation(orientation)
     }
 
     fun interface OnSceneAboutToChangeListener {
@@ -98,7 +126,7 @@ constructor(
         transitionKey: TransitionKey? = null,
         keyguardState: KeyguardState? = null,
     ) {
-        applicationScope.launch("$TAG#changeScene") {
+        applicationScope.launch("$TAG#changeScene", mainImmediateDispatcher) {
             if (SceneContainerFlag.isEnabled) {
                 sceneInteractor.changeScene(
                     toScene = newScene.toSceneContainerSceneKey(),
@@ -109,7 +137,14 @@ constructor(
                 return@launch
             }
 
-            if (currentScene.value == newScene) return@launch
+            if (currentScene.value == newScene) {
+                // If the same Blank scene, notify listeners since the next keyguard state might
+                // require an update.
+                if (newScene == CommunalScenes.Blank && keyguardState != null) {
+                    notifyListeners(newScene, keyguardState)
+                }
+                return@launch
+            }
             logger.logSceneChangeRequested(
                 from = currentScene.value,
                 to = newScene,
@@ -128,7 +163,7 @@ constructor(
         delayMillis: Long = 0,
         keyguardState: KeyguardState? = null,
     ) {
-        applicationScope.launch("$TAG#snapToScene") {
+        applicationScope.launch("$TAG#snapToScene", mainImmediateDispatcher) {
             if (SceneContainerFlag.isEnabled) {
                 sceneInteractor.snapToScene(
                     toScene = newScene.toSceneContainerSceneKey(),
@@ -146,7 +181,30 @@ constructor(
                 isInstant = true,
             )
             notifyListeners(newScene, keyguardState)
-            repository.snapToScene(newScene)
+            repository.instantlyTransitionTo(newScene)
+        }
+    }
+
+    fun showHubFromPowerButton() {
+        val loggingReason = "showing hub from power button"
+        applicationScope.launch("$TAG#showHubFromPowerButton", mainImmediateDispatcher) {
+            if (SceneContainerFlag.isEnabled) {
+                sceneInteractor.changeScene(
+                    toScene = CommunalScenes.Communal.toSceneContainerSceneKey(),
+                    loggingReason = loggingReason,
+                )
+                return@launch
+            }
+
+            if (currentScene.value == CommunalScenes.Communal) return@launch
+            logger.logSceneChangeRequested(
+                from = currentScene.value,
+                to = CommunalScenes.Communal,
+                reason = loggingReason,
+                isInstant = true,
+            )
+            notifyListeners(CommunalScenes.Communal, null)
+            repository.showHubFromPowerButton()
         }
     }
 
@@ -172,6 +230,16 @@ constructor(
                     initialValue = repository.currentScene.value,
                 )
         }
+
+    /** Target scene requested has changed from the previous transition. */
+    val targetSceneChanged: StateFlow<Boolean> =
+        currentScene
+            .pairwiseBy(initialValue = repository.currentScene.value) { old, new -> old != new }
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.Eagerly,
+                initialValue = false,
+            )
 
     private val _editModeState = MutableStateFlow<EditModeState?>(null)
     /**
@@ -285,6 +353,27 @@ constructor(
                 started = SharingStarted.WhileSubscribed(),
                 initialValue = false,
             )
+
+    /** Flow that emits a boolean if transitioning to or idle on communal scene. */
+    val isTransitioningToOrIdleOnCommunal: Flow<Boolean> =
+        transitionState
+            .map {
+                (it is ObservableTransitionState.Idle &&
+                    it.currentScene == CommunalScenes.Communal) ||
+                    (it is ObservableTransitionState.Transition &&
+                        it.toContent == CommunalScenes.Communal)
+            }
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.WhileSubscribed(),
+                initialValue = false,
+            )
+
+    /** Flow that emits a boolean if user is swiping between two scenes. */
+    val isCommunalSceneTransitioning: Flow<Boolean> =
+        transitionState
+            .map { it is ObservableTransitionState.Transition && it.isInitiatedByUserInput }
+            .distinctUntilChanged()
 
     private companion object {
         const val TAG = "CommunalSceneInteractor"

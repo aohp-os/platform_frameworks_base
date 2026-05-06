@@ -24,7 +24,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.platform.test.annotations.IgnoreUnderRavenwood;
+import android.platform.test.annotations.DisabledOnRavenwood;
 import android.platform.test.ravenwood.RavenwoodRule;
 import android.util.Log;
 
@@ -46,7 +46,7 @@ import java.io.IOException;
  * Test whether Binder calls inherit thread priorities correctly.
  */
 @RunWith(AndroidJUnit4.class)
-@IgnoreUnderRavenwood(blockedBy = ActivityManager.class)
+@DisabledOnRavenwood(blockedBy = ActivityManager.class)
 public class BinderThreadPriorityTest {
     private static final String TAG = "BinderThreadPriorityTest";
 
@@ -106,6 +106,8 @@ public class BinderThreadPriorityTest {
     public void tearDown() throws Exception {
         // HACK -- see bug 2665914 -- setThreadPriority() doesn't always set the
         // scheduler group reliably unless we start out with background priority.
+        // As of July, 2025 this looks obsolete and incorrect, probably making the
+        // hack unnecessary, but not seriously harmful.
         Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
         Process.setThreadPriority(mSavedPriority);
         assertEquals(mSavedPriority, Process.getThreadPriority(Process.myTid()));

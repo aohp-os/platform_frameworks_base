@@ -24,11 +24,8 @@ import static android.app.WindowConfiguration.ACTIVITY_TYPE_DREAM;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_RECENTS;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_UNDEFINED;
-import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
-import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
-import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
 import static android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
@@ -38,9 +35,10 @@ import static android.view.MotionEvent.CLASSIFICATION_MULTI_FINGER_SWIPE;
 import static android.view.WindowInsets.Type.mandatorySystemGestures;
 import static android.view.WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW;
 import static android.view.WindowManager.LayoutParams.LAST_APPLICATION_WINDOW;
+import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
+import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_TASKS;
-import static com.android.launcher3.Flags.enableUseTopVisibleActivityForExcludeFromRecentTask;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RECENTS_TRIM_TASKS;
@@ -50,6 +48,7 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.ActivityTaskSupervisor.REMOVE_FROM_RECENTS;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
@@ -78,6 +77,7 @@ import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.view.InsetsState;
 import android.view.MotionEvent;
+import android.view.WindowManager;
 import android.view.WindowManagerPolicyConstants.PointerEventListener;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -242,21 +242,19 @@ class RecentTasks {
                     final InsetsState insetsState = dc.getInsetsStateController()
                             .getRawInsetsState();
                     mTmpRect.set(win.getFrame());
-                    mTmpRect.inset(insetsState.calculateInsets(win.getFrame(),
+                    mTmpRect.inset(insetsState.calculateInsets(win.getFrame(), win.getBounds(),
                             mandatorySystemGestures(), false /* ignoreVisibility */));
                     if (!mTmpRect.contains(x, y)) {
                         return;
                     }
 
-                    // Unfreeze the task list once we touch down in a task
-                    final boolean isAppWindowTouch = FIRST_APPLICATION_WINDOW <= win.mAttrs.type
-                            && win.mAttrs.type <= LAST_APPLICATION_WINDOW;
-                    if (isAppWindowTouch) {
+                    // Unfreeze the task list if the user is interacting with a valid window
+                    if (shouldUnfreezeOnInteractionInWindow(win.mAttrs.type)) {
                         final Task stack = mService.getTopDisplayFocusedRootTask();
                         final Task topTask = stack != null ? stack.getTopMostTask() : null;
                         ProtoLog.i(WM_DEBUG_TASKS, "Resetting frozen recents task list"
-                                + " reason=app touch win=%s x=%d y=%d insetFrame=%s", win, x, y,
-                                mTmpRect);
+                                + " win=%s type=%d x=%d y=%d insetFrame=%s",
+                                win, win.mAttrs.type, x, y, mTmpRect);
                         resetFreezeTaskListReordering(topTask);
                     }
                 }
@@ -445,7 +443,7 @@ class RecentTasks {
      * recents component.
      */
     boolean isRecentsComponent(ComponentName cn, int uid) {
-        return cn.equals(mRecentsComponent) && UserHandle.isSameApp(uid, mRecentsUid);
+        return UserHandle.isSameApp(uid, mRecentsUid) && cn.equals(mRecentsComponent);
     }
 
     /**
@@ -1453,9 +1451,10 @@ class RecentTasks {
      * @return whether the given active task should be presented to the user through SystemUI.
      */
     @VisibleForTesting
-    boolean isVisibleRecentTask(Task task) {
+    boolean isVisibleRecentTask(@NonNull Task task) {
         if (DEBUG_RECENTS_TRIM_TASKS) {
             Slog.d(TAG, "isVisibleRecentTask: task=" + task
+                    + " isForceExcludedFromRecents=" + task.isForceExcludedFromRecents()
                     + " minVis=" + mMinNumVisibleTasks + " maxVis=" + mMaxNumVisibleTasks
                     + " sessionDuration=" + mActiveTasksSessionDurationMs
                     + " inactiveDuration=" + task.getInactiveDuration()
@@ -1463,6 +1462,11 @@ class RecentTasks {
                     + " windowingMode=" + task.getWindowingMode()
                     + " isAlwaysOnTopWhenVisible=" + task.isAlwaysOnTopWhenVisible()
                     + " intentFlags=" + task.getBaseIntent().getFlags());
+        }
+
+        // Ignore the task if it is force excluded from recents.
+        if (task.isForceExcludedFromRecents()) {
+            return false;
         }
 
         switch (task.getActivityType()) {
@@ -1528,12 +1532,7 @@ class RecentTasks {
                 }
                 // The Recents is only supported on default display now, we should only keep the
                 // most recent task of home display.
-                boolean isMostRecentTask;
-                if (enableUseTopVisibleActivityForExcludeFromRecentTask()) {
-                    isMostRecentTask = task.getTopVisibleActivity() != null;
-                } else {
-                    isMostRecentTask = taskIndex == 0;
-                }
+                boolean isMostRecentTask = task.getTopVisibleActivity() != null;
                 return (task.isOnHomeDisplay() && isMostRecentTask);
             }
         }
@@ -1902,6 +1901,20 @@ class RecentTasks {
         return false;
     }
 
+    /**
+     * Returns whether user interaction in a window of the given type should unfreeze the recents
+     * list.
+     */
+    @VisibleForTesting
+    static boolean shouldUnfreezeOnInteractionInWindow(
+            @WindowManager.LayoutParams.WindowType int type) {
+        final boolean isAppWindowTouch = FIRST_APPLICATION_WINDOW <= type
+                && type <= LAST_APPLICATION_WINDOW;
+        final boolean isImeWindowTouch = type == TYPE_INPUT_METHOD
+                || type == TYPE_INPUT_METHOD_DIALOG;
+        return isAppWindowTouch || isImeWindowTouch;
+    }
+
     void dump(PrintWriter pw, boolean dumpAll, String dumpPackage) {
         pw.println("ACTIVITY MANAGER RECENT TASKS (dumpsys activity recents)");
         pw.println("mRecentsUid=" + mRecentsUid);
@@ -2045,27 +2058,19 @@ class RecentTasks {
      * or the windowing mode with the task, so they can be undefined when restored.
      */
     private boolean hasCompatibleActivityTypeAndWindowingMode(Task t1, Task t2) {
-        final int activityType = t1.getActivityType();
-        final int windowingMode = t1.getWindowingMode();
-        final boolean isUndefinedType = activityType == ACTIVITY_TYPE_UNDEFINED;
-        final boolean isUndefinedMode = windowingMode == WINDOWING_MODE_UNDEFINED;
-        final int otherActivityType = t2.getActivityType();
-        final int otherWindowingMode = t2.getWindowingMode();
-        final boolean isOtherUndefinedType = otherActivityType == ACTIVITY_TYPE_UNDEFINED;
-        final boolean isOtherUndefinedMode = otherWindowingMode == WINDOWING_MODE_UNDEFINED;
+        final int activityType1 = t1.getActivityType();
+        final int activityType2 = t2.getActivityType();
+        final boolean isCompatibleType = activityType1 == activityType2
+                || activityType1 == ACTIVITY_TYPE_UNDEFINED
+                || activityType2 == ACTIVITY_TYPE_UNDEFINED;
 
-        // An activity type and windowing mode is compatible if they are the exact same type/mode,
-        // or if one of the type/modes is undefined. This is with the exception of
-        // freeform/fullscreen where both modes are assumed to be compatible with each other.
-        final boolean isCompatibleType = activityType == otherActivityType
-                || isUndefinedType || isOtherUndefinedType;
-        final boolean isCompatibleMode = windowingMode == otherWindowingMode
-                || (windowingMode == WINDOWING_MODE_FREEFORM
-                && otherWindowingMode == WINDOWING_MODE_FULLSCREEN)
-                || (windowingMode == WINDOWING_MODE_FULLSCREEN
-                && otherWindowingMode == WINDOWING_MODE_FREEFORM)
-                || isUndefinedMode || isOtherUndefinedMode;
+        if (!isCompatibleType) return false;
 
-        return isCompatibleType && isCompatibleMode;
+        final int windowingMode1 = t1.getWindowingMode();
+        final int windowingMode2 = t2.getWindowingMode();
+
+        // Unless one of them is pinned and the other is not, all modes are compatible.
+        return (windowingMode1 == windowingMode2) || (windowingMode1 != WINDOWING_MODE_PINNED
+                && windowingMode2 != WINDOWING_MODE_PINNED);
     }
 }

@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Intent;
+import android.security.Flags;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.util.MathUtils;
@@ -45,7 +46,8 @@ import java.util.function.BiFunction;
  * {@link PersistableBundle} subclass.
  */
 @android.ravenwood.annotation.RavenwoodKeepWholeClass
-public class BaseBundle {
+@SuppressWarnings("HiddenSuperclass")
+public class BaseBundle implements Parcel.ClassLoaderProvider {
     /** @hide */
     protected static final String TAG = "Bundle";
     static final boolean DEBUG = false;
@@ -93,7 +95,7 @@ public class BaseBundle {
     // A parcel cannot be obtained during compile-time initialization. Put the
     // empty parcel into an inner class that can be initialized separately. This
     // allows to initialize BaseBundle, and classes depending on it.
-    /** {@hide} */
+    /** @hide */
     static final class NoImagePreloadHolder {
         public static final Parcel EMPTY_PARCEL = Parcel.obtain();
     }
@@ -139,9 +141,10 @@ public class BaseBundle {
      */
     private ClassLoader mClassLoader;
 
-    /** {@hide} */
+    /** @hide */
     @VisibleForTesting
     public int mFlags;
+    private boolean mHasIntent = false;
 
     /**
      * Constructs a new, empty Bundle that uses a specific ClassLoader for
@@ -258,7 +261,18 @@ public class BaseBundle {
 
             // Keep as last statement to ensure visibility of other fields
             mParcelledData = parcelledData;
+            mHasIntent = from.mHasIntent;
         }
+    }
+
+    /** @hide */
+    public boolean hasIntent() {
+        return mHasIntent;
+    }
+
+    /** @hide */
+    public void setHasIntent(boolean hasIntent) {
+        mHasIntent = hasIntent;
     }
 
     /**
@@ -299,8 +313,9 @@ public class BaseBundle {
 
     /**
      * Return the ClassLoader currently associated with this Bundle.
+     * @hide
      */
-    ClassLoader getClassLoader() {
+    public ClassLoader getClassLoader() {
         return mClassLoader;
     }
 
@@ -384,6 +399,15 @@ public class BaseBundle {
     }
 
     /**
+     * return true if the value corresponding to this key is still parceled.
+     * @hide
+     */
+    public boolean isValueParceled(String key) {
+        if (mMap == null) return true;
+        int i = mMap.indexOfKey(key);
+        return (mMap.valueAt(i) instanceof BiFunction<?, ?, ?>);
+    }
+    /**
      * Returns the value for a certain position in the array map for expected return type {@code
      * clazz} (or pass {@code null} for no type check).
      *
@@ -405,6 +429,9 @@ public class BaseBundle {
             if ((mFlags & Bundle.FLAG_VERIFY_TOKENS_PRESENT) != 0) {
                 Intent.maybeMarkAsMissingCreatorToken(object);
             }
+        } else if (object instanceof Bundle) {
+            Bundle bundle = (Bundle) object;
+            bundle.setClassLoaderSameAsContainerBundleWhenRetrievedFirstTime(this);
         }
         return (clazz != null) ? clazz.cast(object) : (T) object;
     }
@@ -420,7 +447,16 @@ public class BaseBundle {
                 object = ((BiFunction<Class<?>, Class<?>[], ?>) object).apply(clazz, itemTypes);
             } catch (BadParcelableException e) {
                 if (sShouldDefuse) {
-                    Log.w(TAG, "Failed to parse item " + mMap.keyAt(i) + ", returning null.", e);
+                    if (Flags.wtfBundleDefuse()) {
+                        Slog.wtf(TAG, "Failed to parse item " + mMap.keyAt(i) + ", returning null.",
+                                e);
+                    } else {
+                        Log.w(TAG, "Failed to parse item " + mMap.keyAt(i) + ", returning null.",
+                                e);
+                    }
+                    if (Flags.deprecateBundleDefuse()) {
+                        throw e;
+                    }
                     return null;
                 } else {
                     throw e;
@@ -431,11 +467,11 @@ public class BaseBundle {
             if (mOwnsLazyValues) {
                 Preconditions.checkState(mLazyValues >= 0,
                         "Lazy values ref count below 0");
-                // No more lazy values in mMap, so we can recycle the parcel early rather than
+                // No more lazy values in mMap, so we can destroy the parcel early rather than
                 // waiting for the next GC run
                 Parcel parcel = mWeakParcelledData.get();
                 if (mLazyValues == 0 && parcel != null) {
-                    recycleParcel(parcel);
+                    parcel.destroy();
                     mWeakParcelledData = null;
                 }
             }
@@ -475,13 +511,20 @@ public class BaseBundle {
             map.erase();
             map.ensureCapacity(count);
         }
-        int numLazyValues = 0;
+        int[] numLazyValues = new int[]{0};
         try {
-            numLazyValues = parcelledData.readArrayMap(map, count, !parcelledByNative,
-                    /* lazy */ ownsParcel, mClassLoader);
+            parcelledData.readArrayMap(map, count, !parcelledByNative,
+                    /* lazy */ ownsParcel, this, numLazyValues);
         } catch (BadParcelableException e) {
             if (sShouldDefuse) {
-                Log.w(TAG, "Failed to parse Bundle, but defusing quietly", e);
+                if (Flags.wtfBundleDefuse()) {
+                    Slog.wtf(TAG, "Failed to parse Bundle, but defusing quietly", e);
+                } else {
+                    Log.w(TAG, "Failed to parse Bundle, but defusing quietly", e);
+                }
+                if (Flags.deprecateBundleDefuse()) {
+                    throw e;
+                }
                 map.erase();
             } else {
                 throw e;
@@ -489,14 +532,15 @@ public class BaseBundle {
         } finally {
             mWeakParcelledData = null;
             if (ownsParcel) {
-                if (numLazyValues == 0) {
-                    recycleParcel(parcelledData);
+                if (numLazyValues[0] == 0) {
+                    // No lazy value, we can directly recycle this parcel
+                    parcelledData.recycle();
                 } else {
                     mWeakParcelledData = new WeakReference<>(parcelledData);
                 }
             }
 
-            mLazyValues = numLazyValues;
+            mLazyValues = numLazyValues[0];
             mParcelledByNative = false;
             mMap = map;
             // Set field last as it is volatile
@@ -528,12 +572,6 @@ public class BaseBundle {
      */
     private static boolean isEmptyParcel(Parcel p) {
         return p == NoImagePreloadHolder.EMPTY_PARCEL;
-    }
-
-    private static void recycleParcel(Parcel p) {
-        if (p != null && !isEmptyParcel(p)) {
-            p.recycle();
-        }
     }
 
     /**
@@ -641,7 +679,10 @@ public class BaseBundle {
     public void clear() {
         unparcel();
         if (mOwnsLazyValues && mWeakParcelledData != null) {
-            recycleParcel(mWeakParcelledData.get());
+            Parcel parcel = mWeakParcelledData.get();
+            if (parcel != null) {
+                parcel.destroy();
+            }
         }
 
         mWeakParcelledData = null;
@@ -786,7 +827,7 @@ public class BaseBundle {
         return mMap.keySet();
     }
 
-    /** {@hide} */
+    /** @hide */
     public void putObject(@Nullable String key, @Nullable Object value) {
         if (value == null) {
             putString(key, null);
@@ -1828,6 +1869,7 @@ public class BaseBundle {
                     parcel.writeInt(length);
                     parcel.writeInt(mParcelledByNative ? BUNDLE_MAGIC_NATIVE : BUNDLE_MAGIC);
                     parcel.appendFrom(mParcelledData, 0, length);
+                    parcel.writeBoolean(mHasIntent);
                 }
                 return;
             }
@@ -1842,7 +1884,6 @@ public class BaseBundle {
         int lengthPos = parcel.dataPosition();
         parcel.writeInt(-1); // placeholder, will hold length
         parcel.writeInt(BUNDLE_MAGIC);
-
         int startPos = parcel.dataPosition();
         parcel.writeArrayMapInternal(map);
         int endPos = parcel.dataPosition();
@@ -1852,6 +1893,7 @@ public class BaseBundle {
         int length = endPos - startPos;
         parcel.writeInt(length);
         parcel.setDataPosition(endPos);
+        parcel.writeBoolean(mHasIntent);
     }
 
     /**
@@ -1895,6 +1937,7 @@ public class BaseBundle {
                 mOwnsLazyValues = false;
                 initializeFromParcelLocked(parcel, /*ownsParcel*/ false, isNativeBundle);
             }
+            mHasIntent = parcel.readBoolean();
             return;
         }
 
@@ -1913,9 +1956,10 @@ public class BaseBundle {
         mOwnsLazyValues = true;
         mParcelledByNative = isNativeBundle;
         mParcelledData = p;
+        mHasIntent = parcel.readBoolean();
     }
 
-    /** {@hide} */
+    /** @hide */
     public static void dumpStats(IndentingPrintWriter pw, String key, Object value) {
         final Parcel tmp = Parcel.obtain();
         tmp.writeValue(value);
@@ -1933,7 +1977,7 @@ public class BaseBundle {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public static void dumpStats(IndentingPrintWriter pw, SparseArray array) {
         pw.increaseIndent();
         if (array == null) {
@@ -1946,7 +1990,7 @@ public class BaseBundle {
         pw.decreaseIndent();
     }
 
-    /** {@hide} */
+    /** @hide */
     public static void dumpStats(IndentingPrintWriter pw, BaseBundle bundle) {
         pw.increaseIndent();
         if (bundle == null) {

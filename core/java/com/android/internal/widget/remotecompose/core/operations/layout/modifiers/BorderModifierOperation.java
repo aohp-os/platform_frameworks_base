@@ -28,6 +28,8 @@ import com.android.internal.widget.remotecompose.core.documentation.Documentatio
 import com.android.internal.widget.remotecompose.core.operations.layout.Component;
 import com.android.internal.widget.remotecompose.core.operations.paint.PaintBundle;
 import com.android.internal.widget.remotecompose.core.operations.utilities.StringSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.SerializeTags;
 
 import java.util.List;
 
@@ -126,7 +128,10 @@ public class BorderModifierOperation extends DecoratorModifierOperation {
 
     @Override
     public void layout(
-            @NonNull RemoteContext context, Component component, float width, float height) {
+            @NonNull RemoteContext context,
+            @NonNull Component component,
+            float width,
+            float height) {
         this.mWidth = width;
         this.mHeight = height;
     }
@@ -176,6 +181,22 @@ public class BorderModifierOperation extends DecoratorModifierOperation {
         return OP_CODE;
     }
 
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer the WireBuffer
+     * @param x x coordinate of the border rect
+     * @param y y coordinate of the border rect
+     * @param width width of the border rect
+     * @param height height of the border rect
+     * @param borderWidth the width of the border outline
+     * @param roundedCorner rounded corner value in pixels
+     * @param r red component of the border color
+     * @param g green component of the border color
+     * @param b blue component of the border color
+     * @param a alpha component of the border color
+     * @param shapeType the shape type (0 = RECTANGLE, 1 = CIRCLE)
+     */
     public static void apply(
             @NonNull WireBuffer buffer,
             float x,
@@ -232,9 +253,9 @@ public class BorderModifierOperation extends DecoratorModifierOperation {
         context.savePaint();
         paint.reset();
         paint.setColor(mR, mG, mB, mA);
-        paint.setStrokeWidth(mBorderWidth);
+        paint.setStrokeWidth(mBorderWidth * context.getContext().getDensity());
         paint.setStyle(PaintBundle.STYLE_STROKE);
-        context.applyPaint(paint);
+        context.replacePaint(paint);
         if (mShapeType == ShapeType.RECTANGLE) {
             context.drawRect(0f, 0f, mWidth, mHeight);
         } else {
@@ -266,5 +287,20 @@ public class BorderModifierOperation extends DecoratorModifierOperation {
                 .field(FLOAT, "b", "")
                 .field(FLOAT, "a", "")
                 .field(FLOAT, "shapeType", "");
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addTags(SerializeTags.MODIFIER)
+                .addType("BorderModifierOperation")
+                .add("x", mX)
+                .add("y", mY)
+                .add("width", mWidth)
+                .add("height", mHeight)
+                .add("borderWidth", mBorderWidth)
+                .add("roundedCornerRadius", mRoundedCorner)
+                .add("color", mA, mR, mG, mB)
+                .add("shapeType", ShapeType.getString(mShapeType));
     }
 }

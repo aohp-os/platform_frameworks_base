@@ -62,7 +62,8 @@ public class DataMapIds extends Operation {
         return "?";
     }
 
-    public DataMapIds(int id, @NonNull String[] names, @NonNull byte[] types, @NonNull int[] ids) {
+    public DataMapIds(
+            int id, @NonNull String[] names, @NonNull byte [] types, @NonNull int [] ids) {
         mId = id;
         mDataMap = new DataMap(names, types, ids);
     }
@@ -89,12 +90,21 @@ public class DataMapIds extends Operation {
         return builder.toString();
     }
 
+    /**
+     * Write this operation to the buffer
+     *
+     * @param buffer the buffer to apply the operation to
+     * @param id the id
+     * @param names the names of the variables
+     * @param type the types of the variables
+     * @param ids the ids of the variables
+     */
     public static void apply(
             @NonNull WireBuffer buffer,
             int id,
             @NonNull String[] names,
-            @Nullable byte[] type, // todo: can we make this not nullable?
-            @NonNull int[] ids) {
+            @Nullable byte [] type, // todo: can we make this not nullable?
+            @NonNull int [] ids) {
         buffer.start(OP_CODE);
         buffer.writeInt(id);
         buffer.writeInt(names.length);

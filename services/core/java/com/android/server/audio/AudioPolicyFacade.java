@@ -26,4 +26,6 @@ public interface AudioPolicyFacade {
     public boolean isHotwordStreamSupported(boolean lookbackAudio);
     public INativePermissionController getPermissionController();
     public void registerOnStartTask(Runnable r);
+    public void setEnableHardening(boolean shouldEnable);
+    public boolean isServiceAvailable();
 }

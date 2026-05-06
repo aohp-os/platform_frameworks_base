@@ -46,7 +46,7 @@ import com.android.internal.infra.AndroidFuture;
 import java.util.List;
 
 /**
- * {@hide}
+ * @hide
  */
 interface ILauncherApps {
     void addOnAppsChangedListener(String callingPackage, in IOnAppsChangedListener listener);
@@ -83,8 +83,6 @@ interface ILauncherApps {
 
     ParceledListSlice getShortcuts(String callingPackage, in ShortcutQueryWrapper query,
             in UserHandle user);
-    void getShortcutsAsync(String callingPackage, in ShortcutQueryWrapper query,
-            in UserHandle user, in AndroidFuture<List<ShortcutInfo>> cb);
     void pinShortcuts(String callingPackage, String packageName, in List<String> shortcutIds,
             in UserHandle user);
     boolean startShortcut(String callingPackage, String packageName, String featureId, String id,
@@ -136,4 +134,8 @@ interface ILauncherApps {
 
     /** Saves view capture data to the wm trace directory. */
     void saveViewCaptureData();
+
+    ParceledListSlice getAvailableShortcuts(String callingPackage, in UserHandle user);
+
+    ParceledListSlice getActivityLaunchIntentForAllApps(String callingPackage, in UserHandle user);
 }

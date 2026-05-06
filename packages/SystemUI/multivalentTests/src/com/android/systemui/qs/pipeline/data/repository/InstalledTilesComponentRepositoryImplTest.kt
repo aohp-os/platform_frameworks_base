@@ -43,7 +43,6 @@ import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -53,7 +52,6 @@ import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 @TestableLooper.RunWithLooper
@@ -85,7 +83,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
             InstalledTilesComponentRepositoryImpl(
                 context,
                 testScope.backgroundScope,
-                kosmos.packageChangeRepository
+                kosmos.packageChangeRepository,
             )
     }
 
@@ -99,7 +97,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -128,7 +126,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -150,7 +148,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -173,7 +171,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -214,7 +212,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     secondaryUserPackageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -222,7 +220,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -260,7 +258,7 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
                     packageManager.queryIntentServicesAsUser(
                         matchIntent(),
                         matchFlags(),
-                        eq(userId)
+                        eq(userId),
                     )
                 )
                 .thenReturn(listOf(resolveInfo))
@@ -278,7 +276,8 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
             ResolveInfoFlags.of(
                 (PackageManager.MATCH_DIRECT_BOOT_AWARE or
                         PackageManager.MATCH_DIRECT_BOOT_UNAWARE or
-                        PackageManager.GET_SERVICES)
+                        PackageManager.GET_SERVICES or
+                        PackageManager.GET_META_DATA)
                     .toLong()
             )
         private val PERMISSION = BIND_QUICK_SETTINGS_TILE
@@ -287,12 +286,13 @@ class InstalledTilesComponentRepositoryImplTest : SysuiTestCase() {
 
         private fun matchFlags() =
             argThat<ResolveInfoFlags> { flags -> flags?.value == FLAGS.value }
+
         private fun matchIntent() = argThat<Intent> { intent -> intent.action == INTENT.action }
 
         private fun ResolveInfo(
             componentName: ComponentName,
             hasPermission: Boolean,
-            defaultEnabled: Boolean
+            defaultEnabled: Boolean,
         ): ResolveInfo {
             val applicationInfo = ApplicationInfo().apply { enabled = true }
             val serviceInfo =

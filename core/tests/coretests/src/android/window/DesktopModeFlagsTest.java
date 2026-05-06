@@ -21,25 +21,39 @@ import static android.window.DesktopModeFlags.ToggleOverride.OVERRIDE_OFF;
 import static android.window.DesktopModeFlags.ToggleOverride.OVERRIDE_ON;
 import static android.window.DesktopModeFlags.ToggleOverride.OVERRIDE_UNSET;
 import static android.window.DesktopModeFlags.ToggleOverride.fromSetting;
-import static android.window.DesktopModeFlags.ENABLE_DESKTOP_WINDOWING_TRANSITIONS;
 
+import static com.android.server.display.feature.flags.Flags.FLAG_ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT;
 import static com.android.window.flags.Flags.FLAG_ENABLE_DESKTOP_WINDOWING_MODE;
-import static com.android.window.flags.Flags.FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS;
+import static com.android.window.flags.Flags.FLAG_SHOW_DESKTOP_EXPERIENCE_DEV_OPTION;
 import static com.android.window.flags.Flags.FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assume.assumeTrue;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
+
+import android.annotation.Nullable;
+import android.app.ActivityThread;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Resources;
 import android.platform.test.annotations.DisableFlags;
 import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.flag.junit.FlagsParameterization;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.provider.Settings;
+import android.support.test.uiautomator.UiDevice;
+import android.window.DesktopModeFlags.DesktopModeFlag;
 
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
+
+import com.android.internal.R;
+import com.android.window.flags.Flags;
 
 import org.junit.After;
 import org.junit.Before;
@@ -47,7 +61,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
+import platform.test.runner.parameterized.Parameters;
+
 import java.lang.reflect.Field;
+import java.util.List;
 
 /**
  * Test class for {@link android.window.DesktopModeFlags}
@@ -57,21 +75,56 @@ import java.lang.reflect.Field;
  */
 @SmallTest
 @Presubmit
-@RunWith(AndroidJUnit4.class)
+@RunWith(ParameterizedAndroidJunit4.class)
+@DisableFlags(FLAG_ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT)
 public class DesktopModeFlagsTest {
 
-    @Rule
-    public SetFlagsRule setFlagsRule = new SetFlagsRule();
+    @Parameters(name = "{0}")
+    public static List<FlagsParameterization> getParams() {
+        return FlagsParameterization.allCombinationsOf(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
+                FLAG_SHOW_DESKTOP_EXPERIENCE_DEV_OPTION,
+                FLAG_ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT, FLAG_ENABLE_DESKTOP_WINDOWING_MODE);
+    }
 
+    @Rule
+    public SetFlagsRule mSetFlagsRule;
+
+    private UiDevice mUiDevice;
     private Context mContext;
+    private boolean mLocalFlagValue = false;
+    private final DesktopModeFlag mOverriddenLocalFlag = new DesktopModeFlag(
+            () -> mLocalFlagValue, true);
+    private final DesktopModeFlag mNotOverriddenLocalFlag = new DesktopModeFlag(
+            () -> mLocalFlagValue, false);
 
     private static final int OVERRIDE_OFF_SETTING = 0;
     private static final int OVERRIDE_ON_SETTING = 1;
     private static final int OVERRIDE_UNSET_SETTING = -1;
 
+    private Context mMockContext;
+    private Resources mMockResources;
+    private boolean mIsDesktopModeSupported;
+
+    public DesktopModeFlagsTest(FlagsParameterization flags) {
+        mSetFlagsRule = new SetFlagsRule(flags);
+    }
+
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
+        mMockContext = spy(ActivityThread.currentApplication());
+        mMockResources = spy(mMockContext.getResources());
+        when(mMockContext.getResources()).thenReturn(mMockResources);
+        setDesktopModeSupported(false);
+
+        // Set the application context to the mock one
+        Field cachedToggleOverride =
+                DesktopExperienceFlags.class.getDeclaredField("sApplicationContext");
+        cachedToggleOverride.setAccessible(true);
+        cachedToggleOverride.set(null, mMockContext);
+
         mContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        mUiDevice = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        setOverride(null);
     }
 
     @After
@@ -80,102 +133,104 @@ public class DesktopModeFlagsTest {
     }
 
     @Test
-    @DisableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
     @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_devOptionFlagDisabled_overrideOff_featureFlagOn_returnsTrue() {
+    public void isTrue_overrideOff_featureFlagOn() throws Exception {
         setOverride(OVERRIDE_OFF_SETTING);
-        // In absence of dev options, follow flag
-        assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+
+        if (showDesktopWindowingDevOpts()) {
+            // DW Dev Opts turns off flags when ON
+            assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        } else {
+            // DE Dev Opts doesn't turn flags OFF
+            assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        }
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
 
     @Test
-    @DisableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_devOptionFlagDisabled_overrideOn_featureFlagOff_returnsFalse() {
+    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_overrideOn_featureFlagOff() throws Exception {
+        setDesktopModeSupported(true);
         setOverride(OVERRIDE_ON_SETTING);
 
-        assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        if (showAnyDevOpts()) {
+            assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        } else {
+            assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        }
+        if (showAnyDevOpts()) {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
+        } else {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+        }
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_overrideUnset_featureFlagOn_returnsTrue() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_overrideUnset_featureFlagOn() throws Exception {
         setOverride(OVERRIDE_UNSET_SETTING);
 
         // For overridableFlag, for unset overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_overrideUnset_featureFlagOff_returnsFalse() {
+    public void isTrue_overrideUnset_featureFlagOff() throws Exception {
         setOverride(OVERRIDE_UNSET_SETTING);
 
         // For overridableFlag, for unset overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_noOverride_featureFlagOn_returnsTrue() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_noOverride_featureFlagOn_returnsTrue() throws Exception {
         setOverride(null);
 
         // For overridableFlag, in absence of overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_noOverride_featureFlagOff_returnsFalse() {
+    public void isTrue_noOverride_featureFlagOff_returnsFalse() throws Exception {
         setOverride(null);
 
         // For overridableFlag, in absence of overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_unrecognizableOverride_featureFlagOn_returnsTrue() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_unrecognizableOverride_featureFlagOn_returnsTrue() throws Exception {
         setOverride(-2);
 
         // For overridableFlag, for unrecognized overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_unrecognizableOverride_featureFlagOff_returnsFalse() {
+    public void isTrue_unrecognizableOverride_featureFlagOff_returnsFalse() throws Exception {
         setOverride(-2);
 
         // For overridableFlag, for unrecognizable overrides, follow flag
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_overrideOff_featureFlagOn_returnsFalse() {
-        setOverride(OVERRIDE_OFF_SETTING);
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_overrideOffThenOn_featureFlagOn_returnsFalseAndFalse() throws Exception {
+        assumeTrue(showDesktopWindowingDevOpts());
 
-        // For overridableFlag, follow override if they exist
-        assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
-    }
-
-    @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
-    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_overrideOn_featureFlagOff_returnsTrue() {
-        setOverride(OVERRIDE_ON_SETTING);
-
-        // For overridableFlag, follow override if they exist
-        assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
-    }
-
-    @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    public void isTrue_overrideOffThenOn_featureFlagOn_returnsFalseAndFalse() {
         setOverride(OVERRIDE_OFF_SETTING);
 
         // For overridableFlag, follow override if they exist
@@ -185,12 +240,13 @@ public class DesktopModeFlagsTest {
 
         // Keep overrides constant through the process
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_overrideOnThenOff_featureFlagOff_returnsTrueAndTrue() {
+    public void isTrue_overrideOnThenOff_featureFlagOff_returnsTrueAndTrue() throws Exception {
+        assumeTrue(showAnyDevOpts());
         setOverride(OVERRIDE_ON_SETTING);
 
         // For overridableFlag, follow override if they exist
@@ -200,149 +256,177 @@ public class DesktopModeFlagsTest {
 
         // Keep overrides constant through the process
         assertThat(ENABLE_DESKTOP_WINDOWING_MODE.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS})
-    public void isTrue_dwFlagOn_overrideUnset_featureFlagOn_returnsTrue() {
+    @EnableFlags({FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
+    public void isTrue_dwFlagOn_overrideUnset_featureFlagOn() throws Exception {
+        mLocalFlagValue = true;
         setOverride(OVERRIDE_UNSET_SETTING);
 
         // For unset overrides, follow flag
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS)
-    public void isTrue_dwFlagOn_overrideUnset_featureFlagOff_returnsFalse() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOn_overrideUnset_featureFlagOff() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_UNSET_SETTING);
         // For unset overrides, follow flag
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
+        assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({
-            FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
-            FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
-    public void isTrue_dwFlagOn_overrideOn_featureFlagOn_returnsTrue() {
+    @EnableFlags({FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
+    public void isTrue_dwFlagOn_overrideOn_featureFlagOn() throws Exception {
+        mLocalFlagValue = true;
         setOverride(OVERRIDE_ON_SETTING);
 
         // When toggle override matches its default state (dw flag), don't override flags
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        if (showAnyDevOpts()) {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
+        } else {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+        }
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS)
-    public void isTrue_dwFlagOn_overrideOn_featureFlagOff_returnsFalse() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOn_overrideOn_featureFlagOff() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_ON_SETTING);
 
-        // When toggle override matches its default state (dw flag), don't override flags
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
+        if (showDesktopExperienceDevOpts()) {
+            assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        } else {
+            assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        }
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        if (showAnyDevOpts()) {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
+        } else {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+        }
     }
 
     @Test
-    @EnableFlags({
-            FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
-            FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
-    public void isTrue_dwFlagOn_overrideOff_featureFlagOn_returnsTrue() {
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOn_overrideOff_featureFlagOn() throws Exception {
+        mLocalFlagValue = true;
+        setDesktopModeSupported(true);
+        setOverride(OVERRIDE_OFF_SETTING);
+
+        if (showDesktopWindowingDevOpts()) {
+            // Follow override if they exist, and is not equal to default toggle state (dw flag)
+            assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        } else {
+            assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        }
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+    }
+
+    @Test
+    @EnableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOn_overrideOff_featureFlagOff_returnsFalse() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_OFF_SETTING);
 
         // Follow override if they exist, and is not equal to default toggle state (dw flag)
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION, FLAG_ENABLE_DESKTOP_WINDOWING_MODE})
-    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS)
-    public void isTrue_dwFlagOn_overrideOff_featureFlagOff_returnsFalse() {
-        setOverride(OVERRIDE_OFF_SETTING);
-
-        // Follow override if they exist, and is not equal to default toggle state (dw flag)
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
-    }
-
-    @Test
-    @EnableFlags({
-            FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_dwFlagOff_overrideUnset_featureFlagOn_returnsTrue() {
+    public void isTrue_dwFlagOff_overrideUnset_featureFlagOn_returnsTrue() throws Exception {
+        mLocalFlagValue = true;
         setOverride(OVERRIDE_UNSET_SETTING);
 
         // For unset overrides, follow flag
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
-    @DisableFlags({
-            FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
-    public void isTrue_dwFlagOff_overrideUnset_featureFlagOff_returnsFalse() {
+    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOff_overrideUnset_featureFlagOff_returnsFalse() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_UNSET_SETTING);
 
         // For unset overrides, follow flag
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
+        assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags({
-            FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_dwFlagOff_overrideOn_featureFlagOn_returnsTrue() {
+    public void isTrue_dwFlagOff_overrideOn_featureFlagOn_returnsTrue() throws Exception {
+        mLocalFlagValue = true;
         setOverride(OVERRIDE_ON_SETTING);
 
         // Follow override if they exist, and is not equal to default toggle state (dw flag)
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        if (showAnyDevOpts()) {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
+        } else {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+        }
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
-    @DisableFlags({
-            FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
-    public void isTrue_dwFlagOff_overrideOn_featureFlagOff_returnFalse() {
+    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOff_overrideOn_featureFlagOff() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_ON_SETTING);
 
-        // Follow override if they exist, and is not equal to default toggle state (dw flag)
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
+        if (showAnyDevOpts()) {
+            assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        } else {
+            // Follow override if they exist, and is not equal to default toggle state (dw flag)
+            assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        }
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        if (showAnyDevOpts()) {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isTrue();
+        } else {
+            assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
+        }
     }
 
     @Test
-    @EnableFlags({
-            FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
     @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
-    public void isTrue_dwFlagOff_overrideOff_featureFlagOn_returnsTrue() {
+    public void isTrue_dwFlagOff_overrideOff_featureFlagOn_returnsTrue() throws Exception {
+        mLocalFlagValue = true;
         setOverride(OVERRIDE_OFF_SETTING);
 
         // When toggle override matches its default state (dw flag), don't override flags
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isTrue();
+        assertThat(mOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isTrue();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
-    @EnableFlags(FLAG_SHOW_DESKTOP_WINDOWING_DEV_OPTION)
-    @DisableFlags({
-            FLAG_ENABLE_DESKTOP_WINDOWING_MODE,
-            FLAG_ENABLE_DESKTOP_WINDOWING_TRANSITIONS
-    })
-    public void isTrue_dwFlagOff_overrideOff_featureFlagOff_returnsFalse() {
+    @DisableFlags(FLAG_ENABLE_DESKTOP_WINDOWING_MODE)
+    public void isTrue_dwFlagOff_overrideOff_featureFlagOff_returnsFalse() throws Exception {
+        mLocalFlagValue = false;
         setOverride(OVERRIDE_OFF_SETTING);
 
-        // When toggle override matches its default state (dw flag), don't override flags
-        assertThat(ENABLE_DESKTOP_WINDOWING_TRANSITIONS.isTrue()).isFalse();
+        assertThat(mOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(mNotOverriddenLocalFlag.isTrue()).isFalse();
+        assertThat(DesktopModeFlags.isDesktopModeForcedEnabled()).isFalse();
     }
 
     @Test
@@ -365,7 +449,16 @@ public class DesktopModeFlagsTest {
         assertThat(OVERRIDE_UNSET.getSetting()).isEqualTo(-1);
     }
 
-    private void setOverride(Integer setting) {
+    private DesktopModeFlags.ToggleOverride getCachedOverride() throws Exception {
+        Field cachedToggleOverride = DesktopModeFlags.class.getDeclaredField(
+                "sCachedToggleOverride");
+        cachedToggleOverride.setAccessible(true);
+        return (DesktopModeFlags.ToggleOverride) cachedToggleOverride.get(null);
+    }
+
+    private void setOverride(@Nullable Integer setting) throws Exception {
+        setSysProp(setting);
+
         ContentResolver contentResolver = mContext.getContentResolver();
         String key = Settings.Global.DEVELOPMENT_OVERRIDE_DESKTOP_MODE_FEATURES;
 
@@ -376,11 +469,56 @@ public class DesktopModeFlagsTest {
         }
     }
 
+    private void setSysProp(@Nullable Integer value) throws Exception {
+        if (value == null) {
+            resetSysProp();
+        } else {
+            mUiDevice.executeShellCommand(
+                    "setprop " + DesktopExperienceFlags.SYSTEM_PROPERTY_NAME + " " + (value == 1
+                            ? "true" : "false"));
+        }
+    }
+
+    private void resetSysProp() throws Exception {
+        mUiDevice.executeShellCommand(
+                "setprop " + DesktopExperienceFlags.SYSTEM_PROPERTY_NAME + " ''");
+    }
+
     private void resetCache() throws Exception {
-        Field cachedToggleOverride = DesktopModeFlags.class.getDeclaredField(
+        Field cachedDMToggleOverride = DesktopModeFlags.class.getDeclaredField(
                 "sCachedToggleOverride");
-        cachedToggleOverride.setAccessible(true);
-        cachedToggleOverride.set(null, null);
-        setOverride(OVERRIDE_UNSET_SETTING);
+        cachedDMToggleOverride.setAccessible(true);
+        cachedDMToggleOverride.set(null, null);
+        cachedDMToggleOverride.setAccessible(false);
+
+        Field cachedDMRawToggleOverride = DesktopModeFlags.class.getDeclaredField(
+                "sCachedRawToggleOverride");
+        cachedDMRawToggleOverride.setAccessible(true);
+        cachedDMRawToggleOverride.set(null, null);
+        cachedDMRawToggleOverride.setAccessible(false);
+
+        Field cachedDEToggleOverride = DesktopExperienceFlags.class.getDeclaredField(
+                "sCachedToggleOverride");
+        cachedDEToggleOverride.setAccessible(true);
+        cachedDEToggleOverride.set(null, null);
+        cachedDEToggleOverride.setAccessible(false);
+    }
+
+    private boolean showDesktopWindowingDevOpts() {
+        return Flags.showDesktopWindowingDevOption() && !Flags.showDesktopExperienceDevOption();
+    }
+
+    private boolean showDesktopExperienceDevOpts() {
+        return Flags.showDesktopExperienceDevOption() && mIsDesktopModeSupported;
+    }
+
+    private boolean showAnyDevOpts() {
+        return Flags.showDesktopWindowingDevOption() || Flags.showDesktopExperienceDevOption();
+    }
+
+    private void setDesktopModeSupported(boolean isSupported) {
+        doReturn(isSupported).when(mMockResources).getBoolean(
+                eq(R.bool.config_isDesktopModeSupported));
+        mIsDesktopModeSupported = isSupported;
     }
 }

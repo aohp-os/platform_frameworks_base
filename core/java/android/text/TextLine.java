@@ -53,6 +53,7 @@ import java.util.ArrayList;
  * @hide
  */
 @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class TextLine {
     private static final boolean DEBUG = false;
 
@@ -1357,6 +1358,9 @@ public class TextLine {
                 || numDecorations != 0 || runIsRtl))) {
             if (drawBounds != null && mTmpRectForPaintAPI == null) {
                 mTmpRectForPaintAPI = new RectF();
+            }
+            if (drawBounds != null) {
+                mTmpRectForPaintAPI.setEmpty();
             }
             totalWidth = getRunAdvance(wp, start, end, contextStart, contextEnd, runIsRtl, offset,
                     advances, advancesIndex, drawBounds == null ? null : mTmpRectForPaintAPI,

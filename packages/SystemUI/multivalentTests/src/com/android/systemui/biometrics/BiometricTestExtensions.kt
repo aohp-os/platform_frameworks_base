@@ -19,6 +19,7 @@ package com.android.systemui.biometrics
 import android.graphics.Bitmap
 import android.hardware.biometrics.BiometricManager.Authenticators
 import android.hardware.biometrics.ComponentInfoInternal
+import android.hardware.biometrics.FallbackOption
 import android.hardware.biometrics.PromptContentView
 import android.hardware.biometrics.PromptInfo
 import android.hardware.biometrics.SensorProperties
@@ -34,8 +35,10 @@ import com.android.systemui.biometrics.shared.model.AuthenticationReason
 import com.android.systemui.bouncer.data.repository.keyguardBouncerRepository
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.res.R
+import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.util.mockito.whenever
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 
@@ -140,6 +143,7 @@ internal fun promptInfo(
     credentialSubtitle: String? = "cred sub",
     credentialDescription: String? = "cred desc",
     negativeButton: String = "neg",
+    fallbackOptions: List<FallbackOption> = emptyList(),
 ): PromptInfo {
     val info = PromptInfo()
     if (logoBitmap != null) {
@@ -154,10 +158,11 @@ internal fun promptInfo(
     credentialSubtitle?.let { info.deviceCredentialSubtitle = it }
     credentialDescription?.let { info.deviceCredentialDescription = it }
     info.negativeButtonText = negativeButton
+    fallbackOptions.forEach { option -> info.addFallbackOption(option) }
+
     return info
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
 internal fun TestScope.updateSfpsIndicatorRequests(
     kosmos: Kosmos,
     mContext: SysuiTestableContext,
@@ -207,8 +212,16 @@ internal fun updatePrimaryBouncer(
     fpsDetectionRunning: Boolean,
     isUnlockingWithFpAllowed: Boolean,
 ) {
-    kosmos.keyguardBouncerRepository.setPrimaryShow(isShowing)
-    kosmos.keyguardBouncerRepository.setPrimaryStartingToHide(false)
+    if (SceneContainerFlag.isEnabled) {
+        if (isShowing) {
+            kosmos.sceneInteractor.showOverlay(Overlays.Bouncer, "")
+        } else {
+            kosmos.sceneInteractor.hideOverlay(Overlays.Bouncer, "")
+        }
+    } else {
+        kosmos.keyguardBouncerRepository.setPrimaryShow(isShowing)
+        kosmos.keyguardBouncerRepository.setPrimaryStartingToHide(false)
+    }
     val primaryStartDisappearAnimation = if (isAnimatingAway) Runnable {} else null
     kosmos.keyguardBouncerRepository.setPrimaryStartDisappearAnimation(
         primaryStartDisappearAnimation

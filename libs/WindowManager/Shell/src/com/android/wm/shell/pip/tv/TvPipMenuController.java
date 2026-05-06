@@ -32,6 +32,7 @@ import android.view.View;
 import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.WindowManagerGlobal;
+import android.view.accessibility.AccessibilityManager;
 import android.window.SurfaceSyncGroup;
 
 import androidx.annotation.Nullable;
@@ -62,6 +63,8 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
     private SurfaceControl mLeash;
     private TvPipMenuView mPipMenuView;
     private TvPipBackgroundView mPipBackgroundView;
+
+    private final AccessibilityManager mA11yManager;
 
     private boolean mIsReloading;
     private static final int PIP_MENU_FORCE_CLOSE_DELAY_MS = 10_000;
@@ -106,6 +109,8 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
         mTvPipBoundsState = tvPipBoundsState;
         mSystemWindows = systemWindows;
         mMainHandler = mainHandler;
+
+        mA11yManager = context.getSystemService(AccessibilityManager.class);
 
         // We need to "close" the menu the platform call for all the system dialogs to close (for
         // example, on the Home button press).
@@ -156,7 +161,7 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
             throw new IllegalStateException("Delegate is not set.");
         }
 
-        mLeash = leash;
+        mLeash = new SurfaceControl(leash, "TvPipMenuController");
         attachPipMenu(/* showEduText */ true);
     }
 
@@ -289,7 +294,10 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
     public void detach() {
         detachPipMenu();
         switchToMenuMode(MODE_NO_MENU);
-        mLeash = null;
+        if (mLeash != null) {
+            mLeash.release();
+            mLeash = null;
+        }
     }
 
     @Override
@@ -499,7 +507,9 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
             switchToMenuMode(menuMode);
         } else {
             if (isMenuOpen(menuMode)) {
-                mMainHandler.postDelayed(mClosePipMenuRunnable, PIP_MENU_FORCE_CLOSE_DELAY_MS);
+                if (!mA11yManager.isEnabled()) {
+                    mMainHandler.postDelayed(mClosePipMenuRunnable, PIP_MENU_FORCE_CLOSE_DELAY_MS);
+                }
                 mMenuModeOnFocus = menuMode;
             }
             // Send a request to gain window focus if the menu is open, or lose window focus
@@ -515,12 +525,9 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
         ProtoLog.d(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
                 "%s: requestPipMenuFocus(%b)", TAG, focus);
 
-        try {
-            WindowManagerGlobal.getWindowSession().grantEmbeddedWindowFocus(null /* window */,
-                    mSystemWindows.getFocusGrantToken(mPipMenuView), focus);
-        } catch (Exception e) {
+        if (!mSystemWindows.requestInputFocus(mPipMenuView, focus)) {
             ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
-                    "%s: Unable to update focus, %s", TAG, e);
+                    "%s: Unable to update focus", TAG);
         }
     }
 
@@ -594,8 +601,10 @@ public class TvPipMenuController implements PipMenuController, TvPipMenuView.Lis
     public void onUserInteracting() {
         ProtoLog.d(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
                 "%s: onUserInteracting - mCurrentMenuMode=%s", TAG, getMenuModeString());
-        mMainHandler.removeCallbacks(mClosePipMenuRunnable);
-        mMainHandler.postDelayed(mClosePipMenuRunnable, PIP_MENU_FORCE_CLOSE_DELAY_MS);
+        if (mMainHandler.hasCallbacks(mClosePipMenuRunnable)) {
+            mMainHandler.removeCallbacks(mClosePipMenuRunnable);
+            mMainHandler.postDelayed(mClosePipMenuRunnable, PIP_MENU_FORCE_CLOSE_DELAY_MS);
+        }
 
     }
     @Override

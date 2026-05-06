@@ -26,6 +26,7 @@ import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.annotation.UserIdInt;
 import android.companion.AssociationInfo;
+import android.companion.DeviceId;
 import android.companion.IOnAssociationsChangedListener;
 import android.content.Context;
 import android.content.pm.UserInfo;
@@ -221,7 +222,7 @@ public class AssociationStore {
             Slog.i(TAG, "Done adding new association.");
         }
 
-        logCreateAssociation(association.getDeviceProfile());
+        logCreateAssociation(association, mContext);
 
         if (association.isActive()) {
             broadcastChange(CHANGE_TYPE_ADDED, association);
@@ -276,7 +277,7 @@ public class AssociationStore {
     /**
      * Remove an association.
      */
-    public void removeAssociation(int id) {
+    public void removeAssociation(int id, String reason) {
         Slog.i(TAG, "Removing association id=[" + id + "]...");
 
         final AssociationInfo association;
@@ -291,10 +292,12 @@ public class AssociationStore {
 
             writeCacheToDisk(association.getUserId());
 
+            mDiskStore.writeLastRemovedAssociation(association, reason);
+
             Slog.i(TAG, "Done removing association.");
         }
 
-        logRemoveAssociation(association.getDeviceProfile());
+        logRemoveAssociation(association, mContext);
 
         if (association.isActive()) {
             broadcastChange(CHANGE_TYPE_REMOVED, association);
@@ -405,6 +408,23 @@ public class AssociationStore {
         synchronized (mLock) {
             return mIdToAssociationMap.get(id);
         }
+    }
+
+    /**
+     * Get the association by device id.
+     */
+    @Nullable
+    public AssociationInfo getAssociationByDeviceId(
+            int userId, DeviceId deviceId) {
+        final List<AssociationInfo> associationsForPackage = getAssociationsByUser(userId);
+
+        for (AssociationInfo ai : associationsForPackage) {
+            if (ai.getDeviceId() != null && ai.getDeviceId().equals(deviceId)) {
+                return ai;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -523,6 +543,14 @@ public class AssociationStore {
             out.append("\n");
             for (AssociationInfo a : getActiveAssociations()) {
                 out.append("  ").append(a.toString()).append('\n');
+            }
+        }
+
+        out.append("Last Removed Association:\n");
+        for (UserInfo user : mUserManager.getAliveUsers()) {
+            String lastRemovedAssociation = mDiskStore.readLastRemovedAssociation(user.id);
+            if (lastRemovedAssociation != null) {
+                out.append("  ").append(lastRemovedAssociation).append('\n');
             }
         }
     }

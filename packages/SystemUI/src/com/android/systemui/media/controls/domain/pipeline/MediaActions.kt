@@ -29,6 +29,8 @@ import android.media.session.PlaybackState
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.media.utils.MediaConstants
+import com.android.systemui.media.NotificationMediaManager.isConnectingState
+import com.android.systemui.media.NotificationMediaManager.isPlayingState
 import com.android.systemui.media.controls.domain.pipeline.LegacyMediaDataManagerImpl.Companion.MAX_COMPACT_ACTIONS
 import com.android.systemui.media.controls.domain.pipeline.LegacyMediaDataManagerImpl.Companion.MAX_NOTIFICATION_ACTIONS
 import com.android.systemui.media.controls.shared.MediaControlDrawables
@@ -37,8 +39,6 @@ import com.android.systemui.media.controls.shared.model.MediaButton
 import com.android.systemui.media.controls.shared.model.MediaNotificationAction
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
-import com.android.systemui.statusbar.NotificationMediaManager.isConnectingState
-import com.android.systemui.statusbar.NotificationMediaManager.isPlayingState
 import com.android.systemui.util.kotlin.logI
 
 private const val TAG = "MediaActions"
@@ -69,7 +69,7 @@ fun createActionsFromState(
                 drawable,
                 null, // no action to perform when clicked
                 context.getString(R.string.controls_media_button_connecting),
-                context.getDrawable(R.drawable.ic_media_connecting_container),
+                context.getDrawable(R.drawable.ic_media_connecting_button_container),
                 // Specify a rebind id to prevent the spinner from restarting on later binds.
                 com.android.internal.R.drawable.progress_small_material,
             )
@@ -157,18 +157,18 @@ private fun getStandardAction(
     return when (action) {
         PlaybackState.ACTION_PLAY -> {
             MediaAction(
-                context.getDrawable(R.drawable.ic_media_play),
+                context.getDrawable(R.drawable.ic_media_play_button),
                 { controller.transportControls.play() },
                 context.getString(R.string.controls_media_button_play),
-                context.getDrawable(R.drawable.ic_media_play_container),
+                context.getDrawable(R.drawable.ic_media_play_button_container),
             )
         }
         PlaybackState.ACTION_PAUSE -> {
             MediaAction(
-                context.getDrawable(R.drawable.ic_media_pause),
+                context.getDrawable(R.drawable.ic_media_pause_button),
                 { controller.transportControls.pause() },
                 context.getString(R.string.controls_media_button_pause),
-                context.getDrawable(R.drawable.ic_media_pause_container),
+                context.getDrawable(R.drawable.ic_media_pause_button_container),
             )
         }
         PlaybackState.ACTION_SKIP_TO_PREVIOUS -> {

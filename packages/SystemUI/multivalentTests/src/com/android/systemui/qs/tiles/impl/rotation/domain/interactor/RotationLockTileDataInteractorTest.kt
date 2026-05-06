@@ -20,7 +20,6 @@ import android.Manifest
 import android.content.packageManager
 import android.content.pm.PackageManager
 import android.os.UserHandle
-import android.platform.test.annotations.EnabledOnRavenwood
 import android.testing.LeakCheck
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
@@ -28,15 +27,15 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.camera.data.repository.fakeCameraAutoRotateRepository
 import com.android.systemui.camera.data.repository.fakeCameraSensorPrivacyRepository
 import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.qs.tiles.base.interactor.DataUpdateTrigger
+import com.android.systemui.qs.tiles.base.domain.model.DataUpdateTrigger
+import com.android.systemui.statusbar.pipeline.battery.data.repository.batteryRepository
+import com.android.systemui.statusbar.policy.batteryController
+import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.eq
 import com.android.systemui.util.mockito.whenever
-import com.android.systemui.utils.leaks.FakeBatteryController
 import com.android.systemui.utils.leaks.FakeRotationLockController
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toCollection
 import kotlinx.coroutines.test.runCurrent
@@ -45,14 +44,11 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
-@EnabledOnRavenwood
 @RunWith(AndroidJUnit4::class)
 class RotationLockTileDataInteractorTest : SysuiTestCase() {
-    private val kosmos = Kosmos()
+    private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
-    private val batteryController = FakeBatteryController(LeakCheck())
     private val rotationController = FakeRotationLockController(LeakCheck())
     private val fakeCameraAutoRotateRepository = kosmos.fakeCameraAutoRotateRepository
     private val fakeCameraSensorPrivacyRepository = kosmos.fakeCameraSensorPrivacyRepository
@@ -67,7 +63,7 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
         whenever(
                 packageManager.checkPermission(
                     eq(Manifest.permission.CAMERA),
-                    eq(TEST_PACKAGE_NAME)
+                    eq(TEST_PACKAGE_NAME),
                 )
             )
             .thenReturn(PackageManager.PERMISSION_GRANTED)
@@ -75,7 +71,7 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
         underTest =
             RotationLockTileDataInteractor(
                 rotationController,
-                batteryController,
+                kosmos.batteryRepository,
                 fakeCameraAutoRotateRepository,
                 fakeCameraSensorPrivacyRepository,
                 packageManager,
@@ -83,7 +79,7 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
                     .apply {
                         addOverride(com.android.internal.R.bool.config_allowRotationResolver, true)
                     }
-                    .resources
+                    .resources,
             )
     }
 
@@ -128,11 +124,11 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
             runCurrent()
             assertThat(data!!.isCameraRotationEnabled).isTrue()
 
-            batteryController.setPowerSaveMode(true)
+            kosmos.batteryController.setPowerSaveMode(true)
             runCurrent()
             assertThat(data!!.isCameraRotationEnabled).isFalse()
 
-            batteryController.setPowerSaveMode(false)
+            kosmos.batteryController.setPowerSaveMode(false)
             runCurrent()
             assertThat(data!!.isCameraRotationEnabled).isTrue()
         }
@@ -184,7 +180,7 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
             whenever(
                     packageManager.checkPermission(
                         eq(Manifest.permission.CAMERA),
-                        eq(TEST_PACKAGE_NAME)
+                        eq(TEST_PACKAGE_NAME),
                     )
                 )
                 .thenReturn(PackageManager.PERMISSION_DENIED)
@@ -215,7 +211,7 @@ class RotationLockTileDataInteractorTest : SysuiTestCase() {
 
     private fun setupControllersToEnableCameraRotation() {
         rotationController.setRotationLocked(true, CALLER)
-        batteryController.setPowerSaveMode(false)
+        kosmos.batteryController.setPowerSaveMode(false)
         fakeCameraSensorPrivacyRepository.setEnabled(testUser, false)
         fakeCameraAutoRotateRepository.setEnabled(testUser, true)
     }

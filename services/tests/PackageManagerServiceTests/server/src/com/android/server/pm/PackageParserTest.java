@@ -65,10 +65,13 @@ import android.content.pm.SigningDetails;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.annotations.Presubmit;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.ArraySet;
 
 import androidx.annotation.Nullable;
@@ -150,6 +153,9 @@ public class PackageParserTest {
     @Rule
     public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
 
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
     private File mTmpDir;
     private static final File FRAMEWORK = new File("/system/framework/framework-res.apk");
     private static final String TEST_APP1_APK = "PackageParserTestApp1.apk";
@@ -160,6 +166,8 @@ public class PackageParserTest {
     private static final String TEST_APP6_APK = "PackageParserTestApp6.apk";
     private static final String TEST_APP7_APK = "PackageParserTestApp7.apk";
     private static final String TEST_APP8_APK = "PackageParserTestApp8.apk";
+    private static final String TEST_APP9_APK = "PackageParserTestApp9.apk";
+    private static final String TEST_APP10_APK = "PackageParserTestApp10.apk";
     private static final String PACKAGE_NAME = "com.android.servicestests.apps.packageparserapp";
 
     @Before
@@ -286,8 +294,6 @@ public class PackageParserTest {
         assertSame(deserialized.getPackageName(), deserialized2.getPackageName());
         assertSame(deserialized.getPermission(),
                 deserialized2.getPermission());
-        assertSame(deserialized.getRequestedPermissions().iterator().next(),
-                deserialized2.getRequestedPermissions().iterator().next());
 
         List<String> protectedBroadcastsOne = new ArrayList<>(1);
         protectedBroadcastsOne.addAll(deserialized.getProtectedBroadcasts());
@@ -765,8 +771,8 @@ public class PackageParserTest {
                             .collect(toList());
             assertWithMessage(
                     "Compatibility permissions shouldn't be added into uses permissions.")
-                    .that(pkg.getUsesPermissions().stream().map(ParsedUsesPermission::getName)
-                            .collect(toList()))
+                    .that(pkg.getUsesPermissionMapping().values().stream()
+                            .map(ParsedUsesPermission::getName).collect(toList()))
                     .containsNoneIn(compatPermissions);
             assertWithMessage(
                     "Compatibility permissions shouldn't be added into requested permissions.")
@@ -788,7 +794,7 @@ public class PackageParserTest {
             assertWithMessage(
                     "Compatibility permissions should be added into uses permissions.")
                     .that(Arrays.stream(COMPAT_PERMS).map(CompatibilityPermissionInfo::getName)
-                            .allMatch(pkg.getUsesPermissions().stream()
+                            .allMatch(pkg.getUsesPermissionMapping().values().stream()
                                     .map(ParsedUsesPermission::getName)
                             .collect(toList())::contains))
                     .isTrue();
@@ -846,7 +852,8 @@ public class PackageParserTest {
 
     @Test
     @RequiresFlagsEnabled(android.content.res.Flags.FLAG_MANIFEST_FLAGGING)
-    public void testParseWithFeatureFlagAttributes() throws Exception {
+    @DisableFlags(android.content.res.Flags.FLAG_USE_NEW_ACONFIG_STORAGE)
+    public void testParseWithFeatureFlagAttributes_oldStorage() throws Exception {
         final File testFile = extractFile(TEST_APP8_APK);
         try (PackageParser2 parser = new TestPackageParser2()) {
             Map<String, Boolean> flagValues = new HashMap<>();
@@ -872,6 +879,81 @@ public class PackageParserTest {
             assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM3");
             assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM4");
             assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM5");
+
+            var activities = pkg.getActivities().stream().map(ParsedActivity::getName).toList();
+            assertThat(activities).contains(PACKAGE_NAME + ".TestActivity");
+            assertThat(activities).doesNotContain(PACKAGE_NAME + ".TestActivity2");
+        } finally {
+            testFile.delete();
+        }
+    }
+
+    @Test
+    @RequiresFlagsEnabled(android.content.res.Flags.FLAG_MANIFEST_FLAGGING)
+    @EnableFlags(android.content.res.Flags.FLAG_USE_NEW_ACONFIG_STORAGE)
+    public void testParseWithFeatureFlagAttributes_newStorage() throws Exception {
+        final File testFile = extractFile(TEST_APP8_APK);
+        try (PackageParser2 parser = new TestPackageParser2()) {
+            Map<String, Boolean> flagValues = new HashMap<>();
+            flagValues.put("my.flag1", true);
+            flagValues.put("my.flag2", false);
+            flagValues.put("my.flag3", false);
+            flagValues.put("my.flag4", true);
+            ParsingPackageUtils.getAconfigFlags().addFlagValuesForTesting(flagValues);
+
+            // The manifest has:
+            //    <permission android:name="PERM1" android:featureFlag="my.flag1 " />
+            //    <permission android:name="PERM2" android:featureFlag=" !my.flag2" />
+            //    <permission android:name="PERM3" android:featureFlag="my.flag3" />
+            //    <permission android:name="PERM4" android:featureFlag="!my.flag4" />
+            //    <permission android:name="PERM5" android:featureFlag="unknown.flag" />
+            // Therefore with the above flag values, only PERM1 and PERM2 should be present.
+
+            final ParsedPackage pkg = parser.parsePackage(testFile, 0, false);
+            List<String> permissionNames =
+                    pkg.getPermissions().stream().map(ParsedComponent::getName).toList();
+            assertThat(permissionNames).contains(PACKAGE_NAME + ".PERM1");
+            assertThat(permissionNames).contains(PACKAGE_NAME + ".PERM2");
+            assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM3");
+            assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM4");
+            assertThat(permissionNames).doesNotContain(PACKAGE_NAME + ".PERM5");
+
+            var activities = pkg.getActivities().stream().map(ParsedActivity::getName).toList();
+            assertThat(activities).contains(PACKAGE_NAME + ".TestActivity");
+            assertThat(activities).doesNotContain(PACKAGE_NAME + ".TestActivity2");
+        } finally {
+            testFile.delete();
+        }
+    }
+
+    @Test
+    public void testParseBackupProperties_noBackupAgent() throws Exception {
+        final File testFile = extractFile(TEST_APP9_APK);
+        try {
+            final ParsedPackage pkg = new TestPackageParser2().parsePackage(testFile, 0, false);
+            // Supported without backupAgent - checks they are the non-default
+            assertTrue("restoreAnyVersion", pkg.isRestoreAnyVersion());
+            assertFalse("killAfterRestore", pkg.isKillAfterRestoreAllowed());
+
+            // Not supported without backupAgent - checks they are the default
+            // (opposite of what is in the manifest)
+            assertFalse("fullBackupOnly", pkg.isFullBackupOnly());
+            assertFalse("backupInForeground", pkg.isBackupInForeground());
+        } finally {
+            testFile.delete();
+        }
+    }
+
+    @Test
+    public void testParseBackupProperties_withBackupAgent() throws Exception {
+        final File testFile = extractFile(TEST_APP10_APK);
+        try {
+            final ParsedPackage pkg = new TestPackageParser2().parsePackage(testFile, 0, false);
+            // Non-default values
+            assertTrue("restoreAnyVersion", pkg.isRestoreAnyVersion());
+            assertFalse("killAfterRestore", pkg.isKillAfterRestoreAllowed());
+            assertTrue("fullBackupOnly", pkg.isFullBackupOnly());
+            assertTrue("backupInForeground", pkg.isBackupInForeground());
         } finally {
             testFile.delete();
         }
@@ -1238,7 +1320,7 @@ public class PackageParserTest {
                 .addProvider(new ParsedProviderImpl())
                 .addService(new ParsedServiceImpl())
                 .addInstrumentation(new ParsedInstrumentationImpl())
-                .addUsesPermission(new ParsedUsesPermissionImpl("foo7", 0))
+                .addUsesPermission(new ParsedUsesPermissionImpl("foo7", 0, Collections.emptySet()))
                 .addImplicitPermission("foo25")
                 .addProtectedBroadcast("foo8")
                 .setSdkLibraryName("sdk12")

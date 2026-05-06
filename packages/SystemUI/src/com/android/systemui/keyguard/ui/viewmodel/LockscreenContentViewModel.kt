@@ -16,134 +16,140 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
-import android.content.res.Resources
+import androidx.compose.runtime.getValue
 import com.android.app.tracing.coroutines.launchTraced as launch
-import com.android.internal.annotations.VisibleForTesting
-import com.android.systemui.biometrics.AuthController
-import com.android.systemui.customization.R as customR
-import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
+import com.android.compose.animation.scene.content.state.TransitionState
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryBypassInteractor
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardBlueprintInteractor
-import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
-import com.android.systemui.keyguard.shared.model.ClockSize
+import com.android.systemui.keyguard.shared.transition.KeyguardTransitionAnimationCallback
+import com.android.systemui.keyguard.shared.transition.KeyguardTransitionAnimationCallbackDelegator
 import com.android.systemui.lifecycle.ExclusiveActivatable
-import com.android.systemui.res.R
-import com.android.systemui.scene.domain.interactor.SceneContainerOcclusionInteractor
-import com.android.systemui.shade.domain.interactor.ShadeInteractor
-import com.android.systemui.unfold.domain.interactor.UnfoldTransitionInteractor
+import com.android.systemui.lifecycle.Hydrator
+import com.android.systemui.scene.shared.model.Overlays
+import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
+import com.android.systemui.shade.shared.model.ShadeMode
+import com.android.systemui.statusbar.notification.stack.domain.interactor.NotificationStackAppearanceInteractor
+import com.android.systemui.wallpapers.domain.interactor.WallpaperFocalAreaInteractor
+import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 
 class LockscreenContentViewModel
 @AssistedInject
 constructor(
-    clockInteractor: KeyguardClockInteractor,
-    private val interactor: KeyguardBlueprintInteractor,
-    private val authController: AuthController,
-    val touchHandling: KeyguardTouchHandlingViewModel,
-    private val shadeInteractor: ShadeInteractor,
-    private val unfoldTransitionInteractor: UnfoldTransitionInteractor,
-    private val occlusionInteractor: SceneContainerOcclusionInteractor,
-    private val deviceEntryInteractor: DeviceEntryInteractor,
+    interactor: KeyguardBlueprintInteractor,
+    val touchHandlingFactory: KeyguardTouchHandlingViewModel.Factory,
+    shadeModeInteractor: ShadeModeInteractor,
+    deviceEntryBypassInteractor: DeviceEntryBypassInteractor,
+    deviceEntryUdfpsInteractor: DeviceEntryUdfpsInteractor,
+    private val keyguardTransitionAnimationCallbackDelegator:
+        KeyguardTransitionAnimationCallbackDelegator,
+    private val wallpaperFocalAreaInteractor: WallpaperFocalAreaInteractor,
+    private val notificationStackAppearanceInteractor: NotificationStackAppearanceInteractor,
+    private val lockscreenAlphaViewModelFactory: LockscreenAlphaViewModel.Factory,
+    @Assisted private val keyguardTransitionAnimationCallback: KeyguardTransitionAnimationCallback,
+    @Assisted private val viewStateAccessor: ViewStateAccessor,
 ) : ExclusiveActivatable() {
-    @VisibleForTesting val clockSize = clockInteractor.clockSize
 
-    val isUdfpsVisible: Boolean
-        get() = authController.isUdfpsSupported
+    private val hydrator = Hydrator("LockscreenContentViewModel.hydrator")
 
-    val isShadeLayoutWide: StateFlow<Boolean> = shadeInteractor.isShadeLayoutWide
+    /** @see ShadeModeInteractor.isFullWidthShade */
+    val isFullWidthShade: Boolean by
+        hydrator.hydratedStateOf(
+            traceName = "isFullWidthShade",
+            source = shadeModeInteractor.isFullWidthShade,
+        )
 
-    private val _unfoldTranslations = MutableStateFlow(UnfoldTranslations())
-    /** Amount of horizontal translation that should be applied to elements in the scene. */
-    val unfoldTranslations: StateFlow<UnfoldTranslations> = _unfoldTranslations.asStateFlow()
+    /** @see ShadeModeInteractor.shadeMode */
+    val shadeMode: ShadeMode by
+        hydrator.hydratedStateOf(traceName = "shadeMode", source = shadeModeInteractor.shadeMode)
 
-    private val _isContentVisible = MutableStateFlow(true)
-    /** Whether the content of the scene UI should be shown. */
-    val isContentVisible: StateFlow<Boolean> = _isContentVisible.asStateFlow()
+    /** @see DeviceEntryBypassInteractor.isBypassEnabled */
+    val isBypassEnabled: Boolean by
+        hydrator.hydratedStateOf(
+            traceName = "isBypassEnabled",
+            source = deviceEntryBypassInteractor.isBypassEnabled,
+        )
 
-    /** @see DeviceEntryInteractor.isBypassEnabled */
-    val isBypassEnabled: StateFlow<Boolean>
-        get() = deviceEntryInteractor.isBypassEnabled
+    val blueprintId: String by
+        hydrator.hydratedStateOf(
+            traceName = "blueprintId",
+            initialValue = interactor.getCurrentBlueprint().id,
+            source = interactor.blueprint.map { it.id }.distinctUntilChanged(),
+        )
+
+    /** Whether udfps is supported. */
+    val isUdfpsSupported: Boolean by
+        hydrator.hydratedStateOf(
+            traceName = "isUdfpsSupported",
+            source = deviceEntryUdfpsInteractor.isUdfpsSupported,
+            initialValue = deviceEntryUdfpsInteractor.isUdfpsSupported.value,
+        )
+
+    /** Alpha value applied to all LockscreenElements. */
+    val alpha: Float
+        get() = lockscreenAlphaViewModel.alpha
+
+    private val lockscreenAlphaViewModel: LockscreenAlphaViewModel by lazy {
+        lockscreenAlphaViewModelFactory.create(viewStateAccessor)
+    }
 
     override suspend fun onActivated(): Nothing {
         coroutineScope {
-            launch {
-                combine(
-                        unfoldTransitionInteractor.unfoldTranslationX(isOnStartSide = true),
-                        unfoldTransitionInteractor.unfoldTranslationX(isOnStartSide = false),
-                    ) { start, end ->
-                        UnfoldTranslations(start = start, end = end)
-                    }
-                    .collect { _unfoldTranslations.value = it }
+            try {
+                launch { hydrator.activate() }
+                launch { lockscreenAlphaViewModel.activate() }
+
+                keyguardTransitionAnimationCallbackDelegator.delegate =
+                    keyguardTransitionAnimationCallback
+
+                awaitCancellation()
+            } finally {
+                keyguardTransitionAnimationCallbackDelegator.delegate = null
             }
-
-            launch {
-                occlusionInteractor.isOccludingActivityShown
-                    .map { !it }
-                    .collect { _isContentVisible.value = it }
-            }
-
-            awaitCancellation()
         }
     }
 
-    /** Returns a flow that indicates whether lockscreen notifications should be rendered. */
-    fun areNotificationsVisible(): Flow<Boolean> {
-        return combine(clockSize, shadeInteractor.isShadeLayoutWide) { clockSize, isShadeLayoutWide
-            ->
-            clockSize == ClockSize.SMALL || isShadeLayoutWide
-        }
+    fun setMediaPlayerBottom(bottom: Float) {
+        wallpaperFocalAreaInteractor.setMediaPlayerBottom(bottom)
     }
 
-    fun getSmartSpacePaddingTop(resources: Resources): Int {
-        return if (clockSize.value == ClockSize.LARGE) {
-            resources.getDimensionPixelSize(customR.dimen.keyguard_smartspace_top_offset) +
-                resources.getDimensionPixelSize(R.dimen.keyguard_clock_top_margin)
-        } else {
-            0
-        }
+    fun setShortcutTop(top: Float) {
+        wallpaperFocalAreaInteractor.setShortcutTop(top)
     }
 
-    fun blueprintId(scope: CoroutineScope): StateFlow<String> {
-        return interactor.blueprint
-            .map { it.id }
-            .distinctUntilChanged()
-            .stateIn(
-                scope = scope,
-                started = SharingStarted.WhileSubscribed(),
-                initialValue = interactor.getCurrentBlueprint().id,
-            )
+    fun setSmallClockBottom(bottom: Float) {
+        wallpaperFocalAreaInteractor.setSmallClockBottom(bottom)
     }
 
-    data class UnfoldTranslations(
+    fun setSmartspaceCardBottom(bottom: Float) {
+        wallpaperFocalAreaInteractor.setSmartspaceCardBottom(bottom)
+    }
 
-        /**
-         * Amount of horizontal translation to apply to elements that are aligned to the start side
-         * (left in left-to-right layouts). Can also be used as horizontal padding for elements that
-         * need horizontal padding on both side. In pixels.
-         */
-        val start: Float = 0f,
+    /** Sets the alpha to apply to the NSSL for fade-in on lockscreen */
+    fun setContentAlphaForLockscreenFadeIn(alpha: Float) {
+        notificationStackAppearanceInteractor.setAlphaForLockscreenFadeIn(alpha)
+    }
 
-        /**
-         * Amount of horizontal translation to apply to elements that are aligned to the end side
-         * (right in left-to-right layouts). In pixels.
-         */
-        val end: Float = 0f,
-    )
+    /** Should a content reveal animation run for the given transition */
+    fun shouldContentFadeIn(currentTransition: TransitionState.Transition): Boolean {
+        return shadeMode != ShadeMode.Dual &&
+            currentTransition.isInitiatedByUserInput &&
+            (currentTransition.isTransitioning(from = Scenes.Shade, to = Scenes.Lockscreen) ||
+                currentTransition.isTransitioning(from = Overlays.Bouncer, to = Scenes.Lockscreen))
+    }
 
     @AssistedFactory
     interface Factory {
-        fun create(): LockscreenContentViewModel
+        fun create(
+            keyguardTransitionAnimationCallback: KeyguardTransitionAnimationCallback,
+            viewState: ViewStateAccessor,
+        ): LockscreenContentViewModel
     }
 }

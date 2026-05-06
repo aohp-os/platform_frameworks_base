@@ -40,8 +40,12 @@ android_library {
         "androidx.savedstate_savedstate",
         "androidx.window_window",
         "//frameworks/libs/systemui:tracinglib-platform",
+        "//frameworks/libs/systemui:mechanics",
     ],
 
-    kotlincflags: ["-Xjvm-default=all"],
+    kotlincflags: [
+        "-Xjvm-default=all",
+        "-P plugin:androidx.compose.compiler.plugins.kotlin:sourceInformation=true",
+    ],
     use_resource_processor: true,
 }

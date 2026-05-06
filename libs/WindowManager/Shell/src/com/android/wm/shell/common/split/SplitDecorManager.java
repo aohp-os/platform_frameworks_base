@@ -39,6 +39,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Binder;
+import android.util.Log;
 import android.view.IWindow;
 import android.view.LayoutInflater;
 import android.view.SurfaceControl;
@@ -50,12 +51,15 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.android.launcher3.icons.IconProvider;
 import com.android.wm.shell.R;
 import com.android.wm.shell.common.ScreenshotUtils;
 import com.android.wm.shell.common.SurfaceUtils;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -108,6 +112,14 @@ public class SplitDecorManager extends WindowlessWindowManager {
     private int mOffsetX;
     private int mOffsetY;
     private int mRunningAnimationCount = 0;
+    /**
+     * Keeps track of all finish callbacks meant to be executed after all animations are finished.
+     * Do not add null values.
+     * <p>
+     * Maps a callback to the value meant to be passed in the callback. Default value to be passed
+     * to the callback is false.
+     */
+    private final Map<Consumer<Boolean>, Boolean> mAnimFinishCallbacks = new HashMap<>();
 
     public SplitDecorManager(Configuration configuration, IconProvider iconProvider) {
         super(configuration, null /* rootSurface */, null /* hostInputToken */);
@@ -207,10 +219,37 @@ public class SplitDecorManager extends WindowlessWindowManager {
         mInstantaneousBounds.setEmpty();
     }
 
-    /** Showing resizing hint. */
+    /**
+     * Called on every frame when an app is getting resized, and controls the showing & hiding of
+     * the app veil. IMPORTANT: There is one SplitDecorManager for each task, so if two tasks are
+     * getting resized simultaneously, this method is called in parallel on the other
+     * SplitDecorManager too. In general, we want to hide the app behind a veil when:
+     *   a) the app is stretching past its original bounds (because app content layout doesn't
+     *      update mid-stretch).
+     *   b) the app is resizing down from fullscreen (because there is no parallax effect that
+     *      makes every app look good in this scenario).
+     * In the world of flexible split, where apps can go offscreen, there is an exception to this:
+     *   - We do NOT hide the app when it is going offscreen, even though it is technically
+     *     getting larger and would qualify for condition (a). Instead, we use parallax to give
+     *     the illusion that the app is getting pushed offscreen by the divider.
+     *
+     * @param resizingTask The task that is getting resized.
+     * @param newBounds The bounds that that we are updating this surface to. This can be an
+     *                  instantaneous bounds, just for a frame, during a drag or animation.
+     * @param sideBounds The bounds of the OPPOSITE task in the split layout. This is used just for
+     *                   reference/calculation, the surface of the other app won't be set here.
+     * @param displayBounds The bounds of the entire display.
+     * @param t The transaction on which these changes will be bundled.
+     * @param offsetX The x-translation applied to the task surface for parallax. Will be used to
+     *                position the task screenshot and/or icon veil.
+     * @param offsetY The x-translation applied to the task surface for parallax. Will be used to
+     *                position the task screenshot and/or icon veil.
+     * @param immediately {@code true} if the veil should transition in/out instantly, with no
+     *                                animation.
+     */
     public void onResizing(ActivityManager.RunningTaskInfo resizingTask, Rect newBounds,
-            Rect sideBounds, SurfaceControl.Transaction t, int offsetX, int offsetY,
-            boolean immediately) {
+            Rect sideBounds, Rect displayBounds, SurfaceControl.Transaction t, int offsetX,
+            int offsetY, boolean immediately) {
         if (mVeilIconView == null) {
             return;
         }
@@ -232,7 +271,10 @@ public class SplitDecorManager extends WindowlessWindowManager {
         final boolean isStretchingPastOriginalBounds =
                 newBounds.width() > mOldMainBounds.width()
                         || newBounds.height() > mOldMainBounds.height();
-        final boolean showVeil = isResizingDownFromFullscreen || isStretchingPastOriginalBounds;
+        final boolean isFullyOnscreen = displayBounds.contains(newBounds);
+        boolean showVeil = isFullyOnscreen
+                && (isResizingDownFromFullscreen || isStretchingPastOriginalBounds);
+
         final boolean update = showVeil != mShown;
         if (update && mFadeAnimator != null && mFadeAnimator.isRunning()) {
             // If we need to animate and animator still running, cancel it before we ensure both
@@ -295,11 +337,31 @@ public class SplitDecorManager extends WindowlessWindowManager {
     }
 
     /** Stops showing resizing hint. */
-    public void onResized(SurfaceControl.Transaction t, Consumer<Boolean> animFinishedCallback) {
+    public void onResized(SurfaceControl.Transaction t,
+            @Nullable Consumer<Boolean> animFinishedCallback) {
+        // If there is a running animation, place a placeholder callback to avoid calling the end
+        // callback too early when canceling the existed animation before the new animation starts.
+        final Consumer<Boolean> callbackPlaceHolder =
+                animFinishedCallback != null && mRunningAnimationCount > 0 ? status -> {} : null;
+        if (callbackPlaceHolder != null) {
+            mRunningAnimationCount++;
+            mAnimFinishCallbacks.put(callbackPlaceHolder, false);
+        }
+        animateResized(t, animFinishedCallback);
+        if (callbackPlaceHolder != null) {
+            mRunningAnimationCount--;
+            updateCallbackStatus(false /* callbackStatus */, callbackPlaceHolder);
+        }
+    }
+
+    private void animateResized(SurfaceControl.Transaction t,
+            @Nullable Consumer<Boolean> animFinishedCallback) {
         if (mScreenshotAnimator != null && mScreenshotAnimator.isRunning()) {
             mScreenshotAnimator.cancel();
         }
-
+        if (animFinishedCallback != null) {
+            mAnimFinishCallbacks.put(animFinishedCallback, false);
+        }
         if (mScreenshot != null) {
             t.setPosition(mScreenshot, mOffsetX, mOffsetY);
 
@@ -324,19 +386,14 @@ public class SplitDecorManager extends WindowlessWindowManager {
                     animT.apply();
                     animT.close();
                     mScreenshot = null;
-
-                    if (mRunningAnimationCount == 0 && animFinishedCallback != null) {
-                        animFinishedCallback.accept(true);
-                    }
+                    updateCallbackStatus(true /*callbackStatus*/, animFinishedCallback);
                 }
             });
             mScreenshotAnimator.start();
         }
 
         if (mVeilIconView == null) {
-            if (mRunningAnimationCount == 0 && animFinishedCallback != null) {
-                animFinishedCallback.accept(false);
-            }
+            updateCallbackStatus(false /*callbackStatus*/, animFinishedCallback);
             return;
         }
 
@@ -356,27 +413,54 @@ public class SplitDecorManager extends WindowlessWindowManager {
                         releaseDecor(finishT);
                         finishT.apply();
                         finishT.close();
-                        if (mRunningAnimationCount == 0 && animFinishedCallback != null) {
-                            animFinishedCallback.accept(true);
-                        }
+                        updateCallbackStatus(true /*callbackStatus*/, animFinishedCallback);
                     }
                 });
                 return;
             }
         }
         if (mShown) {
-            fadeOutDecor(()-> {
-                if (mRunningAnimationCount == 0 && animFinishedCallback != null) {
-                    animFinishedCallback.accept(true);
-                }
-            }, false /* addDelay */);
+            if (animFinishedCallback != null) {
+                // Update to return true. Will be executed when fadeOutDecor anims finish
+                mAnimFinishCallbacks.put(animFinishedCallback, true);
+            }
+            fadeOutDecor(()-> {}, false /* addDelay */);
         } else {
             // Decor surface is hidden so release it directly.
             releaseDecor(t);
-            if (mRunningAnimationCount == 0 && animFinishedCallback != null) {
-                animFinishedCallback.accept(false);
-            }
+            updateCallbackStatus(false /*callbackStatus*/, animFinishedCallback);
         }
+    }
+
+    /**
+     * Updates the value for the provided {@param callback} and optionally executes the callback
+     * list if no animations are in progress.
+     *
+     * @param callbackStatus the parameter that will be passed into the {@param callback}
+     * @param callback       no-op if null, must be added to {@link #mAnimFinishCallbacks} prior to
+     *                       updating via this method
+     */
+    private void updateCallbackStatus(boolean callbackStatus,
+            @Nullable Consumer<Boolean> callback) {
+        if (callback == null) {
+            return;
+        }
+        if (mAnimFinishCallbacks.get(callback) == null) {
+            Log.e(TAG, "Finish callback not found!");
+            return;
+        }
+
+        mAnimFinishCallbacks.put(callback, callbackStatus);
+        if (mRunningAnimationCount != 0) {
+            // Not all animations finished, wait
+            return;
+        }
+
+        // Run all finish callbacks
+        for (Map.Entry<Consumer<Boolean>, Boolean> c : mAnimFinishCallbacks.entrySet()) {
+            c.getKey().accept(c.getValue());
+        }
+        mAnimFinishCallbacks.clear();
     }
 
     /**
@@ -523,8 +607,14 @@ public class SplitDecorManager extends WindowlessWindowManager {
      *                 time to redraw.
      */
     private void startFadeAnimation(boolean show, boolean releaseSurface,
-            Runnable finishedCallback, boolean addDelay) {
+            @Nullable Runnable finishedCallback, boolean addDelay) {
         final SurfaceControl.Transaction animT = new SurfaceControl.Transaction();
+        final Consumer<Boolean> wrappedFinishCallback = aBoolean -> {
+            if (finishedCallback != null) {
+                finishedCallback.run();
+            }
+        };
+        mAnimFinishCallbacks.put(wrappedFinishCallback, false);
 
         mFadeAnimator = ValueAnimator.ofFloat(0f, 1f);
         if (addDelay) {
@@ -570,17 +660,14 @@ public class SplitDecorManager extends WindowlessWindowManager {
                 }
                 animT.apply();
                 animT.close();
-
-                if (mRunningAnimationCount == 0 && finishedCallback != null) {
-                    finishedCallback.run();
-                }
+                updateCallbackStatus(true /*callbackStatus*/, wrappedFinishCallback);
             }
         });
         mFadeAnimator.start();
     }
 
     /** Release or hide decor hint. */
-    private void releaseDecor(SurfaceControl.Transaction t) {
+    public void releaseDecor(SurfaceControl.Transaction t) {
         if (mBackgroundLeash != null) {
             t.remove(mBackgroundLeash);
             mBackgroundLeash = null;

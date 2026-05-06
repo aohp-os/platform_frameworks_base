@@ -35,14 +35,19 @@ import android.view.ViewRootImpl;
 import android.view.WindowManagerGlobal;
 
 import com.android.internal.protolog.ProtoLog;
+import com.android.wm.shell.common.DisplayController;
+import com.android.wm.shell.common.DisplayInsetsController;
+import com.android.wm.shell.common.ImeListener;
 import com.android.wm.shell.common.ShellExecutor;
 import com.android.wm.shell.common.SystemWindows;
 import com.android.wm.shell.common.pip.PipBoundsState;
+import com.android.wm.shell.common.pip.PipDisplayLayoutState;
 import com.android.wm.shell.common.pip.PipMediaController;
 import com.android.wm.shell.common.pip.PipMediaController.ActionListener;
 import com.android.wm.shell.common.pip.PipMenuController;
 import com.android.wm.shell.common.pip.PipUiEventLogger;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
+import com.android.wm.shell.shared.pip.PipFlags;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -121,7 +126,12 @@ public class PhonePipMenuController implements PipMenuController,
     @NonNull
     private final PipTransitionState mPipTransitionState;
 
+    @NonNull
+    private final PipDisplayLayoutState mPipDisplayLayoutState;
+
     private SurfaceControl mLeash;
+
+    private boolean mIsImeVisible;
 
     private ActionListener mMediaActionListener = new ActionListener() {
         @Override
@@ -134,7 +144,10 @@ public class PhonePipMenuController implements PipMenuController,
     public PhonePipMenuController(Context context, PipBoundsState pipBoundsState,
             PipMediaController mediaController, SystemWindows systemWindows,
             PipUiEventLogger pipUiEventLogger, PipTaskListener pipTaskListener,
-            @NonNull PipTransitionState pipTransitionState, ShellExecutor mainExecutor,
+            @NonNull PipTransitionState pipTransitionState,
+            @NonNull DisplayController displayController,
+            @NonNull DisplayInsetsController displayInsetsController,
+            @NonNull PipDisplayLayoutState pipDisplayLayoutState, ShellExecutor mainExecutor,
             Handler mainHandler) {
         mContext = context;
         mPipBoundsState = pipBoundsState;
@@ -142,18 +155,31 @@ public class PhonePipMenuController implements PipMenuController,
         mSystemWindows = systemWindows;
         mPipTaskListener = pipTaskListener;
         mPipTransitionState = pipTransitionState;
+        mPipDisplayLayoutState = pipDisplayLayoutState;
         mMainExecutor = mainExecutor;
         mMainHandler = mainHandler;
         mPipUiEventLogger = pipUiEventLogger;
 
         mPipTransitionState.addPipTransitionStateChangedListener(this);
-
+        // Clear actions after exit PiP. Otherwise, next PiP could accidentally inherit the
+        // actions provided by the previous app in PiP mode.
+        mPipBoundsState.addOnPipComponentChangedListener(((oldPipComponent, newPipComponent) -> {
+            if (mAppActions != null) mAppActions.clear();
+            mCloseAction = null;
+        }));
         mPipTaskListener.addParamsChangedListener(new PipTaskListener.PipParamsChangedCallback() {
             @Override
             public void onActionsChanged(List<RemoteAction> actions, RemoteAction closeAction) {
                 setAppActions(actions, closeAction);
             }
         });
+        displayInsetsController.addInsetsChangedListener(mPipDisplayLayoutState.getDisplayId(),
+                new ImeListener(displayController, mPipDisplayLayoutState.getDisplayId()) {
+                    @Override
+                    protected void onImeVisibilityChanged(boolean imeVisible, int imeHeight) {
+                        mIsImeVisible = imeVisible;
+                    }
+                });
     }
 
     public boolean isMenuVisible() {
@@ -184,7 +210,8 @@ public class PhonePipMenuController implements PipMenuController,
         if (mPipMenuView != null) {
             detachPipMenuView();
         }
-        mPipMenuView = new PipMenuView(mContext, this, mMainExecutor, mMainHandler,
+        final Context uiContext = mPipDisplayLayoutState.getCurrentUiContext();
+        mPipMenuView = new PipMenuView(uiContext, this, mMainExecutor, mMainHandler,
                 mPipUiEventLogger);
         mPipMenuView.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
@@ -194,7 +221,7 @@ public class PhonePipMenuController implements PipMenuController,
                             @Override
                             public void surfaceCreated(SurfaceControl.Transaction t) {
                                 final SurfaceControl sc = getSurfaceControl();
-                                if (sc != null) {
+                                if (sc != null && mLeash.isValid()) {
                                     t.reparent(sc, mLeash);
                                     // make menu on top of the surface
                                     t.setLayer(sc, Integer.MAX_VALUE);
@@ -217,8 +244,8 @@ public class PhonePipMenuController implements PipMenuController,
         });
 
         mSystemWindows.addView(mPipMenuView,
-                getPipMenuLayoutParams(mContext, MENU_WINDOW_TITLE, 0 /* width */, 0 /* height */),
-                0, SHELL_ROOT_LAYER_PIP);
+                getPipMenuLayoutParams(uiContext, MENU_WINDOW_TITLE, 0 /* width */, 0 /* height */),
+                mPipDisplayLayoutState.getDisplayId(), SHELL_ROOT_LAYER_PIP);
         setShellRootAccessibilityWindow();
 
         // Make sure the initial actions are set
@@ -475,6 +502,12 @@ public class PhonePipMenuController implements PipMenuController,
      * @return the best set of actions to show in the PiP menu.
      */
     private List<RemoteAction> resolveMenuActions() {
+        // If UMO Experience is enabled, default to MediaSession actions if present.
+        // Note that mMediaActions can be pulled asynchronously, we use the active media session
+        // check here instead.
+        if (PipFlags.isPipUmoExperienceEnabled() && mMediaController.hasActiveMediaSession()) {
+            return mMediaActions;
+        }
         if (isValidActions(mAppActions)) {
             return mAppActions;
         }
@@ -522,13 +555,13 @@ public class PhonePipMenuController implements PipMenuController,
                 mMediaController.removeActionListener(mMediaActionListener);
             }
 
-            try {
-                WindowManagerGlobal.getWindowSession().grantEmbeddedWindowFocus(null /* window */,
-                        mSystemWindows.getFocusGrantToken(mPipMenuView),
-                        menuState != MENU_STATE_NONE /* grantFocus */);
-            } catch (RemoteException e) {
+            // Do not grant focus if IME is visible, which can cause the focus being granted
+            // back and forth in between the IME and PiP menu, and causes flicker.
+            final boolean grantFocus = !mIsImeVisible && (menuState != MENU_STATE_NONE);
+            if (mIsImeVisible) return;
+            if (!mSystemWindows.requestInputFocus(mPipMenuView, grantFocus)) {
                 ProtoLog.e(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
-                        "%s: Unable to update focus as menu appears/disappears, %s", TAG, e);
+                        "%s: Unable to update focus as menu appears/disappears", TAG);
             }
         }
     }

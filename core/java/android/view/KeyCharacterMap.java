@@ -16,6 +16,9 @@
 
 package android.view;
 
+
+import static com.android.hardware.input.Flags.removeFallbackModifiers;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -310,8 +313,8 @@ public class KeyCharacterMap implements Parcelable {
     private static native KeyCharacterMap nativeObtainEmptyKeyCharacterMap(int deviceId);
     private static native boolean nativeEquals(long ptr1, long ptr2);
 
-    private static native void nativeApplyOverlay(long ptr, String layoutDescriptor,
-            String overlay);
+    private static native KeyCharacterMap nativeObtainMapWithOverlay(long ptrForBaseMap,
+            String layoutDescriptor, String overlay);
     private static native int nativeGetMappedKey(long ptr, int scanCode);
 
     private KeyCharacterMap(Parcel in) {
@@ -384,13 +387,13 @@ public class KeyCharacterMap implements Parcelable {
      * @hide
      */
     public static KeyCharacterMap load(@NonNull String layoutDescriptor, @NonNull String overlay) {
-        KeyCharacterMap kcm = KeyCharacterMap.load(VIRTUAL_KEYBOARD);
-        kcm.applyOverlay(layoutDescriptor, overlay);
-        return kcm;
-    }
-
-    private void applyOverlay(@NonNull String layoutDescriptor, @NonNull String overlay) {
-        nativeApplyOverlay(mPtr, layoutDescriptor, overlay);
+        KeyCharacterMap virtualKcm = KeyCharacterMap.load(VIRTUAL_KEYBOARD);
+        KeyCharacterMap kcmWithOverlay = nativeObtainMapWithOverlay(virtualKcm.mPtr,
+                layoutDescriptor, overlay);
+        if (kcmWithOverlay == null) {
+            return virtualKcm;
+        }
+        return kcmWithOverlay;
     }
 
     /**
@@ -458,7 +461,15 @@ public class KeyCharacterMap implements Parcelable {
         FallbackAction action = FallbackAction.obtain();
         metaState = KeyEvent.normalizeMetaState(metaState);
         if (nativeGetFallbackAction(mPtr, keyCode, metaState, action)) {
-            action.metaState = KeyEvent.normalizeMetaState(action.metaState);
+            if (removeFallbackModifiers()) {
+                // Strip all modifiers. This is safe to do since only exact keyCode + metaState
+                // modifiers will trigger a fallback.
+                // E.g. Ctrl + Space -> language_switch (fallback generated)
+                //      Ctrl + Alt + Space -> Ctrl + Alt + Space (no fallback generated)
+                action.metaState = 0;
+            } else {
+                action.metaState = KeyEvent.normalizeMetaState(action.metaState);
+            }
             return action;
         }
         action.recycle();

@@ -125,6 +125,8 @@ class ExternalDisplayPolicy {
     }
 
     /**
+     * Handles the displays which were connected before the boot completed.
+     * Handles content mode for external displays.
      * Starts listening for temperature changes.
      */
     void onBootCompleted() {
@@ -142,12 +144,8 @@ class ExternalDisplayPolicy {
             mDisplayIdsWaitingForBootCompletion.clear();
         }
 
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            if (DEBUG) {
-                Slog.d(TAG, "External display management is not enabled on your device:"
-                                    + " cannot register thermal listener.");
-            }
-            return;
+        if (mFlags.isDisplayContentModeManagementEnabled()) {
+            handleMirrorBuiltInDisplaySettingChangeLocked(/*enableDisplays=*/ false);
         }
 
         if (!mFlags.isConnectedDisplayErrorHandlingEnabled()) {
@@ -164,20 +162,28 @@ class ExternalDisplayPolicy {
     }
 
     /**
+     * Handles content mode change for all displays and
+     * enables all external displays if needed.
+     */
+    void handleMirrorBuiltInDisplaySettingChangeLocked(boolean enableDisplays) {
+        mLogicalDisplayMapper.forEachLocked(logicalDisplay -> {
+            if (!isExternalDisplayLocked(logicalDisplay)) {
+                return;
+            }
+            if (!logicalDisplay.isEnabledLocked() && enableDisplays) {
+                setExternalDisplayEnabledLocked(logicalDisplay, true);
+            }
+            handleLogicalDisplayContentModeChange(logicalDisplay);
+        });
+    }
+
+    /**
      * Checks the display type is external, and if it is external then enables/disables it.
      */
     void setExternalDisplayEnabledLocked(@NonNull final LogicalDisplay logicalDisplay,
             final boolean enabled) {
         if (!isExternalDisplayLocked(logicalDisplay)) {
             Slog.e(TAG, "setExternalDisplayEnabledLocked called for non external display");
-            return;
-        }
-
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            if (DEBUG) {
-                Slog.d(TAG, "setExternalDisplayEnabledLocked: External display management is not"
-                                    + " enabled on your device, cannot enable/disable display.");
-            }
             return;
         }
 
@@ -202,14 +208,6 @@ class ExternalDisplayPolicy {
             return;
         }
 
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            if (DEBUG) {
-                Slog.d(TAG, "handleExternalDisplayConnectedLocked connected display management"
-                                    + " flag is off");
-            }
-            return;
-        }
-
         if (!mIsBootCompleted) {
             mDisplayIdsWaitingForBootCompletion.add(logicalDisplay.getDisplayIdLocked());
             return;
@@ -217,8 +215,7 @@ class ExternalDisplayPolicy {
 
         mExternalDisplayStatsService.onDisplayConnected(logicalDisplay);
 
-        if ((Build.IS_ENG || Build.IS_USERDEBUG)
-                && SystemProperties.getBoolean(ENABLE_ON_CONNECT, false)) {
+        if (shouldAutoEnable(logicalDisplay)) {
             Slog.w(TAG, "External display is enabled by default, bypassing user consent.");
             mInjector.sendExternalDisplayEventLocked(logicalDisplay, EVENT_DISPLAY_CONNECTED);
             return;
@@ -249,10 +246,6 @@ class ExternalDisplayPolicy {
     void handleLogicalDisplayDisconnectedLocked(@NonNull final LogicalDisplay logicalDisplay) {
         // Type of the display here is always UNKNOWN, so we can't verify it is an external display
 
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            return;
-        }
-
         var displayId = logicalDisplay.getDisplayIdLocked();
         if (mDisplayIdsWaitingForBootCompletion.remove(displayId)) {
             return;
@@ -262,18 +255,15 @@ class ExternalDisplayPolicy {
     }
 
     /**
-     * Upon external display gets added.
+     * Upon external display content mode change.
      */
-    void handleLogicalDisplayAddedLocked(@NonNull final LogicalDisplay logicalDisplay) {
-        if (!isExternalDisplayLocked(logicalDisplay)) {
+    void handleLogicalDisplayContentModeChange(@NonNull final LogicalDisplay logicalDisplay) {
+        if (!isExternalDisplayLocked(logicalDisplay) || !logicalDisplay.isEnabledLocked()) {
             return;
         }
 
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            return;
-        }
-
-        mExternalDisplayStatsService.onDisplayAdded(logicalDisplay.getDisplayIdLocked());
+        mExternalDisplayStatsService.onDisplayContentModeChange(
+            logicalDisplay.getDisplayIdLocked());
     }
 
     /**
@@ -287,10 +277,6 @@ class ExternalDisplayPolicy {
             }
         }
 
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            return;
-        }
-
         if (isShown) {
             mExternalDisplayStatsService.onPresentationWindowAdded(displayId);
         } else {
@@ -298,15 +284,21 @@ class ExternalDisplayPolicy {
         }
     }
 
+    private boolean shouldAutoEnable(LogicalDisplay logicalDisplay) {
+        if ((Build.IS_ENG || Build.IS_USERDEBUG)
+                && SystemProperties.getBoolean(ENABLE_ON_CONNECT, false)) return true;
+
+        // If using the new connection dialog, then don't auto enable displays so the dialog
+        // has a reason to show
+        if (mFlags.isUpdatedDisplayConnectionDialogEnabled()) return false;
+
+        return mFlags.isDisplayContentModeManagementEnabled()
+                && logicalDisplay.canHostTasksLocked();
+    }
+
     @GuardedBy("mSyncRoot")
     private void disableExternalDisplayLocked(@NonNull final LogicalDisplay logicalDisplay) {
         if (!isExternalDisplayLocked(logicalDisplay)) {
-            return;
-        }
-
-        if (!mFlags.isConnectedDisplayManagementEnabled()) {
-            Slog.e(TAG, "disableExternalDisplayLocked shouldn't be called when the"
-                                + " connected display management flag is off");
             return;
         }
 
@@ -376,14 +368,6 @@ class ExternalDisplayPolicy {
     }
 
     boolean isDisplayReadyForMirroring(int displayId) {
-        if (!mFlags.isWaitingConfirmationBeforeMirroringEnabled()) {
-            if (DEBUG) {
-                Slog.d(TAG, "isDisplayReadyForMirroring: mirroring CONFIRMED - "
-                        + " flag 'waiting for confirmation before mirroring' is disabled");
-            }
-            return true;
-        }
-
         synchronized (mSyncRoot) {
             if (!mIsBootCompleted) {
                 if (DEBUG) {

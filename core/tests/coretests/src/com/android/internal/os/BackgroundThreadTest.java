@@ -21,18 +21,12 @@ import static com.google.common.truth.Truth.assertThat;
 import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.Looper;
-import android.platform.test.ravenwood.RavenwoodRule;
 
-import org.junit.Rule;
 import org.junit.Test;
 
 import java.util.concurrent.Executor;
 
 public class BackgroundThreadTest {
-
-    @Rule
-    public final RavenwoodRule mRavenwood =
-            new RavenwoodRule.Builder().setProvideMainThread(true).build();
 
     @Test
     public void test_get() {
@@ -56,5 +50,23 @@ public class BackgroundThreadTest {
         executor.execute(done::open);
         boolean success = done.block(5000);
         assertThat(success).isTrue();
+    }
+
+    @Test
+    public void test_startIfNeeded() {
+        BackgroundThread.startIfNeeded();
+
+        BackgroundThread thread = BackgroundThread.get();
+        assertThat(thread.getLooper()).isNotEqualTo(Looper.getMainLooper());
+    }
+
+    @Test
+    public void test_startIfNeededMultipleTimes() {
+        BackgroundThread.startIfNeeded();
+        BackgroundThread.startIfNeeded();
+        BackgroundThread.startIfNeeded();
+
+        BackgroundThread thread = BackgroundThread.get();
+        assertThat(thread.getLooper()).isNotEqualTo(Looper.getMainLooper());
     }
 }

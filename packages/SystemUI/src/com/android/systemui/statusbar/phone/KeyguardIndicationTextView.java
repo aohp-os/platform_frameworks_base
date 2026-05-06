@@ -26,23 +26,30 @@ import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.View;
-import android.widget.TextView;
 
 import androidx.annotation.StyleRes;
+import androidx.core.graphics.ColorUtils;
 
 import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.systemui.Flags;
 import com.android.systemui.keyguard.KeyguardIndication;
 import com.android.systemui.res.R;
+import com.android.systemui.shared.shadow.DoubleShadowTextView;
 
 /**
  * A view to show hints on Keyguard ("Swipe up to unlock", "Tap again to open").
  */
-public class KeyguardIndicationTextView extends TextView {
+public class KeyguardIndicationTextView extends DoubleShadowTextView {
+    // Minimum luminance for texts to receive shadows.
+    private static final float MIN_TEXT_SHADOW_LUMINANCE = 0.5f;
     public static final long Y_IN_DURATION = 600L;
 
     @StyleRes
     private static int sStyleId = R.style.TextAppearance_Keyguard_BottomArea;
+    @StyleRes
+    private static int sStyleWithDoubleShadowTextId =
+            R.style.TextAppearance_Keyguard_BottomArea_DoubleShadow;
     @StyleRes
     private static int sButtonStyleId = R.style.TextAppearance_Keyguard_BottomArea_Button;
 
@@ -51,7 +58,6 @@ public class KeyguardIndicationTextView extends TextView {
     private KeyguardIndication mKeyguardIndicationInfo;
 
     private Animator mLastAnimator;
-    private boolean mAlwaysAnnounceText;
 
     public KeyguardIndicationTextView(Context context) {
         super(context);
@@ -102,19 +108,6 @@ public class KeyguardIndicationTextView extends TextView {
      */
     public void switchIndication(CharSequence text, KeyguardIndication indication) {
         switchIndication(text, indication, true, null);
-    }
-
-    /**
-     * Controls whether the text displayed in the indication area will be announced always.
-     */
-    public void setAlwaysAnnounceEnabled(boolean enabled) {
-        this.mAlwaysAnnounceText = enabled;
-        if (mAlwaysAnnounceText) {
-            // We will announce the text programmatically anyway.
-            setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_NONE);
-        } else {
-            setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
-        }
     }
 
     /**
@@ -226,7 +219,14 @@ public class KeyguardIndicationTextView extends TextView {
             if (mKeyguardIndicationInfo.getBackground() != null) {
                 setTextAppearance(sButtonStyleId);
             } else {
-                setTextAppearance(sStyleId);
+                // If text is transparent or dark color, don't draw any shadow
+                if (Flags.indicationTextA11yFix() && ColorUtils.calculateLuminance(
+                        mKeyguardIndicationInfo.getTextColor().getDefaultColor())
+                        > MIN_TEXT_SHADOW_LUMINANCE) {
+                    setTextAppearance(sStyleWithDoubleShadowTextId);
+                } else {
+                    setTextAppearance(sStyleId);
+                }
             }
             setBackground(mKeyguardIndicationInfo.getBackground());
             setTextColor(mKeyguardIndicationInfo.getTextColor());
@@ -249,9 +249,6 @@ public class KeyguardIndicationTextView extends TextView {
         setText(mMessage);
         if (forceAssertiveAccessibilityLiveRegion) {
             setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
-        }
-        if (mAlwaysAnnounceText) {
-            announceForAccessibility(mMessage);
         }
     }
 

@@ -85,6 +85,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
@@ -145,8 +146,31 @@ public final class AccessibilityManager {
     /** @hide */
     public static final int DALTONIZER_CORRECT_DEUTERANOMALY = 12;
 
+    // TODO(b/407054269): Clean up usages of AUTOCLICK_DELAY_DEFAULT after
+    // enable_autoclick_indicator is released.
     /** @hide */
     public static final int AUTOCLICK_DELAY_DEFAULT = 600;
+
+    /** @hide */
+    public static final int AUTOCLICK_DELAY_WITH_INDICATOR_DEFAULT = 1000;
+
+    /** @hide */
+    public static final int AUTOCLICK_CURSOR_AREA_SIZE_DEFAULT = 60;
+
+    /** @hide */
+    public static final int AUTOCLICK_CURSOR_AREA_SIZE_MIN = 20;
+
+    /** @hide */
+    public static final int AUTOCLICK_CURSOR_AREA_SIZE_MAX = 100;
+
+    /** @hide */
+    public static final int AUTOCLICK_CURSOR_AREA_INCREMENT_SIZE = 20;
+
+    /** @hide */
+    public static final boolean AUTOCLICK_IGNORE_MINOR_CURSOR_MOVEMENT_DEFAULT = false;
+
+    /** @hide */
+    public static final boolean AUTOCLICK_REVERT_TO_LEFT_CLICK_DEFAULT = true;
 
     /**
      * Activity action: Launch UI to manage which accessibility service or feature is assigned
@@ -623,6 +647,68 @@ public final class AccessibilityManager {
     }
 
     /**
+     * Enables a trusted {@link AccessibilityService} identified by the provided component name.
+     *
+     * <p>In order to succeed, the provided service must:
+     * <ul>
+     *     <li>Belong to the same package name as the caller.</li>
+     *     <li>Belong to a preinstalled package on the device.</li>
+     *     <li>Belong to an allowlist defined by the device.</li>
+     * </ul>
+     *
+     * @param trustedAccessibilityService the component name of the {@link AccessibilityService}
+     * @return {@code true} if the system attempted to start the service, otherwise {@code false}
+     */
+    @FlaggedApi(Flags.FLAG_ENABLE_TRUSTED_ACCESSIBILITY_SERVICE_API)
+    public boolean enableTrustedAccessibilityService(
+            @NonNull ComponentName trustedAccessibilityService) {
+        Objects.requireNonNull(trustedAccessibilityService);
+        final IAccessibilityManager service;
+        final int userId;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return false;
+            }
+            userId = mUserId;
+        }
+        try {
+            return service.enableTrustedAccessibilityService(trustedAccessibilityService, userId);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Set the given component name as a trusted accessibility service so that it bypasses
+     * the regular trust checks in the system.
+     *
+     * <p>This is only used for testing and must be permission-protected against non-system callers.
+     * @param trustedAccessibilityService The component name to set as trusted, or
+     *        {@code null} to clear.
+     * @hide
+     */
+    @TestApi
+    @FlaggedApi(Flags.FLAG_ENABLE_TRUSTED_ACCESSIBILITY_SERVICE_API)
+    @RequiresPermission(Manifest.permission.MANAGE_ACCESSIBILITY)
+    @VisibleForTesting
+    public void setTrustedAccessibilityServiceForTesting(
+            @Nullable ComponentName trustedAccessibilityService) {
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.setTrustedAccessibilityServiceForTesting(trustedAccessibilityService);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * @see AccessibilityInteractionClient#hasAnyDirectConnection
      * @hide
      */
@@ -848,31 +934,18 @@ public final class AccessibilityManager {
     }
 
     /**
-     * Returns the {@link AccessibilityServiceInfo}s of the enabled accessibility services
-     * for a given feedback type.
-     *
-     * @param feedbackTypeFlags The feedback type flags.
-     * @return An unmodifiable list with {@link AccessibilityServiceInfo}s.
-     *
-     * @see AccessibilityServiceInfo#FEEDBACK_AUDIBLE
-     * @see AccessibilityServiceInfo#FEEDBACK_GENERIC
-     * @see AccessibilityServiceInfo#FEEDBACK_HAPTIC
-     * @see AccessibilityServiceInfo#FEEDBACK_SPOKEN
-     * @see AccessibilityServiceInfo#FEEDBACK_VISUAL
-     * @see AccessibilityServiceInfo#FEEDBACK_BRAILLE
+     * @see #getEnabledAccessibilityServiceList(int)
+     * @hide
      */
     public List<AccessibilityServiceInfo> getEnabledAccessibilityServiceList(
-            int feedbackTypeFlags) {
+            int feedbackTypeFlags, int userId) {
         final IAccessibilityManager service;
-        final int userId;
         synchronized (mLock) {
             service = getServiceLocked();
             if (service == null) {
                 return Collections.emptyList();
             }
-            userId = mUserId;
         }
-
         List<AccessibilityServiceInfo> services = null;
         try {
             services = service.getEnabledAccessibilityServiceList(feedbackTypeFlags, userId);
@@ -891,6 +964,29 @@ public final class AccessibilityManager {
         } else {
             return Collections.emptyList();
         }
+    }
+
+    /**
+     * Returns the {@link AccessibilityServiceInfo}s of the enabled accessibility services
+     * for a given feedback type.
+     *
+     * @param feedbackTypeFlags The feedback type flags.
+     * @return An unmodifiable list with {@link AccessibilityServiceInfo}s.
+     *
+     * @see AccessibilityServiceInfo#FEEDBACK_AUDIBLE
+     * @see AccessibilityServiceInfo#FEEDBACK_GENERIC
+     * @see AccessibilityServiceInfo#FEEDBACK_HAPTIC
+     * @see AccessibilityServiceInfo#FEEDBACK_SPOKEN
+     * @see AccessibilityServiceInfo#FEEDBACK_VISUAL
+     * @see AccessibilityServiceInfo#FEEDBACK_BRAILLE
+     */
+    public List<AccessibilityServiceInfo> getEnabledAccessibilityServiceList(
+            int feedbackTypeFlags) {
+        final int userId;
+        synchronized (mLock) {
+            userId = mUserId;
+        }
+        return getEnabledAccessibilityServiceList(feedbackTypeFlags, userId);
     }
 
     /**
@@ -1889,6 +1985,33 @@ public final class AccessibilityManager {
      * @return The list of shortcut target names.
      * @hide
      */
+    @RequiresPermission(Manifest.permission.MANAGE_ACCESSIBILITY)
+    @NonNull
+    public List<String> getAccessibilityShortcutTargets(
+            @UserShortcutType int shortcutType, int userId) {
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+        }
+        if (service != null) {
+            try {
+                return service.getAccessibilityShortcutTargets(shortcutType, userId);
+            } catch (RemoteException re) {
+                re.rethrowFromSystemServer();
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * Returns the list of shortcut target names currently assigned to the given shortcut.
+     * Use of {@link AccessibilityManager#getAccessibilityShortcutTargets(int, int)}
+     * is preferred.
+     *
+     * @param shortcutType The shortcut type.
+     * @return The list of shortcut target names.
+     * @hide
+     */
     @TestApi
     @RequiresPermission(Manifest.permission.MANAGE_ACCESSIBILITY)
     @NonNull
@@ -1900,7 +2023,8 @@ public final class AccessibilityManager {
         }
         if (service != null) {
             try {
-                return service.getAccessibilityShortcutTargets(shortcutType);
+                return service.getAccessibilityShortcutTargets(shortcutType,
+                        UserHandle.USER_CURRENT);
             } catch (RemoteException re) {
                 re.rethrowFromSystemServer();
             }
@@ -2593,6 +2717,28 @@ public final class AccessibilityManager {
         }
         try {
             service.notifyQuickSettingsTilesChanged(userId, tileComponentNames);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Turns on Magnification and zooms in.
+     *
+     * @param displayId which display enabling Magnification
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MANAGE_ACCESSIBILITY)
+    public void enableMagnificationAndZoomIn(int displayId) {
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.enableMagnificationAndZoomIn(displayId);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }

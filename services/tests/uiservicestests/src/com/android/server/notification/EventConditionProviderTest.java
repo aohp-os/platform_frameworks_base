@@ -35,8 +35,6 @@ import android.content.Intent;
 import android.content.pm.UserInfo;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.platform.test.annotations.DisableFlags;
-import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper.RunWithLooper;
@@ -88,6 +86,8 @@ public class EventConditionProviderTest extends UiServiceTestCase {
         mService.mContext = this.getContext();
 
         mContext.addMockSystemService(UserManager.class, mUserManager);
+        when(mUserManager.getProfiles(eq(UserHandle.USER_SYSTEM))).thenReturn(
+                List.of(new UserInfo(UserHandle.USER_SYSTEM, "USER_SYSTEM", 0)));
         when(mUserManager.getProfiles(eq(mUserId))).thenReturn(
                 List.of(new UserInfo(mUserId, "mUserId", 0)));
 
@@ -112,18 +112,6 @@ public class EventConditionProviderTest extends UiServiceTestCase {
     }
 
     @Test
-    @DisableFlags(android.app.Flags.FLAG_MODES_HSUM)
-    public void onBootComplete_flagOff_loadsTrackers() {
-        when(mUserManager.getUserProfiles()).thenReturn(List.of(UserHandle.of(mUserId)));
-
-        mService.onBootComplete();
-
-        assertThat(mService.getTrackers().size()).isEqualTo(1);
-        assertThat(mService.getTrackers().keyAt(0)).isEqualTo(mUserId);
-    }
-
-    @Test
-    @EnableFlags(android.app.Flags.FLAG_MODES_HSUM)
     public void onBootComplete_loadsTrackersForSystemUser() {
         mService.onBootComplete();
 
@@ -133,7 +121,6 @@ public class EventConditionProviderTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_MODES_HSUM)
     public void onUserSwitched_reloadsTrackers() {
         UserHandle someUser = UserHandle.of(42);
         when(mUserManager.getProfiles(eq(42))).thenReturn(List.of(new UserInfo(42, "user 42", 0)));
@@ -146,7 +133,6 @@ public class EventConditionProviderTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_MODES_HSUM)
     public void onUserSwitched_reloadsTrackersIncludingProfiles() {
         UserHandle anotherUser = UserHandle.of(42);
         when(mUserManager.getProfiles(eq(42))).thenReturn(List.of(
@@ -163,7 +149,6 @@ public class EventConditionProviderTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(android.app.Flags.FLAG_MODES_HSUM)
     public void onUserSwitched_sameUser_doesNothing() {
         UserHandle someUser = UserHandle.of(42);
         when(mUserManager.getProfiles(eq(42))).thenReturn(List.of(new UserInfo(42, "user 42", 0)));

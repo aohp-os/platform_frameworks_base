@@ -16,12 +16,11 @@
 
 package android.service.notification;
 
-import android.annotation.FlaggedApi;
+import android.annotation.FloatRange;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.TestApi;
-import android.app.Flags;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -37,26 +36,31 @@ import java.util.Set;
  * Represents the set of device effects (affecting display and device behavior in general) that
  * are applied whenever an {@link android.app.AutomaticZenRule} is active.
  */
-@FlaggedApi(Flags.FLAG_MODES_API)
 public final class ZenDeviceEffects implements Parcelable {
 
     /**
      * Enum for the user-modifiable fields in this object.
+     *
      * @hide
      */
-    @IntDef(flag = true, prefix = { "FIELD_" }, value = {
-            FIELD_GRAYSCALE,
-            FIELD_SUPPRESS_AMBIENT_DISPLAY,
-            FIELD_DIM_WALLPAPER,
-            FIELD_NIGHT_MODE,
-            FIELD_DISABLE_AUTO_BRIGHTNESS,
-            FIELD_DISABLE_TAP_TO_WAKE,
-            FIELD_DISABLE_TILT_TO_WAKE,
-            FIELD_DISABLE_TOUCH,
-            FIELD_MINIMIZE_RADIO_USAGE,
-            FIELD_MAXIMIZE_DOZE,
-            FIELD_EXTRA_EFFECTS
-    })
+    @IntDef(
+            flag = true,
+            prefix = {"FIELD_"},
+            value = {
+                FIELD_GRAYSCALE,
+                FIELD_SUPPRESS_AMBIENT_DISPLAY,
+                FIELD_DIM_WALLPAPER,
+                FIELD_NIGHT_MODE,
+                FIELD_DISABLE_AUTO_BRIGHTNESS,
+                FIELD_DISABLE_TAP_TO_WAKE,
+                FIELD_DISABLE_TILT_TO_WAKE,
+                FIELD_DISABLE_TOUCH,
+                FIELD_MINIMIZE_RADIO_USAGE,
+                FIELD_MAXIMIZE_DOZE,
+                FIELD_NIGHT_LIGHT,
+                FIELD_BRIGHTNESS_CAP,
+                FIELD_EXTRA_EFFECTS
+            })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ModifiableField {}
 
@@ -105,7 +109,15 @@ public final class ZenDeviceEffects implements Parcelable {
      */
     public static final int FIELD_EXTRA_EFFECTS = 1 << 10;
 
+    /** @hide */
+    public static final int FIELD_NIGHT_LIGHT = 1 << 11;
+
+    /** @hide */
+    public static final int FIELD_BRIGHTNESS_CAP = 1 << 12;
+
     private static final int MAX_EFFECTS_LENGTH = 2_000; // characters
+    private static final float BRIGHTNESS_CAP_MIN = 0f;
+    private static final float BRIGHTNESS_CAP_MAX = 1f;
 
     private final boolean mGrayscale;
     private final boolean mSuppressAmbientDisplay;
@@ -118,12 +130,28 @@ public final class ZenDeviceEffects implements Parcelable {
     private final boolean mDisableTouch;
     private final boolean mMinimizeRadioUsage;
     private final boolean mMaximizeDoze;
+    private final boolean mNightLight;
+
+    @Nullable
+    @FloatRange(from = BRIGHTNESS_CAP_MIN, to = BRIGHTNESS_CAP_MAX)
+    private final Float mBrightnessCap;
+
     private final Set<String> mExtraEffects;
 
-    private ZenDeviceEffects(boolean grayscale, boolean suppressAmbientDisplay,
-            boolean dimWallpaper, boolean nightMode, boolean disableAutoBrightness,
-            boolean disableTapToWake, boolean disableTiltToWake, boolean disableTouch,
-            boolean minimizeRadioUsage, boolean maximizeDoze, Set<String> extraEffects) {
+    private ZenDeviceEffects(
+            boolean grayscale,
+            boolean suppressAmbientDisplay,
+            boolean dimWallpaper,
+            boolean nightMode,
+            boolean disableAutoBrightness,
+            boolean disableTapToWake,
+            boolean disableTiltToWake,
+            boolean disableTouch,
+            boolean minimizeRadioUsage,
+            boolean maximizeDoze,
+            boolean nightLight,
+            @Nullable Float brightnessCap,
+            Set<String> extraEffects) {
         mGrayscale = grayscale;
         mSuppressAmbientDisplay = suppressAmbientDisplay;
         mDimWallpaper = dimWallpaper;
@@ -134,11 +162,12 @@ public final class ZenDeviceEffects implements Parcelable {
         mDisableTouch = disableTouch;
         mMinimizeRadioUsage = minimizeRadioUsage;
         mMaximizeDoze = maximizeDoze;
+        mNightLight = nightLight;
+        mBrightnessCap = Flags.applyBrightnessClampingForModes() ? brightnessCap : null;
         mExtraEffects = Collections.unmodifiableSet(extraEffects);
     }
 
     /** @hide */
-    @FlaggedApi(Flags.FLAG_MODES_API)
     public void validate() {
         int extraEffectsLength = 0;
         for (String extraEffect : mExtraEffects) {
@@ -148,6 +177,10 @@ public final class ZenDeviceEffects implements Parcelable {
             throw new IllegalArgumentException(
                     "Total size of extra effects must be at most " + MAX_EFFECTS_LENGTH
                             + " characters");
+        }
+        if (mBrightnessCap != null
+                && (mBrightnessCap < BRIGHTNESS_CAP_MIN || mBrightnessCap > BRIGHTNESS_CAP_MAX)) {
+            throw new IllegalArgumentException("Brightness cap must be between 0f and 1f");
         }
     }
 
@@ -166,14 +199,27 @@ public final class ZenDeviceEffects implements Parcelable {
                 && this.mDisableTouch == that.mDisableTouch
                 && this.mMinimizeRadioUsage == that.mMinimizeRadioUsage
                 && this.mMaximizeDoze == that.mMaximizeDoze
+                && this.mNightLight == that.mNightLight
+                && Objects.equals(this.mBrightnessCap, that.mBrightnessCap)
                 && Objects.equals(this.mExtraEffects, that.mExtraEffects);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mGrayscale, mSuppressAmbientDisplay, mDimWallpaper, mNightMode,
-                mDisableAutoBrightness, mDisableTapToWake, mDisableTiltToWake, mDisableTouch,
-                mMinimizeRadioUsage, mMaximizeDoze, mExtraEffects);
+        return Objects.hash(
+                mGrayscale,
+                mSuppressAmbientDisplay,
+                mDimWallpaper,
+                mNightMode,
+                mDisableAutoBrightness,
+                mDisableTapToWake,
+                mDisableTiltToWake,
+                mDisableTouch,
+                mMinimizeRadioUsage,
+                mMaximizeDoze,
+                mNightLight,
+                mBrightnessCap,
+                mExtraEffects);
     }
 
     @Override
@@ -189,6 +235,8 @@ public final class ZenDeviceEffects implements Parcelable {
         if (mDisableTouch) effects.add("disableTouch");
         if (mMinimizeRadioUsage) effects.add("minimizeRadioUsage");
         if (mMaximizeDoze) effects.add("maximizeDoze");
+        if (mNightLight) effects.add("nightLight");
+        if (mBrightnessCap != null) effects.add("brightnessCap=" + mBrightnessCap + "%");
         if (mExtraEffects.size() > 0) {
             effects.add("extraEffects=[" + String.join(",", mExtraEffects) + "]");
         }
@@ -227,6 +275,12 @@ public final class ZenDeviceEffects implements Parcelable {
         }
         if ((bitmask & FIELD_MAXIMIZE_DOZE) != 0) {
             modified.add("FIELD_MAXIMIZE_DOZE");
+        }
+        if (((bitmask) & FIELD_NIGHT_LIGHT) != 0) {
+            modified.add("FIELD_NIGHT_LIGHT");
+        }
+        if (((bitmask) & FIELD_BRIGHTNESS_CAP) != 0) {
+            modified.add("FIELD_BRIGHTNESS_CAP");
         }
         if ((bitmask & FIELD_EXTRA_EFFECTS) != 0) {
             modified.add("FIELD_EXTRA_EFFECTS");
@@ -313,6 +367,28 @@ public final class ZenDeviceEffects implements Parcelable {
     }
 
     /**
+     * Whether the night display transformation should be activated while the rule is active.
+     *
+     * @hide
+     */
+    public boolean shouldUseNightLight() {
+        return mNightLight;
+    }
+
+    /**
+     * Gets the brightness cap that should be applied while the rule is active. This is reflected as
+     * a {@code float} normalized to a range of [0, 1] where 1 indicates the maximum brightness
+     * supported by the display.
+     *
+     * @hide
+     */
+    @Nullable
+    @FloatRange(from = BRIGHTNESS_CAP_MIN, to = BRIGHTNESS_CAP_MAX)
+    public Float getBrightnessCap() {
+        return mBrightnessCap;
+    }
+
+    /**
      * (Immutable) set of extra effects to be applied while the rule is active. Extra effects are
      * not used in AOSP, but OEMs may add support for them by providing a custom
      * {@link DeviceEffectsApplier}.
@@ -329,29 +405,48 @@ public final class ZenDeviceEffects implements Parcelable {
      * @hide
      */
     public boolean hasEffects() {
-        return mGrayscale || mSuppressAmbientDisplay || mDimWallpaper || mNightMode
-                || mDisableAutoBrightness || mDisableTapToWake || mDisableTiltToWake
-                || mDisableTouch || mMinimizeRadioUsage || mMaximizeDoze
+        return mGrayscale
+                || mSuppressAmbientDisplay
+                || mDimWallpaper
+                || mNightMode
+                || mDisableAutoBrightness
+                || mDisableTapToWake
+                || mDisableTiltToWake
+                || mDisableTouch
+                || mMinimizeRadioUsage
+                || mMaximizeDoze
+                || mNightLight
+                || mBrightnessCap != null
                 || mExtraEffects.size() > 0;
     }
 
     /** {@link Parcelable.Creator} that instantiates {@link ZenDeviceEffects} objects. */
     @NonNull
-    public static final Creator<ZenDeviceEffects> CREATOR = new Creator<ZenDeviceEffects>() {
-        @Override
-        public ZenDeviceEffects createFromParcel(Parcel in) {
-            return new ZenDeviceEffects(in.readBoolean(),
-                    in.readBoolean(), in.readBoolean(), in.readBoolean(), in.readBoolean(),
-                    in.readBoolean(), in.readBoolean(), in.readBoolean(), in.readBoolean(),
-                    in.readBoolean(),
-                    Set.of(in.readArray(String.class.getClassLoader(), String.class)));
-        }
+    public static final Creator<ZenDeviceEffects> CREATOR =
+            new Creator<ZenDeviceEffects>() {
+                @Override
+                public ZenDeviceEffects createFromParcel(Parcel in) {
+                    return new ZenDeviceEffects(
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean(),
+                            in.readBoolean() ? in.readFloat() : null,
+                            Set.of(in.readArray(String.class.getClassLoader(), String.class)));
+                }
 
-        @Override
-        public ZenDeviceEffects[] newArray(int size) {
-            return new ZenDeviceEffects[size];
-        }
-    };
+                @Override
+                public ZenDeviceEffects[] newArray(int size) {
+                    return new ZenDeviceEffects[size];
+                }
+            };
 
     @Override
     public int describeContents() {
@@ -370,11 +465,17 @@ public final class ZenDeviceEffects implements Parcelable {
         dest.writeBoolean(mDisableTouch);
         dest.writeBoolean(mMinimizeRadioUsage);
         dest.writeBoolean(mMaximizeDoze);
+        dest.writeBoolean(mNightLight);
+        if (mBrightnessCap != null) {
+            dest.writeBoolean(/* val= */ true);
+            dest.writeFloat(mBrightnessCap);
+        } else {
+            dest.writeBoolean(/* val= */ false);
+        }
         dest.writeArray(mExtraEffects.toArray(new String[0]));
     }
 
     /** Builder class for {@link ZenDeviceEffects} objects. */
-    @FlaggedApi(Flags.FLAG_MODES_API)
     public static final class Builder {
 
         private boolean mGrayscale;
@@ -387,6 +488,8 @@ public final class ZenDeviceEffects implements Parcelable {
         private boolean mDisableTouch;
         private boolean mMinimizeRadioUsage;
         private boolean mMaximizeDoze;
+        private boolean mNightLight;
+        @Nullable private Float mBrightnessCap = null;
         private final HashSet<String> mExtraEffects = new HashSet<>();
 
         /**
@@ -410,6 +513,8 @@ public final class ZenDeviceEffects implements Parcelable {
             mDisableTouch = zenDeviceEffects.shouldDisableTouch();
             mMinimizeRadioUsage = zenDeviceEffects.shouldMinimizeRadioUsage();
             mMaximizeDoze = zenDeviceEffects.shouldMaximizeDoze();
+            mNightLight = zenDeviceEffects.shouldUseNightLight();
+            mBrightnessCap = zenDeviceEffects.getBrightnessCap();
             mExtraEffects.addAll(zenDeviceEffects.getExtraEffects());
         }
 
@@ -512,6 +617,33 @@ public final class ZenDeviceEffects implements Parcelable {
         }
 
         /**
+         * Sets whether the night display transformation should be activated while the rule is
+         * active.
+         *
+         * @hide
+         */
+        @NonNull
+        public Builder setShouldUseNightLight(boolean nightLight) {
+            mNightLight = nightLight;
+            return this;
+        }
+
+        /**
+         * Sets whether the maximum brightness of the display should be capped while the rule is
+         * active. This is reflected as a {@code float} normalized to a range of [0, 1] where 1
+         * indicates the maximum brightness supported by the display.
+         *
+         * @hide
+         */
+        @NonNull
+        public Builder setBrightnessCap(
+                @Nullable @FloatRange(from = BRIGHTNESS_CAP_MIN, to = BRIGHTNESS_CAP_MAX)
+                        Float brightnessCap) {
+            mBrightnessCap = Flags.applyBrightnessClampingForModes() ? brightnessCap : null;
+            return this;
+        }
+
+        /**
          * Sets the extra effects to be applied while the rule is active. Extra effects are not
          * used in AOSP, but OEMs may add support for them by providing a custom
          * {@link DeviceEffectsApplier}.
@@ -560,8 +692,12 @@ public final class ZenDeviceEffects implements Parcelable {
         }
 
         /**
-         * Applies the effects that are {@code true} on the supplied {@link ZenDeviceEffects} to
-         * this builder (essentially logically-ORing the effect set).
+         * Applies the supplied {@link ZenDeviceEffects} to this builder which is consolidated on a
+         * case by case basis choosing the most restrictive option. For effects tracked with a
+         * boolean value, currently the structure dictates {@code true} to be most restrictive,
+         * essentially logically-ORing the effect set. For {@link #getBrightnessCap()}, the lower
+         * range is chosen.
+         *
          * @hide
          */
         @NonNull
@@ -577,6 +713,13 @@ public final class ZenDeviceEffects implements Parcelable {
             if (effects.shouldDisableTouch()) setShouldDisableTouch(true);
             if (effects.shouldMinimizeRadioUsage()) setShouldMinimizeRadioUsage(true);
             if (effects.shouldMaximizeDoze()) setShouldMaximizeDoze(true);
+            if (effects.shouldUseNightLight()) setShouldUseNightLight(true);
+            if (mBrightnessCap == null) {
+                setBrightnessCap(effects.getBrightnessCap());
+            } else if (effects.getBrightnessCap() != null) {
+                // BrightnessCap for this and other ZenDeviceEffects is non null.
+                setBrightnessCap(Math.min(effects.getBrightnessCap(), mBrightnessCap));
+            }
             addExtraEffects(effects.getExtraEffects());
             return this;
         }
@@ -584,10 +727,20 @@ public final class ZenDeviceEffects implements Parcelable {
         /** Builds a {@link ZenDeviceEffects} object based on the builder's state. */
         @NonNull
         public ZenDeviceEffects build() {
-            return new ZenDeviceEffects(mGrayscale,
-                    mSuppressAmbientDisplay, mDimWallpaper, mNightMode, mDisableAutoBrightness,
-                    mDisableTapToWake, mDisableTiltToWake, mDisableTouch, mMinimizeRadioUsage,
-                    mMaximizeDoze, mExtraEffects);
+            return new ZenDeviceEffects(
+                    mGrayscale,
+                    mSuppressAmbientDisplay,
+                    mDimWallpaper,
+                    mNightMode,
+                    mDisableAutoBrightness,
+                    mDisableTapToWake,
+                    mDisableTiltToWake,
+                    mDisableTouch,
+                    mMinimizeRadioUsage,
+                    mMaximizeDoze,
+                    mNightLight,
+                    mBrightnessCap,
+                    mExtraEffects);
         }
     }
 }

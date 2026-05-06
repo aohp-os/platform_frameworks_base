@@ -20,8 +20,11 @@ import android.app.appfunctions.ExecuteAppFunctionAidlRequest;
 import android.app.appfunctions.IAppFunctionEnabledCallback;
 import android.app.appfunctions.IExecuteAppFunctionCallback;
 import android.os.ICancellationSignal;
-
 import android.os.UserHandle;
+import android.content.Intent;
+import android.content.pm.SignedPackageParcel;
+
+import java.util.List;
 /**
  * Defines the interface for apps to interact with the app function execution service
  * {@code AppFunctionManagerService} running in the system server process.
@@ -34,7 +37,7 @@ interface IAppFunctionManager {
     * @param request the request to execute an app function.
     * @param callback the callback to report the result.
     */
-    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(anyOf = {android.Manifest.permission.EXECUTE_APP_FUNCTIONS_TRUSTED,android.Manifest.permission.EXECUTE_APP_FUNCTIONS}, conditional = true)")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(value = android.Manifest.permission.EXECUTE_APP_FUNCTIONS, conditional = true)")
     ICancellationSignal executeAppFunction(
         in ExecuteAppFunctionAidlRequest request,
         in IExecuteAppFunctionCallback callback
@@ -50,4 +53,45 @@ interface IAppFunctionManager {
         int enabledState,
         in IAppFunctionEnabledCallback callback
     );
+
+    int getAccessRequestState(
+        in String agentPackageName,
+        int agentUserId,
+        in String targetPackageName,
+        int targetUserId
+    );
+
+    int getAccessFlags(
+        in String agentPackageName,
+        int agentUserId,
+        in String targetPackageName,
+        int targetUserId
+    );
+
+    boolean updateAccessFlags(
+        in String agentPackageName,
+        int agentUserId,
+        in String targetPackageName,
+        int targetUserId,
+        int flagMask,
+        int flags
+    );
+
+    void revokeSelfAccess(in String targetPackageName);
+
+    List<String> getValidAgents(
+        int userId
+    );
+
+    List<String> getValidTargets(
+        int targetUserId
+    );
+
+    @EnforcePermission("MANAGE_APP_FUNCTION_ACCESS")
+    List<SignedPackageParcel> getAgentAllowlist();
+
+    @EnforcePermission("MANAGE_APP_FUNCTION_ACCESS")
+    void clearAccessHistory(int userId);
+
+    Intent createRequestAccessIntent(in String targetPackageName);
 }

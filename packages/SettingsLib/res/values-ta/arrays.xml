@@ -200,7 +200,7 @@
   </string-array>
   <string-array name="select_logpersist_summaries">
     <item msgid="97587758561106269">"ஆஃப்"</item>
-    <item msgid="7126170197336963369">"தற்காலிகமாகச் சேமித்த எல்லா பதிவுகளும்"</item>
+    <item msgid="7126170197336963369">"எல்லா லாக் பஃபர்களும்"</item>
     <item msgid="7167543126036181392">"எல்லாம் (தற்காலிகமாகச் சேமித்த ரேடியோ பதிவுகள் தவிர்த்து)"</item>
     <item msgid="5135340178556563979">"கெர்னல் லாக் பஃபர் மட்டும்"</item>
   </string-array>
@@ -267,7 +267,7 @@
     <item msgid="3474333938380896988">"நிறக்குருடின் பகுதிகளைக் காட்டு"</item>
   </string-array>
   <string-array name="app_process_limit_entries">
-    <item msgid="794656271086646068">"நிலையான வரம்பு"</item>
+    <item msgid="794656271086646068">"வழக்கமான வரம்பு"</item>
     <item msgid="8628438298170567201">"பின்புலச் செயல்முறைகள் இல்லை"</item>
     <item msgid="915752993383950932">"அதிகபட்சமாக 1 செயல்முறை"</item>
     <item msgid="8554877790859095133">"அதிகபட்சமாக 2 செயல்முறைகள்"</item>
@@ -287,5 +287,23 @@
     <item msgid="2646486108212979598">"1"</item>
     <item msgid="3753634915787796632">"2"</item>
     <item msgid="4779928470672877922">"3"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_entries">
+    <item msgid="816770658383209617">"சாதனக் காட்சி மட்டும் (இயல்பு)"</item>
+    <item msgid="9161645858025071955">"வெளிப்புறக் காட்சி"</item>
+    <item msgid="23651860565814477">"சமீபத்திய நிலைப் பட்டித் தொடுகை"</item>
+    <item msgid="7521112827893653392">"ஃபோகஸ் அடிப்படையிலானது"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_summaries">
+    <item msgid="2964753205732912921">"சாதனக் காட்சியில் மட்டும் ஷேடைக் காட்டும்"</item>
+    <item msgid="1955398604822147783">"ஒற்றை வெளிப்புறக் காட்சியில் ஷேடைக் காட்டும்"</item>
+    <item msgid="391477482416751568">"கடைசியாக நிலைப் பட்டி தொடர்புகொண்ட ஷேடைக் காட்சியில் காட்டும்"</item>
+    <item msgid="1746820128097981528">"கடைசியாக ஃபோகஸ் செய்யப்பட்ட காட்சியில் ஷேடைக் காட்டும்"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_values">
+    <item msgid="3055776101992426514">"default_display"</item>
+    <item msgid="774789415968826925">"any_external_display"</item>
+    <item msgid="7880769915418638436">"status_bar_latest_touch"</item>
+    <item msgid="4313165186636015195">"focused_display"</item>
   </string-array>
 </resources>

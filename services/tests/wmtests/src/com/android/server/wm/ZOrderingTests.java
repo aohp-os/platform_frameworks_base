@@ -43,6 +43,7 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
 import static com.android.server.wm.WindowStateAnimator.PRESERVED_SURFACE_LAYER;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -51,7 +52,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.platform.test.annotations.Presubmit;
 import android.view.SurfaceControl;
-import android.window.ScreenCapture;
+import android.window.ScreenCaptureInternal;
 
 import androidx.test.filters.SmallTest;
 
@@ -221,12 +222,12 @@ public class ZOrderingTests extends WindowTestsBase {
     }
 
     WindowState createWindow(String name) {
-        return createWindow(null, TYPE_BASE_APPLICATION, mDisplayContent, name);
+        return newWindowBuilder(name, TYPE_BASE_APPLICATION).setDisplay(mDisplayContent).build();
     }
 
     @Test
     public void testAssignWindowLayers_ForImeWithNoTarget() {
-        mDisplayContent.setImeLayeringTarget(null);
+        mDisplayContent.setImeLayeringTarget(null /* target */);
         mDisplayContent.assignChildLayers(mTransaction);
 
         // The Ime has an higher base layer than app windows and lower base layer than system
@@ -263,12 +264,12 @@ public class ZOrderingTests extends WindowTestsBase {
     @Test
     public void testAssignWindowLayers_ForImeWithAppTargetWithChildWindows() {
         final WindowState imeAppTarget = createWindow("imeAppTarget");
-        final WindowState imeAppTargetChildAboveWindow = createWindow(imeAppTarget,
-                TYPE_APPLICATION_ATTACHED_DIALOG, imeAppTarget.mToken,
-                "imeAppTargetChildAboveWindow");
-        final WindowState imeAppTargetChildBelowWindow = createWindow(imeAppTarget,
-                TYPE_APPLICATION_MEDIA_OVERLAY, imeAppTarget.mToken,
-                "imeAppTargetChildBelowWindow");
+        final WindowState imeAppTargetChildAboveWindow = newWindowBuilder(
+                "imeAppTargetChildAboveWindow", TYPE_APPLICATION_ATTACHED_DIALOG).setParent(
+                imeAppTarget).setWindowToken(imeAppTarget.mToken).build();
+        final WindowState imeAppTargetChildBelowWindow = newWindowBuilder(
+                "imeAppTargetChildBelowWindow", TYPE_APPLICATION_MEDIA_OVERLAY).setParent(
+                imeAppTarget).setWindowToken(imeAppTarget.mToken).build();
 
         mDisplayContent.setImeLayeringTarget(imeAppTarget);
         makeWindowVisible(mImeWindow);
@@ -293,8 +294,11 @@ public class ZOrderingTests extends WindowTestsBase {
         final WindowState imeAppTarget = createWindow("imeAppTarget");
         final WindowState appAboveImeTarget = createWindow("appAboveImeTarget");
 
+        mDisplayContent.setImeInputTarget(imeAppTarget);
         mDisplayContent.setImeLayeringTarget(imeAppTarget);
-        mDisplayContent.setImeControlTarget(imeAppTarget);
+        assertWithMessage("IME control target was updated")
+                .that(mDisplayContent.getImeControlTarget()).isEqualTo(imeAppTarget);
+        mDisplayContent.mTransitionController.mBuildingTransitionLayers = true;
         mDisplayContent.assignChildLayers(mTransaction);
 
         // Ime should be above all app windows except for non-fullscreen app window above it and
@@ -312,16 +316,16 @@ public class ZOrderingTests extends WindowTestsBase {
     }
 
     @Test
-    public void testAssignWindowLayers_ForImeNonAppImeTarget() {
-        final WindowState imeSystemOverlayTarget = createWindow(null, TYPE_SYSTEM_OVERLAY,
-                mDisplayContent, "imeSystemOverlayTarget",
-                true /* ownerCanAddInternalSystemWindow */);
+    public void testAssignWindowLayers_ForImeNonAppImeLayeringTarget() {
+        final WindowState imeSystemOverlayTarget = newWindowBuilder("imeSystemOverlayTarget",
+                TYPE_SYSTEM_OVERLAY).setDisplay(mDisplayContent).setOwnerCanAddInternalSystemWindow(
+                true).build();
 
         mDisplayContent.setImeLayeringTarget(imeSystemOverlayTarget);
         mDisplayContent.assignChildLayers(mTransaction);
 
-        // The IME target base layer is higher than all window except for the nav bar window, so the
-        // IME should be above all windows except for the nav bar.
+        // The IME layering target base layer is higher than all window except for the nav bar
+        // window, so the IME should be above all windows except for the nav bar.
         assertWindowHigher(mImeWindow, imeSystemOverlayTarget);
         assertWindowHigher(mImeWindow, mChildAppWindowAbove);
         assertWindowHigher(mImeWindow, mAppWindow);
@@ -329,7 +333,7 @@ public class ZOrderingTests extends WindowTestsBase {
         // The IME has a higher base layer than the status bar so we may expect it to go
         // above the status bar once they are both in the Non-App layer, as past versions of this
         // test enforced. However this seems like the wrong behavior unless the status bar is the
-        // IME target.
+        // IME layering target.
         assertWindowHigher(mNavBarWindow, mImeWindow);
         assertWindowHigher(mStatusBarWindow, mImeWindow);
 
@@ -339,8 +343,10 @@ public class ZOrderingTests extends WindowTestsBase {
 
     @Test
     public void testAssignWindowLayers_ForStatusBarImeTarget() {
+        mDisplayContent.setImeInputTarget(mStatusBarWindow);
         mDisplayContent.setImeLayeringTarget(mStatusBarWindow);
-        mDisplayContent.setImeControlTarget(mStatusBarWindow);
+        assertWithMessage("IME control target was updated")
+                .that(mDisplayContent.getImeControlTarget()).isEqualTo(mStatusBarWindow);
         mDisplayContent.assignChildLayers(mTransaction);
 
         assertWindowHigher(mImeWindow, mChildAppWindowAbove);
@@ -354,20 +360,22 @@ public class ZOrderingTests extends WindowTestsBase {
     @Test
     public void testStackLayers() {
         final WindowState anyWindow1 = createWindow("anyWindow");
-        final WindowState pinnedStackWindow = createWindow(null, WINDOWING_MODE_PINNED,
-                ACTIVITY_TYPE_STANDARD, TYPE_BASE_APPLICATION, mDisplayContent,
-                "pinnedStackWindow");
-        final WindowState dockedStackWindow = createWindow(null,
-                WINDOWING_MODE_MULTI_WINDOW, ACTIVITY_TYPE_STANDARD, TYPE_BASE_APPLICATION,
-                mDisplayContent, "dockedStackWindow");
-        final WindowState assistantStackWindow = createWindow(null,
-                WINDOWING_MODE_FULLSCREEN, ACTIVITY_TYPE_ASSISTANT, TYPE_BASE_APPLICATION,
-                mDisplayContent, "assistantStackWindow");
-        final WindowState homeActivityWindow = createWindow(null, WINDOWING_MODE_FULLSCREEN,
-                ACTIVITY_TYPE_HOME, TYPE_BASE_APPLICATION,
-                mDisplayContent, "homeActivityWindow");
+        final WindowState pinnedStackWindow = newWindowBuilder("pinnedStackWindow",
+                TYPE_BASE_APPLICATION).setWindowingMode(WINDOWING_MODE_PINNED).setActivityType(
+                ACTIVITY_TYPE_STANDARD).setDisplay(mDisplayContent).build();
+        final WindowState dockedStackWindow = newWindowBuilder("dockedStackWindow",
+                TYPE_BASE_APPLICATION).setWindowingMode(
+                WINDOWING_MODE_MULTI_WINDOW).setActivityType(ACTIVITY_TYPE_STANDARD).setDisplay(
+                mDisplayContent).build();
+        final WindowState assistantStackWindow = newWindowBuilder("assistantStackWindow",
+                TYPE_BASE_APPLICATION).setWindowingMode(WINDOWING_MODE_FULLSCREEN).setActivityType(
+                ACTIVITY_TYPE_ASSISTANT).setDisplay(mDisplayContent).build();
+        final WindowState homeActivityWindow = newWindowBuilder("homeActivityWindow",
+                TYPE_BASE_APPLICATION).setWindowingMode(WINDOWING_MODE_FULLSCREEN).setActivityType(
+                ACTIVITY_TYPE_HOME).setDisplay(mDisplayContent).build();
         final WindowState anyWindow2 = createWindow("anyWindow2");
 
+        mDisplayContent.mTransitionController.mBuildingTransitionLayers = true;
         mDisplayContent.assignChildLayers(mTransaction);
 
         assertWindowHigher(dockedStackWindow, homeActivityWindow);
@@ -383,13 +391,12 @@ public class ZOrderingTests extends WindowTestsBase {
 
     @Test
     public void testAssignWindowLayers_ForSysUiPanels() {
-        final WindowState navBarPanel =
-                createWindow(null, TYPE_NAVIGATION_BAR_PANEL, mDisplayContent, "NavBarPanel");
-        final WindowState statusBarPanel =
-                createWindow(null, TYPE_STATUS_BAR_ADDITIONAL, mDisplayContent,
-                        "StatusBarAdditional");
-        final WindowState statusBarSubPanel =
-                createWindow(null, TYPE_STATUS_BAR_SUB_PANEL, mDisplayContent, "StatusBarSubPanel");
+        final WindowState navBarPanel = newWindowBuilder("NavBarPanel",
+                TYPE_NAVIGATION_BAR_PANEL).setDisplay(mDisplayContent).build();
+        final WindowState statusBarPanel = newWindowBuilder("StatusBarAdditional",
+                TYPE_STATUS_BAR_ADDITIONAL).setDisplay(mDisplayContent).build();
+        final WindowState statusBarSubPanel = newWindowBuilder("StatusBarSubPanel",
+                TYPE_STATUS_BAR_SUB_PANEL).setDisplay(mDisplayContent).build();
         mDisplayContent.assignChildLayers(mTransaction);
 
         // Ime should be above all app windows and below system windows if it is targeting an app
@@ -401,15 +408,17 @@ public class ZOrderingTests extends WindowTestsBase {
 
     @Test
     public void testAssignWindowLayers_ForImeOnPopupImeLayeringTarget() {
-        final WindowState imeAppTarget = createWindow(null, TYPE_APPLICATION,
-                mAppWindow.mActivityRecord, "imeAppTarget");
+        final WindowState imeAppTarget = newWindowBuilder("imeAppTarget",
+                TYPE_APPLICATION).setWindowToken(mAppWindow.mActivityRecord).build();
         mDisplayContent.setImeInputTarget(imeAppTarget);
         mDisplayContent.setImeLayeringTarget(imeAppTarget);
-        mDisplayContent.setImeControlTarget(imeAppTarget);
+        assertWithMessage("IME control target was updated")
+                .that(mDisplayContent.getImeControlTarget()).isEqualTo(imeAppTarget);
 
         // Set a popup IME layering target and keeps the original IME control target behinds it.
-        final WindowState popupImeTargetWin = createWindow(imeAppTarget,
-                TYPE_APPLICATION_SUB_PANEL, mAppWindow.mActivityRecord, "popupImeTargetWin");
+        final WindowState popupImeTargetWin = newWindowBuilder("popupImeTargetWin",
+                TYPE_APPLICATION_SUB_PANEL).setParent(imeAppTarget).setWindowToken(
+                mAppWindow.mActivityRecord).build();
         mDisplayContent.setImeLayeringTarget(popupImeTargetWin);
         mDisplayContent.updateImeParent();
 
@@ -424,11 +433,11 @@ public class ZOrderingTests extends WindowTestsBase {
         // then we can drop all negative layering on the windowing side.
 
         final WindowState anyWindow = createWindow("anyWindow");
-        final WindowState child = createWindow(anyWindow, TYPE_APPLICATION_MEDIA, mDisplayContent,
-                "TypeApplicationMediaChild");
-        final WindowState mediaOverlayChild = createWindow(anyWindow,
-                TYPE_APPLICATION_MEDIA_OVERLAY,
-                mDisplayContent, "TypeApplicationMediaOverlayChild");
+        final WindowState child = newWindowBuilder("TypeApplicationMediaChild",
+                TYPE_APPLICATION_MEDIA).setParent(anyWindow).setDisplay(mDisplayContent).build();
+        final WindowState mediaOverlayChild = newWindowBuilder("TypeApplicationMediaOverlayChild",
+                TYPE_APPLICATION_MEDIA_OVERLAY).setParent(anyWindow).setDisplay(
+                mDisplayContent).build();
 
         mDisplayContent.assignChildLayers(mTransaction);
 
@@ -440,14 +449,17 @@ public class ZOrderingTests extends WindowTestsBase {
     public void testAssignWindowLayers_ForPostivelyZOrderedSubtype() {
         final WindowState anyWindow = createWindow("anyWindow");
         final ArrayList<WindowState> childList = new ArrayList<>();
-        childList.add(createWindow(anyWindow, TYPE_APPLICATION_PANEL, mDisplayContent,
-                "TypeApplicationPanelChild"));
-        childList.add(createWindow(anyWindow, TYPE_APPLICATION_SUB_PANEL, mDisplayContent,
-                "TypeApplicationSubPanelChild"));
-        childList.add(createWindow(anyWindow, TYPE_APPLICATION_ATTACHED_DIALOG, mDisplayContent,
-                "TypeApplicationAttachedDialogChild"));
-        childList.add(createWindow(anyWindow, TYPE_APPLICATION_ABOVE_SUB_PANEL, mDisplayContent,
-                "TypeApplicationAboveSubPanelPanelChild"));
+        childList.add(newWindowBuilder("TypeApplicationPanelChild",
+                TYPE_APPLICATION_PANEL).setParent(anyWindow).setDisplay(mDisplayContent).build());
+        childList.add(newWindowBuilder("TypeApplicationSubPanelChild",
+                TYPE_APPLICATION_SUB_PANEL).setParent(anyWindow).setDisplay(
+                mDisplayContent).build());
+        childList.add(newWindowBuilder("TypeApplicationAttachedDialogChild",
+                TYPE_APPLICATION_ATTACHED_DIALOG).setParent(anyWindow).setDisplay(
+                mDisplayContent).build());
+        childList.add(newWindowBuilder("TypeApplicationAboveSubPanelPanelChild",
+                TYPE_APPLICATION_ABOVE_SUB_PANEL).setParent(anyWindow).setDisplay(
+                mDisplayContent).build());
 
         final LayerRecordingTransaction t = mTransaction;
         mDisplayContent.assignChildLayers(t);
@@ -460,17 +472,19 @@ public class ZOrderingTests extends WindowTestsBase {
 
     @Test
     public void testPopupWindowAndParentIsImeTarget_expectHigherThanIme_inMultiWindow() {
-        // Simulate the app window is in multi windowing mode and being IME target
+        // Simulate the app window is in multi windowing mode and is IME layering and input target
         mAppWindow.getConfiguration().windowConfiguration.setWindowingMode(
                 WINDOWING_MODE_MULTI_WINDOW);
-        mDisplayContent.setImeLayeringTarget(mAppWindow);
         mDisplayContent.setImeInputTarget(mAppWindow);
+        mDisplayContent.setImeLayeringTarget(mAppWindow);
+        assertWithMessage("IME control target was updated")
+                .that(mDisplayContent.getImeControlTarget()).isEqualTo(mAppWindow);
         makeWindowVisible(mImeWindow);
 
         // Create a popupWindow
         assertWindowHigher(mImeWindow, mAppWindow);
-        final WindowState popupWindow = createWindow(mAppWindow, TYPE_APPLICATION_PANEL,
-                mDisplayContent, "PopupWindow");
+        final WindowState popupWindow = newWindowBuilder("PopupWindow",
+                TYPE_APPLICATION_PANEL).setParent(mAppWindow).setDisplay(mDisplayContent).build();
         spyOn(popupWindow);
 
         mDisplayContent.assignChildLayers(mTransaction);
@@ -484,16 +498,19 @@ public class ZOrderingTests extends WindowTestsBase {
 
     @Test
     public void testSystemDialogWindow_expectHigherThanIme_inMultiWindow() {
-        // Simulate the app window is in multi windowing mode and being IME target
+        // Simulate the app window is in multi windowing mode and is IME layering and input target
         mAppWindow.getConfiguration().windowConfiguration.setWindowingMode(
                 WINDOWING_MODE_MULTI_WINDOW);
-        mDisplayContent.setImeLayeringTarget(mAppWindow);
         mDisplayContent.setImeInputTarget(mAppWindow);
+        mDisplayContent.setImeLayeringTarget(mAppWindow);
+        assertWithMessage("IME control target was updated")
+                .that(mDisplayContent.getImeControlTarget()).isEqualTo(mAppWindow);
         makeWindowVisible(mImeWindow);
 
         // Create a popupWindow
-        final WindowState systemDialogWindow = createWindow(null, TYPE_SECURE_SYSTEM_OVERLAY,
-                mDisplayContent, "SystemDialog", true);
+        final WindowState systemDialogWindow = newWindowBuilder("SystemDialog",
+                TYPE_SECURE_SYSTEM_OVERLAY).setDisplay(
+                mDisplayContent).setOwnerCanAddInternalSystemWindow(true).build();
         systemDialogWindow.mAttrs.flags |= FLAG_ALT_FOCUSABLE_IM;
         spyOn(systemDialogWindow);
 
@@ -511,20 +528,20 @@ public class ZOrderingTests extends WindowTestsBase {
         final Task task = createTask(mDisplayContent);
         final WindowState imeAppTarget = createAppWindow(task, TYPE_APPLICATION, "imeAppTarget");
         final Rect bounds = mImeWindow.getParentFrame();
-        final ScreenCapture.ScreenshotHardwareBuffer imeBuffer =
-                ScreenCapture.captureLayersExcluding(mImeWindow.getSurfaceControl(),
-                bounds, 1.0f, PixelFormat.RGB_565, null);
+        final ScreenCaptureInternal.ScreenshotHardwareBuffer imeBuffer =
+                ScreenCaptureInternal.captureLayersExcluding(
+                        mImeWindow.getSurfaceControl(), bounds, 1.0f, PixelFormat.RGB_565, null);
 
         spyOn(mDisplayContent.mWmService.mTaskSnapshotController);
         doReturn(imeBuffer).when(mDisplayContent.mWmService.mTaskSnapshotController)
-                .snapshotImeFromAttachedTask(task);
+                .screenshotImeFromAttachedTask(task);
 
         mDisplayContent.showImeScreenshot(imeAppTarget);
 
         assertEquals(imeAppTarget, mDisplayContent.mImeScreenshot.getImeTarget());
         assertNotNull(mDisplayContent.mImeScreenshot);
-        assertZOrderGreaterThan(mTransaction,
-                mDisplayContent.mImeScreenshot.getImeScreenshotSurface(),
+        assertNotNull(imeBuffer);
+        assertZOrderGreaterThan(mTransaction, mDisplayContent.mImeScreenshot.getSurface(),
                 imeAppTarget.mSurfaceControl);
     }
 }

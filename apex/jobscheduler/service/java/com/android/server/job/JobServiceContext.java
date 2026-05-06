@@ -16,6 +16,8 @@
 
 package com.android.server.job;
 
+import static android.app.job.JobParameters.OVERRIDE_HANDLE_ABANDONED_JOBS;
+
 import static com.android.server.job.JobConcurrencyManager.WORK_TYPE_NONE;
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 import static com.android.server.job.JobSchedulerService.safelyScaleBytesToKBForHistogram;
@@ -71,6 +73,7 @@ import com.android.modules.expresslog.Histogram;
 import com.android.server.EventLogTags;
 import com.android.server.LocalServices;
 import com.android.server.job.controllers.JobStatus;
+import com.android.server.utils.AnrTimer;
 
 import java.util.Objects;
 
@@ -317,6 +320,40 @@ public final class JobServiceContext implements ServiceConnection {
         }
     }
 
+    // All instances of JobAnrTimer share the same arguments.
+    private static final AnrTimer.Args sAnrTimerArgs =
+            new AnrTimer.Args().enable(com.android.server.utils.Flags.anrTimerForJobService());
+
+    /**
+     * An AnrTimer for the JobServiceContext.  There is one instance for each JobServiceContext
+     * (these objects are not large).  For convenience, simple no-argument methods are provided
+     * which use 'this'.
+     */
+    private class JobAnrTimer extends AnrTimer<JobCallback> {
+        JobAnrTimer() {
+            super(mCallbackHandler, MSG_TIMEOUT, "JobScheduler", sAnrTimerArgs);
+        }
+
+        public void start(long timeout) {
+            start(mRunningCallback, /* pid */ 0, mRunningJob.getUid(), timeout);
+        }
+
+        public boolean cancel() {
+            return cancel(mRunningCallback);
+        }
+
+        public void accept(TimeoutRecord tr) {
+            accept(mRunningCallback, tr);
+        }
+
+        public boolean discard() {
+            return discard(mRunningCallback);
+        }
+    }
+
+    // The AnrTimer for this instance.
+    private final JobAnrTimer mAnrTimer;
+
     JobServiceContext(JobSchedulerService service, JobConcurrencyManager concurrencyManager,
             JobNotificationCoordinator notificationCoordinator,
             IBatteryStats batteryStats, JobPackageTracker tracker, Looper looper) {
@@ -335,6 +372,7 @@ public final class JobServiceContext implements ServiceConnection {
         mAvailable = true;
         mVerb = VERB_FINISHED;
         mPreferredUid = NO_PREFERRED_UID;
+        mAnrTimer = new JobAnrTimer();
     }
 
     /**
@@ -409,8 +447,7 @@ public final class JobServiceContext implements ServiceConnection {
 
             mWakeLock = mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                     job.getWakelockTag());
-            mWakeLock.setWorkSource(
-                    mService.deriveWorkSource(job.getSourceUid(), job.getSourcePackageName()));
+            mWakeLock.setWorkSource(mService.deriveWorkSource(job.getSourceUid()));
             mWakeLock.setReferenceCounted(false);
             mWakeLock.acquire();
 
@@ -460,6 +497,8 @@ public final class JobServiceContext implements ServiceConnection {
                     Slog.d(TAG, job.getServiceComponent().getShortClassName() + " unavailable.");
                 }
                 mContext.unbindService(this);
+                // Ensure this occurs while mRunningCallback is still set.
+                removeOpTimeOutLocked();
                 mRunningJob = null;
                 mRunningJobWorkType = WORK_TYPE_NONE;
                 mRunningCallback = null;
@@ -467,7 +506,6 @@ public final class JobServiceContext implements ServiceConnection {
                 mExecutionStartTimeElapsed = 0L;
                 mWakeLock.release();
                 mVerb = VERB_FINISHED;
-                removeOpTimeOutLocked();
                 return false;
             }
             mJobPackageTracker.noteActive(job);
@@ -481,8 +519,7 @@ public final class JobServiceContext implements ServiceConnection {
             mInitialUploadedBytesFromCalling = TrafficStats.getUidTxBytes(job.getUid());
 
             int procState = mService.getUidProcState(job.getUid());
-            if (Flags.useCorrectProcessStateForLogging()
-                    && procState > ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND) {
+            if (procState > ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND) {
                 // Try to get the latest proc state from AMS, there might be some delay
                 // for the proc states worse than TRANSIENT_BACKGROUND.
                 procState = mActivityManagerInternal.getUidProcessState(job.getUid());
@@ -550,7 +587,8 @@ public final class JobServiceContext implements ServiceConnection {
                     job.getNumAbandonedFailures(),
                     /* 0 is reserved for UNKNOWN_POLICY */
                     job.getJob().getBackoffPolicy() + 1,
-                    mService.shouldUseAggressiveBackoff(job.getNumAbandonedFailures()));
+                    mService.shouldUseAggressiveBackoff(
+                            job.getNumAbandonedFailures(), job.getSourceUid()));
             sEnqueuedJwiAtJobStart.logSampleWithUid(job.getUid(), job.getWorkCount());
             final String sourcePackage = job.getSourcePackageName();
             if (Trace.isTagEnabled(Trace.TRACE_TAG_SYSTEM_SERVER)) {
@@ -806,7 +844,11 @@ public final class JobServiceContext implements ServiceConnection {
                 if (!verifyCallerLocked(cb)) {
                     return;
                 }
-
+                if (mVerb != VERB_EXECUTING) {
+                    // Any state other than executing means the
+                    // job is in transient or stopped state
+                    return;
+                }
                 executing = getRunningJobLocked();
             }
             if (executing != null && jobId == executing.getJobId()) {
@@ -1171,6 +1213,9 @@ public final class JobServiceContext implements ServiceConnection {
                             handleOpTimeoutLocked();
                         } else {
                             JobCallback jc = (JobCallback)message.obj;
+                            // This is an unknown JobCallback.  It may, or may not, have an
+                            // associated timer.
+                            mAnrTimer.discard(jc);
                             StringBuilder sb = new StringBuilder(128);
                             sb.append("Ignoring timeout of no longer active job");
                             if (jc.mStoppedReason != null) {
@@ -1427,6 +1472,8 @@ public final class JobServiceContext implements ServiceConnection {
                             mRunningJob.getUid()));
                 break;
             case VERB_EXECUTING:
+                // This is the tricky one.  Some of banches here accept the timeout and some
+                // discard it.
                 if (mPendingStopReason != JobParameters.STOP_REASON_UNDEFINED) {
                     if (mService.isReadyToBeExecutedLocked(mRunningJob, false)) {
                         // Job became ready again while we were waiting to stop it (for example,
@@ -1441,6 +1488,7 @@ public final class JobServiceContext implements ServiceConnection {
                         mParams.setStopReason(mPendingStopReason, mPendingInternalStopReason,
                                 mPendingDebugStopReason);
                         sendStopMessageLocked(mPendingDebugStopReason);
+                        mAnrTimer.discard();
                         break;
                     }
                 }
@@ -1461,7 +1509,10 @@ public final class JobServiceContext implements ServiceConnection {
                     final StringBuilder debugStopReason = new StringBuilder("client timed out");
 
                     if (android.app.job.Flags.handleAbandonedJobs()
-                            && executing != null && executing.isAbandoned()) {
+                            && executing != null
+                            && !CompatChanges.isChangeEnabled(
+                                    OVERRIDE_HANDLE_ABANDONED_JOBS, executing.getSourceUid())
+                            && executing.isAbandoned()) {
                         final String abandonedMessage = " and maybe abandoned";
                         stopReason = JobParameters.STOP_REASON_TIMEOUT_ABANDONED;
                         internalStopReason = JobParameters.INTERNAL_STOP_REASON_TIMEOUT_ABANDONED;
@@ -1472,6 +1523,7 @@ public final class JobServiceContext implements ServiceConnection {
                     mParams.setStopReason(stopReason,
                                     internalStopReason, debugStopReason.toString());
                     sendStopMessageLocked(stopMessage.toString());
+                    mAnrTimer.discard();
                 } else if (nowElapsed >= earliestStopTimeElapsed) {
                     // We've given the app the minimum execution time. See if we should stop it or
                     // let it continue running
@@ -1513,6 +1565,7 @@ public final class JobServiceContext implements ServiceConnection {
             default:
                 Slog.e(TAG, "Handling timeout for an invalid job state: "
                         + getRunningJobNameLocked() + ", dropping.");
+                mAnrTimer.discard();
                 closeAndCleanupJobLocked(false /* needsReschedule */, "invalid timeout");
         }
     }
@@ -1556,9 +1609,12 @@ public final class JobServiceContext implements ServiceConnection {
                     debugReason);
         }
         if (triggerAnr) {
+            final TimeoutRecord tr = TimeoutRecord.forJobService(anrMessage);
+            mAnrTimer.accept(tr);
             mActivityManagerInternal.appNotResponding(
-                    mRunningJob.serviceProcessName, mRunningJob.getUid(),
-                    TimeoutRecord.forJobService(anrMessage));
+                    mRunningJob.serviceProcessName, mRunningJob.getUid(), tr);
+        } else {
+            mAnrTimer.discard();
         }
         closeAndCleanupJobLocked(reschedule, debugReason);
     }
@@ -1616,8 +1672,7 @@ public final class JobServiceContext implements ServiceConnection {
                 loggingInternalStopReason, loggingDebugReason);
         final int sourceUid = completedJob.getSourceUid();
         int procState = mService.getUidProcState(completedJob.getUid());
-        if (Flags.useCorrectProcessStateForLogging()
-                && procState > ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND) {
+        if (procState > ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND) {
             // Try to get the latest proc state from AMS, there might be some delay
             // for the proc states worse than TRANSIENT_BACKGROUND.
             procState = mActivityManagerInternal.getUidProcessState(completedJob.getUid());
@@ -1689,7 +1744,8 @@ public final class JobServiceContext implements ServiceConnection {
                 completedJob.getNumAbandonedFailures(),
                 /* 0 is reserved for UNKNOWN_POLICY */
                 completedJob.getJob().getBackoffPolicy() + 1,
-                mService.shouldUseAggressiveBackoff(completedJob.getNumAbandonedFailures()));
+                mService.shouldUseAggressiveBackoff(
+                        completedJob.getNumAbandonedFailures(), completedJob.getSourceUid()));
         if (Trace.isTagEnabled(Trace.TRACE_TAG_SYSTEM_SERVER)) {
             Trace.asyncTraceForTrackEnd(Trace.TRACE_TAG_SYSTEM_SERVER,
                     JobSchedulerService.TRACE_TRACK_NAME, getId());
@@ -1711,6 +1767,8 @@ public final class JobServiceContext implements ServiceConnection {
         }
         final int workType = mRunningJobWorkType;
         mContext.unbindService(JobServiceContext.this);
+        // Ensure this occurs while mRunningCallback is still set.
+        removeOpTimeOutLocked();
         mWakeLock = null;
         mRunningJob = null;
         mRunningJobWorkType = WORK_TYPE_NONE;
@@ -1728,13 +1786,19 @@ public final class JobServiceContext implements ServiceConnection {
         mPendingInternalStopReason = 0;
         mPendingDebugStopReason = null;
         mPendingNetworkChange = null;
-        removeOpTimeOutLocked();
         if (completedJob.isUserVisibleJob()) {
             mService.informObserversOfUserVisibleJobChange(this, completedJob, false);
         }
-        mCompletedListener.onJobCompletedLocked(completedJob,
-                reschedulingStopReason, reschedulingInternalStopReason, reschedule);
-        mJobConcurrencyManager.onJobCompletedLocked(this, completedJob, workType);
+
+        if (Flags.fixReportingActiveJobs()) {
+            mJobConcurrencyManager.onJobCompletedLocked(this, completedJob, workType);
+            mCompletedListener.onJobCompletedLocked(completedJob,
+                    reschedulingStopReason, reschedulingInternalStopReason, reschedule);
+        } else {
+            mCompletedListener.onJobCompletedLocked(completedJob,
+                    reschedulingStopReason, reschedulingInternalStopReason, reschedule);
+            mJobConcurrencyManager.onJobCompletedLocked(this, completedJob, workType);
+        }
     }
 
     private void applyStoppedReasonLocked(@Nullable String reason) {
@@ -1754,8 +1818,6 @@ public final class JobServiceContext implements ServiceConnection {
      * on with life.
      */
     private void scheduleOpTimeOutLocked() {
-        removeOpTimeOutLocked();
-
         final long timeoutMillis;
         switch (mVerb) {
             case VERB_EXECUTING:
@@ -1790,13 +1852,12 @@ public final class JobServiceContext implements ServiceConnection {
                     mRunningJob.getServiceComponent().getShortClassName() + "' jId: " +
                     mParams.getJobId() + ", in " + (timeoutMillis / 1000) + " s");
         }
-        Message m = mCallbackHandler.obtainMessage(MSG_TIMEOUT, mRunningCallback);
-        mCallbackHandler.sendMessageDelayed(m, timeoutMillis);
+        mAnrTimer.start(timeoutMillis);
         mTimeoutElapsed = sElapsedRealtimeClock.millis() + timeoutMillis;
     }
 
     private void removeOpTimeOutLocked() {
-        mCallbackHandler.removeMessages(MSG_TIMEOUT);
+        mAnrTimer.cancel();
     }
 
     void dumpLocked(IndentingPrintWriter pw, final long nowElapsed) {

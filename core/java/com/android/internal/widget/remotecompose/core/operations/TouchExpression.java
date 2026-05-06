@@ -35,6 +35,8 @@ import com.android.internal.widget.remotecompose.core.operations.layout.RootLayo
 import com.android.internal.widget.remotecompose.core.operations.utilities.AnimatedFloatExpression;
 import com.android.internal.widget.remotecompose.core.operations.utilities.NanMap;
 import com.android.internal.widget.remotecompose.core.operations.utilities.touch.VelocityEasing;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.Arrays;
 import java.util.List;
@@ -44,13 +46,14 @@ import java.util.List;
  * touch behaviours. Including animating to Notched, positions. and tweaking the dynamics of the
  * animation.
  */
-public class TouchExpression extends Operation implements VariableSupport, TouchListener {
+public class TouchExpression extends Operation
+        implements ComponentData, VariableSupport, TouchListener, Serializable {
     private static final int OP_CODE = Operations.TOUCH_EXPRESSION;
     private static final String CLASS_NAME = "TouchExpression";
     private float mDefValue;
     private float mOutDefValue;
     private int mId;
-    public float[] mSrcExp;
+    public @Nullable float [] mSrcExp;
     int mMode = 1; // 0 = delta, 1 = absolute
     float mMax = 1;
     float mMin = 1;
@@ -97,10 +100,10 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     /** Stop at a collection points described in percents of the range */
     public static final int STOP_NOTCHES_PERCENTS = 4;
 
-    /** Stop at a collectiond of point described in abslute cordnates */
+    /** Stop at a collection of point described in absolute cordnates */
     public static final int STOP_NOTCHES_ABSOLUTE = 5;
 
-    /** Jump to the absloute poition of the point */
+    /** Jump to the absolute poition of the point */
     public static final int STOP_ABSOLUTE_POS = 6;
 
     /**
@@ -112,22 +115,22 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
      * @param min the minimum value
      * @param max the maximum value
      * @param touchEffects the type of touch mode
-     * @param velocityId the valocity (not used)
-     * @param stopMode the behavour on touch oup
-     * @param stopSpec the paraameters that affect the touch up behavour
+     * @param velocityId the velocity (not used)
+     * @param stopMode the behaviour on touch oup
+     * @param stopSpec the parameters that affect the touch up behaviour
      * @param easingSpec the easing parameters for coming to a stop
      */
     public TouchExpression(
             int id,
-            float[] exp,
+            @NonNull float [] exp,
             float defValue,
             float min,
             float max,
             int touchEffects,
             float velocityId,
             int stopMode,
-            float[] stopSpec,
-            float[] easingSpec) {
+            @Nullable float [] stopSpec,
+            @Nullable float [] easingSpec) {
         this.mId = id;
         this.mSrcExp = exp;
         mOutDefValue = mDefValue = defValue;
@@ -157,7 +160,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     @Override
-    public void updateVariables(RemoteContext context) {
+    public void updateVariables(@NonNull RemoteContext context) {
         if (mPreCalcValue == null || mPreCalcValue.length != mSrcExp.length) {
             mPreCalcValue = new float[mSrcExp.length];
         }
@@ -210,7 +213,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     @Override
-    public void registerListening(RemoteContext context) {
+    public void registerListening(@NonNull RemoteContext context) {
         if (Float.isNaN(mMax)) {
             context.listensTo(Utils.idFromNan(mMax), this);
         }
@@ -249,15 +252,15 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     private float getStopPosition(float pos, float slope) {
-        float target = pos + slope / mMaxAcceleration;
+        float target = pos + slope / 2f;
         if (mWrapMode) {
             pos = wrap(pos);
-            target = pos += +slope / mMaxAcceleration;
+            target = pos += +slope / 2f;
         } else {
             target = Math.max(Math.min(target, mOutMax), mOutMin);
         }
         float[] positions = new float[mStopSpec.length];
-        float min = (mWrapMode) ? 0 : mOutMin;
+        float min = mWrapMode ? 0 : mOutMin;
 
         switch (mStopMode) {
             case STOP_ENDS:
@@ -268,7 +271,6 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
                 int evenSpacing = (int) mOutStopSpec[0];
                 float notchMax = (mOutStopSpec.length > 1) ? mOutStopSpec[1] : mOutMax;
                 float step = (notchMax - min) / evenSpacing;
-
                 float notch = min + step * (int) (0.5f + (target - mOutMin) / step);
                 if (!mWrapMode) {
                     notch = Math.max(Math.min(notch, mOutMax), min);
@@ -306,7 +308,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     void haptic(RemoteContext context) {
-        int touch = ((mTouchEffects) & 0xFF);
+        int touch = (mTouchEffects & 0xFF);
         if ((mTouchEffects & (1 << 15)) != 0) {
             touch = context.getInteger(mTouchEffects & 0x7FFF);
         }
@@ -321,7 +323,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
         float next = mCurrentValue;
         mLastValue = next;
 
-        float min = (mWrapMode) ? 0 : mOutMin;
+        float min = mWrapMode ? 0 : mOutMin;
         float max = mOutMax;
 
         switch (mStopMode) {
@@ -369,6 +371,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
      *
      * @param component the component, or null if outside
      */
+    @Override
     public void setComponent(@Nullable Component component) {
         mComponent = component;
         if (mComponent != null) {
@@ -401,7 +404,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     @Override
-    public void apply(RemoteContext context) {
+    public void apply(@NonNull RemoteContext context) {
         updateBounds();
         if (mUnmodified) {
             mCurrentValue = mOutDefValue;
@@ -446,7 +449,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     float mDownTouchValue; // The calculated value at down
 
     @Override
-    public void touchDown(RemoteContext context, float x, float y) {
+    public void touchDown(@NonNull RemoteContext context, float x, float y) {
         if (!(x >= mScrLeft && x <= mScrRight && y >= mScrTop && y <= mScrBottom)) {
             Utils.log("NOT IN WINDOW " + x + ", " + y + " " + mScrLeft + ", " + mScrTop);
             return;
@@ -463,7 +466,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     @Override
-    public void touchUp(RemoteContext context, float x, float y, float dx, float dy) {
+    public void touchUp(@NonNull RemoteContext context, float x, float y, float dx, float dy) {
         // calculate the slope (using small changes)
         if (!mTouchDown) {
             return;
@@ -491,14 +494,14 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
         mTouchUpTime = context.getAnimationTime();
 
         float dest = getStopPosition(value, slope);
-        float time = mMaxTime * Math.abs(dest - value) / (2 * mMaxVelocity);
+        float time = Math.min(2, mMaxTime * Math.abs(dest - value) / (2 * mMaxVelocity));
         mEasyTouch.config(value, dest, slope, time, mMaxAcceleration, mMaxVelocity, null);
         mEasingToStop = true;
         context.needsRepaint();
     }
 
     @Override
-    public void touchDrag(RemoteContext context, float x, float y) {
+    public void touchDrag(@NonNull RemoteContext context, float x, float y) {
         if (!mTouchDown) {
             return;
         }
@@ -507,7 +510,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     }
 
     @Override
-    public void write(WireBuffer buffer) {
+    public void write(@NonNull WireBuffer buffer) {
         apply(
                 buffer,
                 mId,
@@ -536,14 +539,16 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
                     + mId
                     + "] = ("
                     + AnimatedFloatExpression.toString(mSrcExp, labels)
-                    + ")";
+                    + ") - "
+                    + mLastChange;
         }
         return CLASS_NAME
                 + "["
                 + mId
                 + "] = ("
                 + AnimatedFloatExpression.toString(mPreCalcValue, labels)
-                + ")";
+                + ") - "
+                + mLastChange;
     }
 
     // ===================== static ======================
@@ -583,17 +588,17 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
      * @param easingSpec the spec of when the object comes to an easing
      */
     public static void apply(
-            WireBuffer buffer,
+            @NonNull WireBuffer buffer,
             int id,
             float value,
             float min,
             float max,
             float velocityId,
             int touchEffects,
-            float[] exp,
+            @NonNull float [] exp,
             int touchMode,
-            float[] touchSpec,
-            float[] easingSpec) {
+            @Nullable float [] touchSpec,
+            @Nullable float [] easingSpec) {
         buffer.start(OP_CODE);
         buffer.writeInt(id);
         buffer.writeFloat(value);
@@ -681,7 +686,7 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
      *
      * @param doc to append the description to.
      */
-    public static void documentation(DocumentationBuilder doc) {
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Expressions Operations", OP_CODE, CLASS_NAME)
                 .description("A Float expression")
                 .field(INT, "id", "The id of the Color")
@@ -708,5 +713,17 @@ public class TouchExpression extends Operation implements VariableSupport, Touch
     @Override
     public String deepToString(@NonNull String indent) {
         return indent + toString();
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        serializer
+                .addType(CLASS_NAME)
+                .add("id", mId)
+                .add("defValue", mDefValue, mOutDefValue)
+                .add("min", mMin, mOutMin)
+                .add("max", mMax, mOutMax)
+                .add("mode", mMode)
+                .addFloatExpressionSrc("srcExp", mSrcExp);
     }
 }

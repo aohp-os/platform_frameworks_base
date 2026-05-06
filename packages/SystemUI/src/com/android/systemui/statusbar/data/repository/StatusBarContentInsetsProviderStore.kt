@@ -17,19 +17,18 @@
 package com.android.systemui.statusbar.data.repository
 
 import android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR
-import com.android.systemui.CameraProtectionLoaderImpl
+import com.android.app.displaylib.PerDisplayRepository
 import com.android.systemui.CoreStartable
-import com.android.systemui.SysUICutoutProviderImpl
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent
 import com.android.systemui.display.data.repository.DisplayRepository
 import com.android.systemui.display.data.repository.DisplayWindowPropertiesRepository
 import com.android.systemui.display.data.repository.PerDisplayStore
-import com.android.systemui.display.data.repository.PerDisplayStoreImpl
 import com.android.systemui.display.data.repository.SingleDisplayStore
 import com.android.systemui.statusbar.core.StatusBarConnectedDisplays
-import com.android.systemui.statusbar.phone.StatusBarContentInsetsProvider
-import com.android.systemui.statusbar.phone.StatusBarContentInsetsProviderImpl
+import com.android.systemui.statusbar.layout.StatusBarContentInsetsProvider
+import com.android.systemui.statusbar.layout.StatusBarContentInsetsProviderImpl
 import dagger.Lazy
 import dagger.Module
 import dagger.Provides
@@ -50,24 +49,23 @@ constructor(
     private val factory: StatusBarContentInsetsProviderImpl.Factory,
     private val displayWindowPropertiesRepository: DisplayWindowPropertiesRepository,
     private val statusBarConfigurationControllerStore: StatusBarConfigurationControllerStore,
-    private val sysUICutoutProviderFactory: SysUICutoutProviderImpl.Factory,
-    private val cameraProtectionLoaderFactory: CameraProtectionLoaderImpl.Factory,
+    private val displaySubcomponentRepo: PerDisplayRepository<SystemUIDisplaySubcomponent>,
 ) :
     StatusBarContentInsetsProviderStore,
-    PerDisplayStoreImpl<StatusBarContentInsetsProvider>(
+    StatusBarPerDisplayStoreImpl<StatusBarContentInsetsProvider>(
         backgroundApplicationScope,
         displayRepository,
     ) {
 
-    override fun createInstanceForDisplay(displayId: Int): StatusBarContentInsetsProvider {
-        val context = displayWindowPropertiesRepository.get(displayId, TYPE_STATUS_BAR).context
-        val cameraProtectionLoader = cameraProtectionLoaderFactory.create(context)
+    override fun createInstanceForDisplay(displayId: Int): StatusBarContentInsetsProvider? {
+        val displayWindowProperties =
+            displayWindowPropertiesRepository.get(displayId, TYPE_STATUS_BAR) ?: return null
+        val context = displayWindowProperties.context
+        val configurationController =
+            statusBarConfigurationControllerStore.forDisplay(displayId) ?: return null
+        val displaySubcomponent = displaySubcomponentRepo[displayId] ?: return null
         return factory
-            .create(
-                context,
-                statusBarConfigurationControllerStore.forDisplay(displayId),
-                sysUICutoutProviderFactory.create(context, cameraProtectionLoader),
-            )
+            .create(context, configurationController, displaySubcomponent.sysUICutoutProvider)
             .also { it.start() }
     }
 

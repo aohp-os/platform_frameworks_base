@@ -16,14 +16,18 @@
 
 package android.security;
 
+import static android.annotation.RestrictedForEnvironment.ENVIRONMENT_SDK_RUNTIME;
+
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.RestrictedForEnvironment;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.content.Context;
+import android.os.Build;
 import android.os.IInstalld.IFsveritySetupAuthToken;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
@@ -39,6 +43,8 @@ import java.security.cert.X509Certificate;
 /**
  * This class provides access to file integrity related operations.
  */
+@RestrictedForEnvironment(
+        environments = ENVIRONMENT_SDK_RUNTIME, from = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @SystemService(Context.FILE_INTEGRITY_SERVICE)
 public final class FileIntegrityManager {
     @NonNull private final IFileIntegrityService mService;
@@ -65,13 +71,7 @@ public final class FileIntegrityManager {
      * other fs-verity APIs.
      */
     public boolean isApkVeritySupported() {
-        try {
-            // Go through the service just to avoid exposing the vendor controlled system property
-            // to all apps.
-            return mService.isApkVeritySupported();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+        return VerityUtils.isFsVeritySupported();
     }
 
     /**
@@ -170,11 +170,6 @@ public final class FileIntegrityManager {
     @Deprecated
     public boolean isAppSourceCertificateTrusted(@NonNull X509Certificate certificate)
             throws CertificateEncodingException {
-        try {
-            return mService.isAppSourceCertificateTrusted(
-                    certificate.getEncoded(), mContext.getOpPackageName());
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+        return false;
     }
 }

@@ -66,9 +66,7 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.VisibleForTesting;
 
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager;
 import com.android.internal.util.Preconditions;
-import com.android.settingslib.Utils;
 import com.android.systemui.biometrics.data.repository.FacePropertyRepository;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.decor.CutoutDecorProviderFactory;
@@ -83,11 +81,13 @@ import com.android.systemui.decor.PrivacyDotDecorProviderFactory;
 import com.android.systemui.decor.RoundedCornerDecorProviderFactory;
 import com.android.systemui.decor.RoundedCornerResDelegateImpl;
 import com.android.systemui.decor.ScreenDecorCommand;
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.log.ScreenDecorationsLogger;
 import com.android.systemui.qs.UserSettingObserver;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
 import com.android.systemui.statusbar.events.PrivacyDotViewController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
@@ -149,6 +149,8 @@ public class ScreenDecorations implements
     private final DecorProviderFactory mDotFactory;
     private final FaceScanningProviderFactory mFaceScanningFactory;
     private final CameraProtectionLoader mCameraProtectionLoader;
+    private final ShadeInteractor mShadeInteractor;
+    private final KeyguardInteractor mKeyguardInteractor;
     public final int mFaceScanningViewId;
 
     @VisibleForTesting
@@ -167,7 +169,7 @@ public class ScreenDecorations implements
     ViewGroup mScreenDecorHwcWindow;
     @VisibleForTesting
     ScreenDecorHwcLayer mScreenDecorHwcLayer;
-    private ViewCaptureAwareWindowManager mWindowManager;
+    private WindowManager mWindowManager;
     private int mRotation;
     private UserSettingObserver mColorInversionSetting;
     private DelayableExecutor mExecutor;
@@ -189,7 +191,7 @@ public class ScreenDecorations implements
 
     @VisibleForTesting
     protected void showCameraProtection(@NonNull Path protectionPath, @NonNull Rect bounds) {
-        if (mFaceScanningFactory.shouldShowFaceScanningAnim()) {
+        if (mDebug || mFaceScanningFactory.shouldShowFaceScanningAnim()) {
             DisplayCutoutView overlay = (DisplayCutoutView) getOverlayView(
                     mFaceScanningViewId);
             if (overlay != null) {
@@ -337,7 +339,9 @@ public class ScreenDecorations implements
             FacePropertyRepository facePropertyRepository,
             JavaAdapter javaAdapter,
             CameraProtectionLoader cameraProtectionLoader,
-            ViewCaptureAwareWindowManager viewCaptureAwareWindowManager,
+            WindowManager windowManager,
+            ShadeInteractor shadeInteractor,
+            KeyguardInteractor keyguardInteractor,
             @ScreenDecorationsThread Handler handler,
             @ScreenDecorationsThread DelayableExecutor executor) {
         mContext = context;
@@ -349,11 +353,13 @@ public class ScreenDecorations implements
         mDotFactory = dotFactory;
         mFaceScanningFactory = faceScanningFactory;
         mCameraProtectionLoader = cameraProtectionLoader;
+        mShadeInteractor = shadeInteractor;
+        mKeyguardInteractor = keyguardInteractor;
         mFaceScanningViewId = com.android.systemui.res.R.id.face_scanning_anim;
         mLogger = logger;
         mFacePropertyRepository = facePropertyRepository;
         mJavaAdapter = javaAdapter;
-        mWindowManager = viewCaptureAwareWindowManager;
+        mWindowManager = windowManager;
         mHandler = handler;
         mExecutor = executor;
     }
@@ -393,6 +399,12 @@ public class ScreenDecorations implements
                 removeAllOverlays();
                 removeHwcOverlay();
                 setupDecorations();
+            });
+        }
+
+        if (cmd.getFaceAuthScreen() != null) {
+            mExecutor.execute(() -> {
+                debugTriggerFaceAuth(cmd.getFaceAuthScreen());
             });
         }
     };
@@ -627,6 +639,15 @@ public class ScreenDecorations implements
             }
 
             overlay.removeView(id);
+        }
+    }
+
+    private void debugTriggerFaceAuth(int screen) {
+        DisplayCutoutView overlay = (DisplayCutoutView) getOverlayView(
+                mFaceScanningViewId);
+        if (overlay != null) {
+            overlay.setDebug(true);
+            mCameraListener.debugFaceAuth(screen);
         }
     }
 
@@ -921,7 +942,6 @@ public class ScreenDecorations implements
                 WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
                         | WindowManager.LayoutParams.FLAG_SLIPPERY
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
@@ -1228,9 +1248,7 @@ public class ScreenDecorations implements
         FaceScanningOverlay faceScanningOverlay =
                 (FaceScanningOverlay) getOverlayView(mFaceScanningViewId);
         if (faceScanningOverlay != null) {
-            faceScanningOverlay.setFaceScanningAnimColor(
-                    Utils.getColorAttrDefaultColor(faceScanningOverlay.getContext(),
-                            com.android.systemui.res.R.attr.wallpaperTextColorAccent));
+            faceScanningOverlay.updateColors();
         }
     }
 
@@ -1361,6 +1379,7 @@ public class ScreenDecorations implements
         final List<Rect> mBounds = new ArrayList();
         final Rect mBoundingRect = new Rect();
         Rect mTotalBounds = new Rect();
+        boolean mDebug = false;
 
         private int mColor = Color.BLACK;
         private int mRotation;
@@ -1377,6 +1396,10 @@ public class ScreenDecorations implements
                 getViewTreeObserver().addOnDrawListener(() -> Log.i(TAG,
                         getWindowTitleByPos(pos) + " drawn in rot " + mRotation));
             }
+        }
+
+        public void setDebug(boolean debug) {
+            mDebug = debug;
         }
 
         public void setColor(int color) {

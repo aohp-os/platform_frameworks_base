@@ -24,26 +24,10 @@ import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.app.PropertyInvalidatedCache;
 import android.app.PropertyInvalidatedCache.Args;
-import android.text.TextUtils;
 import android.util.ArraySet;
-
-import com.android.internal.annotations.GuardedBy;
-import com.android.internal.util.FastPrintWriter;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Random;
-import java.util.Set;
-import java.util.WeakHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * LRU cache that's invalidated when an opaque value in a property changes. Self-synchronizing,
@@ -295,7 +279,8 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
             MODULE_TEST,
             MODULE_SYSTEM,
             MODULE_BLUETOOTH,
-            MODULE_TELEPHONY
+            MODULE_TELEPHONY,
+            MODULE_ADSERVICES,
         }
     )
     @Retention(RetentionPolicy.SOURCE)
@@ -324,6 +309,15 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
     @SystemApi(client=SystemApi.Client.MODULE_LIBRARIES)
     @TestApi
     public static final String MODULE_BLUETOOTH = PropertyInvalidatedCache.MODULE_BLUETOOTH;
+
+    /**
+     * The module used for adservices caches.
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_IPC_DATA_CACHE_MODULE_ADSERVICES)
+    @SystemApi(client=SystemApi.Client.MODULE_LIBRARIES)
+    @TestApi
+    public static final String MODULE_ADSERVICES = PropertyInvalidatedCache.MODULE_ADSERVICES;
 
     /**
      * Make a new property invalidated cache.  The key is computed from the module and api
@@ -411,7 +405,7 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
      * 1. Instance-per-cache: create a static instance of this class using the same
      *    parameters as would have been given to IpcDataCache (or
      *    PropertyInvalidatedCache).  This static instance provides a hook for the
-     *    invalidateCache() and disableForLocalProcess() calls, which, generally, must
+     *    invalidateCache() and disableForCurrentProcess() calls, which, generally, must
      *    also be static.
      *
      * 2. Short-hand for shared configuration parameters: create an instance of this class
@@ -616,7 +610,7 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
      * @hide
      */
     public IpcDataCache(@NonNull Config config, @NonNull RemoteCall<Query, Result> remoteCall) {
-      this(config, android.multiuser.Flags.cachingDevelopmentImprovements() ?
+      this(config,
         new QueryHandler<Query, Result>() {
             @Override
             public Result apply(Query query) {
@@ -626,7 +620,7 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
                     throw e.rethrowFromSystemServer();
                 }
             }
-        } : new SystemServerCallHandler<>(remoteCall));
+        });
     }
 
 
@@ -638,7 +632,6 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
      *     bypassed.
      * @hide
      */
-    @FlaggedApi(android.multiuser.Flags.FLAG_CACHING_DEVELOPMENT_IMPROVEMENTS)
     public IpcDataCache(@NonNull Config config,
             @NonNull RemoteCall<Query, Result> remoteCall,
             @NonNull BypassCall<Query> bypass) {
@@ -657,5 +650,101 @@ public class IpcDataCache<Query, Result> extends PropertyInvalidatedCache<Query,
                 return bypass.apply(query);
             }
         });
+    }
+
+    /**
+     * The following APIs are exposed to support testing.  They only forward the superclass but
+     * that means the superclass does not have to expose the APIs itself.
+     */
+
+    /**
+     * Stop disabling local caches with the same name as <this>.  Any caches that are currently
+     * disabled remain disabled (the "disabled" setting is sticky).  However, new caches with this
+     * name will not be disabled.  It is not an error if the cache name is not found in the list
+     * of disabled caches.
+     * @hide
+     */
+    @TestApi
+    @Override
+    public final void forgetDisableLocal() {
+        super.forgetDisableLocal();
+    }
+
+    /**
+     * Return whether a cache instance is disabled.
+     * @hide
+     */
+    @TestApi
+    @Override
+    public final boolean isDisabled() {
+        return super.isDisabled();
+    }
+
+    /**
+     * This is an obsolete synonym for {@link #isDisabled()}.
+     * @hide
+     */
+    @TestApi
+    public boolean getDisabledState() {
+        return isDisabled();
+    }
+
+    /**
+     * Disable the use of this cache in this process.  This method is used internally and during
+     * testing.  To disable a cache in normal code, use disableProcessLocal().
+     * @hide
+     */
+    @TestApi
+    @Override
+    public final void disableInstance() {
+        super.disableInstance();
+    }
+
+    /**
+     * Disable all caches that use the property as the current cache.
+     * @hide
+     */
+    @TestApi
+    @Override
+    public final void disableSystemWide() {
+        super.disableSystemWide();
+    }
+
+    /**
+     * Enable or disable test mode.  The protocol requires that the mode toggle: for instance, it is
+     * illegal to clear the test mode if the test mode is already off.  Enabling test mode puts
+     * all caches in the process into test mode; all nonces are initialized to UNSET and
+     * subsequent reads and writes are to process memory.  This has the effect of disabling all
+     * caches that are not local to the process.  Disabling test mode restores caches to normal
+     * operation.
+     * @param mode The desired test mode.
+     * @throws IllegalStateException if the supplied mode is already set.
+     * @throws IllegalStateException if the process is not running an instrumentation test.
+     * @hide
+     */
+    @TestApi
+    public static void setTestMode(boolean mode) {
+        PropertyInvalidatedCache.setTestMode(mode);
+    }
+
+    /**
+     * Enable or disable test mode.  The protocol requires that the mode toggle: for instance, it is
+     * illegal to clear the test mode if the test mode is already off.  Enabling test mode puts
+     * all caches in the process into test mode; all nonces are initialized to UNSET and
+     * subsequent reads and writes are to process memory.  This has the effect of disabling all
+     * caches that are not local to the process.  Disabling test mode restores caches to normal
+     * operation.
+     * @param mode The desired test mode.
+     * @throws IllegalStateException if the supplied mode is already set.
+     * @throws IllegalStateException if the process is not running an instrumentation test.
+     * @hide
+     */
+    @FlaggedApi(android.os.Flags.FLAG_IPC_DATA_CACHE_TESTMODE_APIS)
+    @SystemApi(client=SystemApi.Client.MODULE_LIBRARIES)
+    @TestApi
+    public static void setCacheTestMode(boolean mode) {
+        // Trunk-stable flagging requires that this API have a name different from the existing
+        // setTestMode() API.  However, the functionality is identical.
+        setTestMode(mode);
     }
 }

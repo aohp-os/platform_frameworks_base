@@ -17,6 +17,7 @@
 package android.graphics;
 
 import android.annotation.NonNull;
+import android.internal.perfetto.protos.Point.PointProto;
 import android.util.proto.ProtoOutputStream;
 
 /**
@@ -24,6 +25,7 @@ import android.util.proto.ProtoOutputStream;
  *
  * @hide
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public final class GraphicsProtos {
     /** GraphicsProtos can never be an instance */
     private GraphicsProtos() {}

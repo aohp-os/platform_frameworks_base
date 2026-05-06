@@ -20,7 +20,6 @@ import android.testing.LeakCheck;
 import androidx.annotation.Nullable;
 
 import com.android.internal.statusbar.StatusBarIcon;
-import com.android.systemui.statusbar.phone.StatusBarSignalPolicy.CallIndicatorIconState;
 import com.android.systemui.statusbar.phone.ui.IconManager;
 import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
 
@@ -45,6 +44,10 @@ public class FakeStatusBarIconController extends BaseLeakChecker<IconManager>
 
     @Override
     public void refreshIconGroup(IconManager iconManager) {
+    }
+
+    @Override
+    public void refreshIconGroups(int displayId) {
     }
 
     @Override
@@ -77,23 +80,10 @@ public class FakeStatusBarIconController extends BaseLeakChecker<IconManager>
     }
 
     @Override
-    public void setCallStrengthIcons(String slot, List<CallIndicatorIconState> states) {
-    }
-
-    @Override
-    public void setNoCallingIcons(String slot, List<CallIndicatorIconState> states) {
-    }
-
-    @Override
     public void setIconVisibility(String slotTty, boolean b) {
     }
 
     @Override
     public void removeIcon(String slot, int tag) {
     }
-
-    @Override
-    public void setIconAccessibilityLiveRegion(String slot, int mode) {
-    }
-
 }

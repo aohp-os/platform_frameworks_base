@@ -10,6 +10,14 @@ flag {
 }
 
 flag {
+    name: "conscrypt_network_security_config"
+    is_exported: true
+    namespace: "network_security"
+    description: "Enable the frameworks APIs required by the NSC implementation in Conscrypt"
+    bug: "404518910"
+}
+
+flag {
     name: "fsverity_api"
     is_exported: true
     namespace: "hardware_backed_security"
@@ -42,35 +50,34 @@ flag {
 }
 
 flag {
-    name: "secure_array_zeroization"
+    name: "reset_auth_flags_and_metrics_in_lock_user"
     namespace: "security"
-    description: "Enable secure array zeroization"
-    bug: "320392352"
+    description: "Make LockSettingsService#lockUser() always handle resetting strong auth flags and removing user password metrics"
+    bug: "319142556"
+}
+
+flag {
+    name: "scrypt_parameter_change"
+    namespace: "security"
+    description: "Use n=9 instead of n=11 for scrypt for lock screen knowledge factors"
+    bug: "416772194"
     metadata {
       purpose: PURPOSE_BUGFIX
     }
 }
 
 flag {
-    name: "deprecate_fsv_sig"
-    namespace: "hardware_backed_security"
-    description: "Feature flag for deprecating .fsv_sig"
-    bug: "277916185"
+    name: "software_ratelimiter"
+    namespace: "security"
+    description: "Enable support for SoftwareRateLimiter in LockSettingsService"
+    bug: "395976735"
 }
 
 flag {
-    name: "extend_vb_chain_to_updated_apk"
-    namespace: "hardware_backed_security"
-    description: "Use v4 signature and fs-verity to chain verification of allowlisted APKs to Verified Boot"
-    bug: "277916185"
-    is_fixed_read_only: true
-}
-
-flag {
-    name: "binary_transparency_sepolicy_hash"
-    namespace: "hardware_backed_security"
-    description: "Collect sepolicy hash from sysfs"
-    bug: "308471499"
+    name: "stop_recognizing_legacy_password_hashes"
+    namespace: "security"
+    description: "Make LockSettingsService stop recognizing legacy password hashes"
+    bug: "442877927"
 }
 
 flag {
@@ -83,38 +90,10 @@ flag {
 }
 
 flag {
-    name: "significant_places"
-    namespace: "biometrics"
-    description: "Enabled significant place monitoring"
-    bug: "337870680"
-}
-
-flag {
-    name: "report_primary_auth_attempts"
-    namespace: "biometrics"
-    description: "Report primary auth attempts from LockSettingsService"
-    bug: "285053096"
-}
-
-flag {
-    name: "dump_attestation_verifications"
-    namespace: "hardware_backed_security"
-    description: "Add a dump capability for attestation_verification service"
-    bug: "335498868"
-}
-
-flag {
   name: "should_trust_manager_listen_for_primary_auth"
   namespace: "biometrics"
   description: "Causes TrustManagerService to listen for credential attempts and ignore reports from upstream"
   bug: "323086607"
-}
-
-flag {
-    name: "clear_strong_auth_on_add_primary_credential"
-    namespace: "biometrics"
-    description: "Clear StrongAuth on add credential"
-    bug: "320817991"
 }
 
 flag {
@@ -123,6 +102,16 @@ flag {
     description: "AFL feature"
     bug: "365994454"
     is_exported: true
+}
+
+flag {
+    name: "internal_log_event_listener"
+    namespace: "hardware_backed_security"
+    description: "Use internal callback to gather SecurityMonitor logs."
+    bug: "389732143"
+    metadata {
+      purpose: PURPOSE_BUGFIX
+    }
 }
 
 flag {
@@ -147,4 +136,59 @@ flag {
     description: "Feature flag for Secure Lockdown feature"
     bug: "373422357"
     is_exported: true
+}
+
+flag {
+    name: "secure_lock_device"
+    namespace: "biometrics"
+    description: "Feature flag for Secure Lock Device feature"
+    bug: "401645997"
+    is_exported: true
+}
+
+flag {
+    name: "subscribe_to_keyguard_locked_state_perm_priv_flag"
+    namespace: "psap_ai"
+    description: "Feature flag to add the privileged flag to the SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE permission"
+    bug: "380120712"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "disable_adaptive_auth_counter_lock"
+    namespace: "biometrics"
+    description: "Flag to allow an adb secure setting to disable the adaptive auth lock"
+    bug: "371057865"
+}
+
+flag {
+    name: "failed_auth_lock_toggle"
+    namespace: "biometrics"
+    description: "Feature flag to enable the toggle for failed authentication lock"
+    bug: "414605464"
+}
+
+flag {
+    name: "deprecate_uses_cleartext_traffic"
+    namespace: "network_security"
+    description: "If enabled, the XML application flag usesCleartextTraffic is ignored for targetSdk version C+."
+    bug: "415007211"
+    is_fixed_read_only: true
+}
+
+flag {
+    name: "enable_talisman_service"
+    namespace: "cross_device_authentication"
+    description: "Enable the Talisman service."
+    bug: "433283951"
+}
+
+flag {
+    name: "manage_lockout_end_time_in_service"
+    namespace: "security"
+    description: "Manage lockout end time in LockSettingsService rather than LockPatternUtils"
+    bug: "322014085"
+    metadata {
+      purpose: PURPOSE_BUGFIX
+    }
 }

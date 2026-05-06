@@ -29,6 +29,8 @@ import android.util.AttributeSet
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.constraintlayout.widget.ConstraintLayout
 import com.android.settingslib.widget.theme.R
@@ -40,12 +42,14 @@ class CollapsableTextView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : ConstraintLayout(context, attrs, defStyleAttr) {
 
-    private var isCollapsable: Boolean = false
+    private var isCollapsable: Boolean = DEFAULT_COLLAPSABLE
     private var isCollapsed: Boolean = false
     private var minLines: Int = DEFAULT_MIN_LINES
 
     private val titleTextView: TextView
-    private val collapseButton: MaterialButton
+    private val collapseButton: LinearLayout
+    private val collapseButtonIcon: ImageView?
+    private val collapseButtonText: TextView?
     private val collapseButtonResources: CollapseButtonResources
     private var hyperlinkListener: View.OnClickListener? = null
     private var learnMoreListener: View.OnClickListener? = null
@@ -59,6 +63,8 @@ class CollapsableTextView @JvmOverloads constructor(
             .inflate(R.layout.settingslib_expressive_collapsable_textview, this)
         titleTextView = findViewById(android.R.id.title)
         collapseButton = findViewById(R.id.collapse_button)
+        collapseButtonIcon = collapseButton.findViewById(android.R.id.icon1)
+        collapseButtonText = collapseButton.findViewById(android.R.id.text1)
         learnMoreTextView = findViewById(R.id.settingslib_expressive_learn_more)
 
         collapseButtonResources = CollapseButtonResources(
@@ -78,25 +84,47 @@ class CollapsableTextView @JvmOverloads constructor(
 
     private fun initAttributes(context: Context, attrs: AttributeSet?, defStyleAttr: Int) {
         context.obtainStyledAttributes(
-            attrs, Attrs, defStyleAttr, 0
+            attrs, R.styleable.CollapsableTextView, defStyleAttr, 0
         ).apply {
-            val gravity = getInt(GravityAttr, Gravity.START)
+            val gravity = getInt(gravityAttr, Gravity.START)
             when (gravity) {
                 Gravity.CENTER_VERTICAL, Gravity.CENTER, Gravity.CENTER_HORIZONTAL -> {
                     centerHorizontally(titleTextView)
                     centerHorizontally(collapseButton)
+                    centerHorizontally(learnMoreTextView)
                 }
             }
+            isCollapsable = getBoolean(isCollapsableAttr, DEFAULT_COLLAPSABLE)
+            minLines = getInt(minLinesAttr, DEFAULT_MIN_LINES)
             recycle()
         }
     }
 
     private fun centerHorizontally(view: View) {
-        (view.layoutParams as LayoutParams).apply {
-            startToStart = LayoutParams.PARENT_ID
-            endToEnd = LayoutParams.PARENT_ID
-            horizontalBias = 0.5f
+        when (view) {
+            is MaterialButton -> {
+                (view.layoutParams as LayoutParams).apply {
+                    startToStart = LayoutParams.PARENT_ID
+                    endToEnd = LayoutParams.PARENT_ID
+                }
+            }
+            is TextView -> {
+                view.gravity = Gravity.CENTER
+                // Do not remove! This line was discovered to be necessary for GMSCore.
+                view.textAlignment = View.TEXT_ALIGNMENT_CENTER
+            }
+            else -> {
+                (view.layoutParams as LayoutParams).apply {
+                    startToStart = LayoutParams.PARENT_ID
+                    endToEnd = LayoutParams.PARENT_ID
+                }
+            }
         }
+    }
+
+    override fun onMeasure(p0: Int, p1: Int) {
+        super.onMeasure(p0, p1)
+        updateView()
     }
 
     /**
@@ -113,6 +141,8 @@ class CollapsableTextView @JvmOverloads constructor(
      */
     fun setCollapsable(collapsable: Boolean) {
         isCollapsable = collapsable
+        // Make is collapsed when it's collapsable
+        if (isCollapsable) isCollapsed = true
         updateView()
     }
 
@@ -120,8 +150,8 @@ class CollapsableTextView @JvmOverloads constructor(
      * Sets the minimum number of lines to display when collapsed.
      * @param lines The minimum number of lines.
      */
-    fun setMinLines(line: Int) {
-        minLines = line.coerceIn(1, DEFAULT_MAX_LINES)
+    fun setMinLines(lines: Int) {
+        minLines = lines.coerceIn(1, DEFAULT_MAX_LINES)
         updateView()
     }
 
@@ -198,7 +228,7 @@ class CollapsableTextView @JvmOverloads constructor(
         }
         learnMoreSpan = LearnMoreSpan(clickListener = learnMoreListener!!)
         spannableLearnMoreText.setSpan(learnMoreSpan, 0, learnMoreText!!.length, 0)
-        learnMoreTextView.setText(spannableLearnMoreText)
+        learnMoreTextView.text = spannableLearnMoreText
         learnMoreTextView.visibility = VISIBLE
         isLearnMoreEnabled = true
     }
@@ -206,22 +236,22 @@ class CollapsableTextView @JvmOverloads constructor(
     private fun updateView() {
         when {
             isCollapsed -> {
-                collapseButton.apply {
-                    text = collapseButtonResources.expandText
-                    icon = collapseButtonResources.expandIcon
-                }
+                collapseButtonIcon?.setImageDrawable(collapseButtonResources.expandIcon)
+                collapseButtonText?.text = collapseButtonResources.expandText
                 titleTextView.maxLines = minLines
+                titleTextView.ellipsize = null
+                titleTextView.scrollBarSize = 0
             }
 
             else -> {
-                collapseButton.apply {
-                    text = collapseButtonResources.collapseText
-                    icon = collapseButtonResources.collapseIcon
-                }
+                collapseButtonIcon?.setImageDrawable(collapseButtonResources.collapseIcon)
+                collapseButtonText?.text = collapseButtonResources.collapseText
                 titleTextView.maxLines = DEFAULT_MAX_LINES
+                titleTextView.ellipsize = TextUtils.TruncateAt.END
             }
         }
-        collapseButton.visibility = if (isCollapsable) VISIBLE else GONE
+        collapseButton.visibility =
+            if (isCollapsable && titleTextView.lineCount > minLines) VISIBLE else GONE
         learnMoreTextView.visibility = if (isLearnMoreEnabled && !isCollapsed) VISIBLE else GONE
     }
 
@@ -233,19 +263,21 @@ class CollapsableTextView @JvmOverloads constructor(
     )
 
     companion object {
-        private const val DEFAULT_MAX_LINES = 10
+        private const val DEFAULT_MAX_LINES = 50
         private const val DEFAULT_MIN_LINES = 2
+        private const val DEFAULT_COLLAPSABLE = true
 
         private const val LINK_BEGIN_MARKER = "LINK_BEGIN"
         private const val LINK_END_MARKER = "LINK_END"
 
-        private val Attrs = R.styleable.CollapsableTextView
-        private val GravityAttr = R.styleable.CollapsableTextView_android_gravity
+        private val gravityAttr = R.styleable.CollapsableTextView_android_gravity
+        private val minLinesAttr = R.styleable.CollapsableTextView_android_minLines
+        private val isCollapsableAttr = R.styleable.CollapsableTextView_isCollapsable
     }
 }
 
 internal class LearnMoreSpan(
-    val url: String = "",
+    url: String = "",
     val clickListener: View.OnClickListener) : URLSpan(url) {
     override fun onClick(widget: View) {
         clickListener.onClick(widget)

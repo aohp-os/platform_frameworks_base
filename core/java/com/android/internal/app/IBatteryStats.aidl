@@ -35,7 +35,19 @@ import android.telephony.SignalStrength;
 
 interface IBatteryStats {
     /** @hide */
+    const int RESULT_OK = 0;
+
+    /** @hide */
+    const int RESULT_RUNTIME_EXCEPTION = 1;
+
+    /** @hide */
+    const int RESULT_SECURITY_EXCEPTION = 2;
+
+    /** @hide */
     const String KEY_UID_SNAPSHOTS = "uid_snapshots";
+
+    /** @hide */
+    const String KEY_EXCEPTION_MESSAGE = "exception";
 
     // These first methods are also called by native code, so must
     // be kept in sync with frameworks/native/libs/binder/include_batterystats/batterystats/IBatteryStats.h
@@ -235,23 +247,23 @@ interface IBatteryStats {
     @EnforcePermission("UPDATE_DEVICE_STATS")
     void noteBleScanResults(in WorkSource ws, int numNewResults);
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission(anyOf = {"UPDATE_DEVICE_STATS", "BATTERY_STATS"})
     CellularBatteryStats getCellularBatteryStats();
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission(anyOf = {"UPDATE_DEVICE_STATS", "BATTERY_STATS"})
     WifiBatteryStats getWifiBatteryStats();
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission("BATTERY_STATS")
     GpsBatteryStats getGpsBatteryStats();
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission("BATTERY_STATS")
     WakeLockStats getWakeLockStats();
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission("BATTERY_STATS")
     BluetoothBatteryStats getBluetoothBatteryStats();
 
@@ -270,7 +282,7 @@ interface IBatteryStats {
     @EnforcePermission("UPDATE_DEVICE_STATS")
     oneway void noteWifiControllerActivity(in WifiActivityEnergyInfo info);
 
-    /** {@hide} */
+    /** @hide */
     @EnforcePermission("POWER_SAVER")
     boolean setChargingStateUpdateDelayMillis(int delay);
 

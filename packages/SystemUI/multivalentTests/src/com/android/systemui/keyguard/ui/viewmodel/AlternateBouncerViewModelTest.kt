@@ -21,30 +21,38 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.policy.IKeyguardDismissCallback
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.biometrics.data.repository.fakeFacePropertyRepository
+import com.android.systemui.biometrics.shared.model.FaceSensorInfo
+import com.android.systemui.biometrics.shared.model.SensorStrength
 import com.android.systemui.bouncer.domain.interactor.primaryBouncerInteractor
 import com.android.systemui.concurrency.fakeExecutor
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.coroutines.collectValues
+import com.android.systemui.keyguard.data.repository.fakeDeviceEntryFaceAuthRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.dismissCallbackRegistry
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.lifecycle.activateIn
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.statusbar.phone.statusBarKeyguardViewManager
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.mockito.eq
 import com.google.common.collect.Range
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.ArgumentMatchers.anyBoolean
+import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.kotlin.never
 
-@ExperimentalCoroutinesApi
 @RunWith(AndroidJUnit4::class)
 @SmallTest
 class AlternateBouncerViewModelTest : SysuiTestCase() {
@@ -58,7 +66,8 @@ class AlternateBouncerViewModelTest : SysuiTestCase() {
     fun onTapped() =
         testScope.runTest {
             underTest.onTapped()
-            verify(statusBarKeyguardViewManager).showPrimaryBouncer(any())
+            verify(statusBarKeyguardViewManager)
+                .showPrimaryBouncer(any(), eq("AlternateBouncerViewModel#onTapped"))
         }
 
     @Test
@@ -154,9 +163,52 @@ class AlternateBouncerViewModelTest : SysuiTestCase() {
             assertThat(registerForDismissGestures).isFalse()
         }
 
+    @Test
+    fun strongFaceAuthLockout_showPrimaryBouncer() =
+        testScope.runTest {
+            underTest.activateIn(this)
+            setFaceAuthSensor(strength = SensorStrength.STRONG)
+            runCurrent()
+            kosmos.fakeDeviceEntryFaceAuthRepository.setLockedOut(true)
+            runCurrent()
+
+            verify(kosmos.statusBarKeyguardViewManager)
+                .showPrimaryBouncer(anyBoolean(), anyString())
+        }
+
+    @Test
+    fun weakFaceAuthLockout_doNotShowPrimaryBouncer() =
+        testScope.runTest {
+            underTest.activateIn(this)
+            setFaceAuthSensor(strength = SensorStrength.WEAK)
+            runCurrent()
+            kosmos.fakeDeviceEntryFaceAuthRepository.setLockedOut(true)
+            runCurrent()
+
+            verify(kosmos.statusBarKeyguardViewManager, never())
+                .showPrimaryBouncer(anyBoolean(), anyString())
+        }
+
+    @Test
+    fun convenienceFaceAuthLockout_doNotShowPrimaryBouncer() =
+        testScope.runTest {
+            underTest.activateIn(this)
+            setFaceAuthSensor(strength = SensorStrength.CONVENIENCE)
+            runCurrent()
+            kosmos.fakeDeviceEntryFaceAuthRepository.setLockedOut(true)
+            runCurrent()
+
+            verify(kosmos.statusBarKeyguardViewManager, never())
+                .showPrimaryBouncer(anyBoolean(), anyString())
+        }
+
+    private fun setFaceAuthSensor(strength: SensorStrength) {
+        kosmos.fakeFacePropertyRepository.setSensorInfo(FaceSensorInfo(id = 0, strength = strength))
+    }
+
     private fun stepToAlternateBouncer(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return step(
             from = KeyguardState.LOCKSCREEN,
@@ -168,7 +220,7 @@ class AlternateBouncerViewModelTest : SysuiTestCase() {
 
     private fun stepFromAlternateBouncer(
         value: Float,
-        state: TransitionState = TransitionState.RUNNING
+        state: TransitionState = TransitionState.RUNNING,
     ): TransitionStep {
         return step(
             from = KeyguardState.ALTERNATE_BOUNCER,
@@ -182,14 +234,14 @@ class AlternateBouncerViewModelTest : SysuiTestCase() {
         from: KeyguardState,
         to: KeyguardState,
         value: Float,
-        transitionState: TransitionState
+        transitionState: TransitionState,
     ): TransitionStep {
         return TransitionStep(
             from = from,
             to = to,
             value = value,
             transitionState = transitionState,
-            ownerName = "AlternateBouncerViewModelTest"
+            ownerName = "AlternateBouncerViewModelTest",
         )
     }
 }

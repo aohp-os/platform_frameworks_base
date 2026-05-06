@@ -16,10 +16,13 @@
 
 package android.os;
 
+import static android.security.Flags.failOnParcelSizeMismatch;
+
 import static com.android.internal.util.Preconditions.checkArgument;
 
 import static java.util.Objects.requireNonNull;
 
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -27,7 +30,6 @@ import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.app.AppOpsManager;
 import android.compat.annotation.UnsupportedAppUsage;
-import android.ravenwood.annotation.RavenwoodClassLoadHook;
 import android.ravenwood.annotation.RavenwoodKeepWholeClass;
 import android.ravenwood.annotation.RavenwoodReplace;
 import android.ravenwood.annotation.RavenwoodThrow;
@@ -46,10 +48,13 @@ import android.util.SparseBooleanArray;
 import android.util.SparseIntArray;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.StringCache;
 
 import dalvik.annotation.optimization.CriticalNative;
 import dalvik.annotation.optimization.FastNative;
+import dalvik.annotation.optimization.NeverInline;
 
 import libcore.util.SneakyThrow;
 
@@ -66,6 +71,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.nio.BufferOverflowException;
+import java.nio.ByteBuffer;
+import java.nio.ReadOnlyBufferException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -233,7 +241,6 @@ import java.util.function.IntFunction;
  * {@link #readSparseArray(ClassLoader, Class)}.
  */
 @RavenwoodKeepWholeClass
-@RavenwoodClassLoadHook(RavenwoodClassLoadHook.LIBANDROID_LOADING_HOOK)
 public final class Parcel {
 
     private static final boolean DEBUG_RECYCLE = false;
@@ -456,8 +463,15 @@ public final class Parcel {
     private static native void nativeDestroy(long nativePtr);
 
     private static native byte[] nativeMarshall(long nativePtr);
+    private static native int nativeMarshallArray(
+            long nativePtr, byte[] data, int offset, int length);
+    private static native int nativeMarshallBuffer(
+            long nativePtr, ByteBuffer buffer, int offset, int length);
     private static native void nativeUnmarshall(
             long nativePtr, byte[] data, int offset, int length);
+    private static native void nativeUnmarshallBuffer(
+            long nativePtr, ByteBuffer buffer, int offset, int length);
+
     private static native int nativeCompareData(long thisNativePtr, long otherNativePtr);
     private static native boolean nativeCompareDataInRange(
             long ptrA, int offsetA, long ptrB, int offsetB, int length);
@@ -593,11 +607,11 @@ public final class Parcel {
      */
     public final void recycle() {
         if (mRecycled) {
-            Log.wtf(TAG, "Recycle called on unowned Parcel. (recycle twice?) Here: "
+            String error = "Recycle called on unowned Parcel. (recycle twice?) Here: "
                     + Log.getStackTraceString(new Throwable())
-                    + " Original recycle call (if DEBUG_RECYCLE): ", mStack);
-
-            return;
+                    + " Original recycle call (if DEBUG_RECYCLE): ";
+            Log.wtf(TAG, error, mStack);
+            throw new IllegalStateException(error, mStack);
         }
         mRecycled = true;
 
@@ -605,7 +619,6 @@ public final class Parcel {
         // able to print a stack when a Parcel is recycled twice, that
         // is cleared in obtain instead.
 
-        mClassCookies = null;
         freeBuffer();
 
         if (mOwnsNativeParcelObject) {
@@ -626,6 +639,21 @@ public final class Parcel {
                 }
             }
         }
+    }
+
+    @NeverInline
+    private void errorUsedWhileRecycling() {
+        String error = "Parcel used while recycled. "
+                + Log.getStackTraceString(new Throwable())
+                + " Original recycle call (if DEBUG_RECYCLE): ", mStack;
+        Log.wtf(TAG, error);
+        throw new BadParcelableException(error);
+    }
+
+    // TODO: call in more places, it costs a _lot_ to use this in many
+    // places, see b/390748425 for instance. Used as canary for now.
+    private void assertNotRecycled() {
+        if (mRecycled) errorUsedWhileRecycling();
     }
 
     /**
@@ -813,10 +841,76 @@ public final class Parcel {
     }
 
     /**
+     * Writes the raw bytes of the parcel to a buffer.
+     *
+     * <p class="note">The data you retrieve here <strong>must not</strong>
+     * be placed in any kind of persistent storage (on local disk, across
+     * a network, etc).  For that, you should use standard serialization
+     * or another kind of general serialization mechanism.  The Parcel
+     * marshalled representation is highly optimized for local IPC, and as
+     * such does not attempt to maintain compatibility with data created
+     * in different versions of the platform.
+     *
+     * @param buffer The ByteBuffer to write the data to.
+     * @throws ReadOnlyBufferException if the buffer is read-only.
+     * @throws BufferOverflowException if the buffer is too small.
+     */
+    @FlaggedApi(Flags.FLAG_PARCEL_MARSHALL_BYTEBUFFER)
+    public final void marshall(@NonNull ByteBuffer buffer) {
+        if (buffer == null) {
+            throw new NullPointerException();
+        }
+        if (buffer.isReadOnly()) {
+            throw new ReadOnlyBufferException();
+        }
+
+        final int position = buffer.position();
+        final int remaining = buffer.remaining();
+
+        int marshalledSize = 0;
+        if (buffer.isDirect()) {
+            marshalledSize = nativeMarshallBuffer(mNativePtr, buffer, position, remaining);
+        } else if (buffer.hasArray()) {
+            marshalledSize = nativeMarshallArray(
+                    mNativePtr, buffer.array(), buffer.arrayOffset() + position, remaining);
+        } else {
+            throw new IllegalArgumentException();
+        }
+
+        buffer.position(position + marshalledSize);
+    }
+
+    /**
      * Fills the raw bytes of this Parcel with the supplied data.
      */
     public final void unmarshall(@NonNull byte[] data, int offset, int length) {
         nativeUnmarshall(mNativePtr, data, offset, length);
+    }
+
+    /**
+     * Fills the raw bytes of this Parcel with data from the supplied buffer.
+     *
+     * @param buffer will read buffer.remaining() bytes from the buffer.
+     */
+    @FlaggedApi(Flags.FLAG_PARCEL_MARSHALL_BYTEBUFFER)
+    public final void unmarshall(@NonNull ByteBuffer buffer) {
+        if (buffer == null) {
+            throw new NullPointerException();
+        }
+
+        final int position = buffer.position();
+        final int remaining = buffer.remaining();
+
+        if (buffer.isDirect()) {
+            nativeUnmarshallBuffer(mNativePtr, buffer, position, remaining);
+        } else if (buffer.hasArray()) {
+            nativeUnmarshall(
+                    mNativePtr, buffer.array(), buffer.arrayOffset() + position, remaining);
+        } else {
+            throw new IllegalArgumentException();
+        }
+
+        buffer.position(position + remaining);
     }
 
     public final void appendFrom(Parcel parcel, int offset, int length) {
@@ -1227,12 +1321,12 @@ public final class Parcel {
         writeString16(val);
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void writeString8(@Nullable String val) {
         mReadWriteHelper.writeString8(this, val);
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void writeString16(@Nullable String val) {
         mReadWriteHelper.writeString16(this, val);
     }
@@ -1248,12 +1342,12 @@ public final class Parcel {
         writeString16NoHelper(val);
     }
 
-    /** {@hide} */
+    /** @hide */
     public void writeString8NoHelper(@Nullable String val) {
         nativeWriteString8(mNativePtr, val);
     }
 
-    /** {@hide} */
+    /** @hide */
     public void writeString16NoHelper(@Nullable String val) {
         nativeWriteString16(mNativePtr, val);
     }
@@ -1311,7 +1405,7 @@ public final class Parcel {
     }
 
     /**
-     * {@hide}
+     * @hide
      * This will be the new name for writeFileDescriptor, for consistency.
      **/
     public final void writeRawFileDescriptor(@NonNull FileDescriptor val) {
@@ -1319,7 +1413,7 @@ public final class Parcel {
     }
 
     /**
-     * {@hide}
+     * @hide
      * Write an array of FileDescriptor objects into the Parcel.
      *
      * @param value The array of objects to be written.
@@ -1646,7 +1740,7 @@ public final class Parcel {
                 totalObjects = Math.multiplyExact(totalObjects, dimension);
             }
         } catch (ArithmeticException e) {
-            Log.e(TAG, "ArithmeticException occurred while multiplying dimensions " + e);
+            Log.e(TAG, "ArithmeticException occurred while multiplying dimensions", e);
             BadParcelableException badParcelableException = new BadParcelableException("Estimated "
                     + "array length is too large. Array Dimensions:" + Arrays.toString(dimensions));
             SneakyThrow.sneakyThrow(badParcelableException);
@@ -1660,7 +1754,7 @@ public final class Parcel {
             estimatedAllocationSize = Math.multiplyExact(typeSize, length);
         } catch (ArithmeticException e) {
             Log.e(TAG, "ArithmeticException occurred while multiplying values " + typeSize
-                    + " and "  + length + " Exception: " + e);
+                    + " and " + length, e);
             BadParcelableException badParcelableException = new BadParcelableException("Estimated "
                     + "allocation size is too large. typeSize: " + typeSize + " length: " + length);
             SneakyThrow.sneakyThrow(badParcelableException);
@@ -1952,7 +2046,7 @@ public final class Parcel {
         readString16Array(val);
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void writeString8Array(@Nullable String[] val) {
         if (val != null) {
             int N = val.length;
@@ -1965,7 +2059,7 @@ public final class Parcel {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     @Nullable
     public final String[] createString8Array() {
         int N = readInt();
@@ -1981,7 +2075,7 @@ public final class Parcel {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void readString8Array(@NonNull String[] val) {
         int N = readInt();
         if (N == val.length) {
@@ -1993,10 +2087,28 @@ public final class Parcel {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void writeString16Array(@Nullable String[] val) {
         if (val != null) {
             int N = val.length;
+            // reduce the number of times we need to growData from writing each String16
+            int size = 4; // int32_t for the size of the array
+            for (int i = 0; i < N; i++) {
+                if (val[i] == null) {
+                    size += 4; // we write a -1 for len for null strings
+                } else {
+                    // + 4 byte int32 for len
+                    // String.length() * 2 because each char is at least one
+                    // UTF-16 code point (2 bytes)
+                    // + 2 for null char
+                    // The string + null is padded for 4 byte alignment
+                    size += ((val[i].length() * 2 + 2 + 3) & ~3) + 4;
+                }
+            }
+            size += dataPosition();
+            // size * 3/2 is what growData uses
+            if (dataCapacity() < size) setDataCapacity(size / 2 * 3);
+
             writeInt(N);
             for (int i=0; i<N; i++) {
                 writeString16(val[i]);
@@ -2006,7 +2118,7 @@ public final class Parcel {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     @Nullable
     public final String[] createString16Array() {
         int N = readInt();
@@ -2022,7 +2134,7 @@ public final class Parcel {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
     public final void readString16Array(@NonNull String[] val) {
         int N = readInt();
         if (N == val.length) {
@@ -3316,12 +3428,12 @@ public final class Parcel {
         return readString16();
     }
 
-    /** {@hide} */
+    /** @hide */
     public final @Nullable String readString8() {
         return mReadWriteHelper.readString8(this);
     }
 
-    /** {@hide} */
+    /** @hide */
     public final @Nullable String readString16() {
         return mReadWriteHelper.readString16(this);
     }
@@ -3337,14 +3449,22 @@ public final class Parcel {
         return readString16NoHelper();
     }
 
-    /** {@hide} */
+    /** @hide */
     public @Nullable String readString8NoHelper() {
-        return nativeReadString8(mNativePtr);
+        if (Flags.parcelStringCacheEnabled()) {
+            return StringCache.INSTANCE.cache(nativeReadString8(mNativePtr));
+        } else {
+            return nativeReadString8(mNativePtr);
+        }
     }
 
-    /** {@hide} */
+    /** @hide */
     public @Nullable String readString16NoHelper() {
-        return nativeReadString16(mNativePtr);
+        if (Flags.parcelStringCacheEnabled()) {
+            return StringCache.INSTANCE.cache(nativeReadString16(mNativePtr));
+        } else {
+            return nativeReadString16(mNativePtr);
+        }
     }
 
     /**
@@ -3387,14 +3507,14 @@ public final class Parcel {
         return fd != null ? new ParcelFileDescriptor(fd) : null;
     }
 
-    /** {@hide} */
+    /** @hide */
     @UnsupportedAppUsage
     public final FileDescriptor readRawFileDescriptor() {
         return nativeReadFileDescriptor(mNativePtr);
     }
 
     /**
-     * {@hide}
+     * @hide
      * Read and return a new array of FileDescriptors from the parcel.
      * @return the FileDescriptor array, or null if the array is null.
      **/
@@ -3413,7 +3533,7 @@ public final class Parcel {
     }
 
     /**
-     * {@hide}
+     * @hide
      * Read an array of FileDescriptors from a parcel.
      * The passed array must be exactly the length of the array in the parcel.
      * @return the FileDescriptor array, or null if the array is null.
@@ -3649,7 +3769,7 @@ public final class Parcel {
 
     /**
      * Read and return a String[] object from the parcel.
-     * {@hide}
+     * @hide
      */
     @UnsupportedAppUsage
     @Nullable
@@ -3659,7 +3779,7 @@ public final class Parcel {
 
     /**
      * Read and return a CharSequence[] object from the parcel.
-     * {@hide}
+     * @hide
      */
     @Nullable
     public final CharSequence[] readCharSequenceArray() {
@@ -3668,6 +3788,7 @@ public final class Parcel {
         int length = readInt();
         if (length >= 0)
         {
+            ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, length);
             array = new CharSequence[length];
 
             for (int i = 0 ; i < length ; i++)
@@ -3681,7 +3802,7 @@ public final class Parcel {
 
     /**
      * Read and return an ArrayList&lt;CharSequence&gt; object from the parcel.
-     * {@hide}
+     * @hide
      */
     @Nullable
     public final ArrayList<CharSequence> readCharSequenceList() {
@@ -3689,6 +3810,7 @@ public final class Parcel {
 
         int length = readInt();
         if (length >= 0) {
+            ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, length);
             array = new ArrayList<CharSequence>(length);
 
             for (int i = 0 ; i < length ; i++) {
@@ -3831,6 +3953,7 @@ public final class Parcel {
         if (N < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         SparseBooleanArray sa = new SparseBooleanArray(N);
         readSparseBooleanArrayInternal(sa, N);
         return sa;
@@ -3847,6 +3970,7 @@ public final class Parcel {
         if (N < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         SparseIntArray sa = new SparseIntArray(N);
         readSparseIntArrayInternal(sa, N);
         return sa;
@@ -3892,6 +4016,7 @@ public final class Parcel {
     public final <T> void readTypedList(@NonNull List<T> list, @NonNull Parcelable.Creator<T> c) {
         int M = list.size();
         int N = readInt();
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         int i = 0;
         for (; i < M && i < N; i++) {
             list.set(i, readTypedObject(c));
@@ -4050,6 +4175,7 @@ public final class Parcel {
     public final void readStringList(@NonNull List<String> list) {
         int M = list.size();
         int N = readInt();
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         int i = 0;
         for (; i < M && i < N; i++) {
             list.set(i, readString());
@@ -4071,6 +4197,7 @@ public final class Parcel {
     public final void readBinderList(@NonNull List<IBinder> list) {
         int M = list.size();
         int N = readInt();
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         int i = 0;
         for (; i < M && i < N; i++) {
             list.set(i, readStrongBinder());
@@ -4093,6 +4220,7 @@ public final class Parcel {
             @NonNull Function<IBinder, T> asInterface) {
         int M = list.size();
         int N = readInt();
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         int i = 0;
         for (; i < M && i < N; i++) {
             list.set(i, asInterface.apply(readStrongBinder()));
@@ -4159,6 +4287,7 @@ public final class Parcel {
             list.clear();
             return list;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
 
         final int m = list.size();
         int i = 0;
@@ -4614,9 +4743,14 @@ public final class Parcel {
             object = readValue(type, loader, clazz, itemTypes);
             int actual = dataPosition() - start;
             if (actual != length) {
-                Slog.wtfStack(TAG,
-                        "Unparcelling of " + object + " of type " + Parcel.valueTypeToString(type)
-                                + "  consumed " + actual + " bytes, but " + length + " expected.");
+                boolean failOnMismatch = failOnParcelSizeMismatch();
+                String msg = "Unparcelling of " + object + " of type " + Parcel.valueTypeToString(
+                        type) + "  consumed " + actual + " bytes, but " + length + " expected."
+                        + (failOnMismatch ? " [throwing]" : " [ignored]");
+                Slog.wtfStack(TAG, msg);
+                if (failOnMismatch) {
+                    throw new BadParcelableException(msg);
+                }
             }
         } else {
             object = readValue(type, loader, clazz, itemTypes);
@@ -4650,7 +4784,7 @@ public final class Parcel {
      * @hide
      */
     @Nullable
-    public Object readLazyValue(@Nullable ClassLoader loader) {
+    private Object readLazyValue(@Nullable ClassLoaderProvider loaderProvider) {
         int start = dataPosition();
         int type = readInt();
         if (isLengthPrefixed(type)) {
@@ -4661,10 +4795,15 @@ public final class Parcel {
             int end = MathUtils.addOrThrow(dataPosition(), objectLength);
             int valueLength = end - start;
             setDataPosition(end);
-            return new LazyValue(this, start, valueLength, type, loader);
+            return new LazyValue(this, start, valueLength, type, loaderProvider);
         } else {
-            return readValue(type, loader, /* clazz */ null);
+            return readValue(type, getClassLoader(loaderProvider), /* clazz */ null);
         }
+    }
+
+    @Nullable
+    private static ClassLoader getClassLoader(@Nullable ClassLoaderProvider loaderProvider) {
+        return loaderProvider == null ? null : loaderProvider.getClassLoader();
     }
 
 
@@ -4680,7 +4819,12 @@ public final class Parcel {
         private final int mPosition;
         private final int mLength;
         private final int mType;
-        @Nullable private final ClassLoader mLoader;
+        // this member is set when a bundle that includes a LazyValue is unparceled. But it is used
+        // when apply method is called. Between these 2 events, the bundle's ClassLoader could have
+        // changed. Let the bundle be a ClassLoaderProvider allows the bundle provides its current
+        // ClassLoader at the time apply method is called.
+        @NonNull
+        private final ClassLoaderProvider mLoaderProvider;
         @Nullable private Object mObject;
 
         /**
@@ -4691,12 +4835,13 @@ public final class Parcel {
          */
         @Nullable private volatile Parcel mSource;
 
-        LazyValue(Parcel source, int position, int length, int type, @Nullable ClassLoader loader) {
+        LazyValue(Parcel source, int position, int length, int type,
+                @NonNull ClassLoaderProvider loaderProvider) {
             mSource = requireNonNull(source);
             mPosition = position;
             mLength = length;
             mType = type;
-            mLoader = loader;
+            mLoaderProvider = loaderProvider;
         }
 
         @Override
@@ -4709,7 +4854,8 @@ public final class Parcel {
                         int restore = source.dataPosition();
                         try {
                             source.setDataPosition(mPosition);
-                            mObject = source.readValue(mLoader, clazz, itemTypes);
+                            mObject = source.readValue(mLoaderProvider.getClassLoader(), clazz,
+                                    itemTypes);
                         } finally {
                             source.setDataPosition(restore);
                         }
@@ -4747,6 +4893,12 @@ public final class Parcel {
             return Parcel.hasFileDescriptors(mObject);
         }
 
+        /** @hide */
+        @VisibleForTesting
+        public ClassLoader getClassLoader() {
+            return mLoaderProvider.getClassLoader();
+        }
+
         @Override
         public String toString() {
             return (mSource != null)
@@ -4782,7 +4934,8 @@ public final class Parcel {
                 return Objects.equals(mObject, value.mObject);
             }
             // Better safely fail here since this could mean we get different objects.
-            if (!Objects.equals(mLoader, value.mLoader)) {
+            if (!Objects.equals(mLoaderProvider.getClassLoader(),
+                    value.mLoaderProvider.getClassLoader())) {
                 return false;
             }
             // Otherwise compare metadata prior to comparing payload.
@@ -4796,8 +4949,22 @@ public final class Parcel {
         @Override
         public int hashCode() {
             // Accessing mSource first to provide memory barrier for mObject
-            return Objects.hash(mSource == null, mObject, mLoader, mType, mLength);
+            return Objects.hash(mSource == null, mObject, mLoaderProvider.getClassLoader(), mType,
+                    mLength);
         }
+    }
+
+    /**
+     * Provides a ClassLoader.
+     * @hide
+     */
+    public interface ClassLoaderProvider {
+        /**
+         * Returns a ClassLoader.
+         *
+         * @return ClassLoader
+         */
+        ClassLoader getClassLoader();
     }
 
     /** Same as {@link #readValue(ClassLoader, Class, Class[])} without any item types. */
@@ -5082,6 +5249,7 @@ public final class Parcel {
     @SuppressWarnings("unchecked")
     @Nullable
     private <T> T readParcelableInternal(@Nullable ClassLoader loader, @Nullable Class<T> clazz) {
+        assertNotRecycled();
         Parcelable.Creator<?> creator = readParcelableCreatorInternal(loader, clazz);
         if (creator == null) {
             return null;
@@ -5474,9 +5642,11 @@ public final class Parcel {
             nativeFreeBuffer(mNativePtr);
         }
         mReadWriteHelper = ReadWriteHelper.DEFAULT;
+        mClassCookies = null;
     }
 
-    private void destroy() {
+    /** @hide */
+    public void destroy() {
         resetSqaushingState();
         if (mNativePtr != 0) {
             if (mOwnsNativeParcelObject) {
@@ -5513,6 +5683,7 @@ public final class Parcel {
         if (n < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
         HashMap<K, V> map = new HashMap<>(n);
         readMapInternal(map, n, loader, clazzKey, clazzValue);
         return map;
@@ -5528,6 +5699,8 @@ public final class Parcel {
     private <K, V> void readMapInternal(@NonNull Map<? super K, ? super V> outVal, int n,
             @Nullable ClassLoader loader, @Nullable Class<K> clazzKey,
             @Nullable Class<V> clazzValue) {
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
+        // TODO: move all reservation of map size here, not all reserves?
         while (n > 0) {
             K key = readValue(loader, clazzKey);
             V value = readValue(loader, clazzValue);
@@ -5537,8 +5710,8 @@ public final class Parcel {
     }
 
     private void readArrayMapInternal(@NonNull ArrayMap<? super String, Object> outVal,
-            int size, @Nullable ClassLoader loader) {
-        readArrayMap(outVal, size, /* sorted */ true, /* lazy */ false, loader);
+            int size, @Nullable ClassLoaderProvider loaderProvider) {
+        readArrayMap(outVal, size, /* sorted */ true, /* lazy */ false, loaderProvider, null);
     }
 
     /**
@@ -5548,17 +5721,18 @@ public final class Parcel {
      * @param lazy   Whether to populate the map with lazy {@link Function} objects for
      *               length-prefixed values. See {@link Parcel#readLazyValue(ClassLoader)} for more
      *               details.
-     * @return a count of the lazy values in the map
+     * @param lazyValueCount number of lazy values added here
      * @hide
      */
-    int readArrayMap(ArrayMap<? super String, Object> map, int size, boolean sorted,
-            boolean lazy, @Nullable ClassLoader loader) {
-        int lazyValues = 0;
+    void readArrayMap(ArrayMap<? super String, Object> map, int size, boolean sorted,
+            boolean lazy, @Nullable ClassLoaderProvider loaderProvider, int[] lazyValueCount) {
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, size);
         while (size > 0) {
             String key = readString();
-            Object value = (lazy) ? readLazyValue(loader) : readValue(loader);
+            Object value = (lazy) ? readLazyValue(loaderProvider) : readValue(
+                    getClassLoader(loaderProvider));
             if (value instanceof LazyValue) {
-                lazyValues++;
+                lazyValueCount[0]++;
             }
             if (sorted) {
                 map.append(key, value);
@@ -5570,7 +5744,6 @@ public final class Parcel {
         if (sorted) {
             map.validate();
         }
-        return lazyValues;
     }
 
     /**
@@ -5578,12 +5751,12 @@ public final class Parcel {
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public void readArrayMap(@NonNull ArrayMap<? super String, Object> outVal,
-            @Nullable ClassLoader loader) {
+            @Nullable ClassLoaderProvider loaderProvider) {
         final int N = readInt();
         if (N < 0) {
             return;
         }
-        readArrayMapInternal(outVal, N, loader);
+        readArrayMapInternal(outVal, N, loaderProvider);
     }
 
     /**
@@ -5599,6 +5772,7 @@ public final class Parcel {
         if (size < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, size);
         ArraySet<Object> result = new ArraySet<>(size);
         for (int i = 0; i < size; i++) {
             Object value = readValue(loader);
@@ -5620,6 +5794,8 @@ public final class Parcel {
      */
     private <T> void readListInternal(@NonNull List<? super T> outVal, int n,
             @Nullable ClassLoader loader, @Nullable Class<T> clazz) {
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
+        // TODO: move all size reservations here, instead of code that calls this. Not all reserves.
         while (n > 0) {
             T value = readValue(loader, clazz);
             //Log.d(TAG, "Unmarshalling value=" + value);
@@ -5639,6 +5815,7 @@ public final class Parcel {
         if (n < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
         ArrayList<T> l = new ArrayList<>(n);
         readListInternal(l, n, loader, clazz);
         return l;
@@ -5681,6 +5858,7 @@ public final class Parcel {
      */
     private void readSparseArrayInternal(@NonNull SparseArray outVal, int N,
             @Nullable ClassLoader loader) {
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, N);
         while (N > 0) {
             int key = readInt();
             Object value = readValue(loader);
@@ -5699,6 +5877,7 @@ public final class Parcel {
         if (n < 0) {
             return null;
         }
+        ensureWithinMemoryLimit(SIZE_COMPLEX_TYPE, n);
         SparseArray<T> outVal = new SparseArray<>(n);
 
         while (n > 0) {

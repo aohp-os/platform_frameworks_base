@@ -35,6 +35,7 @@ import android.annotation.NonNull;
 import android.app.WindowConfiguration;
 import android.content.pm.ActivityInfo;
 import android.graphics.Rect;
+import android.window.DesktopExperienceFlags;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -69,11 +70,24 @@ public class DesktopAppCompatAspectRatioPolicy {
      * Calculates the final aspect ratio of an launching activity based on the task it will be
      * launched in. Takes into account any min or max aspect ratio constraints.
      */
-    float calculateAspectRatio(@NonNull Task task) {
+    float calculateAspectRatio(@NonNull Task task, boolean hasOrientationMismatch) {
+        if (DesktopExperienceFlags.PRESERVE_RECENTS_TASK_CONFIGURATION_ON_RELAUNCH.isTrue()
+                && task.inRecents && task.topRunningActivity() != null) {
+            final ActivityRecord top = task.topRunningActivity();
+            // If activity eligible for SCM, use original aspect ratio.
+            if (top.getAppCompatDisplayInsets() != null) {
+                return top.getAppCompatDisplayInsets().mAspectRatio;
+            }
+            // If task in resents with running activity, inherit existing activity aspect ratio.
+            final WindowConfiguration windowConfiguration = top.getWindowConfiguration();
+            final Rect existingBounds = windowConfiguration.getAppBounds() != null
+                    ? windowConfiguration.getAppBounds() : windowConfiguration.getBounds();
+            return AppCompatUtils.computeAspectRatio(existingBounds);
+        }
         final float maxAspectRatio = getMaxAspectRatio();
         final float minAspectRatio = getMinAspectRatio(task);
         float desiredAspectRatio = 0;
-        desiredAspectRatio = getDesiredAspectRatio(task);
+        desiredAspectRatio = getDesiredAspectRatio(task, hasOrientationMismatch);
         if (maxAspectRatio >= 1 && desiredAspectRatio > maxAspectRatio) {
             desiredAspectRatio = maxAspectRatio;
         } else if (minAspectRatio >= 1 && desiredAspectRatio < minAspectRatio) {
@@ -87,13 +101,14 @@ public class DesktopAppCompatAspectRatioPolicy {
      * any min or max aspect ratio constraints.
      */
     @VisibleForTesting
-    float getDesiredAspectRatio(@NonNull Task task) {
+    float getDesiredAspectRatio(@NonNull Task task, boolean hasOrientationMismatch) {
         final float letterboxAspectRatioOverride = getFixedOrientationLetterboxAspectRatio(task);
         // Aspect ratio as suggested by the system. Apps requested mix/max aspect ratio will
         // be respected in #calculateAspectRatio.
         if (isDefaultMultiWindowLetterboxAspectRatioDesired(task)) {
             return DEFAULT_LETTERBOX_ASPECT_RATIO_FOR_MULTI_WINDOW;
-        } else if (letterboxAspectRatioOverride > MIN_FIXED_ORIENTATION_LETTERBOX_ASPECT_RATIO) {
+        } else if (hasOrientationMismatch
+                && letterboxAspectRatioOverride > MIN_FIXED_ORIENTATION_LETTERBOX_ASPECT_RATIO) {
             return letterboxAspectRatioOverride;
         }
         return AppCompatUtils.computeAspectRatio(task.getDisplayArea().getBounds());
@@ -176,7 +191,7 @@ public class DesktopAppCompatAspectRatioPolicy {
         final DisplayContent dc = task.mDisplayContent;
         final int windowingMode = task.getDisplayArea().getWindowingMode();
         return WindowConfiguration.inMultiWindowMode(windowingMode)
-                && !dc.getIgnoreOrientationRequest();
+                && dc != null && !dc.getIgnoreOrientationRequest();
     }
 
     /**
@@ -189,7 +204,7 @@ public class DesktopAppCompatAspectRatioPolicy {
 
         final ActivityInfo info = mActivityRecord.info;
         final AppCompatAspectRatioOverrides aspectRatioOverrides =
-                mAppCompatOverrides.getAppCompatAspectRatioOverrides();
+                mAppCompatOverrides.getAspectRatioOverrides();
         if (shouldApplyUserMinAspectRatioOverride(task)) {
             return aspectRatioOverrides.getUserMinAspectRatio();
         }
@@ -266,7 +281,7 @@ public class DesktopAppCompatAspectRatioPolicy {
             return false;
         }
 
-        final int userAspectRatioCode = mAppCompatOverrides.getAppCompatAspectRatioOverrides()
+        final int userAspectRatioCode = mAppCompatOverrides.getAspectRatioOverrides()
                 .getUserMinAspectRatioOverrideCode();
 
         return userAspectRatioCode != USER_MIN_ASPECT_RATIO_UNSET
@@ -281,9 +296,10 @@ public class DesktopAppCompatAspectRatioPolicy {
         // We use mBooleanPropertyAllowUserAspectRatioOverride to allow apps to opt-out which has
         // effect only if explicitly false. If mBooleanPropertyAllowUserAspectRatioOverride is null,
         // the current app doesn't opt-out so the first part of the predicate is true.
-        return mAppCompatOverrides.getAppCompatAspectRatioOverrides()
+        return mAppCompatOverrides.getAspectRatioOverrides()
                     .getAllowUserAspectRatioOverridePropertyValue()
                 && mAppCompatConfiguration.isUserAppAspectRatioSettingsEnabled()
+                && task.mDisplayContent != null
                 && task.mDisplayContent.getIgnoreOrientationRequest();
     }
 

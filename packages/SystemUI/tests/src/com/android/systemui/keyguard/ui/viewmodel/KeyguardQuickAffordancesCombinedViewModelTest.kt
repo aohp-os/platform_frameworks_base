@@ -19,21 +19,24 @@ package com.android.systemui.keyguard.ui.viewmodel
 
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
+import android.graphics.drawable.Drawable
 import android.os.UserHandle
+import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.EnableFlags
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.widget.LockPatternUtils
 import com.android.keyguard.logging.KeyguardQuickAffordancesLogger
-import com.android.systemui.Flags as AConfigFlags
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.accessibility.domain.interactor.accessibilityInteractor
 import com.android.systemui.animation.DialogTransitionAnimator
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.dock.DockManagerFake
-import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
+import com.android.systemui.flags.fakeFeatureFlagsClassic
+import com.android.systemui.haptics.msdl.msdlPlayer
 import com.android.systemui.keyguard.data.quickaffordance.BuiltInKeyguardQuickAffordanceKeys
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceConfig
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceProviderClientFactory
@@ -44,9 +47,11 @@ import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanc
 import com.android.systemui.keyguard.data.repository.FakeBiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository
+import com.android.systemui.keyguard.data.repository.biometricSettingsRepository
+import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractorFactory
 import com.android.systemui.keyguard.domain.interactor.KeyguardQuickAffordanceInteractor
+import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState.AOD
 import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
@@ -63,6 +68,7 @@ import com.android.systemui.scene.data.repository.Idle
 import com.android.systemui.scene.data.repository.setTransition
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.scene.shared.model.Scenes
+import com.android.systemui.securelockdevice.domain.interactor.secureLockDeviceInteractor
 import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -76,7 +82,6 @@ import com.android.systemui.util.settings.fakeSettings
 import com.google.common.truth.Truth
 import kotlin.math.min
 import kotlin.test.assertEquals
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
@@ -88,8 +93,10 @@ import org.mockito.ArgumentMatchers
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.MockitoAnnotations
+import org.mockito.kotlin.isNull
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class KeyguardQuickAffordancesCombinedViewModelTest : SysuiTestCase() {
@@ -189,16 +196,10 @@ class KeyguardQuickAffordancesCombinedViewModelTest : SysuiTestCase() {
         qrCodeScannerAffordanceConfig =
             FakeKeyguardQuickAffordanceConfig(BuiltInKeyguardQuickAffordanceKeys.QR_CODE_SCANNER)
         dockManager = DockManagerFake()
-        biometricSettingsRepository = FakeBiometricSettingsRepository()
+        biometricSettingsRepository = kosmos.biometricSettingsRepository
 
-        mSetFlagsRule.enableFlags(AConfigFlags.FLAG_KEYGUARD_BOTTOM_AREA_REFACTOR)
-
-        val featureFlags =
-            FakeFeatureFlags().apply { set(Flags.LOCK_SCREEN_LONG_PRESS_ENABLED, false) }
-
-        val withDeps = KeyguardInteractorFactory.create(featureFlags = featureFlags)
-        keyguardInteractor = withDeps.keyguardInteractor
-        repository = withDeps.repository
+        keyguardInteractor = kosmos.keyguardInteractor
+        repository = kosmos.fakeKeyguardRepository
 
         whenever(userTracker.userHandle).thenReturn(mock())
         whenever(lockPatternUtils.getStrongAuthForUser(ArgumentMatchers.anyInt()))
@@ -288,17 +289,20 @@ class KeyguardQuickAffordancesCombinedViewModelTest : SysuiTestCase() {
                         keyguardStateController = keyguardStateController,
                         userTracker = userTracker,
                         activityStarter = activityStarter,
-                        featureFlags = featureFlags,
+                        featureFlags = kosmos.fakeFeatureFlagsClassic,
                         repository = { quickAffordanceRepository },
                         launchAnimator = launchAnimator,
                         logger = logger,
                         metricsLogger = metricsLogger,
+                        secureLockDeviceInteractor = { kosmos.secureLockDeviceInteractor },
                         devicePolicyManager = devicePolicyManager,
                         dockManager = dockManager,
                         biometricSettingsRepository = biometricSettingsRepository,
                         backgroundDispatcher = kosmos.testDispatcher,
                         appContext = mContext,
+                        accessibilityInteractor = kosmos.accessibilityInteractor,
                         sceneInteractor = { kosmos.sceneInteractor },
+                        msdlPlayer = kosmos.msdlPlayer,
                     ),
                 keyguardInteractor = keyguardInteractor,
                 shadeInteractor = shadeInteractor,
@@ -352,6 +356,32 @@ class KeyguardQuickAffordancesCombinedViewModelTest : SysuiTestCase() {
                 testConfig = testConfig,
                 configKey = configKey,
             )
+        }
+
+    @Test
+    @EnableFlags(com.android.systemui.Flags.FLAG_CLEAR_SHORTCUT_ICON_TINT)
+    fun nonTintedIcon_clearsTintFromIcon() =
+        testScope.runTest {
+            val icon: Icon.Loaded = mock()
+            val drawable: Drawable = mock()
+            whenever(icon.drawable).thenReturn(drawable)
+
+            underTest.nonTintedIcon(icon)
+
+            verify(drawable).setTintList(isNull())
+        }
+
+    @Test
+    @DisableFlags(com.android.systemui.Flags.FLAG_CLEAR_SHORTCUT_ICON_TINT)
+    fun nonTintedIcon_noInteractionWithDrawable() =
+        testScope.runTest {
+            val icon: Icon.Loaded = mock()
+            val drawable: Drawable = mock()
+            whenever(icon.drawable).thenReturn(drawable)
+
+            underTest.nonTintedIcon(icon)
+
+            verifyNoInteractions(drawable)
         }
 
     @Test

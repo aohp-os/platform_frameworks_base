@@ -36,6 +36,7 @@ import com.android.systemui.accessibility.accessibilitymenu.R;
 import com.android.systemui.accessibility.accessibilitymenu.activity.A11yMenuSettingsActivity.A11yMenuPreferenceFragment;
 import com.android.systemui.accessibility.accessibilitymenu.model.A11yMenuShortcut;
 import com.android.systemui.accessibility.accessibilitymenu.view.A11yMenuFooter.A11yMenuFooterCallBack;
+import com.android.systemui.utils.windowmanager.WindowManagerUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -171,7 +172,7 @@ public class A11yMenuViewPager {
                 a11yMenuLayout.getResources().getConfiguration());
         updateFooterState();
         registerOnGlobalLayoutListener();
-        goToPage(pageIndex);
+        goToPage(pageIndex, /*shouldAnimate=*/ false);
     }
 
     /** Initializes viewPager and its adapter. */
@@ -212,12 +213,12 @@ public class A11yMenuViewPager {
         mA11yMenuFooter.getNextPageBtn().setEnabled(currentPage < lastPage);
     }
 
-    private void goToPage(int pageIndex) {
+    private void goToPage(int pageIndex, boolean shouldAnimate) {
         if (mViewPager == null) {
             return;
         }
         if ((pageIndex >= 0) && (pageIndex < mViewPager.getAdapter().getItemCount())) {
-            mViewPager.setCurrentItem(pageIndex);
+            mViewPager.setCurrentItem(pageIndex, shouldAnimate);
         }
     }
 
@@ -292,8 +293,8 @@ public class A11yMenuViewPager {
             // Keeps footer window height unchanged no matter the density is changed.
             mA11yMenuFooter.adjustFooterToDensityScale(densityScale);
             // Adjust the view pager height for system bar and display cutout insets.
-            WindowManager windowManager = mA11yMenuLayout.getContext()
-                    .getSystemService(WindowManager.class);
+            WindowManager windowManager = WindowManagerUtils
+                    .getWindowManager(mA11yMenuLayout.getContext());
             WindowMetrics windowMetric = windowManager.getCurrentWindowMetrics();
             Insets windowInsets = windowMetric.getWindowInsets().getInsetsIgnoringVisibility(
                     WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
@@ -328,7 +329,7 @@ public class A11yMenuViewPager {
                 public void onPreviousButtonClicked() {
                     // Moves to previous page.
                     int targetPage = mViewPager.getCurrentItem() - 1;
-                    goToPage(targetPage);
+                    goToPage(targetPage, /*shouldAnimate=*/ true);
                     updateFooterState();
                 }
 
@@ -336,7 +337,7 @@ public class A11yMenuViewPager {
                 public void onNextButtonClicked() {
                     // Moves to next page.
                     int targetPage = mViewPager.getCurrentItem() + 1;
-                    goToPage(targetPage);
+                    goToPage(targetPage, /*shouldAnimate=*/ true);
                     updateFooterState();
                 }
             };

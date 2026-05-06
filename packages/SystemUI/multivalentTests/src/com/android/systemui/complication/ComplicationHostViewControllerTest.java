@@ -15,15 +15,26 @@
  */
 package com.android.systemui.complication;
 
+import static android.service.dreams.Flags.FLAG_DREAMS_V2;
+
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.content.res.Configuration;
+import android.graphics.Rect;
 import android.os.UserHandle;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.provider.Settings;
+import android.testing.TestableLooper;
+import android.testing.ViewUtils;
 import android.view.View;
 
 import androidx.constraintlayout.widget.ConstraintLayout;
@@ -35,6 +46,7 @@ import androidx.test.filters.SmallTest;
 
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dreams.DreamOverlayStateController;
+import com.android.systemui.kosmos.KosmosJavaAdapter;
 import com.android.systemui.util.settings.FakeSettings;
 import com.android.systemui.util.settings.SecureSettings;
 
@@ -52,8 +64,8 @@ import java.util.HashSet;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
+@TestableLooper.RunWithLooper(setAsMainLooper = true)
 public class ComplicationHostViewControllerTest extends SysuiTestCase {
-    @Mock
     ConstraintLayout mComplicationHostView;
 
     @Mock
@@ -99,6 +111,10 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
     private SecureSettings mSecureSettings;
 
+    private KosmosJavaAdapter mKosmos;
+
+    private TestableLooper mLooper;
+
     private static final int CURRENT_USER_ID = UserHandle.USER_SYSTEM;
 
     @Before
@@ -113,9 +129,12 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
         when(mViewHolder.getLayoutParams()).thenReturn(mComplicationLayoutParams);
         when(mComplicationView.getParent()).thenReturn(mComplicationHostView);
 
+        mLooper = TestableLooper.get(this);
+        mKosmos = new KosmosJavaAdapter(this);
         mSecureSettings = new FakeSettings();
+        mComplicationHostView = new ConstraintLayout(getContext());
         mSecureSettings.putFloatForUser(
-                        Settings.Global.ANIMATOR_DURATION_SCALE, 1.0f, CURRENT_USER_ID);
+                Settings.Global.ANIMATOR_DURATION_SCALE, 1.0f, CURRENT_USER_ID);
 
         mController = new ComplicationHostViewController(
                 mComplicationHostView,
@@ -123,9 +142,49 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
                 mDreamOverlayStateController,
                 mLifecycleOwner,
                 mViewModel,
-                mSecureSettings);
+                mSecureSettings,
+                mKosmos.getConfigurationInteractor(),
+                mKosmos.getTestDispatcher()
+        );
 
         mController.init();
+    }
+
+    /**
+     * Ensures layout engine update is called on configuration change.
+     */
+    @Test
+    @EnableFlags(FLAG_DREAMS_V2)
+    public void updateLayoutEngine_isCalled_onConfigurationChange_flagEnabled() {
+        // Attach the complication host view so flows collecting on it start running.
+        ViewUtils.attachView(mComplicationHostView);
+        mLooper.processAllMessages();
+
+        // emit configuration change
+        Rect bounds = new Rect(0, 0, 2000, 2000);
+        Configuration config = new Configuration();
+        config.windowConfiguration.setMaxBounds(bounds);
+        mKosmos.getConfigurationRepository().onConfigurationChange(config);
+        mKosmos.getTestScope().getTestScheduler().runCurrent();
+
+        verify(mLayoutEngine).updateLayoutEngine(eq(bounds), anyMap());
+    }
+
+    @Test
+    @DisableFlags(FLAG_DREAMS_V2)
+    public void updateLayoutEngine_notCalled_onConfigurationChange_flagDisabled() {
+        // Attach the complication host view so flows collecting on it start running.
+        ViewUtils.attachView(mComplicationHostView);
+        mLooper.processAllMessages();
+
+        // emit configuration change
+        Rect bounds = new Rect(0, 0, 2000, 2000);
+        Configuration config = new Configuration();
+        config.windowConfiguration.setMaxBounds(bounds);
+        mKosmos.getConfigurationRepository().onConfigurationChange(config);
+        mKosmos.getTestScope().getTestScheduler().runCurrent();
+
+        verify(mLayoutEngine, never()).updateLayoutEngine(eq(bounds), anyMap());
     }
 
     /**
@@ -133,6 +192,7 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
      */
     @Test
     public void testViewModelObservation() {
+        mController.onViewAttached();
         final Observer<Collection<ComplicationViewModel>> observer =
                 captureComplicationViewModelsObserver();
 
@@ -152,6 +212,7 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
     @Test
     public void testMalformedComplicationAddition() {
+        mController.onViewAttached();
         final Observer<Collection<ComplicationViewModel>> observer =
                 captureComplicationViewModelsObserver();
 
@@ -167,6 +228,7 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
     @Test
     public void testNewComplicationsBeforeEntryAnimationsFinishSetToInvisible() {
+        mController.onViewAttached();
         final Observer<Collection<ComplicationViewModel>> observer =
                 captureComplicationViewModelsObserver();
 
@@ -181,6 +243,7 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
     @Test
     public void testNewComplicationsAfterEntryAnimationsFinishNotSetToInvisible() {
+        mController.onViewAttached();
         final Observer<Collection<ComplicationViewModel>> observer =
                 captureComplicationViewModelsObserver();
 
@@ -198,6 +261,7 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
     @Test
     public void testAnimationsDisabled_ComplicationsNeverSetToInvisible() {
+        mController.onViewAttached();
         //Disable animations
         mController.mIsAnimationEnabled = false;
 
@@ -211,6 +275,39 @@ public class ComplicationHostViewControllerTest extends SysuiTestCase {
 
         // The complication view should not be set to invisible.
         verify(mComplicationView, never()).setVisibility(View.INVISIBLE);
+    }
+
+    @Test
+    public void testLifecycleObserve_activeOnlyDuringAttachedState() {
+        verify(mComplicationViewModelLiveData, never()).observe(any(), any());
+        mController.onViewAttached();
+        final Observer<Collection<ComplicationViewModel>> observer =
+                captureComplicationViewModelsObserver();
+        mController.onViewDetached();
+        verify(mComplicationViewModelLiveData).removeObserver(eq(observer));
+    }
+
+    @Test
+    public void testComplicationsRemovedOnDestroy() {
+        mController.onViewAttached();
+        final Observer<Collection<ComplicationViewModel>> observer =
+                captureComplicationViewModelsObserver();
+
+        final HashSet<ComplicationViewModel> complications = new HashSet<>(
+                Collections.singletonList(mComplicationViewModel));
+        observer.onChanged(complications);
+
+        // Assert that the controller has 1 complication.
+        assertThat(mController.getComplicationCount()).isEqualTo(1);
+
+        // Destroy the controller.
+        mController.destroy();
+
+        // Assert that the controller has 0 complications.
+        assertThat(mController.getComplicationCount()).isEqualTo(0);
+
+        // Verify that the complication was removed from the layout engine.
+        verify(mLayoutEngine).removeComplication(mComplicationId);
     }
 
     private Observer<Collection<ComplicationViewModel>> captureComplicationViewModelsObserver() {

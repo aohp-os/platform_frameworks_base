@@ -30,7 +30,8 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.accessibility.IAccessibilityInteractionConnectionCallback;
-import android.window.ScreenCapture;
+import android.view.accessibility.IWindowSurfaceInfoCallback;
+import android.window.ScreenCaptureInternal;
 
 import androidx.annotation.BinderThread;
 
@@ -364,9 +365,18 @@ public class PipAccessibilityInteractionConnection {
         }
 
         @Override
-        public void takeScreenshotOfWindow(int interactionId,
-                ScreenCapture.ScreenCaptureListener listener,
-                IAccessibilityInteractionConnectionCallback callback) throws RemoteException {
+        public void takeScreenshotOfWindow(
+                int interactionId,
+                ScreenCaptureInternal.ScreenCaptureListener listener,
+                IAccessibilityInteractionConnectionCallback callback)
+                throws RemoteException {
+            // AbstractAccessibilityServiceConnection uses the standard
+            // IAccessibilityInteractionConnection for takeScreenshotOfWindow for Pip windows,
+            // so do nothing here.
+        }
+
+        @Override
+        public void getWindowSurfaceInfo(IWindowSurfaceInfoCallback callback) {
             // AbstractAccessibilityServiceConnection uses the standard
             // IAccessibilityInteractionConnection for takeScreenshotOfWindow for Pip windows,
             // so do nothing here.

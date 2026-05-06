@@ -17,7 +17,9 @@
 package com.android.systemui.bouncer.domain.interactor
 
 import android.app.StatusBarManager.SESSION_KEYGUARD
+import com.android.app.tracing.FlowTracing.traceAsCounter
 import com.android.app.tracing.coroutines.asyncTraced as async
+import com.android.compose.animation.scene.ObservableTransitionState
 import com.android.compose.animation.scene.SceneKey
 import com.android.internal.logging.UiEventLogger
 import com.android.systemui.authentication.domain.interactor.AuthenticationInteractor
@@ -34,13 +36,17 @@ import com.android.systemui.classifier.domain.interactor.FalsingInteractor
 import com.android.systemui.common.ui.domain.interactor.ConfigurationInteractor
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.deviceentry.domain.interactor.ActiveUnlockInteractor
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryFaceAuthInteractor
 import com.android.systemui.log.SessionTracker
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.scene.domain.interactor.SceneBackInteractor
+import com.android.systemui.scene.domain.interactor.SceneInteractor
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
+import com.android.systemui.scene.shared.model.Overlays
 import com.android.systemui.scene.shared.model.Scenes
 import com.android.systemui.shade.ShadeDisplayAware
+import com.android.systemui.utils.coroutines.flow.flatMapLatestConflated
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -49,7 +55,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
 /** Encapsulates business logic and application state accessing use-cases. */
@@ -65,7 +73,9 @@ constructor(
     private val powerInteractor: PowerInteractor,
     private val uiEventLogger: UiEventLogger,
     private val sessionTracker: SessionTracker,
+    sceneInteractor: SceneInteractor,
     sceneBackInteractor: SceneBackInteractor,
+    private val activeUnlockInteractor: ActiveUnlockInteractor,
     @ShadeDisplayAware private val configurationInteractor: ConfigurationInteractor,
 ) {
     private val _onIncorrectBouncerInput = MutableSharedFlow<Unit>()
@@ -107,6 +117,10 @@ constructor(
                 (repository.isOneHandedBouncerSupportedInConfig && (authMethod !is Password))
         }
 
+    /** Whether interactions should be improved for large-screen (non-handheld) form factor. */
+    val isImproveLargeScreenInteractionEnabled: Boolean =
+        repository.isImproveLargeScreenInteractionEnabledInConfig
+
     /**
      * Preferred side of the screen where the input area on the bouncer should be. This is
      * applicable for large screen devices (foldables and tablets).
@@ -147,9 +161,43 @@ constructor(
 
     /** The scene to show when bouncer is dismissed. */
     val dismissDestination: Flow<SceneKey> =
-        sceneBackInteractor.backScene
-            .filter { it != Scenes.Bouncer }
-            .map { it ?: Scenes.Lockscreen }
+        sceneBackInteractor.backScene.map { it ?: Scenes.Lockscreen }
+
+    /** The amount [0-1] that the Bouncer Overlay has been transitioned to. */
+    val bouncerExpansion: Flow<Float> =
+        if (SceneContainerFlag.isEnabled) {
+                sceneInteractor.transitionState.flatMapLatestConflated { state ->
+                    when (state) {
+                        is ObservableTransitionState.Idle ->
+                            flowOf(if (Overlays.Bouncer in state.currentOverlays) 1f else 0f)
+                        is ObservableTransitionState.Transition ->
+                            if (state.toContent == Overlays.Bouncer) {
+                                state.progress
+                            } else if (state.fromContent == Overlays.Bouncer) {
+                                state.progress.map { progress -> 1 - progress }
+                            } else {
+                                state.currentOverlays().map {
+                                    if (Overlays.Bouncer in it) 1f else 0f
+                                }
+                            }
+                    }
+                }
+            } else {
+                flowOf()
+            }
+            .distinctUntilChanged()
+            .traceAsCounter("bouncer_expansion") { (it * 100f).toInt() }
+
+    /**
+     * Returns true if a passive authentication method (such as face authentication or watch unlock)
+     * may authenticate the device before the user has the opportunity to enter their
+     * pin/pattern/password. Else, false.
+     */
+    suspend fun passiveAuthMaySucceedBeforeFullyShowingBouncer(): Boolean {
+        return authenticationInteractor.getAuthenticationMethod() != Sim &&
+            (deviceEntryFaceAuthInteractor.canFaceAuthRun() ||
+                activeUnlockInteractor.canRunActiveUnlock.value)
+    }
 
     /** Notifies that the user has places down a pointer, not necessarily dragging just yet. */
     fun onDown() {

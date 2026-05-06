@@ -19,7 +19,9 @@ package android.view;
 import static android.Manifest.permission.CONFIGURE_DISPLAY_COLOR_MODE;
 import static android.Manifest.permission.CONTROL_DISPLAY_BRIGHTNESS;
 import static android.hardware.flags.Flags.FLAG_OVERLAYPROPERTIES_CLASS_API;
+import static android.util.TypedValue.COMPLEX_UNIT_DIP;
 
+import static com.android.server.display.feature.flags.Flags.FLAG_DISPLAY_TOPOLOGY_API;
 import static com.android.server.display.feature.flags.Flags.FLAG_ENABLE_GET_SUPPORTED_REFRESH_RATES;
 import static com.android.server.display.feature.flags.Flags.FLAG_HIGHEST_HDR_SDR_RATIO_API;
 import static com.android.server.display.feature.flags.Flags.FLAG_ENABLE_HAS_ARR_SUPPORT;
@@ -58,6 +60,7 @@ import android.os.SystemClock;
 import android.util.ArraySet;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -106,6 +109,7 @@ public final class Display {
     private final String mOwnerPackageName;
     private final Resources mResources;
     private DisplayAdjustments mDisplayAdjustments;
+    private boolean mRefreshRateChangesRegistered;
 
     @UnsupportedAppUsage
     private DisplayInfo mDisplayInfo; // never null
@@ -283,7 +287,7 @@ public final class Display {
     /**
      * Display flag: Indicates that the display should show system decorations.
      * <p>
-     * This flag identifies secondary displays that should show system decorations, such as
+     * This flag identifies secondary displays that should always show system decorations, such as
      * navigation bar, home activity or wallpaper.
      * </p>
      * <p>Note that this flag doesn't work without {@link #FLAG_TRUSTED}</p>
@@ -396,6 +400,18 @@ public final class Display {
      * @hide
      */
     public static final int FLAG_ROTATES_WITH_CONTENT = 1 << 14;
+
+    /**
+     * Display flag: Indicates that the display is allowed to switch the content mode between
+     * projected/extended and mirroring. This allows the display to dynamically add or remove the
+     * home and system decorations.
+     *
+     * Note that this flag shouldn't be enabled with {@link #FLAG_PRIVATE} or
+     * {@link #FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS} at the same time; otherwise it will be ignored.
+     *
+     * @hide
+     */
+    public static final int FLAG_ALLOWS_CONTENT_MODE_SWITCH = 1 << 15;
 
     /**
      * Display flag: Indicates that the contents of the display should not be scaled
@@ -827,6 +843,16 @@ public final class Display {
     }
 
     /**
+     * Check if this is a built-in display, i.e. one that is physically part of the device rather
+     * than one connected via an external cable, or a Wi-Fi/Overlay/Virtual one.
+     */
+    @FlaggedApi(FLAG_DISPLAY_TOPOLOGY_API)
+    public boolean isInternal() {
+        return mType == TYPE_INTERNAL;
+    }
+
+
+    /**
      * Gets the display address, or null if none.
      * Interpretation varies by display type.
      *
@@ -1048,6 +1074,19 @@ public final class Display {
     }
 
     /**
+     * Returns the smallest size of the display in dp
+     * @hide
+     */
+    public float getMinSizeDimensionDp() {
+        synchronized (mLock) {
+            updateDisplayInfoLocked();
+            mDisplayInfo.getAppMetrics(mTempMetrics);
+            return TypedValue.deriveDimension(COMPLEX_UNIT_DIP,
+                    Math.min(mDisplayInfo.logicalWidth, mDisplayInfo.logicalHeight), mTempMetrics);
+        }
+    }
+
+    /**
      * @deprecated Use {@link WindowMetrics#getBounds#width()} instead.
      */
     @Deprecated
@@ -1202,6 +1241,10 @@ public final class Display {
      */
     public float getRefreshRate() {
         synchronized (mLock) {
+            if (!mRefreshRateChangesRegistered) {
+                DisplayManagerGlobal.getInstance().registerForRefreshRateChanges();
+                mRefreshRateChangesRegistered = true;
+            }
             updateDisplayInfoLocked();
             return mDisplayInfo.getRefreshRate();
         }
@@ -1446,6 +1489,7 @@ public final class Display {
      *
      * @see #isHdr()
      */
+    @Nullable
     public HdrCapabilities getHdrCapabilities() {
         synchronized (mLock) {
             updateDisplayInfoLocked();
@@ -1582,10 +1626,11 @@ public final class Display {
             // Although we only care about the HDR/SDR ratio changing, that can also come in the
             // form of the larger DISPLAY_CHANGED event
             mGlobal.registerDisplayListener(toRegister, executor,
-                    DisplayManagerGlobal.INTERNAL_EVENT_FLAG_DISPLAY_CHANGED
+                    DisplayManagerGlobal
+                                    .INTERNAL_EVENT_FLAG_DISPLAY_BASIC_CHANGED
                             | DisplayManagerGlobal
                                     .INTERNAL_EVENT_FLAG_DISPLAY_HDR_SDR_RATIO_CHANGED,
-                    ActivityThread.currentPackageName());
+                    ActivityThread.currentPackageName(), /* isEventFilterImplicit */ true);
         }
 
     }
@@ -1632,11 +1677,37 @@ public final class Display {
     @TestApi
     @RequiresPermission(Manifest.permission.MODIFY_USER_PREFERRED_DISPLAY_MODE)
     public void setUserPreferredDisplayMode(@NonNull Display.Mode mode) {
+        setUserPreferredDisplayMode(mode, true);
+    }
+
+    /**
+     * Sets the default {@link Display.Mode} to use for the display.  The display mode includes
+     * preference for resolution and refresh rate.
+     * If the mode specified is not supported by the display, then no mode change occurs.
+     *
+     * @param mode The {@link Display.Mode} to set, which can include resolution and/or
+     * refresh-rate. It is created using {@link Display.Mode.Builder}.
+     * @param storeMode controls if the mode should be persisted or not.
+     *`
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_USER_PREFERRED_DISPLAY_MODE)
+    public void setUserPreferredDisplayMode(@NonNull Display.Mode mode, boolean storeMode) {
         // Create a new object containing default values for the unused fields like mode ID and
         // alternative refresh rates.
         Display.Mode preferredMode = new Display.Mode(mode.getPhysicalWidth(),
                 mode.getPhysicalHeight(), mode.getRefreshRate());
-        mGlobal.setUserPreferredDisplayMode(mDisplayId, preferredMode);
+        mGlobal.setUserPreferredDisplayMode(mDisplayId, preferredMode, storeMode);
+    }
+
+    /**
+     * Resets the default {@link Display.Mode} to use for the display from persistence.
+     *`
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_USER_PREFERRED_DISPLAY_MODE)
+    public void resetUserPreferredDisplayMode() {
+        mGlobal.resetUserPreferredDisplayMode(mDisplayId);
     }
 
     /**
@@ -2041,6 +2112,22 @@ public final class Display {
     }
 
     /**
+     * Returns whether the display is eligible for hosting tasks.
+     *
+     * For example, if the display is used for mirroring, this will return {@code false}.
+     *
+     * TODO (b/383666349): Rename this later once there is a better option.
+     *
+     * @hide
+     */
+    public boolean canHostTasks() {
+        synchronized (mLock) {
+            updateDisplayInfoLocked();
+            return mIsValid && mDisplayInfo.canHostTasks;
+        }
+    }
+
+    /**
      * Returns true if the specified UID has access to this display.
      * @hide
      */
@@ -2345,6 +2432,33 @@ public final class Display {
         /**
          * @hide
          */
+        public static final int FLAG_ARR_RENDER_RATE = 1 << 0;
+        /**
+         * @hide
+         *
+         * A synthetic display mode flag that indicates the mode is used to override the display's
+         * logical width and height without changing the mode reported to SurfaceFlinger.
+         */
+        public static final int FLAG_SIZE_OVERRIDE = 1 << 1;
+        /**
+         * @hide
+         *
+         * A synthetic display mode flag that indicates the mode has corrected anisotropy.
+         */
+        public static final int FLAG_ANISOTROPY_CORRECTION = 1 << 2;
+
+        /** @hide */
+        @IntDef(flag = true, prefix = {"FLAG_"}, value = {
+                FLAG_ARR_RENDER_RATE,
+                FLAG_SIZE_OVERRIDE,
+                FLAG_ANISOTROPY_CORRECTION
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface ModeFlags {}
+
+        /**
+         * @hide
+         */
         public static final Mode[] EMPTY_ARRAY = new Mode[0];
 
         /**
@@ -2353,6 +2467,9 @@ public final class Display {
         public static final int INVALID_MODE_ID = -1;
 
         private final int mModeId;
+        private final int mParentModeId;
+        @ModeFlags
+        private final int mFlags;
         private final int mWidth;
         private final int mHeight;
         private final float mPeakRefreshRate;
@@ -2362,7 +2479,6 @@ public final class Display {
         @NonNull
         @HdrCapabilities.HdrType
         private final int[] mSupportedHdrTypes;
-        private final boolean mIsSynthetic;
 
         /**
          * @hide
@@ -2396,22 +2512,23 @@ public final class Display {
          */
         public Mode(int modeId, int width, int height, float refreshRate, float vsyncRate,
                 float[] alternativeRefreshRates, @HdrCapabilities.HdrType int[] supportedHdrTypes) {
-            this(modeId, width, height, refreshRate, vsyncRate, false, alternativeRefreshRates,
-                    supportedHdrTypes);
+            this(modeId, INVALID_MODE_ID, 0, width, height, refreshRate, vsyncRate,
+                    alternativeRefreshRates, supportedHdrTypes);
         }
 
         /**
          * @hide
          */
-        public Mode(int modeId, int width, int height, float refreshRate, float vsyncRate,
-                boolean isSynthetic, float[] alternativeRefreshRates,
-                @HdrCapabilities.HdrType int[] supportedHdrTypes) {
+        public Mode(int modeId, int parentModeId, @ModeFlags int flags,
+                int width, int height, float refreshRate, float vsyncRate,
+                float[] alternativeRefreshRates, @HdrCapabilities.HdrType int[] supportedHdrTypes) {
             mModeId = modeId;
+            mParentModeId = parentModeId;
+            mFlags = flags;
             mWidth = width;
             mHeight = height;
             mPeakRefreshRate = refreshRate;
             mVsyncRate = vsyncRate;
-            mIsSynthetic = isSynthetic;
             mAlternativeRefreshRates =
                     Arrays.copyOf(alternativeRefreshRates, alternativeRefreshRates.length);
             Arrays.sort(mAlternativeRefreshRates);
@@ -2424,6 +2541,24 @@ public final class Display {
          */
         public int getModeId() {
             return mModeId;
+        }
+
+        /**
+         * Returns parent mode's id if the mode is derived from other Display.Mode.
+         * Returns INVALID_MODE_ID in other cases.
+         * @hide
+         */
+        public int getParentModeId() {
+            return mParentModeId;
+        }
+
+        /**
+         * Returns flags associated with this mode.
+         * @hide
+         */
+        @ModeFlags
+        public int getFlags() {
+            return mFlags;
         }
 
         /**
@@ -2478,14 +2613,14 @@ public final class Display {
         }
 
         /**
-         * Returns true if mode is synthetic and does not have corresponding
-         * SurfaceControl.DisplayMode
+         * Returns true if switching to this mode does not actually switch display mode on
+         * SurfaceFlinger level
          * @hide
          */
         @SuppressWarnings("UnflaggedApi") // For testing only
         @TestApi
         public boolean isSynthetic() {
-            return mIsSynthetic;
+            return mParentModeId != INVALID_MODE_ID || (mFlags & FLAG_ARR_RENDER_RATE) != 0;
         }
 
         /**
@@ -2566,7 +2701,8 @@ public final class Display {
          * @hide
          */
         public boolean equalsExceptRefreshRate(@Nullable Display.Mode other) {
-            return mWidth == other.mWidth && mHeight == other.mHeight;
+            return mWidth == other.mWidth && mHeight == other.mHeight
+                    && mSupportedHdrTypes == other.mSupportedHdrTypes;
         }
 
         /**
@@ -2606,6 +2742,8 @@ public final class Display {
         public int hashCode() {
             int hash = 1;
             hash = hash * 17 + mModeId;
+            hash = hash * 17 + mParentModeId;
+            hash = hash * 17 + mFlags;
             hash = hash * 17 + mWidth;
             hash = hash * 17 + mHeight;
             hash = hash * 17 + Float.floatToIntBits(mPeakRefreshRate);
@@ -2619,11 +2757,12 @@ public final class Display {
         public String toString() {
             return new StringBuilder("{")
                     .append("id=").append(mModeId)
+                    .append(", parentModeId=").append(mParentModeId)
+                    .append(", flags=").append(flagsToString(mFlags))
                     .append(", width=").append(mWidth)
                     .append(", height=").append(mHeight)
                     .append(", fps=").append(mPeakRefreshRate)
                     .append(", vsync=").append(mVsyncRate)
-                    .append(", synthetic=").append(mIsSynthetic)
                     .append(", alternativeRefreshRates=")
                     .append(Arrays.toString(mAlternativeRefreshRates))
                     .append(", supportedHdrTypes=")
@@ -2632,41 +2771,53 @@ public final class Display {
                     .toString();
         }
 
+        private static String flagsToString(@ModeFlags int flags) {
+            StringBuilder msg = new StringBuilder();
+            if ((flags & FLAG_ARR_RENDER_RATE) != 0) {
+                msg.append(", FLAG_ARR_RENDER_RATE");
+            }
+            if ((flags & FLAG_SIZE_OVERRIDE) != 0) {
+                msg.append(", FLAG_SIZE_OVERRIDE");
+            }
+            return msg.toString();
+        }
+
         @Override
         public int describeContents() {
             return 0;
         }
 
         private Mode(Parcel in) {
-            this(in.readInt(), in.readInt(), in.readInt(), in.readFloat(), in.readFloat(),
-                    in.readBoolean(), in.createFloatArray(), in.createIntArray());
+            this(in.readInt(), in.readInt(), in.readInt(), in.readInt(), in.readInt(),
+                    in.readFloat(), in.readFloat(), in.createFloatArray(), in.createIntArray());
         }
 
         @Override
         public void writeToParcel(Parcel out, int parcelableFlags) {
             out.writeInt(mModeId);
+            out.writeInt(mParentModeId);
+            out.writeInt(mFlags);
             out.writeInt(mWidth);
             out.writeInt(mHeight);
             out.writeFloat(mPeakRefreshRate);
             out.writeFloat(mVsyncRate);
-            out.writeBoolean(mIsSynthetic);
             out.writeFloatArray(mAlternativeRefreshRates);
             out.writeIntArray(mSupportedHdrTypes);
         }
 
         @SuppressWarnings("hiding")
-        public static final @android.annotation.NonNull Parcelable.Creator<Mode> CREATOR
-                = new Parcelable.Creator<Mode>() {
-            @Override
-            public Mode createFromParcel(Parcel in) {
-                return new Mode(in);
-            }
+        public static final @android.annotation.NonNull Parcelable.Creator<Mode> CREATOR =
+                new Parcelable.Creator<>() {
+                    @Override
+                    public Mode createFromParcel(Parcel in) {
+                        return new Mode(in);
+                    }
 
-            @Override
-            public Mode[] newArray(int size) {
-                return new Mode[size];
-            }
-        };
+                    @Override
+                    public Mode[] newArray(int size) {
+                        return new Mode[size];
+                    }
+                };
 
         /**
          * Builder is used to create {@link Display.Mode} objects

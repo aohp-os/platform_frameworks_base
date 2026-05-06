@@ -16,6 +16,7 @@
 package com.android.systemui.screenshot
 
 import android.animation.Animator
+import android.app.ActivityOptions
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -35,19 +36,20 @@ import android.util.Log
 import android.view.Display
 import android.view.ScrollCaptureResponse
 import android.view.ViewRootImpl.ActivityConfigCallback
-import android.view.WindowManager
 import android.view.WindowManager.TAKE_SCREENSHOT_PROVIDED_IMAGE
 import android.widget.Toast
+import android.window.DesktopExperienceFlags
 import android.window.WindowContext
 import androidx.core.animation.doOnEnd
 import com.android.internal.logging.UiEventLogger
 import com.android.settingslib.applications.InterestingConfigChanges
+import com.android.systemui.Flags
+import com.android.systemui.Flags.screenshotAnnounceLiveRegion
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.clipboardoverlay.ClipboardOverlayController
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.res.R
-import com.android.systemui.screenshot.ActionIntentCreator.createLongScreenshotIntent
 import com.android.systemui.screenshot.ScreenshotShelfViewProxy.ScreenshotViewCallback
 import com.android.systemui.screenshot.scroll.ScrollCaptureController.LongScreenshot
 import com.android.systemui.screenshot.scroll.ScrollCaptureExecutor
@@ -85,6 +87,7 @@ internal constructor(
     private val messageContainerController: MessageContainerController,
     private val announcementResolver: AnnouncementResolver,
     @Main private val mainExecutor: Executor,
+    private val actionIntentCreator: ActionIntentCreator,
     @Assisted private val display: Display,
 ) : InteractiveScreenshotHandler {
     private val context: WindowContext
@@ -218,9 +221,7 @@ internal constructor(
         window.setFocusable(true)
         viewProxy.requestFocus()
 
-        if (screenshot.type != WindowManager.TAKE_SCREENSHOT_PROVIDED_IMAGE) {
-            enqueueScrollCaptureRequest(requestId, screenshot.userHandle)
-        }
+        enqueueScrollCaptureRequest(requestId, screenshot.userHandle)
 
         window.attachWindow()
 
@@ -257,7 +258,11 @@ internal constructor(
     private fun prepareViewForNewScreenshot(screenshot: ScreenshotData, oldPackageName: String?) {
         window.whenWindowAttached {
             announcementResolver.getScreenshotAnnouncement(screenshot.userHandle.identifier) {
-                viewProxy.announceForAccessibility(it)
+                if (screenshotAnnounceLiveRegion()) {
+                    viewProxy.setSavingAnnouncement(it)
+                } else {
+                    viewProxy.announceForAccessibility(it)
+                }
             }
         }
 
@@ -298,7 +303,10 @@ internal constructor(
         screenshotSoundController.releaseScreenshotSoundAsync()
         releaseContext()
         bgExecutor.shutdown()
+        screenshotHandler.cancelTimeout()
     }
+
+    override fun getDisplay() = display
 
     /** Release the constructed window context. */
     private fun releaseContext() {
@@ -376,6 +384,7 @@ internal constructor(
     private fun requestScrollCapture(requestId: UUID, owner: UserHandle) {
         scrollCaptureExecutor.requestScrollCapture(display.displayId, window.getWindowToken()) {
             response: ScrollCaptureResponse ->
+            Log.i(TAG, "Scroll capture response: $response")
             uiEventLogger.log(
                 ScreenshotEvent.SCREENSHOT_LONG_SCREENSHOT_IMPRESSION,
                 0,
@@ -411,8 +420,14 @@ internal constructor(
         scrollCaptureExecutor.executeBatchScrollCapture(
             response,
             {
-                val intent = createLongScreenshotIntent(owner, context)
-                context.startActivity(intent)
+                val intent = actionIntentCreator.createLongScreenshotIntent(owner)
+                if (SCREENSHOT_MULTIDISPLAY_FOCUS_CHANGE.isTrue) {
+                    val options = ActivityOptions.makeBasic()
+                    options.setLaunchDisplayId(context.displayId)
+                    context.startActivity(intent, options.toBundle())
+                } else {
+                    context.startActivity(intent)
+                }
             },
             { viewProxy.restoreNonScrollingUi() },
             { transitionDestination: Rect, onTransitionEnd: Runnable, longScreenshot: LongScreenshot
@@ -569,6 +584,13 @@ internal constructor(
         private const val SETTINGS_SECURE_USER_SETUP_COMPLETE = "user_setup_complete"
 
         const val SCREENSHOT_CORNER_DEFAULT_TIMEOUT_MILLIS: Int = 6000
+
+        val SCREENSHOT_MULTIDISPLAY_FOCUS_CHANGE =
+            DesktopExperienceFlags.DesktopExperienceFlag(
+                Flags::screenshotMultidisplayFocusChange,
+                /* shouldOverrideByDevOption= */ true,
+                Flags.FLAG_SCREENSHOT_MULTIDISPLAY_FOCUS_CHANGE,
+            )
 
         /** Does the aspect ratio of the bitmap with insets removed match the bounds. */
         private fun aspectRatiosMatch(

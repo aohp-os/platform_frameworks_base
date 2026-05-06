@@ -18,14 +18,14 @@ package com.android.server.locksettings;
 
 import static android.os.UserHandle.USER_SYSTEM;
 
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_ESCROW_NOT_READY;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_KEYSTORE_FAILURE;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_NONE;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_NO_ESCROW_KEY;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_NO_PROVIDER;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_PROVIDER_MISMATCH;
-import static com.android.internal.widget.LockSettingsInternal.ARM_REBOOT_ERROR_STORE_ESCROW_KEY;
-import static com.android.internal.widget.LockSettingsInternal.ArmRebootEscrowErrorCode;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_ESCROW_NOT_READY;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_KEYSTORE_FAILURE;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_NONE;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_NO_ESCROW_KEY;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_NO_PROVIDER;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_PROVIDER_MISMATCH;
+import static com.android.server.locksettings.LockSettingsInternal.ARM_REBOOT_ERROR_STORE_ESCROW_KEY;
+import static com.android.server.locksettings.LockSettingsInternal.ArmRebootEscrowErrorCode;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
@@ -50,7 +50,6 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
-import com.android.internal.widget.RebootEscrowListener;
 import com.android.server.pm.UserManagerInternal;
 
 import java.io.IOException;
@@ -428,15 +427,11 @@ class RebootEscrowManager {
 
     /** Wrapper function to set error code serialized through handler, */
     private void setLoadEscrowDataErrorCode(@RebootEscrowErrorCode int value, Handler handler) {
-        if (Flags.waitForInternetRor()) {
-            mInjector.post(
-                    handler,
-                    () -> {
-                        mLoadEscrowDataErrorCode = value;
-                    });
-        } else {
-            mLoadEscrowDataErrorCode = value;
-        }
+        mInjector.post(
+                handler,
+                () -> {
+                    mLoadEscrowDataErrorCode = value;
+                });
     }
 
     /** Wrapper function to compare and set error code serialized through handler. */
@@ -511,23 +506,17 @@ class RebootEscrowManager {
             mWakeLock.acquire(mInjector.getWakeLockTimeoutMillis());
         }
 
-        if (Flags.waitForInternetRor()) {
-            // Timeout to stop retrying same as the wake lock timeout.
-            mInjector.postDelayed(
-                    retryHandler,
-                    () -> {
-                        mRebootEscrowTimedOut = true;
-                    },
-                    mInjector.getLoadEscrowTimeoutMillis());
+        // Timeout to stop retrying same as the wake lock timeout.
+        mInjector.postDelayed(
+                retryHandler,
+                () -> {
+                    mRebootEscrowTimedOut = true;
+                },
+                mInjector.getLoadEscrowTimeoutMillis());
 
-            mInjector.post(
-                    retryHandler,
-                    () -> loadRebootEscrowDataOnInternet(retryHandler, users, rebootEscrowUsers));
-            return;
-        }
-
-        mInjector.post(retryHandler, () -> loadRebootEscrowDataWithRetry(
-                retryHandler, 0, users, rebootEscrowUsers));
+        mInjector.post(
+                retryHandler,
+                () -> loadRebootEscrowDataOnInternet(retryHandler, users, rebootEscrowUsers));
     }
 
     void scheduleLoadRebootEscrowDataOrFail(
@@ -548,27 +537,13 @@ class RebootEscrowManager {
             return;
         }
 
-        if (Flags.waitForInternetRor()) {
-            if (mRebootEscrowTimedOut) {
-                Slog.w(TAG, "Failed to load reboot escrow data within timeout");
-                compareAndSetLoadEscrowDataErrorCode(
-                        ERROR_NONE, ERROR_TIMEOUT_EXHAUSTED, retryHandler);
-            } else {
-                Slog.w(
-                        TAG,
-                        "Failed to load reboot escrow data after " + attemptNumber + " attempts");
-                compareAndSetLoadEscrowDataErrorCode(
-                        ERROR_NONE, ERROR_RETRY_COUNT_EXHAUSTED, retryHandler);
-            }
-            onGetRebootEscrowKeyFailed(users, attemptNumber, retryHandler);
-            return;
-        }
-
-        Slog.w(TAG, "Failed to load reboot escrow data after " + attemptNumber + " attempts");
-        if (mInjector.serverBasedResumeOnReboot() && !mInjector.isNetworkConnected()) {
-            mLoadEscrowDataErrorCode = ERROR_NO_NETWORK;
+        if (mRebootEscrowTimedOut) {
+            Slog.w(TAG, "Failed to load reboot escrow data within timeout");
+            compareAndSetLoadEscrowDataErrorCode(ERROR_NONE, ERROR_TIMEOUT_EXHAUSTED, retryHandler);
         } else {
-            mLoadEscrowDataErrorCode = ERROR_RETRY_COUNT_EXHAUSTED;
+            Slog.w(TAG, "Failed to load reboot escrow data after " + attemptNumber + " attempts");
+            compareAndSetLoadEscrowDataErrorCode(
+                    ERROR_NONE, ERROR_RETRY_COUNT_EXHAUSTED, retryHandler);
         }
         onGetRebootEscrowKeyFailed(users, attemptNumber, retryHandler);
     }

@@ -31,6 +31,7 @@ import android.bluetooth.BluetoothProfile.ServiceListener;
 import android.content.Context;
 import android.os.Build;
 import android.util.Log;
+import android.util.Pair;
 
 import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
@@ -38,10 +39,13 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.android.settingslib.R;
+import com.android.settingslib.flags.Flags;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -52,6 +56,17 @@ import java.util.concurrent.Executors;
  * BluetoothLeBroadcastAssistant.Callback} to get the result callback.
  */
 public class LocalBluetoothLeBroadcastAssistant implements LocalBluetoothProfile {
+    public static final HashSet<Integer> UNKNOWN_CHANNEL = new HashSet<>(List.of(-1));
+
+    /** A derived source state based on {@link BluetoothLeBroadcastReceiveState}. */
+    public enum LocalBluetoothLeBroadcastSourceState {
+        UNKNOWN,
+        STREAMING,
+        DECRYPTION_FAILED,
+        PAUSED,
+        PAUSED_BY_RECEIVER;
+    }
+
     private static final String TAG = "LocalBluetoothLeBroadcastAssistant";
     private static final int UNKNOWN_VALUE_PLACEHOLDER = -1;
     private static final boolean DEBUG = BluetoothUtils.D;
@@ -59,6 +74,13 @@ public class LocalBluetoothLeBroadcastAssistant implements LocalBluetoothProfile
     static final String NAME = "LE_AUDIO_BROADCAST_ASSISTANT";
     // Order of this profile in device profiles list
     private static final int ORDINAL = 1;
+    // Referring to Broadcast Audio Scan Service 1.0
+    // Table 3.9: Broadcast Receive State characteristic format
+    // 0x00000000: 0b0 = Not synchronized to BIS_index[x]
+    // 0xFFFFFFFF: Failed to sync to BIG
+    private static final long BIS_SYNC_NOT_SYNC_TO_BIS = 0x00000000L;
+    private static final long BIS_SYNC_FAILED_SYNC_TO_BIG = 0xFFFFFFFFL;
+    private static final String EMPTY_DEVICE_ADDRESS = "00:00:00:00:00:00";
 
     private LocalBluetoothProfileManager mProfileManager;
     private BluetoothLeBroadcastAssistant mService;
@@ -395,6 +417,27 @@ public class LocalBluetoothLeBroadcastAssistant implements LocalBluetoothProfile
     }
 
     /**
+     * Modifies the source associated with a specific sink and source ID.
+     *
+     * @param sink Broadcast Sink device
+     * @param sourceId Broadcast source id
+     * @param source {@link BluetoothLeBroadcastMetadata} the updated source.
+     */
+    public void modifySource(
+            @NonNull BluetoothDevice sink, @IntRange(from = 0x00, to = 0xFF) int sourceId,
+            @NonNull BluetoothLeBroadcastMetadata source) {
+        if (mService == null) {
+            Log.d(TAG, "The BluetoothLeBroadcastAssistant is null");
+            return;
+        }
+        try {
+            mService.modifySource(sink, sourceId, source);
+        } catch (IllegalArgumentException | NoSuchMethodError e) {
+            Log.w(TAG, "Error calling modifySource()", e);
+        }
+    }
+
+    /**
      * Register Broadcast Assistant Callbacks to track its state and receivers
      *
      * @param executor Executor object for callback
@@ -557,5 +600,58 @@ public class LocalBluetoothLeBroadcastAssistant implements LocalBluetoothProfile
                 Log.w(TAG, "Error cleaning up LeAudio proxy", t);
             }
         }
+    }
+
+    /** Checks the source connection status based on the provided broadcast receive state. */
+    public static LocalBluetoothLeBroadcastSourceState getLocalSourceState(
+            BluetoothLeBroadcastReceiveState state) {
+        // Source is actively streaming
+        if (state.getBisSyncState().stream()
+                .anyMatch(
+                        bitmap ->
+                                (bitmap != BIS_SYNC_NOT_SYNC_TO_BIS
+                                        && bitmap != BIS_SYNC_FAILED_SYNC_TO_BIG))) {
+            return LocalBluetoothLeBroadcastSourceState.STREAMING;
+        }
+        // Wrong password is used for the source
+        if (state.getPaSyncState() == BluetoothLeBroadcastReceiveState.PA_SYNC_STATE_SYNCHRONIZED
+                && state.getBigEncryptionState()
+                == BluetoothLeBroadcastReceiveState.BIG_ENCRYPTION_STATE_BAD_CODE) {
+            return LocalBluetoothLeBroadcastSourceState.DECRYPTION_FAILED;
+        }
+        // Source in hysteresis mode
+        if (!state.getSourceDevice().getAddress().equals(EMPTY_DEVICE_ADDRESS)) {
+            // Referring to Broadcast Audio Scan Service 1.0
+            // All zero address means no source on the sink device
+            return LocalBluetoothLeBroadcastSourceState.PAUSED;
+        }
+        return LocalBluetoothLeBroadcastSourceState.UNKNOWN;
+    }
+
+    /**
+     * Returns the source connection status with channel selected based on the provided broadcast
+     * receive state and source metadata retrieved from stack.
+     */
+    public static @NonNull Pair<LocalBluetoothLeBroadcastSourceState, Set<Integer>>
+            getLocalSourceStateWithSelectedChannel(
+                @NonNull LocalBluetoothProfileManager profileManager,
+                @NonNull BluetoothDevice sink,
+                int sourceId,
+                @NonNull BluetoothLeBroadcastReceiveState state) {
+        var localSourceState = getLocalSourceState(state);
+        if (!Flags.audioStreamPlayPauseByModifySource()) {
+            return Pair.create(localSourceState, UNKNOWN_CHANNEL);
+        }
+        Set<Integer> selectedChannelIndex = BluetoothUtils.getSelectedChannelIndex(
+                profileManager, sink, sourceId);
+        if (localSourceState == LocalBluetoothLeBroadcastSourceState.PAUSED
+                && selectedChannelIndex.isEmpty()) {
+            // No channel selected meaning the user decided to de-sync to the source, we return
+            // `PAUSED_BY_RECEIVER`. In contrast, having any channel selected meaning the source
+            // paused itself, we return `PAUSED`.
+            return Pair.create(LocalBluetoothLeBroadcastSourceState.PAUSED_BY_RECEIVER,
+                    selectedChannelIndex);
+        }
+        return Pair.create(localSourceState, selectedChannelIndex);
     }
 }

@@ -1,38 +1,37 @@
 package com.android.systemui.shade.ui.composable
 
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.android.systemui.shade.ui.composable.ShadeHeader.Colors.shadeHeaderText
-import com.android.systemui.shade.ui.viewmodel.ShadeHeaderViewModel
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun VariableDayDate(
-    viewModel: ShadeHeaderViewModel,
+    longerDateText: String,
+    shorterDateText: String,
+    textColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    val longerText = viewModel.longerDateText.collectAsStateWithLifecycle()
-    val shorterText = viewModel.shorterDateText.collectAsStateWithLifecycle()
-
     Layout(
         contents =
             listOf(
                 {
                     Text(
-                        text = longerText.value,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.shadeHeaderText,
+                        text = longerDateText,
+                        style = MaterialTheme.typography.bodyMediumEmphasized,
+                        color = textColor,
                         maxLines = 1,
                     )
                 },
                 {
                     Text(
-                        text = shorterText.value,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.shadeHeaderText,
+                        text = shorterDateText,
+                        style = MaterialTheme.typography.bodyMediumEmphasized,
+                        color = textColor,
                         maxLines = 1,
                     )
                 },

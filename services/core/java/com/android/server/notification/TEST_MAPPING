@@ -4,7 +4,15 @@
       "name": "CtsNotificationTestCases_notification"
     },
     {
-      "name": "FrameworksUiServicesTests_notification"
+      "name": "FrameworksUiServicesNotificationTests"
+    },
+    {
+      "name": "FrameworksUiServicesZenTests"
+    }
+  ],
+  "hsum-presubmit": [
+    {
+      "name": "FrameworksUiServicesNotificationTests"
     }
   ],
   "postsubmit": [

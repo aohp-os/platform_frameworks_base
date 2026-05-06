@@ -16,6 +16,7 @@
 
 package com.android.server.power;
 
+import android.annotation.Nullable;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.PowerManager;
@@ -29,14 +30,12 @@ import com.android.internal.os.BackgroundThread;
 
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.ConcurrentModificationException;
 import java.util.Date;
 import java.util.Iterator;
-import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.Objects;
+import java.util.TreeMap;
 
 /**
  * Simple Log for wake lock events. Optimized to reduce memory usage.
@@ -81,11 +80,12 @@ final class WakeLockLog {
     private static final int TYPE_ACQUIRE = 0x1;
     private static final int TYPE_RELEASE = 0x2;
     private static final int MAX_LOG_ENTRY_BYTE_SIZE = 9;
-    private static final int LOG_SIZE = 1024 * 10;
+    private static final int LOG_SIZE = 1024 * 3;
     private static final int LOG_SIZE_MIN = MAX_LOG_ENTRY_BYTE_SIZE + 1;
 
-    private static final int TAG_DATABASE_SIZE = 128;
+    private static final int TAG_DATABASE_SIZE = 64;
     private static final int TAG_DATABASE_SIZE_MAX = 128;
+    private static final int TAG_DATABASE_STARTING_SIZE = 16;
 
     private static final int LEVEL_SCREEN_TIMEOUT_OVERRIDE_WAKE_LOCK = 0;
     private static final int LEVEL_PARTIAL_WAKE_LOCK = 1;
@@ -182,7 +182,7 @@ final class WakeLockLog {
      * @param pw The {@code PrintWriter} to write to.
      */
     public void dump(PrintWriter pw) {
-        dump(pw, false);
+        dump(pw, /* includeTagDb= */ true);
     }
 
     @VisibleForTesting
@@ -193,16 +193,9 @@ final class WakeLockLog {
                 int numEvents = 0;
                 int numResets = 0;
                 SparseArray<String[]> uidToPackagesCache = new SparseArray();
-
-                for (int i = 0; i < mLog.mSavedAcquisitions.size(); i++) {
+                for (LogEntry entry : mLog.mSavedAcquisitions.values()) {
                     numEvents++;
-                    LogEntry entry = mLog.mSavedAcquisitions.get(i);
-
                     entry.updatePackageName(uidToPackagesCache, mContext.getPackageManager());
-
-                    if (DEBUG) {
-                        pw.print("Saved acquisition no. " + i);
-                    }
                     entry.dump(pw, mDumpsysDateFormat);
                 }
 
@@ -828,7 +821,7 @@ final class WakeLockLog {
          * Wake lock acquisition events should continue to be printed until their corresponding
          * release event is removed from the log.
          */
-        private final List<LogEntry> mSavedAcquisitions;
+        private final TreeMap<TagData, LogEntry> mSavedAcquisitions;
 
         TheLog(Injector injector, EntryByteTranslator translator, TagDatabase tagDatabase) {
             final int logSize = Math.max(injector.getLogSize(), LOG_SIZE_MIN);
@@ -845,7 +838,7 @@ final class WakeLockLog {
                 }
             });
 
-            mSavedAcquisitions = new ArrayList();
+            mSavedAcquisitions = new TreeMap<TagData, LogEntry>();
         }
 
         /**
@@ -1064,17 +1057,15 @@ final class WakeLockLog {
 
             // Copy the contents of the start of the buffer to our temporary buffer.
             LogEntry entry = readEntryAt(mStart, mStartTime, null);
-            if (entry.type == TYPE_ACQUIRE) {
-                // We'll continue to print the event until the corresponding release event is also
-                // removed from the log.
-                mSavedAcquisitions.add(entry);
-            } else if (entry.type == TYPE_RELEASE) {
-                // We no longer need to print the corresponding acquire event.
-                for (int i = 0; i < mSavedAcquisitions.size(); i++) {
-                    if (Objects.equals(mSavedAcquisitions.get(i).tag, entry.tag)) {
-                        mSavedAcquisitions.remove(i);
-                        break;
-                    }
+
+            if (entry.tag != null) {
+                if (entry.type == TYPE_ACQUIRE) {
+                    // We'll continue to print the event until the corresponding release event is
+                    // also removed from the log.
+                    mSavedAcquisitions.put(entry.tag, entry);
+                } else if (entry.type == TYPE_RELEASE) {
+                    // We no longer need to print the corresponding acquire event.
+                    LogEntry removed = mSavedAcquisitions.remove(entry.tag);
                 }
             }
             if (DEBUG) {
@@ -1161,15 +1152,16 @@ final class WakeLockLog {
      */
     static class TagDatabase {
         private final int mInvalidIndex;
-        private final TagData[] mArray;
+        private final int mMaxArraySize;
+        private TagData[] mArray;
         private Callback mCallback;
 
         TagDatabase(Injector injector) {
-            int size = Math.min(injector.getTagDatabaseSize(), TAG_DATABASE_SIZE_MAX);
-
-            // Largest possible index used as "INVALID", hence the (size - 1) sizing.
-            mArray = new TagData[size - 1];
-            mInvalidIndex = size - 1;
+            // Largest possible index used as "INVALID", hence the (size - 1) sizing
+            mMaxArraySize = Math.min(injector.getTagDatabaseSize(), TAG_DATABASE_SIZE_MAX - 1);
+            int startingSize = Math.min(mMaxArraySize, injector.getTagDatabaseStartingSize());
+            mArray = new TagData[startingSize];
+            mInvalidIndex = mMaxArraySize;
         }
 
         @Override
@@ -1195,8 +1187,10 @@ final class WakeLockLog {
             sb.append(", entries: ").append(entries);
             sb.append(", Bytes used: ").append(byteEstimate);
             if (DEBUG) {
-                sb.append(", Avg tag size: ").append(tagSize / tags);
-                sb.append("\n    ").append(Arrays.toString(mArray));
+                sb.append(", Avg tag size: ").append(tags == 0 ? 0 : (tagSize / tags));
+                for (int i = 0; i < mArray.length; i++) {
+                    sb.append("\n  [").append(i).append("] ").append(mArray[i]);
+                }
             }
             return sb.toString();
         }
@@ -1284,6 +1278,18 @@ final class WakeLockLog {
                 return null;
             }
 
+            // We don't have a spot available, see if we can still increase the array size
+            if (firstAvailable == -1) {
+                if (mArray.length < mMaxArraySize) {
+                    int oldSize = mArray.length;
+                    int newSize = Math.min(oldSize * 2, mMaxArraySize);
+                    TagData[] newArray = new TagData[newSize];
+                    System.arraycopy(mArray, 0, newArray, 0, oldSize);
+                    mArray = newArray;
+                    firstAvailable = oldSize;
+                }
+            }
+
             // If we need to remove an index, report to listeners that we are removing an index.
             boolean useOldest = firstAvailable == -1;
             if (useOldest && mCallback != null) {
@@ -1349,8 +1355,8 @@ final class WakeLockLog {
      * Contains both the wake lock tag data (tag + ownerUid) as well as index and last-used
      * time data as it relates to the tag-database.
      */
-    static class TagData {
-        public String tag;  // Wake lock tag
+    static class TagData implements Comparable<TagData> {
+        @Nullable public String tag;  // Wake lock tag
         public int ownerUid;  // Wake lock owner Uid
         public int index;  // Index of the tag in the tag-database
         public long lastUsedTime;  // Last time that this entry was used
@@ -1365,9 +1371,9 @@ final class WakeLockLog {
             if (this == o) {
                 return true;
             }
-            if (o instanceof TagData) {
+            if (o != null && o instanceof TagData) {
                 TagData other = (TagData) o;
-                return TextUtils.equals(tag, other.tag) && ownerUid == other.ownerUid;
+                return ownerUid == other.ownerUid && TextUtils.equals(tag, other.tag);
             }
             return false;
         }
@@ -1392,6 +1398,22 @@ final class WakeLockLog {
             bytes += 8;  // lastUsedTime
             return bytes;
         }
+
+        @Override
+        public int hashCode() {
+            int result = ownerUid;
+            result = 31 * result + tag.hashCode();
+            return result;
+        }
+
+        @Override
+        public int compareTo(TagData other) {
+            if (other == null) {
+                return -1;
+            }
+            return Long.compare(lastUsedTime, other.lastUsedTime);
+        }
+
     }
 
     /**
@@ -1400,6 +1422,10 @@ final class WakeLockLog {
     public static class Injector {
         public int getTagDatabaseSize() {
             return TAG_DATABASE_SIZE;
+        }
+
+        public int getTagDatabaseStartingSize() {
+            return TAG_DATABASE_STARTING_SIZE;
         }
 
         public int getLogSize() {

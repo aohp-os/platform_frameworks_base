@@ -128,12 +128,20 @@ public class SignalDrawable extends DrawableWrapper {
 
     @Override
     public int getIntrinsicWidth() {
-        return mIntrinsicSize;
+        if (newStatusBarIcons()) {
+            return super.getIntrinsicWidth();
+        } else {
+            return mIntrinsicSize;
+        }
     }
 
     @Override
     public int getIntrinsicHeight() {
-        return mIntrinsicSize;
+        if (newStatusBarIcons()) {
+            return super.getIntrinsicHeight();
+        } else {
+            return mIntrinsicSize;
+        }
     }
 
     private void updateAnimation() {
@@ -154,6 +162,15 @@ public class SignalDrawable extends DrawableWrapper {
         setTintList(ColorStateList.valueOf(mForegroundPaint.getColor()));
         invalidateSelf();
         return true;
+    }
+
+    /**
+     * Returns the level used to access the different drawable assets.
+     *
+     * Temporarily visible for logging purposes - b/378919631.
+     */
+    public int unpackLevel() {
+        return unpackLevel(getLevel());
     }
 
     private int unpackLevel(int packedState) {

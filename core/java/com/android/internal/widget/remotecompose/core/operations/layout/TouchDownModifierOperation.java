@@ -23,6 +23,7 @@ import com.android.internal.widget.remotecompose.core.Operations;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
 import com.android.internal.widget.remotecompose.core.documentation.DocumentationBuilder;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
 
 import java.util.List;
 
@@ -36,7 +37,7 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
     }
 
     @Override
-    public void write(WireBuffer buffer) {
+    public void write(@NonNull WireBuffer buffer) {
         apply(buffer);
     }
 
@@ -46,7 +47,10 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
     }
 
     @Override
-    public void apply(RemoteContext context) {
+    public void apply(@NonNull RemoteContext context) {
+        if (context.getDocument() == null) {
+            return;
+        }
         RootLayoutComponent root = context.getDocument().getRootLayoutComponent();
         if (root != null) {
             root.setHasTouchListeners(true);
@@ -56,7 +60,11 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
 
     @Override
     public void onTouchDown(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         if (applyActions(context, document, component, x, y, false)) {
             document.appliedTouchOperation(component);
         }
@@ -64,9 +72,9 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
 
     @Override
     public void onTouchUp(
-            RemoteContext context,
-            CoreDocument document,
-            Component component,
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
             float x,
             float y,
             float dx,
@@ -76,13 +84,21 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
 
     @Override
     public void onTouchCancel(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         // nothing
     }
 
     @Override
     public void onTouchDrag(
-            RemoteContext context, CoreDocument document, Component component, float x, float y) {
+            @NonNull RemoteContext context,
+            @NonNull CoreDocument document,
+            @NonNull Component component,
+            float x,
+            float y) {
         // nothing
     }
 
@@ -96,18 +112,40 @@ public class TouchDownModifierOperation extends ListActionsOperation implements 
         return "TouchModifier";
     }
 
-    public static void apply(WireBuffer buffer) {
+    /**
+     * Write the operation to the buffer
+     *
+     * @param buffer a WireBuffer
+     */
+    public static void apply(@NonNull WireBuffer buffer) {
         buffer.start(OP_CODE);
     }
 
-    public static void read(WireBuffer buffer, List<Operation> operations) {
+    /**
+     * Read the operation from the buffer
+     *
+     * @param buffer a WireBuffer
+     * @param operations the list of operations we read so far
+     */
+    public static void read(@NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
         operations.add(new TouchDownModifierOperation());
     }
 
-    public static void documentation(DocumentationBuilder doc) {
+    /**
+     * Add documentation for this operation
+     *
+     * @param doc a DocumentationBuilder
+     */
+    public static void documentation(@NonNull DocumentationBuilder doc) {
         doc.operation("Modifier Operations", OP_CODE, name())
                 .description(
                         "Touch down modifier. This operation contains"
                                 + " a list of action executed on Touch down");
+    }
+
+    @Override
+    public void serialize(@NonNull MapSerializer serializer) {
+        super.serialize(serializer);
+        serializer.addType("TouchDownModifierOperation");
     }
 }

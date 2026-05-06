@@ -182,7 +182,8 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
     private final int mMinimumVelocity;
     private final int mMaximumVelocity;
 
-    private MouseEventHandler mMouseEventHandler;
+    @Nullable
+    private final MouseEventHandler mMouseEventHandler;
 
     public FullScreenMagnificationGestureHandler(
             @UiContext Context context,
@@ -194,8 +195,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
             boolean detectShortcutTrigger,
             @NonNull WindowMagnificationPromptController promptController,
             int displayId,
-            FullScreenMagnificationVibrationHelper fullScreenMagnificationVibrationHelper,
-            MouseEventHandler mouseEventHandler) {
+            FullScreenMagnificationVibrationHelper fullScreenMagnificationVibrationHelper) {
         this(
                 context,
                 fullScreenMagnificationController,
@@ -210,8 +210,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                 /* magnificationLogger= */ null,
                 ViewConfiguration.get(context),
                 new OneFingerPanningSettingsProvider(
-                        context, Flags.enableMagnificationOneFingerPanningGesture()),
-                mouseEventHandler);
+                        context, Flags.enableMagnificationOneFingerPanningGesture()));
     }
 
     /** Constructor for tests. */
@@ -229,8 +228,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
             FullScreenMagnificationVibrationHelper fullScreenMagnificationVibrationHelper,
             MagnificationLogger magnificationLogger,
             ViewConfiguration viewConfiguration,
-            OneFingerPanningSettingsProvider oneFingerPanningSettingsProvider,
-            MouseEventHandler mouseEventHandler) {
+            OneFingerPanningSettingsProvider oneFingerPanningSettingsProvider) {
         super(displayId, detectSingleFingerTripleTap, detectTwoFingerTripleTap,
                 detectShortcutTrigger, trace, callback);
         if (DEBUG_ALL) {
@@ -316,7 +314,9 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
         mOverscrollEdgeSlop = context.getResources().getDimensionPixelSize(
                 R.dimen.accessibility_fullscreen_magnification_gesture_edge_slop);
         mIsWatch = context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_WATCH);
-        mMouseEventHandler = mouseEventHandler;
+        mMouseEventHandler =
+                Flags.enableMagnificationFollowsMouseWithPointerMotionFilter()
+                        ? null : new MouseEventHandler(mFullScreenMagnificationController);
 
         if (mDetectShortcutTrigger) {
             mScreenStateReceiver = new ScreenStateReceiver(context, this);
@@ -340,15 +340,16 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
 
     @Override
     void handleMouseOrStylusEvent(MotionEvent event, MotionEvent rawEvent, int policyFlags) {
-        if (Flags.enableMagnificationFollowsMouseBugfix()) {
-            if (mFullScreenMagnificationController.isActivated(mDisplayId)) {
-                // TODO(b/354696546): Allow mouse/stylus to activate whichever display they are
-                // over, rather than only interacting with the current display.
-
-                // Send through the mouse/stylus event handler.
-                mMouseEventHandler.onEvent(event, mDisplayId);
-            }
+        if (mMouseEventHandler == null
+                || !mFullScreenMagnificationController.isActivated(mDisplayId)) {
+            return;
         }
+
+        // TODO(b/354696546): Allow mouse/stylus to activate whichever display they are
+        // over, rather than only interacting with the current display.
+
+        // Send through the mouse/stylus event handler.
+        mMouseEventHandler.onEvent(event, mDisplayId);
     }
 
     private void handleTouchEventWith(
@@ -377,7 +378,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
     }
 
     @Override
-    public void onDestroy() {
+    public void onDestroy(boolean resetMagnification) {
         if (DEBUG_STATE_TRANSITIONS) {
             Slog.i(mLogTag, "onDestroy(); delayed = "
                     + MotionEventInfo.toString(mDetectingState.mDelayedEventQueue));
@@ -388,9 +389,12 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
             mScreenStateReceiver.unregister();
         }
         mPromptController.onDestroy();
-        // Check if need to reset when MagnificationGestureHandler is the last magnifying service.
-        mFullScreenMagnificationController.resetIfNeeded(
-                mDisplayId, AccessibilityManagerService.MAGNIFICATION_GESTURE_HANDLER_ID);
+        if (resetMagnification) {
+            // Check if need to reset when MagnificationGestureHandler is the last magnifying
+            // service.
+            mFullScreenMagnificationController.resetIfNeeded(
+                    mDisplayId, AccessibilityManagerService.MAGNIFICATION_GESTURE_HANDLER_ID);
+        }
         mFullScreenMagnificationController.removeInfoChangedCallback(
                 mMagnificationInfoChangedCallback);
         clearAndTransitionToStateDetecting();
@@ -923,6 +927,13 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
 
                         transitionToDelegatingStateAndClear();
 
+                    } else if (!isActivated() && !mShortcutTriggered
+                            && mFullScreenMagnificationController.imeRegionContains(
+                                    mDisplayId, event.getX(), event.getY())) {
+                        // Delegate new taps performed over the IME while unmagnified. This removes
+                        // any observable delay while typing on an unmagnified keyboard.
+                        transitionToDelegatingStateAndClear();
+
                     } else if (isMultiTapTriggered(2 /* taps */)) {
 
                         // 3tap and hold
@@ -962,7 +973,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                     } else {
                         transitionToDelegatingStateAndClear();
                     }
-                    // LINT.ThenChange(:action_pointer_down_with_multi_finger)
+                    // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_pointer_down_with_multi_finger)
                 }
                 break;
                 case ACTION_POINTER_UP: {
@@ -972,7 +983,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                     }
                     // LINT.IfChange(action_pointer_up)
                     transitionToDelegatingStateAndClear();
-                    // LINT.ThenChange(:action_pointer_up_with_multi_finger)
+                    // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_pointer_up_with_multi_finger)
                 }
                 break;
                 case ACTION_MOVE: {
@@ -1022,7 +1033,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                         //Second pointer is swiping, so transit to PanningScalingState
                         transitToPanningScalingStateAndClear();
                     }
-                    // LINT.ThenChange(:action_move_with_multi_finger)
+                    // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_move_with_multi_finger)
                 }
                 break;
                 case ACTION_UP: {
@@ -1040,6 +1051,15 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                             mDisplayId, event.getX(), event.getY())) {
                         transitionToDelegatingStateAndClear();
 
+                    } else if (isActivated() && !mShortcutTriggered
+                            && mFullScreenMagnificationController.imeRegionContains(
+                                    mDisplayId, event.getX(), event.getY())) {
+                        // Delegate completed taps performed over the IME while magnified. Benefits:
+                        // - Removes any observable delay while typing on a magnified keyboard.
+                        // - Ensures that quick taps (e.g. "www") do not accidentally trigger the
+                        //   triple-tap shortcut and deactivate magnification.
+                        transitionToDelegatingStateAndClear();
+
                     } else if (isMultiTapTriggered(3 /* taps */)) {
                         onTripleTap(/* up */ event);
 
@@ -1052,7 +1072,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                         transitionToDelegatingStateAndClear();
 
                     }
-                    // LINT.ThenChange(:action_up_with_multi_finger)
+                    // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_up_with_multi_finger)
                 }
                 break;
             }
@@ -1170,8 +1190,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
 
         protected void cacheDelayedMotionEvent(MotionEvent event, MotionEvent rawEvent,
                 int policyFlags) {
-            if (Flags.enableMagnificationFollowsMouseBugfix()
-                    && !event.isFromSource(SOURCE_TOUCHSCREEN)) {
+            if (!event.isFromSource(SOURCE_TOUCHSCREEN)) {
                 // Only touch events need to be cached and sent later.
                 return;
             }
@@ -1390,7 +1409,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                 } else {
                     transitionToDelegatingStateAndClear();
                 }
-                // LINT.ThenChange(:action_pointer_down)
+                // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_pointer_down)
             }
 
             private void onMove(MotionEvent event) {
@@ -1447,7 +1466,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                             MESSAGE_TRANSITION_TO_PANNINGSCALING_STATE,
                             ViewConfiguration.getTapTimeout());
                 }
-                // LINT.ThenChange(:action_move)
+                // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_move)
             }
 
             private void onPointerUp() {
@@ -1458,13 +1477,22 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                 if (!mIsTwoFingerCountReached) {
                     transitionToDelegatingStateAndClear();
                 }
-                // LINT.ThenChange(:action_pointer_up)
+                // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_pointer_up)
             }
 
             private void onUp(MotionEvent event) {
                 // LINT.IfChange(action_up_with_multi_finger)
                 if (!mFullScreenMagnificationController.magnificationRegionContains(
                         mDisplayId, event.getX(), event.getY())) {
+                    transitionToDelegatingStateAndClear();
+
+                } else if (isActivated() && !mShortcutTriggered
+                            && mFullScreenMagnificationController.imeRegionContains(
+                                    mDisplayId, event.getX(), event.getY())) {
+                    // Delegate completed taps performed over the IME while magnified. Benefits:
+                    // - Removes any observable delay while typing on a magnified keyboard.
+                    // - Ensures that quick taps (e.g. "www") do not accidentally trigger the
+                    //   triple-tap shortcut and deactivate magnification.
                     transitionToDelegatingStateAndClear();
 
                 } else if (isMultiFingerMultiTapTriggered(
@@ -1489,7 +1517,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
                                 && mCompletedTapCount == 0) {
                     transitionToDelegatingStateAndClear();
                 }
-                // LINT.ThenChange(:action_up)
+                // LINT.ThenChange(FullScreenMagnificationGestureHandler.java:action_up)
             }
 
             private boolean isMultiFingerMultiTapTriggered(int targetTapCount, MotionEvent event) {
@@ -1745,6 +1773,7 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
      * BroadcastReceiver used to cancel the magnification shortcut when the screen turns off
      */
     private static class ScreenStateReceiver extends BroadcastReceiver {
+        private static final String TAG = ScreenStateReceiver.class.getName();
         private final Context mContext;
         private final FullScreenMagnificationGestureHandler mGestureHandler;
 
@@ -1759,7 +1788,16 @@ public class FullScreenMagnificationGestureHandler extends MagnificationGestureH
         }
 
         public void unregister() {
-            mContext.unregisterReceiver(this);
+            try {
+                mContext.unregisterReceiver(this);
+            } catch (IllegalArgumentException exception) {
+                // b/399282180: the unregister happens when the handler is destroyed (cleanup). The
+                // cleanup process should not cause the system crash, also the failure of unregister
+                // will not affect the user experience since it's for the destroyed handler.
+                // Therefore, we use try-catch here, to catch the exception to prevent crash, and
+                // log the exception for future investigations.
+                Slog.e(TAG, "Failed to unregister receiver: " + exception);
+            }
         }
 
         @Override

@@ -16,31 +16,46 @@
 
 package com.android.systemui.screenrecord
 
+import com.android.systemui.CoreStartable
+import com.android.systemui.Flags
+import com.android.systemui.NoOpCoreStartable
+import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.LogBufferFactory
+import com.android.systemui.mediaprojection.MediaProjectionMetricsLogger
+import com.android.systemui.mediaprojection.devicepolicy.ScreenCaptureDevicePolicyResolver
+import com.android.systemui.mediaprojection.devicepolicy.ScreenCaptureDisabledDialogDelegate
 import com.android.systemui.qs.QsEventLogger
 import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.qs.shared.model.TileCategory
 import com.android.systemui.qs.tileimpl.QSTileImpl
 import com.android.systemui.qs.tiles.ScreenRecordTile
-import com.android.systemui.qs.tiles.base.interactor.QSTileAvailabilityInteractor
-import com.android.systemui.qs.tiles.base.viewmodel.QSTileViewModelFactory
+import com.android.systemui.qs.tiles.base.domain.interactor.QSTileAvailabilityInteractor
+import com.android.systemui.qs.tiles.base.shared.model.QSTileConfig
+import com.android.systemui.qs.tiles.base.shared.model.QSTileUIConfig
+import com.android.systemui.qs.tiles.base.ui.viewmodel.QSTileViewModel
+import com.android.systemui.qs.tiles.base.ui.viewmodel.QSTileViewModelFactory
 import com.android.systemui.qs.tiles.impl.screenrecord.domain.interactor.ScreenRecordTileDataInteractor
 import com.android.systemui.qs.tiles.impl.screenrecord.domain.interactor.ScreenRecordTileUserActionInteractor
-import com.android.systemui.qs.tiles.impl.screenrecord.domain.ui.ScreenRecordTileMapper
-import com.android.systemui.qs.tiles.viewmodel.QSTileConfig
-import com.android.systemui.qs.tiles.viewmodel.QSTileUIConfig
-import com.android.systemui.qs.tiles.viewmodel.QSTileViewModel
+import com.android.systemui.qs.tiles.impl.screenrecord.domain.ui.mapper.ScreenRecordTileMapper
 import com.android.systemui.res.R
 import com.android.systemui.screenrecord.data.model.ScreenRecordModel
 import com.android.systemui.screenrecord.data.repository.ScreenRecordRepository
 import com.android.systemui.screenrecord.data.repository.ScreenRecordRepositoryImpl
+import com.android.systemui.screenrecord.domain.interactor.LegacyScreenRecordingStartStopInteractor
+import com.android.systemui.screenrecord.domain.interactor.ScreenRecordingServiceInteractor
+import com.android.systemui.screenrecord.domain.interactor.ScreenRecordingStartStopInteractor
+import com.android.systemui.settings.UserTracker
 import dagger.Binds
+import dagger.Lazy
 import dagger.Module
 import dagger.Provides
+import dagger.multibindings.ClassKey
 import dagger.multibindings.IntoMap
 import dagger.multibindings.StringKey
+import java.util.concurrent.Executor
 
 @Module
 interface ScreenRecordModule {
@@ -65,6 +80,66 @@ interface ScreenRecordModule {
 
         @Provides
         @IntoMap
+        @ClassKey(ScreenRecordingCoreStartable::class)
+        fun bindScreenRecordingCoreStartable(
+            implLazy: Lazy<ScreenRecordingCoreStartable>
+        ): CoreStartable {
+            if (Flags.restoreShowTapsSetting()) {
+                return implLazy.get()
+            } else {
+                return NoOpCoreStartable()
+            }
+        }
+
+        @Provides
+        @SysUISingleton
+        fun provideScreenRecordUxController(
+            @Main mainExecutor: Executor,
+            broadcastDispatcher: BroadcastDispatcher,
+            devicePolicyResolver: Lazy<ScreenCaptureDevicePolicyResolver>,
+            userTracker: UserTracker,
+            recordingControllerLogger: RecordingControllerLogger,
+            mediaProjectionMetricsLogger: MediaProjectionMetricsLogger,
+            screenCaptureDisabledDialogDelegate: ScreenCaptureDisabledDialogDelegate,
+            screenRecordPermissionDialogDelegateFactory:
+                ScreenRecordPermissionDialogDelegate.Factory,
+            screenRecordPermissionContentManagerFactory:
+                ScreenRecordPermissionContentManager.Factory,
+        ): ScreenRecordUxController {
+            return if (Flags.screenReactions()) {
+                ScreenRecordUxControllerImpl()
+            } else {
+                ScreenRecordLegacyUxControllerImpl(
+                    mainExecutor,
+                    broadcastDispatcher,
+                    devicePolicyResolver,
+                    userTracker,
+                    recordingControllerLogger,
+                    mediaProjectionMetricsLogger,
+                    screenCaptureDisabledDialogDelegate,
+                    screenRecordPermissionDialogDelegateFactory,
+                    screenRecordPermissionContentManagerFactory,
+                )
+            }
+        }
+
+        @Provides
+        @SysUISingleton
+        fun provideScreenRecordingStartStopInteractor(
+            legacyScreenRecordingStartStopInteractor:
+                Lazy<LegacyScreenRecordingStartStopInteractor>,
+            screenRecordingServiceInteractor: Lazy<ScreenRecordingServiceInteractor>,
+        ): ScreenRecordingStartStopInteractor {
+            return if (Flags.thinScreenRecordingService()) {
+                    screenRecordingServiceInteractor
+                } else {
+                    legacyScreenRecordingStartStopInteractor
+                }
+                .get()
+        }
+
+        @Provides
+        @IntoMap
         @StringKey(SCREEN_RECORD_TILE_SPEC)
         fun provideScreenRecordTileConfig(uiEventLogger: QsEventLogger): QSTileConfig =
             QSTileConfig(
@@ -86,7 +161,7 @@ interface ScreenRecordModule {
             factory: QSTileViewModelFactory.Static<ScreenRecordModel>,
             mapper: ScreenRecordTileMapper,
             stateInteractor: ScreenRecordTileDataInteractor,
-            userActionInteractor: ScreenRecordTileUserActionInteractor
+            userActionInteractor: ScreenRecordTileUserActionInteractor,
         ): QSTileViewModel =
             factory.create(
                 TileSpec.create(SCREEN_RECORD_TILE_SPEC),

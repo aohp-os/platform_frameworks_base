@@ -23,6 +23,9 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.PermissionMethod;
 import android.annotation.PermissionName;
+import android.annotation.SpecialUsers.CanBeALL;
+import android.annotation.SpecialUsers.CanBeCURRENT;
+import android.annotation.SpecialUsers.CanBeCURRENT_OR_SELF;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager.ProcessCapability;
 import android.app.ActivityManager.RestrictionLevel;
@@ -142,6 +145,15 @@ public abstract class ActivityManagerInternal {
             String processName, String abiOverride, int uid, Runnable crashHandler);
 
     /**
+     * Called when a user is being deleted. This can happen during normal device usage
+     * or just at startup, when partially removed users are purged. Any state persisted by the
+     * ActivityManager should be purged now.
+     *
+     * @param userId The user being cleaned up.
+     */
+    public abstract void onUserRemoving(@UserIdInt int userId);
+
+    /**
      * Called when a user has been deleted. This can happen during normal device usage
      * or just at startup, when partially removed users are purged. Any state persisted by the
      * ActivityManager should be purged now.
@@ -151,11 +163,24 @@ public abstract class ActivityManagerInternal {
     public abstract void onUserRemoved(@UserIdInt int userId);
 
     /**
-     * Start user, if it is not already running, but don't bring it to foreground.
+     * Start user in the background but only temporarily; if the user hasn't left the background
+     * in the provided duration, it may be automatically stopped (at the system's discretion).
+     *
+     * The automatic stopping is not guaranteed, and there are cases in which it won't be.
+     * Similarly, there is no guarantee that the user will not be stopped prior to the given
+     * duration (such as if too many users are running, or the user has been in the background for
+     * long enough that it is considered dispensable).
+     *
+     * Automatically stopping background users is not currently enabled for devices supporting
+     * {@link android.os.UserManager#isVisibleBackgroundUsersEnabled() visible background users};
+     * on such devices, the user will still be started but not stopped.
+     *
      * @param userId ID of the user to start
+     * @param durSecs in how many seconds we should attempt to stop the user, typically something on
+     *                the order of a few minutes
      * @return true if the user has been successfully started
      */
-    public abstract boolean startUserInBackground(int userId);
+    public abstract boolean startUserInBackgroundTemporarily(@UserIdInt int userId, int durSecs);
 
     /**
      * Kill foreground apps from the specified user.
@@ -282,14 +307,14 @@ public abstract class ActivityManagerInternal {
     public abstract boolean canStartMoreUsers();
 
     /**
-     * Sets the user switcher message for switching from {@link android.os.UserHandle#SYSTEM}.
+     * Sets the user switcher message for switching from a user.
      */
-    public abstract void setSwitchingFromSystemUserMessage(String switchingFromSystemUserMessage);
+    public abstract void setSwitchingFromUserMessage(@UserIdInt int user, @Nullable String message);
 
     /**
-     * Sets the user switcher message for switching to {@link android.os.UserHandle#SYSTEM}.
+     * Sets the user switcher message for switching to a user.
      */
-    public abstract void setSwitchingToSystemUserMessage(String switchingToSystemUserMessage);
+    public abstract void setSwitchingToUserMessage(@UserIdInt int user, @Nullable String message);
 
     /**
      * Returns maximum number of users that can run simultaneously.
@@ -312,7 +337,8 @@ public abstract class ActivityManagerInternal {
      * Checks to see if the calling pid is allowed to handle the user. Returns adjusted user id as
      * needed.
      */
-    public abstract int handleIncomingUser(int callingPid, int callingUid, @UserIdInt int userId,
+    public abstract @CanBeALL @UserIdInt int handleIncomingUser(int callingPid, int callingUid,
+            @CanBeALL @CanBeCURRENT @CanBeCURRENT_OR_SELF @UserIdInt int userId,
             boolean allowAll, int allowMode, String name, String callerPackage);
 
     /** Checks if the calling binder pid/uid has the given permission. */
@@ -348,6 +374,7 @@ public abstract class ActivityManagerInternal {
      */
     public abstract boolean hasRunningActivity(int uid, @Nullable String packageName);
 
+    // TODO: b/425766486 - Define the OOM_ADJ_* value by AppProtoEnums.
     /**
      * Oom Adj Reason: none - internal use only, do not use it.
      * @hide
@@ -485,6 +512,26 @@ public abstract class ActivityManagerInternal {
      */
     public static final int OOM_ADJ_REASON_FOLLOW_UP = 23;
 
+    /**
+     * Oom Adj Reason: Update after oom adjuster configuration has changed.
+     */
+    public static final int OOM_ADJ_REASON_RECONFIGURATION = 24;
+
+    /**
+     * Oom Adj Reason: Either a binder call has started or finished.
+     */
+    public static final int OOM_ADJ_REASON_SERVICE_BINDER_CALL = 25;
+
+    /**
+     * Oom Adj Reason: Batched service binding update request
+     */
+    public static final int OOM_ADJ_REASON_BATCH_UPDATE_REQUEST = 26;
+
+    /**
+     * Number of Oom Adj Reasons
+     */
+    public static final int OOM_ADJ_REASON_COUNT = 27;
+
     @IntDef(prefix = {"OOM_ADJ_REASON_"}, value = {
         OOM_ADJ_REASON_NONE,
         OOM_ADJ_REASON_ACTIVITY,
@@ -510,6 +557,9 @@ public abstract class ActivityManagerInternal {
         OOM_ADJ_REASON_RESTRICTION_CHANGE,
         OOM_ADJ_REASON_COMPONENT_DISABLED,
         OOM_ADJ_REASON_FOLLOW_UP,
+        OOM_ADJ_REASON_RECONFIGURATION,
+        OOM_ADJ_REASON_SERVICE_BINDER_CALL,
+        OOM_ADJ_REASON_BATCH_UPDATE_REQUEST,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface OomAdjReason {}
@@ -678,6 +728,17 @@ public abstract class ActivityManagerInternal {
      * @param data AppNotRespondingDialog.Data object
      */
     public abstract void rescheduleAnrDialog(Object data);
+
+    /**
+     * Move all the error dialogs (including {@code com.android.server.am.AppErrorDialog},
+     * {@code com.android.server.am.AppNotRespondingDialog},
+     * {@code com.android.server.am.StrictModeViolationDialog},
+     * and {@code com.android.server.am.AppWaitingForDebuggerDialog}) to the default display.
+     *
+     * @param displayId The display id of the display where the error dialogs are showing and need
+     *                  to be moved.
+     */
+    public abstract void moveErrorDialogsToDefaultDisplay(int displayId);
 
     /**
      * Sends {@link android.content.Intent#ACTION_CONFIGURATION_CHANGED} with all the appropriate
@@ -853,7 +914,7 @@ public abstract class ActivityManagerInternal {
     public abstract int broadcastIntent(Intent intent,
             IIntentReceiver resultTo,
             String[] requiredPermissions, boolean serialized,
-            int userId, int[] appIdAllowList,
+            @CanBeALL @CanBeCURRENT @UserIdInt int userId, int[] appIdAllowList,
             @Nullable BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver,
             @Nullable Bundle bOptions);
 
@@ -866,7 +927,7 @@ public abstract class ActivityManagerInternal {
     public abstract int broadcastIntentWithCallback(Intent intent,
             IIntentReceiver resultTo,
             String[] requiredPermissions,
-            int userId, int[] appIdAllowList,
+            @CanBeALL @CanBeCURRENT @UserIdInt int userId, int[] appIdAllowList,
             @Nullable BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver,
             @Nullable Bundle bOptions);
 
@@ -1295,7 +1356,7 @@ public abstract class ActivityManagerInternal {
      * @hide
      */
     public abstract boolean clearApplicationUserData(String packageName, boolean keepState,
-            boolean isRestore, IPackageDataObserver observer, int userId);
+            boolean isRestore, IPackageDataObserver observer, @CanBeCURRENT @UserIdInt int userId);
 
 
     /**
@@ -1350,8 +1411,8 @@ public abstract class ActivityManagerInternal {
      * watchdog reset.
      * @hide
      */
-    public abstract void killApplicationSync(String pkgName, int appId, int userId,
-            String reason, int exitInfoReason);
+    public abstract void killApplicationSync(String pkgName, int appId,
+            @CanBeALL @UserIdInt int userId, String reason, int exitInfoReason);
 
     /**
      * Queries the offset data for a given method on a process.

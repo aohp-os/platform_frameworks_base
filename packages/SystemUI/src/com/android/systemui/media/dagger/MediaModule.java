@@ -27,6 +27,8 @@ import com.android.systemui.media.controls.ui.controller.MediaHierarchyManager;
 import com.android.systemui.media.controls.ui.controller.MediaHostStatesManager;
 import com.android.systemui.media.controls.ui.view.MediaHost;
 import com.android.systemui.media.dream.dagger.MediaComplicationComponent;
+import com.android.systemui.media.remedia.data.MediaDataModule;
+import com.android.systemui.media.remedia.ui.MediaUiModule;
 import com.android.systemui.media.taptotransfer.receiver.MediaTttReceiverLogBuffer;
 import com.android.systemui.media.taptotransfer.sender.MediaTttSenderLogBuffer;
 
@@ -38,7 +40,9 @@ import javax.inject.Named;
 /** Dagger module for the media package. */
 @Module(
         includes = {
-            MediaDomainModule.class
+            MediaDomainModule.class,
+            MediaDataModule.class,
+            MediaUiModule.class,
         },
         subcomponents = {
         MediaComplicationComponent.class,
@@ -49,6 +53,7 @@ public interface MediaModule {
     String KEYGUARD = "media_keyguard";
     String DREAM = "dream";
     String COMMUNAL_HUB = "communal_Hub";
+    String POPUP = "popup";
 
     /** */
     @Provides
@@ -102,7 +107,26 @@ public interface MediaModule {
     @Provides
     @SysUISingleton
     @Named(COMMUNAL_HUB)
-    static MediaHost providesCommunalMediaHost(MediaHost.MediaHostStateHolder stateHolder,
+    static MediaHost providesCommunalMediaHost(
+            MediaHost.MediaHostStateHolder stateHolder,
+            MediaHierarchyManager hierarchyManager,
+            MediaDataManager dataManager,
+            MediaHostStatesManager statesManager,
+            MediaCarouselController carouselController,
+            MediaCarouselControllerLogger logger) {
+        return new MediaHost(
+                stateHolder,
+                hierarchyManager,
+                dataManager,
+                statesManager,
+                carouselController,
+                logger);
+    }
+
+    @Provides
+    @SysUISingleton
+    @Named(POPUP)
+    static MediaHost providesPopupMediaHost(MediaHost.MediaHostStateHolder stateHolder,
             MediaHierarchyManager hierarchyManager, MediaDataManager dataManager,
             MediaHostStatesManager statesManager, MediaCarouselController carouselController,
             MediaCarouselControllerLogger logger) {

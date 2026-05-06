@@ -77,7 +77,22 @@ public class DefaultAudioPolicyFacade implements AudioPolicyFacade {
     }
 
     @Override
+    public void setEnableHardening(boolean shouldEnable) {
+        IAudioPolicyService ap = mServiceHolder.waitForService();
+        try {
+            ap.setEnableHardening(shouldEnable);
+        } catch (RemoteException e) {
+            mServiceHolder.attemptClear(ap.asBinder());
+        }
+    }
+
+    @Override
     public void registerOnStartTask(Runnable task) {
         mServiceHolder.registerOnStartTask(unused -> task.run());
+    }
+
+    @Override
+    public boolean isServiceAvailable() {
+        return mServiceHolder.checkService() != null;
     }
 }

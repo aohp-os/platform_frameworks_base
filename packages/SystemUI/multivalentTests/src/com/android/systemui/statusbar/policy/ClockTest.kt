@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,115 +16,77 @@
 
 package com.android.systemui.statusbar.policy
 
-import android.testing.TestableLooper
-import android.view.View.MeasureSpec.UNSPECIFIED
-import android.view.View.MeasureSpec.makeMeasureSpec
-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.LinearLayout
+import android.content.res.Configuration
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags
 import com.android.systemui.SysuiTestCase
-import org.junit.Before
-import org.junit.runner.RunWith
-
 import com.google.common.truth.Truth.assertThat
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@TestableLooper.RunWithLooper
 class ClockTest : SysuiTestCase() {
-    private lateinit var clockView: Clock
+
+    private lateinit var clock: Clock
 
     @Before
     fun setUp() {
-        allowTestableLooperAsMainThread()
-        TestableLooper.get(this).runWithLooper {
-            val container = LinearLayout(context)
-            val lp = LinearLayout.LayoutParams(1000, WRAP_CONTENT)
-            container.layoutParams = lp
-            clockView = Clock(context, null)
-            container.addView(clockView)
-            measureClock()
-        }
+        clock = Clock(context, null)
     }
 
     @Test
-    fun testWidthDoesNotDecrease_sameCharLength() {
-        // GIVEN time is narrow
-        clockView.text = ONE_3
-        measureClock()
-        val width1 = clockView.measuredWidth
+    @EnableFlags(Flags.FLAG_SHADE_WINDOW_GOES_AROUND)
+    fun onConfigurationChanged_fontScaleChanges_paddingChanges() {
+        val initialPadding = clock.paddingLeft
 
-        // WHEN the text changes to be wider characters
-        clockView.text = ZERO_3
-        measureClock()
-        val width2 = clockView.measuredWidth
+        val newConfig = Configuration(context.resources.configuration)
+        newConfig.fontScale += 1.0f
 
-        // THEN the width should be wider (or equals when using monospace font)
-        assertThat(width2).isAtLeast(width1)
+        clock.onConfigurationChanged(newConfig)
+
+        assertThat(clock.paddingLeft).isNotEqualTo(initialPadding)
     }
 
     @Test
-    fun testWidthDoesNotDecrease_narrowerFont_sameNumberOfChars() {
-        // GIVEN time is wide
-        clockView.text = ZERO_3
-        measureClock()
-        val width1 = clockView.measuredWidth
+    @EnableFlags(Flags.FLAG_SHADE_WINDOW_GOES_AROUND)
+    fun onConfigurationChanged_densityChanges_paddingChanges() {
+        val initialPadding = clock.paddingLeft
 
-        // WHEN the text changes to a narrower font
-        clockView.text = ONE_3
-        measureClock()
-        val width2 = clockView.measuredWidth
+        val newConfig = Configuration(context.resources.configuration)
+        newConfig.densityDpi += 1
 
-        // THEN the width should not have decreased, and they should in fact be the same
-        assertThat(width2).isEqualTo(width1)
+        clock.onConfigurationChanged(newConfig)
+
+        assertThat(clock.paddingLeft).isNotEqualTo(initialPadding)
     }
 
     @Test
-    fun testWidthIncreases_whenCharsChanges() {
-        // GIVEN wide 3-char text
-        clockView.text = ZERO_3
-        measureClock()
-        val width1 = clockView.measuredWidth
+    @EnableFlags(Flags.FLAG_SHADE_WINDOW_GOES_AROUND)
+    fun onConfigurationChanged_nothingChanges_paddingDoesNotChange() {
+        val initialPadding = clock.paddingLeft
 
-        // WHEN text changes to 4-char wide text
-        clockView.text = ZERO_4
-        measureClock()
-        val width2 = clockView.measuredWidth
+        val newConfig = Configuration(context.resources.configuration)
 
-        // THEN the text field is wider
-        assertThat(width2).isGreaterThan(width1)
+        clock.onConfigurationChanged(newConfig)
+
+        assertThat(clock.paddingLeft).isNotEqualTo(initialPadding)
     }
 
     @Test
-    fun testWidthDecreases_whenCharsChange_longToShort() {
-        // GIVEN wide 4-char text
-        clockView.text = ZERO_4
-        measureClock()
-        val width1 = clockView.measuredWidth
+    @DisableFlags(Flags.FLAG_SHADE_WINDOW_GOES_AROUND)
+    fun onConfigurationChanged_densityChanges_flagOff_paddingDoesNotChange() {
+        val initialPadding = clock.paddingLeft
 
-        // WHEN number of characters changes to a narrow 3-char text
-        clockView.text = ONE_3
-        measureClock()
-        val width2 = clockView.measuredWidth
+        val newConfig = Configuration(context.resources.configuration)
+        newConfig.densityDpi += 1
 
-        // THEN the width can shrink, because number of chars changed
-        assertThat(width2).isLessThan(width1)
-    }
+        clock.onConfigurationChanged(newConfig)
 
-    private fun measureClock() {
-        clockView.measure(
-                makeMeasureSpec(0, UNSPECIFIED),
-                makeMeasureSpec(0, UNSPECIFIED)
-        )
+        assertThat(clock.paddingLeft).isEqualTo(initialPadding)
     }
 }
-
-/**
- * In a non-monospace font, it is expected that "0:00" is wider than "1:11"
- */
-private const val ZERO_3 = "0:00"
-private const val ZERO_4 = "00:00"
-private const val ONE_3 = "1:11"
-private const val ONE_4 = "11:11"

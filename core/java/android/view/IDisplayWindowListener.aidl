@@ -64,4 +64,24 @@ oneway interface IDisplayWindowListener {
      * Called when the keep clear ares on a display have changed.
      */
     void onKeepClearAreasChanged(int displayId, in List<Rect> restricted, in List<Rect> unrestricted);
+
+    /**
+     * Called when the eligibility of the desktop mode for a display have changed.
+     */
+    void onDesktopModeEligibleChanged(int displayId);
+
+    /**
+     * Called when the system decorations should be added onto the display.
+     */
+    void onDisplayAddSystemDecorations(int displayId);
+
+    /**
+     * Called when the system decorations should be removed from the display.
+     */
+    void onDisplayRemoveSystemDecorations(int displayId);
+
+    /**
+     * Called when animations are disabled or enabled for a display.
+     */
+    void onDisplayAnimationsDisabledChanged(int displayId, boolean disabled);
 }

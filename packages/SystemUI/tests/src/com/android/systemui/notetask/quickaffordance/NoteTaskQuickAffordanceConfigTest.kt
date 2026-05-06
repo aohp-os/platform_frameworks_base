@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalCoroutinesApi::class)
-
 package com.android.systemui.notetask.quickaffordance
 
 import android.app.role.RoleManager
@@ -48,7 +46,6 @@ import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.time.FakeSystemClock
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -93,7 +90,7 @@ internal class NoteTaskQuickAffordanceConfigTest : SysuiTestCase() {
                 packageManager.getApplicationInfoAsUser(
                     anyString(),
                     any(ApplicationInfoFlags::class.java),
-                    any(UserHandle::class.java)
+                    any(UserHandle::class.java),
                 )
             )
             .thenReturn(ApplicationInfo())
@@ -101,7 +98,7 @@ internal class NoteTaskQuickAffordanceConfigTest : SysuiTestCase() {
         whenever(
                 roleManager.getRoleHoldersAsUser(
                     eq(RoleManager.ROLE_NOTES),
-                    any(UserHandle::class.java)
+                    any(UserHandle::class.java),
                 )
             )
             .thenReturn(listOf("com.google.test.notes"))
@@ -125,14 +122,14 @@ internal class NoteTaskQuickAffordanceConfigTest : SysuiTestCase() {
             isEnabled = isEnabled,
             backgroundExecutor = FakeExecutor(FakeSystemClock()),
             roleManager = roleManager,
-            noteTaskInfoResolver = NoteTaskInfoResolver(roleManager, packageManager)
+            noteTaskInfoResolver = NoteTaskInfoResolver(roleManager, packageManager),
         )
 
     private fun createLockScreenStateVisible(): LockScreenState =
         LockScreenState.Visible(
             icon =
                 Icon.Resource(
-                    res = R.drawable.ic_note_task_shortcut_keyguard,
+                    resId = R.drawable.ic_note_task_shortcut_keyguard,
                     contentDescription =
                         ContentDescription.Resource(R.string.note_task_button_label),
                 )
@@ -421,7 +418,7 @@ internal class NoteTaskQuickAffordanceConfigTest : SysuiTestCase() {
         whenever(
                 roleManager.getRoleHoldersAsUser(
                     eq(RoleManager.ROLE_NOTES),
-                    any(UserHandle::class.java)
+                    any(UserHandle::class.java),
                 )
             )
             .thenReturn(emptyList())

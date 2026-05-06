@@ -16,24 +16,17 @@
 
 package com.android.systemui.scene.ui.composable.transitions
 
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import com.android.compose.animation.scene.TransitionBuilder
 import com.android.compose.animation.scene.UserActionDistance
 import com.android.systemui.notifications.ui.composable.Notifications
-import com.android.systemui.qs.ui.composable.QuickSettings
+import com.android.systemui.qs.shared.ui.QuickSettings
 import com.android.systemui.shade.ui.composable.Shade
 import com.android.systemui.shade.ui.composable.ShadeHeader
 import kotlin.time.Duration.Companion.milliseconds
 
 fun TransitionBuilder.lockscreenToSplitShadeTransition(durationScale: Double = 1.0) {
     spec = tween(durationMillis = (DefaultDuration * durationScale).inWholeMilliseconds.toInt())
-    swipeSpec =
-        spring(
-            stiffness = Spring.StiffnessMediumLow,
-            visibilityThreshold = Shade.Dimensions.ScrimVisibilityThreshold,
-        )
     distance = UserActionDistance { fromContent, _, _ ->
         val fromContentSize = checkNotNull(fromContent.targetSize())
         fromContentSize.height.toFloat() * 2 / 3f

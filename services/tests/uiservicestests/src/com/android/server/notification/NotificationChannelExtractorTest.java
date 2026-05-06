@@ -32,9 +32,9 @@ import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNull;
 
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -151,7 +151,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_CALL)
     public void testAudioAttributes_callStyleCanUseCallUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()
@@ -175,7 +174,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_CALL)
     public void testAudioAttributes_nonCallStyleCannotUseCallUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()
@@ -196,7 +194,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_ALARM)
     public void testAudioAttributes_alarmCategoryCanUseAlarmUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()
@@ -204,7 +201,7 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
                 .build());
         final Notification n = new Notification.Builder(getContext())
                 .setContentTitle("foo")
-                .setCategory(CATEGORY_ALARM)
+                .setCategory(new String("alarm"))
                 .setSmallIcon(android.R.drawable.sym_def_app_icon)
                 .build();
         NotificationRecord r = getRecord(channel, n);
@@ -216,7 +213,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_ALARM)
     public void testAudioAttributes_nonAlarmCategoryCannotUseAlarmUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()
@@ -237,7 +233,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_MEDIA)
     public void testAudioAttributes_noMediaUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()
@@ -258,7 +253,6 @@ public class NotificationChannelExtractorTest extends UiServiceTestCase {
     }
 
     @Test
-    @EnableFlags(Flags.FLAG_RESTRICT_AUDIO_ATTRIBUTES_MEDIA)
     public void testAudioAttributes_noUnknownUsage() throws RemoteException {
         NotificationChannel channel = new NotificationChannel("a", "a", IMPORTANCE_HIGH);
         channel.setSound(Uri.EMPTY, new AudioAttributes.Builder()

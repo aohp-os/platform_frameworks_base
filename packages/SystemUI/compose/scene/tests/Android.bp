@@ -30,24 +30,25 @@ android_test {
 
     srcs: [
         "src/**/*.kt",
-
-        // TODO(b/240432457): Depend on PlatformComposeSceneTransitionLayout
-        // directly once Kotlin tests can access internal declarations.
-        ":PlatformComposeSceneTransitionLayout-srcs",
     ],
 
     static_libs: [
         "platform-test-annotations",
+        "PlatformComposeSceneTransitionLayout",
         "PlatformComposeSceneTransitionLayoutTestsUtils",
         "PlatformMotionTestingCompose",
         "androidx.test.runner",
         "androidx.test.ext.junit",
+        "platform-parametric-runner-lib",
 
         "androidx.compose.runtime_runtime",
         "androidx.compose.ui_ui-test-junit4",
         "androidx.compose.ui_ui-test-manifest",
 
         "truth",
+    ],
+    associates: [
+        "PlatformComposeSceneTransitionLayout",
     ],
     asset_dirs: ["goldens"],
     kotlincflags: ["-Xjvm-default=all"],

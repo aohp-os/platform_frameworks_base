@@ -228,8 +228,7 @@ public class AppCompatReachabilityPolicyTest extends WindowTestsBase {
      * Runs a test scenario providing a Robot.
      */
     void runTestScenario(@NonNull Consumer<ReachabilityPolicyRobotTest> consumer) {
-        final ReachabilityPolicyRobotTest robot =
-                new ReachabilityPolicyRobotTest(mWm, mAtm, mSupervisor);
+        final ReachabilityPolicyRobotTest robot = new ReachabilityPolicyRobotTest(this);
         consumer.accept(robot);
     }
 
@@ -237,17 +236,15 @@ public class AppCompatReachabilityPolicyTest extends WindowTestsBase {
 
         private final Supplier<Rect> mLetterboxInnerBoundsSupplier = spy(Rect::new);
 
-        ReachabilityPolicyRobotTest(@NonNull WindowManagerService wm,
-                @NonNull ActivityTaskManagerService atm,
-                @NonNull ActivityTaskSupervisor supervisor) {
-            super(wm, atm, supervisor);
+        ReachabilityPolicyRobotTest(@NonNull WindowTestsBase windowTestBase) {
+            super(windowTestBase);
         }
 
         @Override
         void onPostActivityCreation(@NonNull ActivityRecord activity) {
             super.onPostActivityCreation(activity);
-            spyOn(activity.mAppCompatController.getAppCompatReachabilityOverrides());
-            activity.mAppCompatController.getAppCompatReachabilityPolicy()
+            spyOn(activity.mAppCompatController.getReachabilityOverrides());
+            activity.mAppCompatController.getReachabilityPolicy()
                     .setLetterboxInnerBoundsSupplier(mLetterboxInnerBoundsSupplier);
         }
 
@@ -281,12 +278,12 @@ public class AppCompatReachabilityPolicyTest extends WindowTestsBase {
 
         @NonNull
         private AppCompatReachabilityOverrides getAppCompatReachabilityOverrides() {
-            return activity().top().mAppCompatController.getAppCompatReachabilityOverrides();
+            return activity().top().mAppCompatController.getReachabilityOverrides();
         }
 
         @NonNull
         private AppCompatReachabilityPolicy getAppCompatReachabilityPolicy() {
-            return activity().top().mAppCompatController.getAppCompatReachabilityPolicy();
+            return activity().top().mAppCompatController.getReachabilityPolicy();
         }
 
     }

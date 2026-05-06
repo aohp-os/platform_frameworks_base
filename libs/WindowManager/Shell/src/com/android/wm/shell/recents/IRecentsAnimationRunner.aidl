@@ -17,9 +17,10 @@
 package com.android.wm.shell.recents;
 
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.view.RemoteAnimationTarget;
 import android.window.TaskSnapshot;
-import android.os.Bundle;
+import android.window.TransitionInfo;
 
 import com.android.wm.shell.recents.IRecentsAnimationController;
 
@@ -27,7 +28,7 @@ import com.android.wm.shell.recents.IRecentsAnimationController;
  * Interface that is used to callback from window manager to the process that runs a recents
  * animation to start or cancel it.
  *
- * {@hide}
+ * @hide
  */
 oneway interface IRecentsAnimationRunner {
 
@@ -52,16 +53,15 @@ oneway interface IRecentsAnimationRunner {
      * Called when the system is ready for the handler to start animating all the visible tasks.
      *
      * @param homeContentInsets The current home app content insets
-     * @param minimizedHomeBounds Specifies the bounds of the minimized home app, will be
-     *                            {@code null} if the device is not currently in split screen
      */
     void onAnimationStart(in IRecentsAnimationController controller,
             in RemoteAnimationTarget[] apps, in RemoteAnimationTarget[] wallpapers,
-            in Rect homeContentInsets, in Rect minimizedHomeBounds, in Bundle extras) = 2;
+            in Rect homeContentInsets, in Bundle extras, in @nullable TransitionInfo info) = 2;
 
     /**
      * Called when the task of an activity that has been started while the recents animation
      * was running becomes ready for control.
      */
-    void onTasksAppeared(in RemoteAnimationTarget[] app) = 3;
+    void onTasksAppeared(in RemoteAnimationTarget[] app,
+            in @nullable TransitionInfo transitionInfo) = 3;
 }

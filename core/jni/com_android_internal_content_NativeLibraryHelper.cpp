@@ -62,6 +62,18 @@ enum install_status_t {
     NO_NATIVE_LIBRARIES = -114
 };
 
+struct {
+    jclass clazz;
+    jmethodID constructor;
+    jfieldID libraryName;
+    jfieldID errorCode;
+} gLibraryAlignmentInfo;
+
+struct {
+    jclass clazz;
+    jmethodID constructor;
+} gAlignmentResult;
+
 // These code should match with PageSizeAppCompatFlags inside ApplicationInfo.java
 constexpr int PAGE_SIZE_APP_COMPAT_FLAG_ERROR = -1;
 constexpr int PAGE_SIZE_APP_COMPAT_FLAG_UNDEFINED = 0;
@@ -236,7 +248,6 @@ static install_status_t extractNativeLibFromApk(ZipFileRO* zipFile, ZipEntryRO z
         return INSTALL_FAILED_CONTAINER_ERROR;
     }
 
-#ifdef ENABLE_PUNCH_HOLES
     // punch extracted elf files as well. This will fail where compression is on (like f2fs) but it
     // will be useful for ext4 based systems
     struct statfs64 fsInfo;
@@ -253,7 +264,6 @@ static install_status_t extractNativeLibFromApk(ZipFileRO* zipFile, ZipEntryRO z
                   zipFile->getZipFileName());
         }
     }
-#endif // ENABLE_PUNCH_HOLES
 
     ALOGV("Successfully moved %s to %s\n", localTmpFileName, localFileName);
 
@@ -273,7 +283,7 @@ static install_status_t copyFileIfChanged(JNIEnv* env, void* arg, ZipFileRO* zip
     jboolean extractNativeLibs = *(jboolean*)args[1];
     jboolean debuggable = *(jboolean*)args[2];
     jboolean app_compat_16kb = *(jboolean*)args[3];
-    install_status_t ret = INSTALL_SUCCEEDED;
+    jboolean pageSizeCompatDisabled = *(jboolean*)args[4];
 
     ScopedUtfChars nativeLibPath(env, *javaNativeLibPath);
 
@@ -304,6 +314,16 @@ static install_status_t copyFileIfChanged(JNIEnv* env, void* arg, ZipFileRO* zip
         }
 
         if (offset % kPageSize != 0) {
+            // If page size app compat was disabled explicitly in manifest, don't extract libs on
+            // 16 KB page size device.
+            if (kPageSize == 0x4000 && pageSizeCompatDisabled) {
+                ALOGE("pageSizeCompat=disabled library '%s' is not PAGE(%zu)-"
+                      "aligned within apk (APK alignment, not ELF alignment) -"
+                      "and will not be extracted.\n",
+                      fileName, kPageSize);
+                return INSTALL_FAILED_INVALID_APK;
+            }
+
             // If the library is zip-aligned correctly for 4kb devices and app compat is
             // enabled, on 16kb devices fallback to extraction
             if (offset % 0x1000 == 0 && app_compat_16kb) {
@@ -321,7 +341,6 @@ static install_status_t copyFileIfChanged(JNIEnv* env, void* arg, ZipFileRO* zip
             return INSTALL_FAILED_INVALID_APK;
         }
 
-#ifdef ENABLE_PUNCH_HOLES
         // if library is uncompressed, punch hole in it in place
         if (!punchHolesInElf64(zipFile->getZipFileName(), offset)) {
             ALOGW("Failed to punch uncompressed elf file :%s inside apk : %s at offset: "
@@ -334,7 +353,6 @@ static install_status_t copyFileIfChanged(JNIEnv* env, void* arg, ZipFileRO* zip
         if (!punchHolesInZip(zipFile->getZipFileName(), offset, extraFieldLength)) {
             ALOGW("Failed to punch apk : %s at extra field", zipFile->getZipFileName());
         }
-#endif // ENABLE_PUNCH_HOLES
 
         return INSTALL_SUCCEEDED;
     }
@@ -349,21 +367,19 @@ static install_status_t copyFileIfChanged(JNIEnv* env, void* arg, ZipFileRO* zip
  * satisfied :
  *
  * - The entry is under the lib/ directory.
- * - The entry name ends with ".so" and the entry name starts with "lib",
- *   an exception is made for debuggable apps.
  * - The entry filename is "safe" (as determined by isFilenameSafe).
  *
  */
 class NativeLibrariesIterator {
 private:
-    NativeLibrariesIterator(ZipFileRO* zipFile, bool debuggable, void* cookie)
-          : mZipFile(zipFile), mDebuggable(debuggable), mCookie(cookie), mLastSlash(nullptr) {
+    NativeLibrariesIterator(ZipFileRO* zipFile, void* cookie)
+          : mZipFile(zipFile), mCookie(cookie), mLastSlash(nullptr) {
         fileName[0] = '\0';
     }
 
 public:
     static base::expected<std::unique_ptr<NativeLibrariesIterator>, int32_t> create(
-            ZipFileRO* zipFile, bool debuggable) {
+            ZipFileRO* zipFile) {
         // Do not specify a suffix to find both .so files and gdbserver.
         auto result = zipFile->startIterationOrError(APK_LIB.data(), nullptr /* suffix */);
         if (!result.ok()) {
@@ -371,7 +387,7 @@ public:
         }
 
         return std::unique_ptr<NativeLibrariesIterator>(
-                new NativeLibrariesIterator(zipFile, debuggable, result.value()));
+                new NativeLibrariesIterator(zipFile, result.value()));
     }
 
     base::expected<ZipEntryRO, int32_t> next() {
@@ -390,7 +406,7 @@ public:
                 continue;
             }
 
-            const char* lastSlash = util::ValidLibraryPathLastSlash(fileName, false, mDebuggable);
+            const char* lastSlash = util::ValidLibraryPathLastSlash(fileName, false);
             if (lastSlash) {
                 mLastSlash = lastSlash;
                 break;
@@ -415,20 +431,19 @@ private:
 
     char fileName[PATH_MAX];
     ZipFileRO* const mZipFile;
-    const bool mDebuggable;
     void* mCookie;
     const char* mLastSlash;
 };
 
 static install_status_t
 iterateOverNativeFiles(JNIEnv *env, jlong apkHandle, jstring javaCpuAbi,
-                       jboolean debuggable, iterFunc callFunc, void* callArg) {
+                       iterFunc callFunc, void* callArg) {
     ZipFileRO* zipFile = reinterpret_cast<ZipFileRO*>(apkHandle);
     if (zipFile == nullptr) {
         return INSTALL_FAILED_INVALID_APK;
     }
 
-    auto result = NativeLibrariesIterator::create(zipFile, debuggable);
+    auto result = NativeLibrariesIterator::create(zipFile);
     if (!result.ok()) {
         return INSTALL_FAILED_INVALID_APK;
     }
@@ -470,14 +485,13 @@ iterateOverNativeFiles(JNIEnv *env, jlong apkHandle, jstring javaCpuAbi,
     return INSTALL_SUCCEEDED;
 }
 
-static int findSupportedAbi(JNIEnv* env, jlong apkHandle, jobjectArray supportedAbisArray,
-                            jboolean debuggable) {
+static int findSupportedAbi(JNIEnv* env, jlong apkHandle, jobjectArray supportedAbisArray) {
     ZipFileRO* zipFile = reinterpret_cast<ZipFileRO*>(apkHandle);
     if (zipFile == nullptr) {
         return INSTALL_FAILED_INVALID_APK;
     }
 
-    auto result = NativeLibrariesIterator::create(zipFile, debuggable);
+    auto result = NativeLibrariesIterator::create(zipFile);
     if (!result.ok()) {
         return INSTALL_FAILED_INVALID_APK;
     }
@@ -541,33 +555,32 @@ static inline bool app_compat_16kb_enabled() {
     return !android::base::GetBoolProperty("pm.16kb.app_compat.disabled", false);
 }
 
-static jint
-com_android_internal_content_NativeLibraryHelper_copyNativeBinaries(JNIEnv *env, jclass clazz,
-        jlong apkHandle, jstring javaNativeLibPath, jstring javaCpuAbi,
-        jboolean extractNativeLibs, jboolean debuggable)
-{
+static jint com_android_internal_content_NativeLibraryHelper_copyNativeBinaries(
+        JNIEnv* env, jclass clazz, jlong apkHandle, jstring javaNativeLibPath, jstring javaCpuAbi,
+        jboolean extractNativeLibs, jboolean debuggable, jboolean pageSizeCompatDisabled) {
     jboolean app_compat_16kb = app_compat_16kb_enabled();
-    void* args[] = { &javaNativeLibPath, &extractNativeLibs, &debuggable, &app_compat_16kb };
-    return (jint) iterateOverNativeFiles(env, apkHandle, javaCpuAbi, debuggable,
+    void* args[] = {&javaNativeLibPath, &extractNativeLibs, &debuggable, &app_compat_16kb,
+                    &pageSizeCompatDisabled};
+    return (jint) iterateOverNativeFiles(env, apkHandle, javaCpuAbi,
             copyFileIfChanged, reinterpret_cast<void*>(args));
 }
 
 static jlong
 com_android_internal_content_NativeLibraryHelper_sumNativeBinaries(JNIEnv *env, jclass clazz,
-        jlong apkHandle, jstring javaCpuAbi, jboolean debuggable)
+        jlong apkHandle, jstring javaCpuAbi)
 {
     size_t totalSize = 0;
 
-    iterateOverNativeFiles(env, apkHandle, javaCpuAbi, debuggable, sumFiles, &totalSize);
+    iterateOverNativeFiles(env, apkHandle, javaCpuAbi, sumFiles, &totalSize);
 
     return totalSize;
 }
 
 static jint
 com_android_internal_content_NativeLibraryHelper_findSupportedAbi(JNIEnv *env, jclass clazz,
-        jlong apkHandle, jobjectArray javaCpuAbisToSearch, jboolean debuggable)
+        jlong apkHandle, jobjectArray javaCpuAbisToSearch)
 {
-    return (jint) findSupportedAbi(env, apkHandle, javaCpuAbisToSearch, debuggable);
+    return (jint) findSupportedAbi(env, apkHandle, javaCpuAbisToSearch);
 }
 
 enum bitcode_scan_result_t {
@@ -638,7 +651,17 @@ com_android_internal_content_NativeLibraryHelper_openApkFd(JNIEnv *env, jclass,
 
 static jint checkLoadSegmentAlignment(const char* fileName, off64_t offset) {
     std::vector<Elf64_Phdr> programHeaders;
-    if (!getLoadSegmentPhdrs(fileName, offset, programHeaders)) {
+    read_elf_status_t status = getLoadSegmentPhdrs(fileName, offset, programHeaders);
+    // Ignore the ELFs which are not 64 bit.
+    if (status == ELF_IS_NOT_64_BIT) {
+        ALOGW("ELF file is not 64 Bit");
+        // PAGE_SIZE_APP_COMPAT_FLAG_UNDEFINED is equivalent of skipping the current file.
+        // on return, flag is OR'ed with flags from other ELF files. If some app has 32 bit ELF in
+        // 64 bit directory, alignment of that ELF will be ignored.
+        return PAGE_SIZE_APP_COMPAT_FLAG_UNDEFINED;
+    }
+
+    if (status == ELF_READ_ERROR) {
         ALOGE("Failed to read program headers from ELF file.");
         return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
     }
@@ -694,8 +717,7 @@ static jint checkAlignment(JNIEnv* env, jstring javaNativeLibPath, jboolean extr
                            ZipFileRO* zipFile, ZipEntryRO zipEntry, const char* fileName) {
     int mode = PAGE_SIZE_APP_COMPAT_FLAG_UNDEFINED;
     // Need two separate install status for APK and ELF alignment
-    static const size_t kPageSize = getpagesize();
-    jint ret = INSTALL_SUCCEEDED;
+    static const size_t kPageSize16Kb = 16384;
 
     ScopedUtfChars nativeLibPath(env, javaNativeLibPath);
     if (extractNativeLibs) {
@@ -718,10 +740,10 @@ static jint checkAlignment(JNIEnv* env, jstring javaNativeLibPath, jboolean extr
         return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
     }
 
-    if (offset % kPageSize != 0) {
+    if (offset % kPageSize16Kb != 0) {
         ALOGW("Library '%s' is not PAGE(%zu)-aligned - will not be able to open it directly "
               "from apk.\n",
-              fileName, kPageSize);
+              fileName, kPageSize16Kb);
         mode |= PAGE_SIZE_APP_COMPAT_FLAG_UNCOMPRESSED_LIBS_NOT_ALIGNED;
         ALOGI("Setting page size compat mode "
               "PAGE_SIZE_APP_COMPAT_FLAG_UNCOMPRESSED_LIBS_NOT_ALIGNED for %s",
@@ -736,22 +758,20 @@ static jint checkAlignment(JNIEnv* env, jstring javaNativeLibPath, jboolean extr
     return mode;
 }
 
-// TODO(b/371049373): This function is copy of iterateOverNativeFiles with different way of handling
-// and combining return values for all ELF and APKs. Find a way to consolidate two functions.
-static jint com_android_internal_content_NativeLibraryHelper_checkApkAlignment(
+static jobject com_android_internal_content_NativeLibraryHelper_checkApkAlignment(
         JNIEnv* env, jclass clazz, jlong apkHandle, jstring javaNativeLibPath, jstring javaCpuAbi,
         jboolean extractNativeLibs, jboolean debuggable) {
     int mode = PAGE_SIZE_APP_COMPAT_FLAG_UNDEFINED;
     ZipFileRO* zipFile = reinterpret_cast<ZipFileRO*>(apkHandle);
     if (zipFile == nullptr) {
         ALOGE("zipfile handle is null");
-        return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
+        return nullptr;
     }
 
-    auto result = NativeLibrariesIterator::create(zipFile, debuggable);
+    auto result = NativeLibrariesIterator::create(zipFile);
     if (!result.ok()) {
         ALOGE("Can't iterate over native libs for file:%s", zipFile->getZipFileName());
-        return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
+        return nullptr;
     }
     std::unique_ptr<NativeLibrariesIterator> it(std::move(result.value()));
 
@@ -759,14 +779,20 @@ static jint com_android_internal_content_NativeLibraryHelper_checkApkAlignment(
     if (cpuAbi.c_str() == nullptr) {
         ALOGE("cpuAbi is nullptr");
         // This would've thrown, so this return code isn't observable by Java.
-        return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
+        return nullptr;
     }
+
+    struct LibInfo {
+        std::string name;
+        int errorCode;
+    };
+    std::vector<LibInfo> unalignedLibsInfo;
 
     while (true) {
         auto next = it->next();
         if (!next.ok()) {
             ALOGE("next iterator not found Error:%d", next.error());
-            return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
+            return nullptr;
         }
         auto entry = next.value();
         if (entry == nullptr) {
@@ -787,13 +813,46 @@ static jint com_android_internal_content_NativeLibraryHelper_checkApkAlignment(
             if (ret == PAGE_SIZE_APP_COMPAT_FLAG_ERROR) {
                 ALOGE("Alignment check returned for zipfile: %s, entry:%s",
                       zipFile->getZipFileName(), lastSlash + 1);
-                return PAGE_SIZE_APP_COMPAT_FLAG_ERROR;
+                return nullptr;
             }
             mode |= ret;
+            unalignedLibsInfo.push_back({fileName, ret});
         }
     }
 
-    return mode;
+    // Create and Populate the Java Object Array for LibraryAlignmentInfo
+    ScopedLocalRef<jobjectArray> unalignedInfoObjects(env, nullptr);
+    if (!unalignedLibsInfo.empty()) {
+        unalignedInfoObjects.reset(env->NewObjectArray(unalignedLibsInfo.size(),
+                                                       gLibraryAlignmentInfo.clazz, nullptr));
+        if (unalignedInfoObjects.get() == nullptr) {
+            ALOGE("Failed to allocate libinfo array for zipfile: %s", zipFile->getZipFileName());
+            return nullptr;
+        }
+
+        for (size_t index = 0; index < unalignedLibsInfo.size(); ++index) {
+            ScopedLocalRef<jobject> libInfo(env,
+                                            env->NewObject(gLibraryAlignmentInfo.clazz,
+                                                           gLibraryAlignmentInfo.constructor));
+
+            ScopedLocalRef<jstring> libName(env,
+                                            env->NewStringUTF(
+                                                    unalignedLibsInfo[index].name.c_str()));
+            jint errorCode = unalignedLibsInfo[index].errorCode;
+
+            env->SetObjectField(libInfo.get(), gLibraryAlignmentInfo.libraryName, libName.get());
+            env->SetIntField(libInfo.get(), gLibraryAlignmentInfo.errorCode, errorCode);
+            env->SetObjectArrayElement(unalignedInfoObjects.get(), index, libInfo.get());
+        }
+    }
+
+    // Create the final result object.
+    ScopedLocalRef<jobject> finalResultObj(env,
+                                           env->NewObject(gAlignmentResult.clazz,
+                                                          gAlignmentResult.constructor, mode,
+                                                          unalignedInfoObjects.get()));
+
+    return finalResultObj.release();
 }
 
 static void
@@ -808,20 +867,38 @@ static const JNINativeMethod gMethods[] = {
         {"nativeOpenApkFd", "(Ljava/io/FileDescriptor;Ljava/lang/String;)J",
          (void*)com_android_internal_content_NativeLibraryHelper_openApkFd},
         {"nativeClose", "(J)V", (void*)com_android_internal_content_NativeLibraryHelper_close},
-        {"nativeCopyNativeBinaries", "(JLjava/lang/String;Ljava/lang/String;ZZ)I",
+        {"nativeCopyNativeBinaries", "(JLjava/lang/String;Ljava/lang/String;ZZZ)I",
          (void*)com_android_internal_content_NativeLibraryHelper_copyNativeBinaries},
-        {"nativeSumNativeBinaries", "(JLjava/lang/String;Z)J",
+        {"nativeSumNativeBinaries", "(JLjava/lang/String;)J",
          (void*)com_android_internal_content_NativeLibraryHelper_sumNativeBinaries},
-        {"nativeFindSupportedAbi", "(J[Ljava/lang/String;Z)I",
+        {"nativeFindSupportedAbi", "(J[Ljava/lang/String;)I",
          (void*)com_android_internal_content_NativeLibraryHelper_findSupportedAbi},
         {"hasRenderscriptBitcode", "(J)I",
          (void*)com_android_internal_content_NativeLibraryHelper_hasRenderscriptBitcode},
-        {"nativeCheckAlignment", "(JLjava/lang/String;Ljava/lang/String;ZZ)I",
+        {"nativeCheckAlignment",
+         "(JLjava/lang/String;Ljava/lang/String;ZZ)Lcom/android/internal/content/"
+         "NativeLibraryHelper$AlignmentResult;",
          (void*)com_android_internal_content_NativeLibraryHelper_checkApkAlignment},
 };
 
 int register_com_android_internal_content_NativeLibraryHelper(JNIEnv *env)
 {
+    jclass libInfoClass = FindClassOrDie(env, "com/android/internal/content/LibraryAlignmentInfo");
+    gLibraryAlignmentInfo.clazz = MakeGlobalRefOrDie(env, libInfoClass);
+    gLibraryAlignmentInfo.constructor =
+            GetMethodIDOrDie(env, gLibraryAlignmentInfo.clazz, "<init>", "()V");
+    gLibraryAlignmentInfo.libraryName =
+            GetFieldIDOrDie(env, gLibraryAlignmentInfo.clazz, "libraryName", "Ljava/lang/String;");
+    gLibraryAlignmentInfo.errorCode =
+            GetFieldIDOrDie(env, gLibraryAlignmentInfo.clazz, "errorCode", "I");
+
+    jclass alignmentResultClass =
+            FindClassOrDie(env, "com/android/internal/content/NativeLibraryHelper$AlignmentResult");
+    gAlignmentResult.clazz = MakeGlobalRefOrDie(env, alignmentResultClass);
+    gAlignmentResult.constructor =
+            GetMethodIDOrDie(env, gAlignmentResult.clazz, "<init>",
+                             "(I[Lcom/android/internal/content/LibraryAlignmentInfo;)V");
+
     return RegisterMethodsOrDie(env,
             "com/android/internal/content/NativeLibraryHelper", gMethods, NELEM(gMethods));
 }

@@ -17,12 +17,28 @@
 package com.android.server.clipboard;
 
 import static android.app.ActivityManagerInternal.ALLOW_FULL_ONLY;
-import static android.companion.virtual.VirtualDeviceManager.ACTION_VIRTUAL_DEVICE_REMOVED;
-import static android.companion.virtual.VirtualDeviceManager.EXTRA_VIRTUAL_DEVICE_ID;
 import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_CUSTOM;
 import static android.companion.virtual.VirtualDeviceParams.POLICY_TYPE_CLIPBOARD;
+import static android.content.ClipDescription.MIMETYPE_APPLICATION_ACTIVITY;
+import static android.content.ClipDescription.MIMETYPE_APPLICATION_SHORTCUT;
+import static android.content.ClipDescription.MIMETYPE_APPLICATION_TASK;
+import static android.content.ClipDescription.MIMETYPE_TEXT_HTML;
+import static android.content.ClipDescription.MIMETYPE_TEXT_INTENT;
+import static android.content.ClipDescription.MIMETYPE_TEXT_PLAIN;
+import static android.content.ClipDescription.MIMETYPE_TEXT_URILIST;
+import static android.content.ClipDescription.MIMETYPE_UNKNOWN;
 import static android.content.Context.DEVICE_ID_DEFAULT;
 import static android.content.Context.DEVICE_ID_INVALID;
+
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_ACTIVITY;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_SHORTCUT;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_TASK;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_HTML;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_INTENT;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_PLAIN;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_URILIST;
+import static com.android.internal.util.FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_UNKNOWN;
+import static com.android.server.clipboard.Flags.clipboardGetEventLogging;
 
 import android.Manifest;
 import android.annotation.NonNull;
@@ -46,7 +62,6 @@ import android.content.Context;
 import android.content.IClipboard;
 import android.content.IOnPrimaryClipChangedListener;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.UserInfo;
@@ -66,6 +81,7 @@ import android.os.Parcel;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.DeviceConfig;
@@ -73,11 +89,13 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.IntArray;
 import android.util.Pair;
 import android.util.SafetyProtectionUtils;
 import android.util.Slog;
 import android.util.SparseArrayMap;
 import android.util.SparseBooleanArray;
+import android.util.SparseLongArray;
 import android.view.Display;
 import android.view.autofill.AutofillManagerInternal;
 import android.view.textclassifier.TextClassificationContext;
@@ -91,6 +109,7 @@ import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FrameworkStatsLog;
+import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.UiThread;
@@ -101,6 +120,7 @@ import com.android.server.wm.WindowManagerInternal;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -135,6 +155,11 @@ public class ClipboardService extends SystemService {
     private static final String PROPERTY_MAX_CLASSIFICATION_LENGTH = "max_classification_length";
     private static final int DEFAULT_MAX_CLASSIFICATION_LENGTH = 400;
 
+    private static final int[] CLIP_DATA_TYPES_UNKNOWN = {
+            CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_UNKNOWN
+    };
+    private static final long ACCESS_NOTIFICATION_SUPPRESSION_TIMEOUT_MILLIS = 1000L;
+
     private final ActivityManagerInternal mAmInternal;
     private final IUriGrantsManager mUgm;
     private final UriGrantsManagerInternal mUgmInternal;
@@ -155,6 +180,12 @@ public class ClipboardService extends SystemService {
     @GuardedBy("mLock")
     // Maps (userId, deviceId) to Clipboard.
     private final SparseArrayMap<Integer, Clipboard> mClipboards = new SparseArrayMap<>();
+
+    /**
+     * Maps the uid to the time that clip access notification/toast suppression should end.
+     */
+    @GuardedBy("mLock")
+    private final SparseLongArray mSuppressAccessNotification = new SparseLongArray();
 
     @GuardedBy("mLock")
     private boolean mShowAccessNotifications =
@@ -219,35 +250,8 @@ public class ClipboardService extends SystemService {
     @Override
     public void onStart() {
         publishBinderService(Context.CLIPBOARD_SERVICE, new ClipboardImpl());
-        if (!android.companion.virtual.flags.Flags.vdmPublicApis() && mVdmInternal != null) {
-            registerVirtualDeviceBroadcastReceiver();
-        } else if (android.companion.virtual.flags.Flags.vdmPublicApis() && mVdm != null) {
-            registerVirtualDeviceListener();
-        }
-    }
-
-    private void registerVirtualDeviceBroadcastReceiver() {
-        if (mVirtualDeviceRemovedReceiver != null) {
-            return;
-        }
-        mVirtualDeviceRemovedReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (!intent.getAction().equals(ACTION_VIRTUAL_DEVICE_REMOVED)) {
-                    return;
-                }
-                final int removedDeviceId =
-                        intent.getIntExtra(EXTRA_VIRTUAL_DEVICE_ID, DEVICE_ID_INVALID);
-                synchronized (mLock) {
-                    for (int i = mClipboards.numMaps() - 1; i >= 0; i--) {
-                        mClipboards.delete(mClipboards.keyAt(i), removedDeviceId);
-                    }
-                }
-            }
-        };
-        IntentFilter filter = new IntentFilter(ACTION_VIRTUAL_DEVICE_REMOVED);
-        getContext().registerReceiver(mVirtualDeviceRemovedReceiver, filter,
-                Context.RECEIVER_NOT_EXPORTED);
+        LocalServices.addService(ClipboardManagerInternal.class, new ClipboardInternalImpl());
+        registerVirtualDeviceListener();
     }
 
     private void registerVirtualDeviceListener() {
@@ -462,6 +466,12 @@ public class ClipboardService extends SystemService {
                 || virtualDeviceIds.contains(requestedDeviceId)
                 || (clipboardDeviceId == DEVICE_ID_DEFAULT && allDevicesHaveDefaultClipboard)) {
             return clipboardDeviceId;
+        }
+
+        // The app is running on the default device, even if it requests access to some virtual
+        // device clipboard, fallback to the default clipboard.
+        if (virtualDeviceIds.isEmpty()) {
+            return DEVICE_ID_DEFAULT;
         }
 
         // Fallback to the device where the app is running, unless it uses the default clipboard.
@@ -688,6 +698,8 @@ public class ClipboardService extends SystemService {
                         pkg, intendingUid, intendingUserId, clipboard, deviceId);
                 notifyTextClassifierLocked(clipboard, pkg, intendingUid);
                 if (clipboard.primaryClip != null) {
+                    scheduleWriteClipDataStats(clipboard.primaryClip,
+                            clipboard.primaryClipUid, intendingUid);
                     scheduleAutoClear(userId, intendingUid, intendingDeviceId);
                 }
                 return clipboard.primaryClip;
@@ -877,7 +889,34 @@ public class ClipboardService extends SystemService {
                 }
             }
         }
-    };
+
+    }
+
+    private class ClipboardInternalImpl implements ClipboardManagerInternal {
+
+        @Override
+        public void notifyUserAuthorizedClipAccess(int uid) {
+            long elapsedRealtime = SystemClock.elapsedRealtime();
+            synchronized (mLock) {
+                mSuppressAccessNotification.put(uid,
+                        elapsedRealtime + ACCESS_NOTIFICATION_SUPPRESSION_TIMEOUT_MILLIS);
+            }
+            mWorkerHandler.postDelayed(PooledLambda.obtainRunnable(
+                            ClipboardInternalImpl::pruneExpiredNotificationSuppressionUids, this),
+                    ACCESS_NOTIFICATION_SUPPRESSION_TIMEOUT_MILLIS + 1);
+        }
+
+        private void pruneExpiredNotificationSuppressionUids() {
+            long elapsedRealtime = SystemClock.elapsedRealtime();
+            synchronized (mLock) {
+                for (int i = mSuppressAccessNotification.size() - 1; i >= 0; i--) {
+                    if (mSuppressAccessNotification.valueAt(i) < elapsedRealtime) {
+                        mSuppressAccessNotification.removeAt(i);
+                    }
+                }
+            }
+        }
+    }
 
     @GuardedBy("mLock")
     private @Nullable Clipboard getClipboardLocked(@UserIdInt int userId, int deviceId) {
@@ -1431,6 +1470,19 @@ public class ClipboardService extends SystemService {
         return false;
     }
 
+    @GuardedBy("mLock")
+    private boolean shouldSuppressAccessNotificationForUidLocked(int uid) {
+        long elapsedRealtime = SystemClock.elapsedRealtime();
+        long expiration = mSuppressAccessNotification.get(uid, elapsedRealtime);
+
+        if (expiration > elapsedRealtime) {
+            return true;
+        }
+
+        mSuppressAccessNotification.delete(uid);
+        return false;
+    }
+
     /**
      * Shows a toast to inform the user that an app has accessed the clipboard. This is only done if
      * the setting is enabled, and if the accessing app is not the source of the data and is not the
@@ -1441,6 +1493,10 @@ public class ClipboardService extends SystemService {
     private void showAccessNotificationLocked(String callingPackage, int uid, @UserIdInt int userId,
             Clipboard clipboard, int accessDeviceId) {
         if (clipboard.primaryClip == null) {
+            return;
+        }
+        // Don't notify if a trusted component has confirmed the user decided on clip access.
+        if (shouldSuppressAccessNotificationForUidLocked(uid)) {
             return;
         }
         if (Settings.Secure.getInt(getContext().getContentResolver(),
@@ -1630,5 +1686,66 @@ public class ClipboardService extends SystemService {
     private TextClassificationManager createTextClassificationManagerAsUser(@UserIdInt int userId) {
         Context context = getContext().createContextAsUser(UserHandle.of(userId), /* flags= */ 0);
         return context.getSystemService(TextClassificationManager.class);
+    }
+
+    private static int mimeTypeToClipDataType(@NonNull String mimeType) {
+        switch (mimeType) {
+            case MIMETYPE_TEXT_PLAIN:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_PLAIN;
+            case MIMETYPE_TEXT_HTML:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_HTML;
+            case MIMETYPE_TEXT_URILIST:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_URILIST;
+            case MIMETYPE_TEXT_INTENT:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_TEXT_INTENT;
+            case MIMETYPE_APPLICATION_ACTIVITY:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_ACTIVITY;
+            case MIMETYPE_APPLICATION_SHORTCUT:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_SHORTCUT;
+            case MIMETYPE_APPLICATION_TASK:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_APPLICATION_TASK;
+            case MIMETYPE_UNKNOWN:
+                // fallthrough
+            default:
+                return CLIPBOARD_GET_EVENT_REPORTED__CLIP_DATA_TYPE__MIMETYPE_UNKNOWN;
+        }
+    }
+
+    private void scheduleWriteClipDataStats(@NonNull ClipData clipData,
+            int sourceUid, int intendingUid) {
+        if (!clipboardGetEventLogging()) {
+            return;
+        }
+        final ClipDescription description = clipData.getDescription();
+        if (description != null) {
+            final IntArray mimeTypes = new IntArray();
+            final int secondsSinceSet = (int) TimeUnit.MILLISECONDS.toSeconds(
+                    System.currentTimeMillis() - description.getTimestamp());
+            for (int i = description.getMimeTypeCount() - 1; i >= 0; i--) {
+                final String mimeType = description.getMimeType(i);
+                if (mimeType != null) {
+                    final int clipDataType = mimeTypeToClipDataType(mimeType);
+                    if (!mimeTypes.contains(clipDataType)) {
+                        mimeTypes.add(clipDataType);
+                    }
+                }
+            }
+            // The getUidProcessState() will hit AMS lock which might be slow, while getting the
+            // clip data might be on the critical UI path. So post to the work thread.
+            // There could be race conditions where the UID state might have been changed
+            // between now and the work thread execution time, but this should be acceptable.
+            mWorkerHandler.post(() -> FrameworkStatsLog.write(
+                    FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED,
+                    sourceUid, intendingUid,
+                    mAmInternal.getUidProcessState(intendingUid),
+                    mimeTypes.toArray(),
+                    secondsSinceSet));
+        } else {
+            mWorkerHandler.post(() -> FrameworkStatsLog.write(
+                    FrameworkStatsLog.CLIPBOARD_GET_EVENT_REPORTED,
+                    sourceUid, intendingUid,
+                    mAmInternal.getUidProcessState(intendingUid),
+                    CLIP_DATA_TYPES_UNKNOWN, 0));
+        }
     }
 }

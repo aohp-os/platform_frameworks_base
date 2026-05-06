@@ -19,6 +19,7 @@ package android.app.jank.tests;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
@@ -33,12 +34,16 @@ import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
 import android.widget.EditText;
+import android.widget.ListView;
 
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.rule.ActivityTestRule;
 import androidx.test.runner.AndroidJUnit4;
 import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.Direction;
 import androidx.test.uiautomator.UiDevice;
+import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
 import org.junit.Before;
@@ -48,6 +53,7 @@ import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * This file contains tests that verify the proper functionality of the Jank Tracking feature.
@@ -60,6 +66,7 @@ import java.util.HashMap;
 @RunWith(AndroidJUnit4.class)
 public class IntegrationTests {
     public static final int WAIT_FOR_TIMEOUT_MS = 5000;
+    public static final int WAIT_FOR_PENDING_JANKSTATS_MS = 1000;
 
     @Rule
     public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
@@ -75,6 +82,7 @@ public class IntegrationTests {
 
     private ActivityTestRule<EmptyActivity> mEmptyActivityRule =
             new ActivityTestRule<>(EmptyActivity.class, false , true);
+
 
     @Before
     public void setUp() {
@@ -102,6 +110,10 @@ public class IntegrationTests {
     @RequiresFlagsEnabled(Flags.FLAG_DETAILED_APP_JANK_METRICS_API)
     public void reportJankStats_confirmPendingStatsIncreases() {
         Activity jankTrackerActivity = mJankTrackerActivityRule.launchActivity(null);
+        mDevice.wait(Until.findObject(
+                By.text(jankTrackerActivity.getString(R.string.continue_test))),
+                WAIT_FOR_TIMEOUT_MS);
+
         EditText editText = jankTrackerActivity.findViewById(R.id.edit_text);
         JankTracker jankTracker = editText.getJankTracker();
 
@@ -111,18 +123,8 @@ public class IntegrationTests {
 
         editText.reportAppJankStats(JankUtils.getAppJankStats());
 
-        // reportAppJankStats performs the work on a background thread, check periodically to see
-        // if the work is complete.
-        for (int i = 0; i < 10; i++) {
-            try {
-                Thread.sleep(100);
-                if (jankTracker.getPendingJankStats().size() > 0) {
-                    break;
-                }
-            } catch (InterruptedException exception) {
-                //do nothing and continue
-            }
-        }
+        // wait until pending results are available.
+        JankUtils.waitForResults(jankTracker, WAIT_FOR_PENDING_JANKSTATS_MS);
 
         pendingStats = jankTracker.getPendingJankStats();
 
@@ -134,6 +136,10 @@ public class IntegrationTests {
     public void simulateWidgetStateChanges_confirmStateChangesAreTracked() {
         JankTrackerActivity jankTrackerActivity =
                 mJankTrackerActivityRule.launchActivity(null);
+        mDevice.wait(Until.findObject(
+                        By.text(jankTrackerActivity.getString(R.string.continue_test))),
+                WAIT_FOR_TIMEOUT_MS);
+
         TestWidget testWidget = jankTrackerActivity.findViewById(R.id.jank_tracker_widget);
         JankTracker jankTracker = testWidget.getJankTracker();
         jankTracker.forceListenerRegistration();
@@ -163,7 +169,7 @@ public class IntegrationTests {
         // of that state.
         for (int i = 0; i < uiStates.size(); i++) {
             StateTracker.StateData stateData = uiStates.get(i);
-            if (stateData.mWidgetCategory.equals(AppJankStats.ANIMATION)) {
+            if (stateData.mWidgetCategory.equals(AppJankStats.WIDGET_CATEGORY_ANIMATION)) {
                 assertNotEquals(Long.MAX_VALUE, stateData.mVsyncIdEnd);
             }
         }
@@ -208,8 +214,77 @@ public class IntegrationTests {
                 JankTrackerActivity.class);
         resumeJankTracker.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         mEmptyActivity.startActivity(resumeJankTracker);
-        mDevice.wait(Until.findObject(By.text("Edit Text")), WAIT_FOR_TIMEOUT_MS);
+        mDevice.wait(Until.findObject(By.text(mEmptyActivity.getString(R.string.continue_test))),
+                WAIT_FOR_TIMEOUT_MS);
 
         assertTrue(jankTracker.shouldTrack());
+    }
+
+    /*
+       When JankTracker is first instantiated it gets passed the apps UID the same UID should be
+       passed when reporting AppJankStats. To make sure frames and metrics are all associated with
+       the same app these UIDs need to match. This test confirms that mismatched IDs are not
+       counted.
+     */
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_DETAILED_APP_JANK_METRICS_API)
+    public void reportJankStats_statNotMerged_onMisMatchedAppIds() {
+        Activity jankTrackerActivity = mJankTrackerActivityRule.launchActivity(null);
+        mDevice.wait(Until.findObject(
+                        By.text(jankTrackerActivity.getString(R.string.continue_test))),
+                WAIT_FOR_TIMEOUT_MS);
+
+        EditText editText = jankTrackerActivity.findViewById(R.id.edit_text);
+        JankTracker jankTracker = editText.getJankTracker();
+
+        HashMap<String, JankDataProcessor.PendingJankStat> pendingStats =
+                jankTracker.getPendingJankStats();
+        assertEquals(0, pendingStats.size());
+
+        int mismatchedAppUID = 25;
+        editText.reportAppJankStats(JankUtils.getAppJankStats(mismatchedAppUID));
+
+        // wait until pending results should be available.
+        JankUtils.waitForResults(jankTracker, WAIT_FOR_PENDING_JANKSTATS_MS);
+
+        pendingStats = jankTracker.getPendingJankStats();
+
+        assertEquals(0, pendingStats.size());
+    }
+
+    @Test
+    @RequiresFlagsEnabled(Flags.FLAG_INSTRUMENT_LISTVIEW_SCROLL_STATES)
+    public void confirmListView_reportsStateChanges() {
+        String resourceIdPkg = "android.app.jank.tests";
+
+        try (ActivityScenario<ListViewActivity> scenario =
+                ActivityScenario.launch(ListViewActivity.class)) {
+            UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+            UiObject2 listview = device.findObject(By.res(resourceIdPkg, "list_view_id"));
+            assertNotNull(listview);
+
+            // This should result in two widget state additions being added the active state being
+            // fling and the none state.
+            listview.fling(Direction.DOWN, 1000);
+
+            scenario.onActivity(
+                    activity -> {
+                        ListView listView = activity.findViewById(R.id.list_view_id);
+                        JankTracker jankTracker = listView.getJankTracker();
+
+                        ArrayList<StateTracker.StateData> stateData = new ArrayList<>();
+                        jankTracker.getAllUiStates(stateData);
+                        Map<String, Integer> aggregateData =
+                                JankUtils.aggregateCountsByState(stateData);
+
+                        long flingCount = aggregateData.get(AppJankStats.WIDGET_STATE_FLINGING);
+                        long idleCount = aggregateData.get(AppJankStats.WIDGET_STATE_NONE);
+                        assertEquals(1, flingCount);
+                        assertEquals(1, idleCount);
+                    });
+
+        } catch (Exception e) {
+            throw new RuntimeException(e.toString());
+        }
     }
 }

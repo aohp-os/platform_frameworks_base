@@ -26,8 +26,10 @@ import android.companion.AssociationRequest;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.hardware.display.DisplayManager;
 import android.os.Binder;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.telecom.TelecomManager;
 import android.telephony.TelephonyCallback;
@@ -36,8 +38,10 @@ import android.util.Slog;
 import android.view.Display;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.media.projection.flags.Flags;
 import com.android.server.SystemConfig;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -53,28 +57,50 @@ public class MediaProjectionStopController {
     @VisibleForTesting
     static final int STOP_REASON_CALL_END = 2;
 
+    static final int STOP_REASON_DISPLAY_REMOVED = 3;
+
     private final TelephonyCallback mTelephonyCallback = new ProjectionTelephonyCallback();
+    private final ProjectionDisplayListener mProjectionDisplayListener =
+            new ProjectionDisplayListener();
     private final Consumer<Integer> mStopReasonConsumer;
     private final KeyguardManager mKeyguardManager;
     private final TelecomManager mTelecomManager;
     private final TelephonyManager mTelephonyManager;
     private final AppOpsManager mAppOpsManager;
     private final PackageManager mPackageManager;
-    private final RoleManager mRoleManager;
+    private final RoleHolderProvider mRoleHolderProvider;
     private final ContentResolver mContentResolver;
+    private final DisplayManager mDisplayManager;
 
+    private int mCurrentRecordedDisplay = Display.INVALID_DISPLAY;
     private boolean mIsInCall;
     private long mLastCallStartTimeMillis;
+    private final KeyguardManager.KeyguardLockedStateListener mOnKeyguardLockedStateChanged =
+            this::onKeyguardLockedStateChanged;
 
+    @VisibleForTesting
+    interface RoleHolderProvider {
+
+        List<String> getRoleHoldersAsUser(String roleName, UserHandle user);
+    }
     public MediaProjectionStopController(Context context, Consumer<Integer> stopReasonConsumer) {
+        this(context, stopReasonConsumer,
+                (roleName, user) -> context.getSystemService(RoleManager.class)
+                        .getRoleHoldersAsUser(roleName, user));
+    }
+
+    @VisibleForTesting
+    MediaProjectionStopController(Context context, Consumer<Integer> stopReasonConsumer,
+            RoleHolderProvider roleHolderProvider) {
         mStopReasonConsumer = stopReasonConsumer;
         mKeyguardManager = context.getSystemService(KeyguardManager.class);
         mTelecomManager = context.getSystemService(TelecomManager.class);
         mTelephonyManager = context.getSystemService(TelephonyManager.class);
         mAppOpsManager = context.getSystemService(AppOpsManager.class);
+        mDisplayManager = context.getSystemService(DisplayManager.class);
         mPackageManager = context.getPackageManager();
-        mRoleManager = context.getSystemService(RoleManager.class);
         mContentResolver = context.getContentResolver();
+        mRoleHolderProvider = roleHolderProvider;
     }
 
     /**
@@ -84,15 +110,25 @@ public class MediaProjectionStopController {
         final long token = Binder.clearCallingIdentity();
         try {
             mKeyguardManager.addKeyguardLockedStateListener(context.getMainExecutor(),
-                    this::onKeyguardLockedStateChanged);
+                    mOnKeyguardLockedStateChanged);
             if (com.android.media.projection.flags.Flags.stopMediaProjectionOnCallEnd()) {
                 callStateChanged();
                 mTelephonyManager.registerTelephonyCallback(context.getMainExecutor(),
                         mTelephonyCallback);
             }
+            if (Flags.stopOnDisplayRemoval()) {
+                mDisplayManager.registerDisplayListener(context.getMainExecutor(),
+                            DisplayManager.EVENT_TYPE_DISPLAY_REMOVED,
+                            mProjectionDisplayListener);
+            }
         } finally {
             Binder.restoreCallingIdentity(token);
         }
+    }
+
+    /** Checks if the given stop reason corresponds to a call ending. */
+    public boolean isStopReasonCallEnd(int stopReason) {
+        return stopReason == STOP_REASON_CALL_END;
     }
 
     /**
@@ -141,8 +177,9 @@ public class MediaProjectionStopController {
             Slog.v(TAG, "Continuing MediaProjection for package with OP_PROJECT_MEDIA AppOp ");
             return true;
         }
-        if (mRoleManager.getRoleHoldersAsUser(AssociationRequest.DEVICE_PROFILE_APP_STREAMING,
-                projectionGrant.userHandle).contains(projectionGrant.packageName)) {
+        if (mRoleHolderProvider.getRoleHoldersAsUser(
+                AssociationRequest.DEVICE_PROFILE_APP_STREAMING, projectionGrant.userHandle)
+                .contains(projectionGrant.packageName)) {
             Slog.v(TAG, "Continuing MediaProjection for package holding app streaming role.");
             return true;
         }
@@ -172,10 +209,6 @@ public class MediaProjectionStopController {
      */
     public boolean isStartForbidden(
             MediaProjectionManagerService.MediaProjection projectionGrant) {
-        if (!android.companion.virtualdevice.flags.Flags.mediaProjectionKeyguardRestrictions()) {
-            return false;
-        }
-
         if (!mKeyguardManager.isKeyguardLocked()) {
             return false;
         }
@@ -189,9 +222,6 @@ public class MediaProjectionStopController {
     @VisibleForTesting
     void onKeyguardLockedStateChanged(boolean isKeyguardLocked) {
         if (!isKeyguardLocked) return;
-        if (!android.companion.virtualdevice.flags.Flags.mediaProjectionKeyguardRestrictions()) {
-            return;
-        }
         mStopReasonConsumer.accept(STOP_REASON_KEYGUARD);
     }
 
@@ -215,20 +245,52 @@ public class MediaProjectionStopController {
     }
 
     /**
+     * Sets the recorded display ID.
+     */
+    public void setRecordedDisplay(int displayId) {
+        mCurrentRecordedDisplay = displayId;
+    }
+
+    /**
+     * Clears the recorded display ID.
+     */
+    public void clearRecordedDisplay() {
+        setRecordedDisplay(Display.INVALID_DISPLAY);
+    }
+
+    void onDisplayRemoved() {
+        mStopReasonConsumer.accept(STOP_REASON_DISPLAY_REMOVED);
+    }
+
+    /**
      * @return a String representation of the stop reason interrupting MediaProjection.
      */
     public static String stopReasonToString(int stopReason) {
-        switch (stopReason) {
-            case STOP_REASON_KEYGUARD -> {
-                return "STOP_REASON_KEYGUARD";
-            }
-            case STOP_REASON_CALL_END -> {
-                return "STOP_REASON_CALL_END";
+        return switch (stopReason) {
+            case STOP_REASON_KEYGUARD -> "STOP_REASON_KEYGUARD";
+            case STOP_REASON_CALL_END -> "STOP_REASON_CALL_END";
+            case STOP_REASON_DISPLAY_REMOVED -> "STOP_REASON_DISPLAY_REMOVED";
+            default -> "";
+        };
+    }
+    private final class ProjectionDisplayListener implements DisplayManager.DisplayListener {
+
+        @Override
+        public void onDisplayAdded(int displayId) {
+        }
+
+        @Override
+        public void onDisplayRemoved(int displayId) {
+            if (displayId == mCurrentRecordedDisplay) {
+                clearRecordedDisplay();
+                MediaProjectionStopController.this.onDisplayRemoved();
             }
         }
-        return "";
-    }
 
+        @Override
+        public void onDisplayChanged(int displayId) {
+        }
+    }
     private final class ProjectionTelephonyCallback extends TelephonyCallback implements
             TelephonyCallback.CallStateListener {
         @Override

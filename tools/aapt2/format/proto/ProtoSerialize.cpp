@@ -275,6 +275,7 @@ void SerializeConfig(const ConfigDescription& config, pb::Configuration* out_pb_
   }
 
   out_pb_config->set_sdk_version(config.sdkVersion);
+  out_pb_config->set_sdk_version_minor(config.minorVersion);
 
   // The constant values are the same across the structs.
   out_pb_config->set_grammatical_gender(
@@ -430,6 +431,14 @@ void SerializeTableToPb(const ResourceTable& table, pb::ResourceTable* out_table
 
         for (const ResourceConfigValue* config_value : entry.flag_disabled_values) {
           pb::ConfigValue* pb_config_value = pb_entry->add_flag_disabled_config_value();
+          SerializeConfig(config_value->config, pb_config_value->mutable_config());
+          pb_config_value->mutable_config()->set_product(config_value->product);
+          SerializeValueToPb(*config_value->value, pb_config_value->mutable_value(),
+                             source_pool.get());
+        }
+
+        for (const ResourceConfigValue* config_value : entry.readwrite_flag_values) {
+          pb::ConfigValue* pb_config_value = pb_entry->add_readwrite_flag_config_value();
           SerializeConfig(config_value->config, pb_config_value->mutable_config());
           pb_config_value->mutable_config()->set_product(config_value->product);
           SerializeValueToPb(*config_value->value, pb_config_value->mutable_value(),
@@ -767,6 +776,7 @@ void SerializeCompiledFileToPb(const ResourceFile& file, pb::internal::CompiledF
     out_file->set_flag_negated(file.flag->negated);
     out_file->set_flag_name(file.flag->name);
   }
+  out_file->set_uses_readwrite_feature_flags(file.uses_readwrite_feature_flags);
 
   for (const SourcedResourceName& exported : file.exported_symbols) {
     pb::internal::CompiledFile_Symbol* pb_symbol = out_file->add_exported_symbol();

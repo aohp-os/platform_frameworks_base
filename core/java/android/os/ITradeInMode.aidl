@@ -59,4 +59,101 @@ interface ITradeInMode {
      * ENTER_TRADE_IN_MODE permission is required.
      */
     boolean enterEvaluationMode();
+
+    /**
+     * Schedules a wipe to trigger SUW for trade-in mode testing. A reboot is
+     * required. After this, startTesting() can be called.
+     *
+     * ENTER_TRADE_IN_MODE permission is required and ro.debuggable must be 1.
+     */
+    void scheduleWipeForTesting();
+
+    /**
+     * Enables testing. This only takes effect after the next reboot, and is
+     * only allowed in ro.debuggable builds. On the following boot, normal
+     * adbd will be disabled and trade-in mode adbd will be enabled instead.
+     *
+     * ENTER_TRADE_IN_MODE permission is required and ro.debuggable must be 1.
+     */
+    void startTesting();
+
+    /**
+     * Disables testing. This disables trade-in mode and removes any scheduled
+     * trade-in mode wipe.
+     *
+     * ENTER_TRADE_IN_MODE permission is required, ro.debuggable must be 1, and
+     * startTesting() must have been called.
+     */
+    void stopTesting();
+
+    /**
+     * Returns whether the device is testing trade-in mode.
+     *
+     * ENTER_TRADE_IN_MODE permission is required and ro.debuggable must be 1.
+     */
+    boolean isTesting();
+    /**
+     * Get HingeCount on device
+     *
+     */
+    int getHingeCount();
+    /**
+     * Get foldCount of specific hinge on device
+     *
+     */
+    int getFoldCount(in int hingeId);
+    /**
+     * Get lifeSpan of specific hinge on device
+     *
+     */
+    int getHingeLifeSpan(in int hingeId);
+    /**
+     * Information relating to internal screen panel part originality
+     * This is imported from composer HAL's screen part status
+     */
+    @VintfStability
+    @Backing(type="int")
+    enum ScreenPartStatus {
+        /**
+         * Device cannot differentiate an original screen from a replaced screen.
+         */
+        UNSUPPORTED = 0,
+        /**
+         * Device has the original screen it was manufactured with.
+         */
+        ORIGINAL = 1,
+        /**
+         * Device has a replaced screen.
+         */
+        REPLACED = 2,
+    }
+    /**
+     * Get ScreenPartStatus
+     *
+     */
+    ScreenPartStatus[] getScreenPartStatus();
+    /**
+     * Information relating to moisture instrusion within device chassis
+     */
+    @VintfStability
+    @Backing(type="int")
+    enum MoistureIntrusionStatus {
+        /**
+         * Device cannot detect moisture intrusion
+         */
+        UNSUPPORTED = -1,
+        /**
+         * Device has no moisture detected
+         */
+        UNDETECTED = 0,
+        /**
+         * Device has moisutre detected
+         */
+        DETECTED = 1,
+    }
+    /**
+     * Detect water intrusion damage within device chassis
+     *
+     */
+    MoistureIntrusionStatus getMoistureIntrusionDetected(in long timeoutMillis);
 }

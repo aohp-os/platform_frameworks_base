@@ -16,18 +16,21 @@
 
 package com.android.systemui.qs.panels.ui.compose
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,12 +41,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
+import com.android.systemui.bluetooth.qsdialog.BluetoothDetailsContent
+import com.android.systemui.bluetooth.ui.viewModel.BluetoothDetailsViewModel
+import com.android.systemui.plugins.qs.TileDetailsViewModel
 import com.android.systemui.qs.flags.QsDetailedView
 import com.android.systemui.qs.panels.ui.viewmodel.DetailsViewModel
+import com.android.systemui.qs.tiles.dialog.AudioDetailsContent
+import com.android.systemui.qs.tiles.dialog.AudioDetailsViewModel
+import com.android.systemui.qs.tiles.dialog.CastDetailsContent
+import com.android.systemui.qs.tiles.dialog.CastDetailsViewModel
+import com.android.systemui.qs.tiles.dialog.InternetDetailsContent
+import com.android.systemui.qs.tiles.dialog.InternetDetailsViewModel
+import com.android.systemui.qs.tiles.dialog.ModesDetailsContent
+import com.android.systemui.qs.tiles.dialog.ModesDetailsViewModel
 
 @Composable
-fun TileDetails(detailsViewModel: DetailsViewModel) {
+fun TileDetails(modifier: Modifier = Modifier, detailsViewModel: DetailsViewModel) {
 
     if (!QsDetailedView.isEnabled) {
         throw IllegalStateException("QsDetailedView should be enabled")
@@ -53,69 +66,99 @@ fun TileDetails(detailsViewModel: DetailsViewModel) {
 
     DisposableEffect(Unit) { onDispose { detailsViewModel.closeDetailedView() } }
 
+    val title = tileDetailedViewModel.title
+    val subTitle = tileDetailedViewModel.subTitle
+    val colors = MaterialTheme.colorScheme
+
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            // The height of the details view is TBD.
-            .fillMaxHeight()
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .heightIn(
+                    min = TileDetailsDefaults.DetailsMinHeight,
+                    max = TileDetailsDefaults.DetailsMaxHeight,
+                )
+                .background(color = colors.onPrimary)
     ) {
         CompositionLocalProvider(
             value = LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                    Modifier.fillMaxWidth()
+                        .padding(
+                            start = TileDetailsDefaults.TitleRowStart,
+                            top = TileDetailsDefaults.TitleRowTop,
+                            end = TileDetailsDefaults.TitleRowEnd,
+                            bottom = TileDetailsDefaults.TitleRowBottom,
+                        ),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-
                 IconButton(
                     onClick = { detailsViewModel.closeDetailedView() },
-                    modifier = Modifier
-                        .align(Alignment.CenterVertically)
-                        .height(TileDetailsDefaults.IconHeight)
-                        .padding(start = TileDetailsDefaults.IconPadding),
+                    colors = IconButtonDefaults.iconButtonColors(contentColor = colors.onSurface),
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         // Description is TBD
                         contentDescription = "Back to QS panel",
+                        tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 Text(
-                    text = tileDetailedViewModel.getTitle(),
-                    modifier = Modifier
-                        .align(Alignment.CenterVertically),
+                    text = title,
+                    modifier = Modifier.align(Alignment.CenterVertically),
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleLarge
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.onSurface,
                 )
                 IconButton(
                     onClick = { tileDetailedViewModel.clickOnSettingsButton() },
-                    modifier = Modifier
-                        .align(Alignment.CenterVertically)
-                        .height(TileDetailsDefaults.IconHeight)
-                        .padding(end = TileDetailsDefaults.IconPadding),
+                    colors = IconButtonDefaults.iconButtonColors(contentColor = colors.onSurface),
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 ) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         // Description is TBD
                         contentDescription = "Go to Settings",
+                        tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             }
             Text(
-                text = tileDetailedViewModel.getSubTitle(),
-                modifier = Modifier
-                    .fillMaxWidth(),
+                text = subTitle,
+                modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.titleSmall
-
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
             )
         }
-        tileDetailedViewModel.GetContentView()
+
+        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+            MapTileDetailsContent(tileDetailedViewModel)
+        }
+    }
+}
+
+@Composable
+private fun MapTileDetailsContent(tileDetailsViewModel: TileDetailsViewModel) {
+    when (tileDetailsViewModel) {
+        is InternetDetailsViewModel -> InternetDetailsContent(tileDetailsViewModel)
+        is BluetoothDetailsViewModel ->
+            BluetoothDetailsContent(tileDetailsViewModel.detailsContentViewModel)
+        is ModesDetailsViewModel -> ModesDetailsContent(tileDetailsViewModel)
+        is CastDetailsViewModel -> CastDetailsContent(tileDetailsViewModel)
+        is AudioDetailsViewModel -> AudioDetailsContent(tileDetailsViewModel)
     }
 }
 
 private object TileDetailsDefaults {
-    val IconHeight = 48.dp
-    val IconPadding = 4.dp
+    val TitleRowStart = 2.dp
+    val TitleRowTop = 14.dp
+    val TitleRowEnd = 8.dp
+    val TitleRowBottom = 2.dp
+    val DetailsMaxHeight = 600.dp
+    val DetailsMinHeight = 300.dp
 }

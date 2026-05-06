@@ -29,7 +29,6 @@ import com.android.systemui.log.LogcatEchoTracker
 import com.android.systemui.user.data.repository.FakeUserRepository
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -44,10 +43,8 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@android.platform.test.annotations.EnabledOnRavenwood
 class TrustRepositoryTest : SysuiTestCase() {
     @Mock private lateinit var trustManager: TrustManager
     @Captor private lateinit var listener: ArgumentCaptor<TrustManager.TrustListener>
@@ -238,7 +235,7 @@ class TrustRepositoryTest : SysuiTestCase() {
             runCurrent()
             verify(trustManager).registerTrustListener(listener.capture())
             val isCurrentUserActiveUnlockRunning by
-                collectLastValue(underTest.isCurrentUserActiveUnlockRunning)
+                collectLastValue(underTest.isCurrentUserActiveUnlockEnabled)
             userRepository.setSelectedUserInfo(users[1])
 
             // active unlock running = true for users[0].id, but not the current user
@@ -256,7 +253,7 @@ class TrustRepositoryTest : SysuiTestCase() {
             runCurrent()
             verify(trustManager).registerTrustListener(listener.capture())
             val isCurrentUserActiveUnlockRunning by
-                collectLastValue(underTest.isCurrentUserActiveUnlockRunning)
+                collectLastValue(underTest.isCurrentUserActiveUnlockEnabled)
             userRepository.setSelectedUserInfo(users[0])
 
             listener.value.onIsActiveUnlockRunningChanged(true, users[0].id)

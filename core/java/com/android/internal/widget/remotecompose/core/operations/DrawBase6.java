@@ -23,11 +23,13 @@ import com.android.internal.widget.remotecompose.core.PaintOperation;
 import com.android.internal.widget.remotecompose.core.RemoteContext;
 import com.android.internal.widget.remotecompose.core.VariableSupport;
 import com.android.internal.widget.remotecompose.core.WireBuffer;
+import com.android.internal.widget.remotecompose.core.serialize.MapSerializer;
+import com.android.internal.widget.remotecompose.core.serialize.Serializable;
 
 import java.util.List;
 
 /** Base class for draw commands the take 6 floats */
-public abstract class DrawBase6 extends PaintOperation implements VariableSupport {
+public abstract class DrawBase6 extends PaintOperation implements VariableSupport, Serializable {
     @NonNull protected String mName = "DrawRectBase";
     float mV1;
     float mV2;
@@ -112,12 +114,31 @@ public abstract class DrawBase6 extends PaintOperation implements VariableSuppor
                 + Utils.floatToString(mV4);
     }
 
-    interface Maker {
-        DrawBase6 create(float v1, float v2, float v3, float v4, float v5, float v6);
+    /** interface for the operation builder with 6 float parameters */
+    public interface Maker {
+        /**
+         * creation function for operation with 6 float parameters
+         *
+         * @param v1 param 1
+         * @param v2 param 2
+         * @param v3 param 3
+         * @param v4 param 4
+         * @param v5 param 5
+         * @param v6 param 6
+         * @return operation
+         */
+        @NonNull DrawBase6 create(float v1, float v2, float v3, float v4, float v5, float v6);
     }
 
+    /**
+     * Read this operation and add it to the list of operations
+     *
+     * @param buffer the buffer to read from
+     * @param operations the list of operations to add to
+     * @param build interface to construct the component
+     */
     public static void read(
-            @NonNull Maker build, @NonNull WireBuffer buffer, @NonNull List<Operation> operations) {
+            @NonNull WireBuffer buffer, @NonNull List<Operation> operations, @NonNull Maker build) {
         float sv1 = buffer.readFloat();
         float sv2 = buffer.readFloat();
         float sv3 = buffer.readFloat();
@@ -132,13 +153,13 @@ public abstract class DrawBase6 extends PaintOperation implements VariableSuppor
     /**
      * writes out a the operation to the buffer.
      *
-     * @param v1
-     * @param v2
-     * @param v3
-     * @param v4
-     * @param v5
-     * @param v6
-     * @return
+     * @param v1 the first parameter
+     * @param v2 the second parameter
+     * @param v3 the third parameter
+     * @param v4 the fourth parameter
+     * @param v5 the fifth parameter
+     * @param v6 the sixth parameter
+     * @return the operation
      */
     @Nullable
     public Operation construct(float v1, float v2, float v3, float v4, float v5, float v6) {
@@ -153,5 +174,22 @@ public abstract class DrawBase6 extends PaintOperation implements VariableSuppor
     @NonNull
     public static String name() {
         return "DrawBase6";
+    }
+
+    protected @NonNull MapSerializer serialize(
+            @NonNull MapSerializer serializer,
+            @NonNull String v1Name,
+            @NonNull String v2Name,
+            @NonNull String v3Name,
+            @NonNull String v4Name,
+            @NonNull String v5Name,
+            @NonNull String v6Name) {
+        return serializer
+                .add(v1Name, mValue1, mV1)
+                .add(v2Name, mValue2, mV2)
+                .add(v3Name, mValue3, mV3)
+                .add(v4Name, mValue4, mV4)
+                .add(v5Name, mValue5, mV5)
+                .add(v6Name, mValue6, mV6);
     }
 }
