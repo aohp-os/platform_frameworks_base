@@ -28,4 +28,7 @@ interface IAohpVirtualDisplay {
 
     /** Privileged UI tree dump for any logical display (JSON). See AohpUiTreeDumper in system_server. */
     String dumpUiTree(int displayId, int flags);
+
+    /** Privileged: set a range/slider node to percent 0..100 using accessibility ACTION_SET_PROGRESS. */
+    String setNodeProgress(int displayId, int nodeId, float percent, int flags);
 }

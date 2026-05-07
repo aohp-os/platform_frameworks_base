@@ -511,6 +511,12 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
         public String dumpUiTreeForDisplay(int displayId, int flags) {
             return mService.dumpUiTreeForDisplayInternal(displayId, flags);
         }
+
+        @Override
+        public String setNodeProgressForDisplay(int displayId, int nodeId, float percent,
+                int flags) {
+            return mService.setNodeProgressForDisplayInternal(displayId, nodeId, percent, flags);
+        }
     }
 
     public static final class Lifecycle extends SystemService {
@@ -765,6 +771,36 @@ public class AccessibilityManagerService extends IAccessibilityManager.Stub
         }
         try {
             return AohpUiTreeDumper.buildJsonFromWindows(this, snapshot, userId, displayId, flags);
+        } finally {
+            for (int i = 0; i < snapshot.size(); i++) {
+                snapshot.get(i).recycle();
+            }
+        }
+    }
+
+    /**
+     * AOHP: perform ACTION_SET_PROGRESS on a node addressed by the temporary id from UI tree JSON.
+     */
+    String setNodeProgressForDisplayInternal(int displayId, int nodeId, float percent, int flags) {
+        final ArrayList<AccessibilityWindowInfo> snapshot = new ArrayList<>();
+        final int userId;
+        synchronized (mLock) {
+            mA11yWindowManager.startTrackingWindows(displayId, false);
+            final List<AccessibilityWindowInfo> raw =
+                    mA11yWindowManager.getWindowListLocked(displayId);
+            if (raw != null) {
+                for (int i = 0; i < raw.size(); i++) {
+                    final AccessibilityWindowInfo w = raw.get(i);
+                    if (w != null) {
+                        snapshot.add(AccessibilityWindowInfo.obtain(w));
+                    }
+                }
+            }
+            userId = mCurrentUserId;
+        }
+        try {
+            return AohpUiTreeDumper.setNodeProgressFromWindows(
+                    this, snapshot, userId, displayId, nodeId, percent, flags);
         } finally {
             for (int i = 0; i < snapshot.size(); i++) {
                 snapshot.get(i).recycle();

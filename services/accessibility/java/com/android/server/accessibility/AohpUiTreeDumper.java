@@ -7,6 +7,7 @@
 package com.android.server.accessibility;
 
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -212,6 +213,134 @@ public final class AohpUiTreeDumper {
             Log.e(TAG, "writeJson", e);
             return "{\"error\":\"serialize_failed\"}";
         }
+    }
+
+    public static String setNodeProgressFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId,
+            float percent, int flags) {
+        if (nodeId <= 0) {
+            return writeSetProgressError(displayId, nodeId, "bad_node_id",
+                    "nodeId must be a positive id from ui.tree");
+        }
+        if (Float.isNaN(percent) || percent < 0f || percent > 100f) {
+            return writeSetProgressError(displayId, nodeId, "bad_percent",
+                    "percent must be 0..100");
+        }
+
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        int nextId = 1;
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeSetProgressError(displayId, nodeId, "interrupted", e.getMessage());
+            }
+
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                int currentId = nextId++;
+                if (currentId != nodeId) {
+                    continue;
+                }
+                return performSetProgress(conn.getRemote(), raw, displayId, wid, nodeId, percent,
+                        deadline);
+            }
+        }
+
+        return writeSetProgressError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+    }
+
+    private static String performSetProgress(IAccessibilityInteractionConnection remote,
+            AccessibilityNodeInfo node, int displayId, int windowId, int nodeId, float percent,
+            long deadlineMs) {
+        if (node == null) {
+            return writeSetProgressError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+        }
+        AccessibilityNodeInfo.RangeInfo range = node.getRangeInfo();
+        if (range == null) {
+            return writeSetProgressError(displayId, nodeId, "node_not_range",
+                    "node has no AccessibilityNodeInfo.RangeInfo");
+        }
+        int actionSetProgress =
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId();
+        if (!hasAction(node, actionSetProgress)) {
+            return writeSetProgressError(displayId, nodeId, "action_unavailable",
+                    "node does not expose ACTION_SET_PROGRESS");
+        }
+
+        float min = range.getMin();
+        float max = range.getMax();
+        if (Float.isNaN(min) || Float.isNaN(max) || max < min) {
+            return writeSetProgressError(displayId, nodeId, "bad_range",
+                    "node range is invalid");
+        }
+        float target = min + ((max - min) * percent / 100f);
+
+        Bundle args = new Bundle();
+        args.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target);
+        int iid = sNextInteractionId.getAndIncrement();
+        ActionCallback cb = new ActionCallback();
+        try {
+            remote.performAccessibilityAction(
+                    node.getSourceNodeId(),
+                    actionSetProgress,
+                    args,
+                    iid,
+                    cb,
+                    PREFETCH_FLAGS,
+                    Process.myPid(),
+                    Process.myTid());
+        } catch (RemoteException e) {
+            Log.w(TAG, "performAccessibilityAction ACTION_SET_PROGRESS: " + e.getMessage());
+            return writeSetProgressError(displayId, nodeId, "remote_exception", e.getMessage());
+        }
+
+        try {
+            long wait = Math.max(1L, deadlineMs - SystemClock.uptimeMillis());
+            cb.await(Math.min(wait, TIMEOUT_MS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return writeSetProgressError(displayId, nodeId, "interrupted", e.getMessage());
+        }
+
+        Boolean performed = cb.getResult();
+        if (!Boolean.TRUE.equals(performed)) {
+            return writeSetProgressError(displayId, nodeId, "action_failed",
+                    performed == null ? "no callback result"
+                            : "ACTION_SET_PROGRESS returned false");
+        }
+        return writeSetProgressSuccess(displayId, windowId, nodeId, percent, target, range);
+    }
+
+    private static boolean hasAction(AccessibilityNodeInfo node, int actionId) {
+        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+        if (actions == null) {
+            return false;
+        }
+        for (int i = 0; i < actions.size(); i++) {
+            AccessibilityNodeInfo.AccessibilityAction action = actions.get(i);
+            if (action != null && action.getId() == actionId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void fillFromA11yInfo(NodeRec nr, AccessibilityNodeInfo n) {
@@ -434,6 +563,52 @@ public final class AohpUiTreeDumper {
         jw.endObject();
     }
 
+    private static String writeSetProgressSuccess(int displayId, int windowId, int nodeId,
+            float percent, float targetValue, AccessibilityNodeInfo.RangeInfo range) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(true);
+            jw.name("displayId").value(displayId);
+            jw.name("windowId").value(windowId);
+            jw.name("nodeId").value(nodeId);
+            jw.name("percent").value(percent);
+            jw.name("targetValue").value(targetValue);
+            jw.name("range");
+            jw.beginObject();
+            jw.name("min").value(range.getMin());
+            jw.name("max").value(range.getMax());
+            jw.name("currentBefore").value(range.getCurrent());
+            jw.endObject();
+            jw.name("action").value("ACTION_SET_PROGRESS");
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":true}";
+        }
+    }
+
+    private static String writeSetProgressError(int displayId, int nodeId, String code,
+            String message) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(false);
+            jw.name("error").value(code != null ? code : "error");
+            jw.name("message").value(message != null ? message : "");
+            jw.name("displayId").value(displayId);
+            jw.name("nodeId").value(nodeId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":false,\"error\":\"serialize_failed\"}";
+        }
+    }
+
     private static void writeNullableString(JsonWriter jw, String name, String v)
             throws IOException {
         jw.name(name);
@@ -593,6 +768,53 @@ public final class AohpUiTreeDumper {
 
         @Override
         public void setPerformAccessibilityActionResult(boolean succeeded, int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void sendTakeScreenshotOfWindowError(int errorCode, int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void sendAttachOverlayResult(int result, int interactionId) {
+            mLatch.countDown();
+        }
+    }
+
+    private static final class ActionCallback extends IAccessibilityInteractionConnectionCallback.Stub {
+        private final CountDownLatch mLatch = new CountDownLatch(1);
+        private volatile Boolean mSucceeded;
+
+        void await(long timeoutMs) throws InterruptedException {
+            mLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        }
+
+        Boolean getResult() {
+            return mSucceeded;
+        }
+
+        @Override
+        public void setFindAccessibilityNodeInfoResult(AccessibilityNodeInfo info,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setFindAccessibilityNodeInfosResult(List<AccessibilityNodeInfo> infos,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setPrefetchAccessibilityNodeInfoResult(List<AccessibilityNodeInfo> infos,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setPerformAccessibilityActionResult(boolean succeeded, int interactionId) {
+            mSucceeded = succeeded;
             mLatch.countDown();
         }
 

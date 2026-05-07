@@ -356,6 +356,22 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     }
 
     @Override
+    public String setNodeProgress(int displayId, int nodeId, float percent, int flags)
+            throws RemoteException {
+        enforceAohpPermission();
+        if (percent < 0f || percent > 100f || Float.isNaN(percent)) {
+            return "{\"success\":false,\"error\":\"bad_percent\",\"message\":\"percent must be 0..100\"}";
+        }
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return AccessibilityManagerInternal.get().setNodeProgressForDisplay(
+                    displayId, nodeId, percent, flags);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
     public void applyMultiDisplayDeveloperSettings() {
         enforceAohpPermission();
         final int uid = Binder.getCallingUid();
