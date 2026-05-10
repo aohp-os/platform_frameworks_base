@@ -78,7 +78,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             }
             JSONObject o = ok();
             o.put("file", fileJson(f, "direct", 0.5));
-            return o.toString();
+            return annotateFileJson(o.toString());
         } catch (Exception e) {
             Log.w(TAG, "stat", e);
             return error("stat_failed", e.getMessage());
@@ -111,7 +111,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             out.put("rootStats", new JSONArray()
                     .put(rootStat(root, list.visited, System.currentTimeMillis() - started,
                             list.status)));
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "list", e);
             return error("list_failed", e.getMessage());
@@ -304,7 +304,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
                 out.put("detected", false);
                 out.put("reason", scan.partial ? "partial_timeout" : "no_change_in_window");
             }
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "recent", e);
             return error("recent_failed", e.getMessage());
@@ -336,7 +336,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             out.put("createdAt", snap.createdAt);
             out.put("partial", scan.partial);
             out.put("files", scan.toSortedArray());
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "snapshot", e);
             return error("snapshot_failed", e.getMessage());
@@ -390,7 +390,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             } else {
                 out.put("reason", "no_change_in_window");
             }
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "diff", e);
             return error("diff_failed", e.getMessage());
@@ -790,6 +790,14 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
                 a.put(o);
             }
             return a;
+        }
+    }
+
+    private static String annotateFileJson(String json) {
+        try {
+            return AohpFilePathSecurity.filterFileListJson(json);
+        } catch (Exception e) {
+            return json;
         }
     }
 

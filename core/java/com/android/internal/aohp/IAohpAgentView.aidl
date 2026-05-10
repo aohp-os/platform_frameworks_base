@@ -19,4 +19,10 @@ interface IAohpAgentView {
      * Region screenshot: full display capture cropped to the given rect.
      */
     byte[] captureRegion(int displayId, int left, int top, int right, int bottom, int quality);
+
+    /**
+     * Full-display screenshot with rectangles redacted (filled) before encode.
+     * sensitiveRectFlat is [l,t,r,b,...] in logical display coordinates.
+     */
+    byte[] captureDisplayRedacted(int displayId, int quality, in int[] sensitiveRectFlat);
 }

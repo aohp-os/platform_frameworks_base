@@ -39,6 +39,8 @@ import android.view.MotionEvent;
 import android.view.Surface;
 
 import com.android.internal.aohp.IAohpVirtualDisplay;
+
+import org.json.JSONObject;
 import com.android.server.AccessibilityManagerInternal;
 import com.android.server.LocalServices;
 import com.android.server.input.InputManagerService;
@@ -53,6 +55,7 @@ import com.android.server.wm.SafeActivityOptions;
 public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     public static final String SERVICE_NAME = "aohp_virtual_display";
     private static final String TAG = "AohpVD";
+    private static final String ALLOW_POLICY = "ALLOW";
 
     private static final float DEFAULT_SIZE = 1.0f;
     private static final float DEFAULT_PRESSURE = 1.0f;
@@ -219,6 +222,29 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     }
 
     @Override
+    public boolean injectTapWithTarget(int displayId, int x, int y, String targetResourceId) {
+        enforceAohpPermission();
+        verifyCallerRegistered(displayId, Binder.getCallingUid());
+        try {
+            String fg = AohpForegroundPackage.forDisplay(mAtm, displayId);
+            String rid = targetResourceId != null ? targetResourceId : "";
+            JSONObject pol =
+                    new JSONObject(
+                            AohpSecurityBridgeService.checkTapPolicyTrusted(fg, rid));
+            String mode = pol.optString("mode", "DENY");
+            if (!ALLOW_POLICY.equals(mode)) {
+                Slog.w(TAG, "injectTapWithTarget blocked policy=" + pol);
+                return false;
+            }
+        } catch (Exception e) {
+            Slog.w(TAG, "injectTapWithTarget policy check failed", e);
+            return false;
+        }
+        final long now = SystemClock.uptimeMillis();
+        return injectMotionDownUp(displayId, x, y, now);
+    }
+
+    @Override
     public boolean injectSwipe(int displayId, int x1, int y1, int x2, int y2, int durationMs) {
         enforceAohpPermission();
         verifyCallerRegistered(displayId, Binder.getCallingUid());
@@ -243,10 +269,30 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
 
     @Override
     public boolean injectText(int displayId, String text) {
+        return injectTextWithTarget(displayId, "", text);
+    }
+
+    @Override
+    public boolean injectTextWithTarget(int displayId, String targetResourceId, String text) {
         enforceAohpPermission();
         verifyCallerRegistered(displayId, Binder.getCallingUid());
         if (text == null || text.isEmpty()) {
             return true;
+        }
+        try {
+            String fg = AohpForegroundPackage.forDisplay(mAtm, displayId);
+            String rid = targetResourceId != null ? targetResourceId : "";
+            JSONObject pol =
+                    new JSONObject(
+                            AohpSecurityBridgeService.checkInputPolicyTrusted(fg, rid, text));
+            String mode = pol.optString("mode", "DENY");
+            if (!ALLOW_POLICY.equals(mode)) {
+                Slog.w(TAG, "injectText blocked policy=" + pol);
+                return false;
+            }
+        } catch (Exception e) {
+            Slog.w(TAG, "injectText policy check failed", e);
+            return false;
         }
         final long ident = Binder.clearCallingIdentity();
         try {
@@ -349,7 +395,9 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
         enforceAohpPermission();
         final long ident = Binder.clearCallingIdentity();
         try {
-            return AccessibilityManagerInternal.get().dumpUiTreeForDisplay(displayId, flags);
+            String raw = AccessibilityManagerInternal.get().dumpUiTreeForDisplay(displayId, flags);
+            String fg = AohpForegroundPackage.forDisplay(mAtm, displayId);
+            return AohpSecurityBridgeService.filterUiTreeTrusted(raw, fg, displayId);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }

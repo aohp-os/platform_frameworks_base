@@ -296,6 +296,11 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
             if (mutator != null) {
                 mutator.apply(data);
             }
+            try {
+                data = new JSONObject(
+                        AohpSecurityBridgeService.sanitizeEventJsonTrusted(data.toString()));
+            } catch (Exception ignored) {
+            }
             EventRecord record = new EventRecord();
             boolean capture;
             int quality;
@@ -560,7 +565,7 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
         long nextSeq;
         int maxEvents = DEFAULT_MAX_EVENTS;
         long ttlMs = DEFAULT_TTL_MS;
-        boolean captureScreenshots = true;
+        boolean captureScreenshots;
         int screenshotQuality = DEFAULT_QUALITY;
     }
 
@@ -599,7 +604,7 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
     private static class Options {
         int maxEvents = DEFAULT_MAX_EVENTS;
         long ttlMs = DEFAULT_TTL_MS;
-        boolean captureScreenshots = true;
+        boolean captureScreenshots;
         int screenshotQuality = DEFAULT_QUALITY;
 
         static Options parse(String json) {
@@ -607,7 +612,7 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
             JSONObject p = parseObj(json);
             o.maxEvents = clamp(p.optInt("maxEvents", DEFAULT_MAX_EVENTS), 1, 2000);
             o.ttlMs = clamp(p.optLong("ttlMs", DEFAULT_TTL_MS), 10_000L, 60 * 60 * 1000L);
-            o.captureScreenshots = p.optBoolean("captureScreenshots", true);
+            o.captureScreenshots = p.optBoolean("captureScreenshots", false);
             o.screenshotQuality = clamp(p.optInt("screenshotQuality", DEFAULT_QUALITY), 1, 100);
             return o;
         }
