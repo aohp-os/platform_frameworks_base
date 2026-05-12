@@ -86,6 +86,11 @@ public final class AohpUiTreeDumper {
         boolean editable;
         boolean password;
         boolean importantForA11y;
+        Integer rangeType;
+        Float rangeMin;
+        Float rangeMax;
+        Float rangeCurrent;
+        Float rangePercent;
         final List<String> marks = new ArrayList<>();
     }
 
@@ -378,6 +383,18 @@ public final class AohpUiTreeDumper {
         nr.editable = n.isEditable();
         nr.password = n.isPassword();
         nr.importantForA11y = n.isImportantForAccessibility();
+        AccessibilityNodeInfo.RangeInfo range = n.getRangeInfo();
+        if (range != null) {
+            nr.rangeType = range.getType();
+            nr.rangeMin = range.getMin();
+            nr.rangeMax = range.getMax();
+            nr.rangeCurrent = range.getCurrent();
+            if (!Float.isNaN(nr.rangeMin) && !Float.isNaN(nr.rangeMax)
+                    && !Float.isNaN(nr.rangeCurrent) && nr.rangeMax > nr.rangeMin) {
+                nr.rangePercent = ((nr.rangeCurrent - nr.rangeMin) * 100f)
+                        / (nr.rangeMax - nr.rangeMin);
+            }
+        }
     }
 
     private static void applyFlagsToNodes(ArrayList<NodeRec> nodes, int flags, int onlyWindowId) {
@@ -554,6 +571,24 @@ public final class AohpUiTreeDumper {
         jw.name("selected").value(n.selected);
         jw.name("editable").value(n.editable);
         jw.name("password").value(n.password);
+        if (n.rangeMin != null && n.rangeMax != null && n.rangeCurrent != null) {
+            jw.name("range");
+            jw.beginObject();
+            if (n.rangeType != null) {
+                jw.name("type").value(n.rangeType);
+            }
+            jw.name("min").value(n.rangeMin);
+            jw.name("max").value(n.rangeMax);
+            jw.name("currentValue").value(n.rangeCurrent);
+            jw.name("currentPercent");
+            if (n.rangePercent == null || Float.isNaN(n.rangePercent)
+                    || Float.isInfinite(n.rangePercent)) {
+                jw.nullValue();
+            } else {
+                jw.value(n.rangePercent);
+            }
+            jw.endObject();
+        }
         jw.name("marks");
         jw.beginArray();
         for (int i = 0; i < n.marks.size(); i++) {
