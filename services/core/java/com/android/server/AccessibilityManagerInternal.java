@@ -80,6 +80,12 @@ public abstract class AccessibilityManagerInternal {
     public abstract String setNodeProgressForDisplay(int displayId, int nodeId, float percent,
             int flags);
 
+    /**
+     * AOHP: clear text via {@code ACTION_SET_TEXT} (empty). See {@link #dumpUiTreeForDisplay} for
+     * {@code nodeId}; use {@code nodeId <= 0} for the focused editable.
+     */
+    public abstract String clearEditableTextForDisplay(int displayId, int nodeId, int flags);
+
     private static final AccessibilityManagerInternal NOP = new AccessibilityManagerInternal() {
         @Override
         public void setImeSessionEnabled(SparseArray<IAccessibilityInputMethodSession> sessions,
@@ -120,6 +126,11 @@ public abstract class AccessibilityManagerInternal {
         @Override
         public String setNodeProgressForDisplay(int displayId, int nodeId, float percent,
                 int flags) {
+            return "{\"success\":false,\"error\":\"accessibility_manager_unavailable\"}";
+        }
+
+        @Override
+        public String clearEditableTextForDisplay(int displayId, int nodeId, int flags) {
             return "{\"success\":false,\"error\":\"accessibility_manager_unavailable\"}";
         }
     };

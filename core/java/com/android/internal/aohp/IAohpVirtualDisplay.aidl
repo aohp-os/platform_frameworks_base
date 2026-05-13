@@ -31,4 +31,7 @@ interface IAohpVirtualDisplay {
 
     /** Privileged: set a range/slider node to percent 0..100 using accessibility ACTION_SET_PROGRESS. */
     String setNodeProgress(int displayId, int nodeId, float percent, int flags);
+
+    // Clear text via ACTION_SET_TEXT (empty). nodeId > 0: same id as dumpUiTree; nodeId <= 0: focused field.
+    String clearEditableText(int displayId, int nodeId, int flags);
 }

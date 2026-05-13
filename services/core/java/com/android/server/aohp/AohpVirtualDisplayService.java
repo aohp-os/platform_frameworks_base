@@ -372,6 +372,18 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     }
 
     @Override
+    public String clearEditableText(int displayId, int nodeId, int flags) throws RemoteException {
+        enforceAohpPermission();
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return AccessibilityManagerInternal.get().clearEditableTextForDisplay(
+                    displayId, nodeId, flags);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
     public void applyMultiDisplayDeveloperSettings() {
         enforceAohpPermission();
         final int uid = Binder.getCallingUid();

@@ -16,6 +16,9 @@ import android.util.Log;
 import android.util.LongSparseArray;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.accessibility.IAccessibilityInteractionConnectionCallback;
 
@@ -270,6 +273,287 @@ public final class AohpUiTreeDumper {
         }
 
         return writeSetProgressError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+    }
+
+    /**
+     * AOHP: clear text with {@link AccessibilityNodeInfo#ACTION_SET_TEXT} (empty argument).
+     * {@code nodeId > 0}: same id space as {@link #buildJsonFromWindows}. {@code nodeId <= 0}:
+     * focused editable on the display (prefers {@link AccessibilityWindowInfo#isFocused()} windows).
+     */
+    public static String clearEditableTextFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId, int flags) {
+        if (nodeId > 0) {
+            return clearEditableByTreeId(service, windows, userId, displayId, nodeId, flags);
+        }
+        return clearFocusedEditableFromWindows(service, windows, userId, displayId, flags);
+    }
+
+    private static String clearEditableByTreeId(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId, int flags) {
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        int nextId = 1;
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeClearTextError(displayId, nodeId, "interrupted", e.getMessage());
+            }
+
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                int currentId = nextId++;
+                if (currentId != nodeId) {
+                    continue;
+                }
+                return tryClearEditableChain(conn.getRemote(), bySource, raw, displayId, wid,
+                        nodeId, deadline);
+            }
+        }
+
+        return writeClearTextError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+    }
+
+    private static String clearFocusedEditableFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int flags) {
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        ArrayList<Integer> focused = new ArrayList<>();
+        ArrayList<Integer> other = new ArrayList<>();
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            if (win.isFocused()) {
+                focused.add(wi);
+            } else {
+                other.add(wi);
+            }
+        }
+        ArrayList<Integer> order = new ArrayList<>(focused.size() + other.size());
+        order.addAll(focused);
+        order.addAll(other);
+
+        for (int oi = 0; oi < order.size(); oi++) {
+            int wi = order.get(oi);
+            AccessibilityWindowInfo win = windows.get(wi);
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeClearTextError(displayId, 0, "interrupted", e.getMessage());
+            }
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                if (!raw.isFocused()) {
+                    continue;
+                }
+                String attempt = tryClearEditableChain(conn.getRemote(), bySource, raw, displayId,
+                        wid, 0, deadline);
+                if (jsonClearSucceeded(attempt)) {
+                    return attempt;
+                }
+            }
+        }
+        return writeClearTextError(displayId, 0, "no_focused_editable",
+                "No focused text input: the focused node is not an editable field "
+                        + "(no ACTION_SET_TEXT path). Focus an EditText or pick a node id from ui.tree.");
+    }
+
+    private static boolean jsonClearSucceeded(String json) {
+        if (json == null) {
+            return false;
+        }
+        try {
+            return new JSONObject(json).optBoolean("success", false);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Try {@code ACTION_SET_TEXT} on {@code start} and editable ancestors (in {@code map}).
+     */
+    private static String tryClearEditableChain(IAccessibilityInteractionConnection remote,
+            LongSparseArray<AccessibilityNodeInfo> map, AccessibilityNodeInfo start, int displayId,
+            int windowId, int responseNodeId, long deadlineMs) {
+        boolean sawEditableCandidate = false;
+        String lastFailureDetail = null;
+        AccessibilityNodeInfo cur = start;
+        for (int hop = 0; hop < 16 && cur != null; hop++) {
+            if (cur.isEditable() || hasAction(cur, AccessibilityNodeInfo.ACTION_SET_TEXT)) {
+                sawEditableCandidate = true;
+                String r = performClearText(remote, cur, displayId, windowId, responseNodeId,
+                        deadlineMs);
+                if (jsonClearSucceeded(r)) {
+                    return r;
+                }
+                lastFailureDetail = summarizeClearFailureJson(r);
+            }
+            long psid = cur.getParentNodeId();
+            AccessibilityNodeInfo parent = map.get(psid);
+            if (parent == null) {
+                break;
+            }
+            cur = parent;
+        }
+        if (!sawEditableCandidate) {
+            String hint = describeNonTextInputNode(start);
+            if (responseNodeId > 0) {
+                return writeClearTextError(displayId, responseNodeId, "not_text_input",
+                        "node id=" + responseNodeId + " is not a text input field (" + hint
+                                + "). Choose a ui.tree node with editable=true or class EditText/"
+                                + "TextInput (or a descendant of the field).");
+            }
+            return writeClearTextError(displayId, 0, "not_text_input",
+                    "Focused node is not a text input field (" + hint
+                            + "). Focus an EditText or use act.clear_node / act.input_node with "
+                            + "the correct node id.");
+        }
+        String extra = (lastFailureDetail != null && !lastFailureDetail.isEmpty())
+                ? (" Last attempt: " + lastFailureDetail)
+                : "";
+        return writeClearTextError(displayId, responseNodeId, "not_clearable",
+                "ACTION_SET_TEXT failed on editable candidate(s) in this node chain." + extra);
+    }
+
+    /** Short hint for logs / errors: class name and editable flag. */
+    private static String describeNonTextInputNode(AccessibilityNodeInfo n) {
+        if (n == null) {
+            return "null node";
+        }
+        CharSequence cn = n.getClassName();
+        String cls = cn != null ? cn.toString() : "unknown";
+        return "class=" + cls + ", editable=" + n.isEditable();
+    }
+
+    private static String summarizeClearFailureJson(String json) {
+        if (json == null) {
+            return "";
+        }
+        try {
+            JSONObject o = new JSONObject(json);
+            String err = o.optString("error", "");
+            String msg = o.optString("message", "");
+            if (!msg.isEmpty()) {
+                return err.isEmpty() ? msg : err + ": " + msg;
+            }
+            return err;
+        } catch (JSONException e) {
+            return "";
+        }
+    }
+
+    private static String performClearText(IAccessibilityInteractionConnection remote,
+            AccessibilityNodeInfo node, int displayId, int windowId, int responseNodeId,
+            long deadlineMs) {
+        if (node == null) {
+            return writeClearTextError(displayId, responseNodeId, "node_null", "null node");
+        }
+        if (node.isPassword()) {
+            return writeClearTextError(displayId, responseNodeId, "password_field",
+                    "refusing to clear password field via ACTION_SET_TEXT");
+        }
+        int actionSetText = AccessibilityNodeInfo.ACTION_SET_TEXT;
+        Bundle args = new Bundle();
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "");
+        int iid = sNextInteractionId.getAndIncrement();
+        ActionCallback cb = new ActionCallback();
+        try {
+            remote.performAccessibilityAction(
+                    node.getSourceNodeId(),
+                    actionSetText,
+                    args,
+                    iid,
+                    cb,
+                    PREFETCH_FLAGS,
+                    Process.myPid(),
+                    Process.myTid());
+        } catch (RemoteException e) {
+            Log.w(TAG, "performAccessibilityAction ACTION_SET_TEXT: " + e.getMessage());
+            return writeClearTextError(displayId, responseNodeId, "remote_exception", e.getMessage());
+        }
+
+        try {
+            long wait = Math.max(1L, deadlineMs - SystemClock.uptimeMillis());
+            cb.await(Math.min(wait, TIMEOUT_MS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return writeClearTextError(displayId, responseNodeId, "interrupted", e.getMessage());
+        }
+
+        Boolean performed = cb.getResult();
+        if (!Boolean.TRUE.equals(performed)) {
+            return writeClearTextError(displayId, responseNodeId, "action_failed",
+                    performed == null ? "no callback result" : "ACTION_SET_TEXT returned false");
+        }
+        return writeClearTextSuccess(displayId, windowId, responseNodeId, actionSetText);
+    }
+
+    private static String writeClearTextSuccess(int displayId, int windowId, int responseNodeId,
+            int actionId) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(true);
+            jw.name("displayId").value(displayId);
+            jw.name("windowId").value(windowId);
+            jw.name("nodeId").value(responseNodeId);
+            jw.name("action").value("ACTION_SET_TEXT");
+            jw.name("actionId").value(actionId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":true}";
+        }
+    }
+
+    private static String writeClearTextError(int displayId, int nodeId, String code,
+            String message) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(false);
+            jw.name("error").value(code != null ? code : "error");
+            jw.name("message").value(message != null ? message : "");
+            jw.name("displayId").value(displayId);
+            jw.name("nodeId").value(nodeId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":false,\"error\":\"serialize_failed\"}";
+        }
     }
 
     private static String performSetProgress(IAccessibilityInteractionConnection remote,
