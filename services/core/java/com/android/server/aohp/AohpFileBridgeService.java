@@ -54,8 +54,6 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
     private static final int DEFAULT_MAX_DEPTH = 4;
     private static final int DEFAULT_MAX_FILES = 2000;
     private static final long DEFAULT_WINDOW_MS = 30_000L;
-    private static final String EMULATED_STORAGE_ROOT = "/storage/emulated/0";
-    private static final String DATA_MEDIA_ROOT = "/data/media/0";
 
     private final Context mContext;
     private final Map<String, Snapshot> mSnapshots = new HashMap<>();
@@ -80,7 +78,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             }
             JSONObject o = ok();
             o.put("file", fileJson(f, "direct", 0.5));
-            return o.toString();
+            return annotateFileJson(o.toString());
         } catch (Exception e) {
             Log.w(TAG, "stat", e);
             return error("stat_failed", e.getMessage());
@@ -113,7 +111,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             out.put("rootStats", new JSONArray()
                     .put(rootStat(root, list.visited, System.currentTimeMillis() - started,
                             list.status)));
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "list", e);
             return error("list_failed", e.getMessage());
@@ -306,7 +304,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
                 out.put("detected", false);
                 out.put("reason", scan.partial ? "partial_timeout" : "no_change_in_window");
             }
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "recent", e);
             return error("recent_failed", e.getMessage());
@@ -338,7 +336,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             out.put("createdAt", snap.createdAt);
             out.put("partial", scan.partial);
             out.put("files", scan.toSortedArray());
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "snapshot", e);
             return error("snapshot_failed", e.getMessage());
@@ -392,7 +390,7 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
             } else {
                 out.put("reason", "no_change_in_window");
             }
-            return out.toString();
+            return annotateFileJson(out.toString());
         } catch (Exception e) {
             Log.w(TAG, "diff", e);
             return error("diff_failed", e.getMessage());
@@ -602,38 +600,17 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
     private static File resolveAllowedPath(String path) {
         if (TextUtils.isEmpty(path)) return null;
         String p = path.trim();
-        if (p.equals("/sdcard") || p.startsWith("/sdcard/")) {
-            return externalStorageFile(p.substring("/sdcard".length()));
-        }
-        if (p.equals(EMULATED_STORAGE_ROOT) || p.startsWith(EMULATED_STORAGE_ROOT + "/")) {
-            return externalStorageFile(p.substring(EMULATED_STORAGE_ROOT.length()));
+        if (p.startsWith("/sdcard")) {
+            p = Environment.getExternalStorageDirectory().getAbsolutePath() + p.substring("/sdcard".length());
         }
         if (!isAllowedExternalPath(p)) return null;
         return new File(p);
     }
 
-    private static File externalStorageFile(String suffix) {
-        File dataMedia = new File(DATA_MEDIA_ROOT + suffix);
-        if (dataMedia.exists()) {
-            return dataMedia;
-        }
-        File env = new File(Environment.getExternalStorageDirectory().getAbsolutePath() + suffix);
-        if (env.exists()) {
-            return env;
-        }
-        // system_server may not see the emulated-storage FUSE path; prefer the backing path.
-        return dataMedia;
-    }
-
     private static boolean isAllowedExternalPath(String path) {
         if (TextUtils.isEmpty(path)) return false;
         String ext = Environment.getExternalStorageDirectory().getAbsolutePath();
-        return path.equals(ext)
-                || path.startsWith(ext + "/")
-                || path.equals(EMULATED_STORAGE_ROOT)
-                || path.startsWith(EMULATED_STORAGE_ROOT + "/")
-                || path.equals(DATA_MEDIA_ROOT)
-                || path.startsWith(DATA_MEDIA_ROOT + "/");
+        return path.equals(ext) || path.startsWith(ext + "/") || path.startsWith("/storage/emulated/0/");
     }
 
     private static String toDevicePath(File f) {
@@ -641,12 +618,6 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
         String ext = Environment.getExternalStorageDirectory().getAbsolutePath();
         if (p.equals(ext)) return "/sdcard";
         if (p.startsWith(ext + "/")) return "/sdcard" + p.substring(ext.length());
-        if (p.equals(EMULATED_STORAGE_ROOT)) return "/sdcard";
-        if (p.startsWith(EMULATED_STORAGE_ROOT + "/")) {
-            return "/sdcard" + p.substring(EMULATED_STORAGE_ROOT.length());
-        }
-        if (p.equals(DATA_MEDIA_ROOT)) return "/sdcard";
-        if (p.startsWith(DATA_MEDIA_ROOT + "/")) return "/sdcard" + p.substring(DATA_MEDIA_ROOT.length());
         return p;
     }
 
@@ -694,7 +665,6 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
         if (name.endsWith(".gif")) return "image/gif";
         if (name.endsWith(".mp4")) return "video/mp4";
         if (name.endsWith(".mp3")) return "audio/mpeg";
-        if (name.endsWith(".md") || name.endsWith(".markdown")) return "text/markdown";
         if (name.endsWith(".txt")) return "text/plain";
         if (name.endsWith(".pdf")) return "application/pdf";
         return "application/octet-stream";
@@ -820,6 +790,14 @@ public final class AohpFileBridgeService extends IAohpFileBridge.Stub {
                 a.put(o);
             }
             return a;
+        }
+    }
+
+    private static String annotateFileJson(String json) {
+        try {
+            return AohpFilePathSecurity.filterFileListJson(json);
+        } catch (Exception e) {
+            return json;
         }
     }
 

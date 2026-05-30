@@ -14,8 +14,12 @@ interface IAohpVirtualDisplay {
     void setFocusPackage(String packageName);
     boolean startLauncherOnDisplay(int displayId, String packageName);
     boolean injectTap(int displayId, int x, int y);
+    /** Like {@link #injectTap} but always applies {@code checkTapPolicy} (empty target is ALLOW). */
+    boolean injectTapWithTarget(int displayId, int x, int y, String targetResourceId);
     boolean injectSwipe(int displayId, int x1, int y1, int x2, int y2, int durationMs);
     boolean injectText(int displayId, String text);
+    /** Like {@link #injectText} but passes {@code targetResourceId} for sensitivity / consent policy. */
+    boolean injectTextWithTarget(int displayId, String targetResourceId, String text);
     boolean injectKeyEvent(int displayId, int keyCode);
     void applyMultiDisplayDeveloperSettings();
     /** @param extraDisplayIds optional ids to merge (e.g. app-known MediaProjection VD); may be null */
@@ -28,10 +32,4 @@ interface IAohpVirtualDisplay {
 
     /** Privileged UI tree dump for any logical display (JSON). See AohpUiTreeDumper in system_server. */
     String dumpUiTree(int displayId, int flags);
-
-    /** Privileged: set a range/slider node to percent 0..100 using accessibility ACTION_SET_PROGRESS. */
-    String setNodeProgress(int displayId, int nodeId, float percent, int flags);
-
-    // Clear text via ACTION_SET_TEXT (empty). nodeId > 0: same id as dumpUiTree; nodeId <= 0: focused field.
-    String clearEditableText(int displayId, int nodeId, int flags);
 }

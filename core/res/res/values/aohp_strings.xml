@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (C) 2026 The Android Open Source Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+-->
+<resources>
+    <string name="aohp_consent_title">Allow automated action?</string>
+    <string name="aohp_consent_message">An AOHP agent requested a sensitive action.\n\nReason: %1$s\nApp: %2$s\nTarget: %3$s\n\nDo you want to allow this once for the next few minutes?</string>
+</resources>

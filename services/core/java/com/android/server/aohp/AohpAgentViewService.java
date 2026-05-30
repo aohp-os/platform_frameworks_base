@@ -10,6 +10,9 @@ package com.android.server.aohp;
 import android.Manifest;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.os.RemoteException;
@@ -50,7 +53,15 @@ public final class AohpAgentViewService extends IAohpAgentView.Stub {
         enforceAohpPermission();
         final long ident = Binder.clearCallingIdentity();
         try {
-            return captureDisplayInternal(displayId, null, quality);
+            Bitmap b = captureDisplayBitmap(displayId, null);
+            if (b == null) {
+                return null;
+            }
+            try {
+                return bitmapToBytes(b, quality);
+            } finally {
+                b.recycle();
+            }
         } finally {
             Binder.restoreCallingIdentity(ident);
         }
@@ -67,13 +78,41 @@ public final class AohpAgentViewService extends IAohpAgentView.Stub {
                 Slog.w(TAG, "Invalid crop rect");
                 return null;
             }
-            return captureDisplayInternal(displayId, crop, quality);
+            Bitmap b = captureDisplayBitmap(displayId, crop);
+            if (b == null) {
+                return null;
+            }
+            try {
+                return bitmapToBytes(b, quality);
+            } finally {
+                b.recycle();
+            }
         } finally {
             Binder.restoreCallingIdentity(ident);
         }
     }
 
-    private byte[] captureDisplayInternal(int displayId, Rect sourceCrop, int quality) {
+    @Override
+    public byte[] captureDisplayRedacted(int displayId, int quality, int[] sensitiveRectFlat)
+            throws RemoteException {
+        enforceAohpPermission();
+        final long ident = Binder.clearCallingIdentity();
+        Bitmap b = captureDisplayBitmap(displayId, /*sourceCrop=*/ null);
+        try {
+            if (b == null) {
+                return null;
+            }
+            applySensitiveRects(b, sensitiveRectFlat);
+            return bitmapToBytes(b, quality);
+        } finally {
+            if (b != null) {
+                b.recycle();
+            }
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    private Bitmap captureDisplayBitmap(int displayId, Rect sourceCrop) {
         WindowManagerInternal wmi = LocalServices.getService(WindowManagerInternal.class);
         if (wmi == null) {
             Slog.e(TAG, "WindowManagerInternal not available");
@@ -119,10 +158,37 @@ public final class AohpAgentViewService extends IAohpAgentView.Stub {
         }
         Bitmap swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false);
         hwBitmap.recycle();
+        return swBitmap;
+    }
+
+    private static void applySensitiveRects(Bitmap bitmap, int[] flat) {
+        if (bitmap == null || flat == null || flat.length < 4) {
+            return;
+        }
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint();
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.BLACK);
+        for (int i = 0; i + 3 < flat.length; i += 4) {
+            int l = flat[i];
+            int t = flat[i + 1];
+            int r = flat[i + 2];
+            int btm = flat[i + 3];
+            if (r > l && btm > t) {
+                canvas.drawRect(l, t, r, btm, paint);
+            }
+        }
+    }
+
+    private byte[] captureDisplayInternal(int displayId, Rect sourceCrop, int quality) {
+        Bitmap b = captureDisplayBitmap(displayId, sourceCrop);
+        if (b == null) {
+            return null;
+        }
         try {
-            return bitmapToBytes(swBitmap, quality);
+            return bitmapToBytes(b, quality);
         } finally {
-            swBitmap.recycle();
+            b.recycle();
         }
     }
 

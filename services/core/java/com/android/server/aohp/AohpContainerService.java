@@ -159,12 +159,16 @@ public final class AohpContainerService extends IAohpContainer.Stub {
         enforcePermission();
         final long ident = Binder.clearCallingIdentity();
         try {
+            AohpSandboxSecurityGate.checkExecCommand(command);
             String resp = sendCommand("EXEC " + containerName + " " + timeoutMs + " " + command);
             if (isOk(resp) && resp.length() > 3) {
                 return okPayload(resp);
             }
             return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" +
                     (resp != null ? resp.replace("\"", "\\\"") : "daemon error") + "\"}";
+        } catch (SecurityException se) {
+            return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" +
+                    se.getMessage().replace("\"", "\\\"") + "\"}";
         } catch (IOException e) {
             Log.e(TAG, "execSync failed", e);
             return "{\"exitCode\":-1,\"stdout\":\"\",\"stderr\":\"" +
@@ -228,6 +232,7 @@ public final class AohpContainerService extends IAohpContainer.Stub {
         enforcePermission();
         final long ident = Binder.clearCallingIdentity();
         try {
+            AohpSandboxSecurityGate.checkExecCommand(command);
             String resp = sendCommand("START_SVC " + containerName + " " + serviceId + " " + command);
             if (isOk(resp)) {
                 String p = okPayload(resp);
@@ -237,6 +242,9 @@ public final class AohpContainerService extends IAohpContainer.Stub {
                     return -1L;
                 }
             }
+            return -1L;
+        } catch (SecurityException se) {
+            Log.w(TAG, "startService policy", se);
             return -1L;
         } catch (IOException e) {
             Log.e(TAG, "startService failed", e);
