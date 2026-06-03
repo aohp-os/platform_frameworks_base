@@ -73,6 +73,26 @@ public abstract class AccessibilityManagerInternal {
      */
     public abstract String dumpUiTreeForDisplay(int displayId, int flags);
 
+    /**
+     * AOHP: perform the native set-progress accessibility action for a range/slider node addressed
+     * by the temporary {@code id} from {@link #dumpUiTreeForDisplay}.
+     */
+    public abstract String setNodeProgressForDisplay(int displayId, int nodeId, float percent,
+            int flags);
+
+    /**
+     * AOHP: clear text via {@code ACTION_SET_TEXT} (empty). See {@link #dumpUiTreeForDisplay} for
+     * {@code nodeId}; use {@code nodeId <= 0} for the focused editable.
+     */
+    public abstract String clearEditableTextForDisplay(int displayId, int nodeId, int flags);
+
+    /**
+     * AOHP: set text via {@code ACTION_SET_TEXT}. See {@link #dumpUiTreeForDisplay} for
+     * {@code nodeId}; use {@code nodeId <= 0} for the focused editable.
+     */
+    public abstract String setEditableTextForDisplay(int displayId, int nodeId, String text,
+            int flags);
+
     private static final AccessibilityManagerInternal NOP = new AccessibilityManagerInternal() {
         @Override
         public void setImeSessionEnabled(SparseArray<IAccessibilityInputMethodSession> sessions,
@@ -108,6 +128,22 @@ public abstract class AccessibilityManagerInternal {
         @Override
         public String dumpUiTreeForDisplay(int displayId, int flags) {
             return "{}";
+        }
+
+        @Override
+        public String setNodeProgressForDisplay(int displayId, int nodeId, float percent,
+                int flags) {
+            return "{\"success\":false,\"error\":\"accessibility_manager_unavailable\"}";
+        }
+
+        @Override
+        public String clearEditableTextForDisplay(int displayId, int nodeId, int flags) {
+            return "{\"success\":false,\"error\":\"accessibility_manager_unavailable\"}";
+        }
+
+        @Override
+        public String setEditableTextForDisplay(int displayId, int nodeId, String text, int flags) {
+            return "{\"success\":false,\"error\":\"accessibility_manager_unavailable\"}";
         }
     };
 

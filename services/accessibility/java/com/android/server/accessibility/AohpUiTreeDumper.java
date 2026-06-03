@@ -7,6 +7,7 @@
 package com.android.server.accessibility;
 
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -15,6 +16,9 @@ import android.util.Log;
 import android.util.LongSparseArray;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 import android.view.accessibility.IAccessibilityInteractionConnection;
 import android.view.accessibility.IAccessibilityInteractionConnectionCallback;
 
@@ -85,6 +89,11 @@ public final class AohpUiTreeDumper {
         boolean editable;
         boolean password;
         boolean importantForA11y;
+        Integer rangeType;
+        Float rangeMin;
+        Float rangeMax;
+        Float rangeCurrent;
+        Float rangePercent;
         final List<String> marks = new ArrayList<>();
     }
 
@@ -214,6 +223,429 @@ public final class AohpUiTreeDumper {
         }
     }
 
+    public static String setNodeProgressFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId,
+            float percent, int flags) {
+        if (nodeId <= 0) {
+            return writeSetProgressError(displayId, nodeId, "bad_node_id",
+                    "nodeId must be a positive id from ui.tree");
+        }
+        if (Float.isNaN(percent) || percent < 0f || percent > 100f) {
+            return writeSetProgressError(displayId, nodeId, "bad_percent",
+                    "percent must be 0..100");
+        }
+
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        int nextId = 1;
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeSetProgressError(displayId, nodeId, "interrupted", e.getMessage());
+            }
+
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                int currentId = nextId++;
+                if (currentId != nodeId) {
+                    continue;
+                }
+                return performSetProgress(conn.getRemote(), raw, displayId, wid, nodeId, percent,
+                        deadline);
+            }
+        }
+
+        return writeSetProgressError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+    }
+
+    /**
+     * AOHP: clear text with {@link AccessibilityNodeInfo#ACTION_SET_TEXT} (empty argument).
+     * {@code nodeId > 0}: same id space as {@link #buildJsonFromWindows}. {@code nodeId <= 0}:
+     * focused editable on the display (prefers {@link AccessibilityWindowInfo#isFocused()} windows).
+     */
+    public static String clearEditableTextFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId, int flags) {
+        return setEditableTextFromWindows(service, windows, userId, displayId, nodeId, flags, "");
+    }
+
+    /**
+     * AOHP: set text with {@link AccessibilityNodeInfo#ACTION_SET_TEXT}. {@code nodeId <= 0} uses the
+     * focused editable on the display.
+     */
+    public static String setEditableTextFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId, int flags,
+            String text) {
+        final CharSequence value = text != null ? text : "";
+        if (nodeId > 0) {
+            return setEditableByTreeId(service, windows, userId, displayId, nodeId, flags, value);
+        }
+        return setFocusedEditableFromWindows(service, windows, userId, displayId, flags, value);
+    }
+
+    private static String setEditableByTreeId(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int nodeId, int flags,
+            CharSequence text) {
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        int nextId = 1;
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeClearTextError(displayId, nodeId, "interrupted", e.getMessage());
+            }
+
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                int currentId = nextId++;
+                if (currentId != nodeId) {
+                    continue;
+                }
+                return trySetEditableChain(conn.getRemote(), bySource, raw, displayId, wid,
+                        nodeId, text, deadline);
+            }
+        }
+
+        return writeClearTextError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+    }
+
+    private static String setFocusedEditableFromWindows(AccessibilityManagerService service,
+            List<AccessibilityWindowInfo> windows, int userId, int displayId, int flags,
+            CharSequence text) {
+        long deadline = SystemClock.uptimeMillis() + TIMEOUT_MS;
+        ArrayList<Integer> focused = new ArrayList<>();
+        ArrayList<Integer> other = new ArrayList<>();
+        for (int wi = 0; wi < windows.size(); wi++) {
+            AccessibilityWindowInfo win = windows.get(wi);
+            if (win == null) {
+                continue;
+            }
+            if ((flags & FLAG_APPLICATION_ONLY) != 0
+                    && win.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                continue;
+            }
+            if (win.isFocused()) {
+                focused.add(wi);
+            } else {
+                other.add(wi);
+            }
+        }
+        ArrayList<Integer> order = new ArrayList<>(focused.size() + other.size());
+        order.addAll(focused);
+        order.addAll(other);
+
+        for (int oi = 0; oi < order.size(); oi++) {
+            int wi = order.get(oi);
+            AccessibilityWindowInfo win = windows.get(wi);
+            int wid = win.getId();
+            RemoteAccessibilityConnection conn = service.getAccessibilityConnectionForDump(
+                    userId, wid);
+            if (conn == null || conn.getRemote() == null) {
+                continue;
+            }
+            LongSparseArray<AccessibilityNodeInfo> bySource;
+            try {
+                bySource = fetchEntireWindow(conn, new AtomicInteger(0), deadline);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return writeClearTextError(displayId, 0, "interrupted", e.getMessage());
+            }
+            for (int i = 0; i < bySource.size(); i++) {
+                AccessibilityNodeInfo raw = bySource.valueAt(i);
+                if (!raw.isFocused()) {
+                    continue;
+                }
+                String attempt = trySetEditableChain(conn.getRemote(), bySource, raw, displayId,
+                        wid, 0, text, deadline);
+                if (jsonClearSucceeded(attempt)) {
+                    return attempt;
+                }
+            }
+        }
+        return writeClearTextError(displayId, 0, "no_focused_editable",
+                "No focused text input: the focused node is not an editable field "
+                        + "(no ACTION_SET_TEXT path). Focus an EditText or pick a node id from ui.tree.");
+    }
+
+    private static boolean jsonClearSucceeded(String json) {
+        if (json == null) {
+            return false;
+        }
+        try {
+            return new JSONObject(json).optBoolean("success", false);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Try {@code ACTION_SET_TEXT} on {@code start} and editable ancestors (in {@code map}).
+     */
+    private static String trySetEditableChain(IAccessibilityInteractionConnection remote,
+            LongSparseArray<AccessibilityNodeInfo> map, AccessibilityNodeInfo start, int displayId,
+            int windowId, int responseNodeId, CharSequence text, long deadlineMs) {
+        boolean sawEditableCandidate = false;
+        String lastFailureDetail = null;
+        AccessibilityNodeInfo cur = start;
+        for (int hop = 0; hop < 16 && cur != null; hop++) {
+            if (cur.isEditable() || hasAction(cur, AccessibilityNodeInfo.ACTION_SET_TEXT)) {
+                sawEditableCandidate = true;
+                String r = performSetText(remote, cur, text, displayId, windowId, responseNodeId,
+                        deadlineMs);
+                if (jsonClearSucceeded(r)) {
+                    return r;
+                }
+                lastFailureDetail = summarizeClearFailureJson(r);
+            }
+            long psid = cur.getParentNodeId();
+            AccessibilityNodeInfo parent = map.get(psid);
+            if (parent == null) {
+                break;
+            }
+            cur = parent;
+        }
+        if (!sawEditableCandidate) {
+            String hint = describeNonTextInputNode(start);
+            if (responseNodeId > 0) {
+                return writeClearTextError(displayId, responseNodeId, "not_text_input",
+                        "node id=" + responseNodeId + " is not a text input field (" + hint
+                                + "). Choose a ui.tree node with editable=true or class EditText/"
+                                + "TextInput (or a descendant of the field).");
+            }
+            return writeClearTextError(displayId, 0, "not_text_input",
+                    "Focused node is not a text input field (" + hint
+                            + "). Focus an EditText or use act.clear_node / act.input_node with "
+                            + "the correct node id.");
+        }
+        String extra = (lastFailureDetail != null && !lastFailureDetail.isEmpty())
+                ? (" Last attempt: " + lastFailureDetail)
+                : "";
+        return writeClearTextError(displayId, responseNodeId, "not_clearable",
+                "ACTION_SET_TEXT failed on editable candidate(s) in this node chain." + extra);
+    }
+
+    /** Short hint for logs / errors: class name and editable flag. */
+    private static String describeNonTextInputNode(AccessibilityNodeInfo n) {
+        if (n == null) {
+            return "null node";
+        }
+        CharSequence cn = n.getClassName();
+        String cls = cn != null ? cn.toString() : "unknown";
+        return "class=" + cls + ", editable=" + n.isEditable();
+    }
+
+    private static String summarizeClearFailureJson(String json) {
+        if (json == null) {
+            return "";
+        }
+        try {
+            JSONObject o = new JSONObject(json);
+            String err = o.optString("error", "");
+            String msg = o.optString("message", "");
+            if (!msg.isEmpty()) {
+                return err.isEmpty() ? msg : err + ": " + msg;
+            }
+            return err;
+        } catch (JSONException e) {
+            return "";
+        }
+    }
+
+    private static String performSetText(IAccessibilityInteractionConnection remote,
+            AccessibilityNodeInfo node, CharSequence text, int displayId, int windowId,
+            int responseNodeId, long deadlineMs) {
+        if (node == null) {
+            return writeClearTextError(displayId, responseNodeId, "node_null", "null node");
+        }
+        if (node.isPassword()) {
+            return writeClearTextError(displayId, responseNodeId, "password_field",
+                    "refusing to set password field via ACTION_SET_TEXT");
+        }
+        int actionSetText = AccessibilityNodeInfo.ACTION_SET_TEXT;
+        Bundle args = new Bundle();
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                text != null ? text : "");
+        int iid = sNextInteractionId.getAndIncrement();
+        ActionCallback cb = new ActionCallback();
+        try {
+            remote.performAccessibilityAction(
+                    node.getSourceNodeId(),
+                    actionSetText,
+                    args,
+                    iid,
+                    cb,
+                    PREFETCH_FLAGS,
+                    Process.myPid(),
+                    Process.myTid());
+        } catch (RemoteException e) {
+            Log.w(TAG, "performAccessibilityAction ACTION_SET_TEXT: " + e.getMessage());
+            return writeClearTextError(displayId, responseNodeId, "remote_exception", e.getMessage());
+        }
+
+        try {
+            long wait = Math.max(1L, deadlineMs - SystemClock.uptimeMillis());
+            cb.await(Math.min(wait, TIMEOUT_MS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return writeClearTextError(displayId, responseNodeId, "interrupted", e.getMessage());
+        }
+
+        Boolean performed = cb.getResult();
+        if (!Boolean.TRUE.equals(performed)) {
+            return writeClearTextError(displayId, responseNodeId, "action_failed",
+                    performed == null ? "no callback result" : "ACTION_SET_TEXT returned false");
+        }
+        return writeClearTextSuccess(displayId, windowId, responseNodeId, actionSetText);
+    }
+
+    private static String writeClearTextSuccess(int displayId, int windowId, int responseNodeId,
+            int actionId) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(true);
+            jw.name("displayId").value(displayId);
+            jw.name("windowId").value(windowId);
+            jw.name("nodeId").value(responseNodeId);
+            jw.name("action").value("ACTION_SET_TEXT");
+            jw.name("actionId").value(actionId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":true}";
+        }
+    }
+
+    private static String writeClearTextError(int displayId, int nodeId, String code,
+            String message) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(false);
+            jw.name("error").value(code != null ? code : "error");
+            jw.name("message").value(message != null ? message : "");
+            jw.name("displayId").value(displayId);
+            jw.name("nodeId").value(nodeId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":false,\"error\":\"serialize_failed\"}";
+        }
+    }
+
+    private static String performSetProgress(IAccessibilityInteractionConnection remote,
+            AccessibilityNodeInfo node, int displayId, int windowId, int nodeId, float percent,
+            long deadlineMs) {
+        if (node == null) {
+            return writeSetProgressError(displayId, nodeId, "node_not_found", "id=" + nodeId);
+        }
+        AccessibilityNodeInfo.RangeInfo range = node.getRangeInfo();
+        if (range == null) {
+            return writeSetProgressError(displayId, nodeId, "node_not_range",
+                    "node has no AccessibilityNodeInfo.RangeInfo");
+        }
+        int actionSetProgress =
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId();
+        if (!hasAction(node, actionSetProgress)) {
+            return writeSetProgressError(displayId, nodeId, "action_unavailable",
+                    "node does not expose ACTION_SET_PROGRESS");
+        }
+
+        float min = range.getMin();
+        float max = range.getMax();
+        if (Float.isNaN(min) || Float.isNaN(max) || max < min) {
+            return writeSetProgressError(displayId, nodeId, "bad_range",
+                    "node range is invalid");
+        }
+        float target = min + ((max - min) * percent / 100f);
+
+        Bundle args = new Bundle();
+        args.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target);
+        int iid = sNextInteractionId.getAndIncrement();
+        ActionCallback cb = new ActionCallback();
+        try {
+            remote.performAccessibilityAction(
+                    node.getSourceNodeId(),
+                    actionSetProgress,
+                    args,
+                    iid,
+                    cb,
+                    PREFETCH_FLAGS,
+                    Process.myPid(),
+                    Process.myTid());
+        } catch (RemoteException e) {
+            Log.w(TAG, "performAccessibilityAction ACTION_SET_PROGRESS: " + e.getMessage());
+            return writeSetProgressError(displayId, nodeId, "remote_exception", e.getMessage());
+        }
+
+        try {
+            long wait = Math.max(1L, deadlineMs - SystemClock.uptimeMillis());
+            cb.await(Math.min(wait, TIMEOUT_MS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return writeSetProgressError(displayId, nodeId, "interrupted", e.getMessage());
+        }
+
+        Boolean performed = cb.getResult();
+        if (!Boolean.TRUE.equals(performed)) {
+            return writeSetProgressError(displayId, nodeId, "action_failed",
+                    performed == null ? "no callback result"
+                            : "ACTION_SET_PROGRESS returned false");
+        }
+        return writeSetProgressSuccess(displayId, windowId, nodeId, percent, target, range);
+    }
+
+    private static boolean hasAction(AccessibilityNodeInfo node, int actionId) {
+        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+        if (actions == null) {
+            return false;
+        }
+        for (int i = 0; i < actions.size(); i++) {
+            AccessibilityNodeInfo.AccessibilityAction action = actions.get(i);
+            if (action != null && action.getId() == actionId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void fillFromA11yInfo(NodeRec nr, AccessibilityNodeInfo n) {
         if (n.getClassName() != null) {
             nr.className = n.getClassName().toString();
@@ -249,6 +681,18 @@ public final class AohpUiTreeDumper {
         nr.editable = n.isEditable();
         nr.password = n.isPassword();
         nr.importantForA11y = n.isImportantForAccessibility();
+        AccessibilityNodeInfo.RangeInfo range = n.getRangeInfo();
+        if (range != null) {
+            nr.rangeType = range.getType();
+            nr.rangeMin = range.getMin();
+            nr.rangeMax = range.getMax();
+            nr.rangeCurrent = range.getCurrent();
+            if (!Float.isNaN(nr.rangeMin) && !Float.isNaN(nr.rangeMax)
+                    && !Float.isNaN(nr.rangeCurrent) && nr.rangeMax > nr.rangeMin) {
+                nr.rangePercent = ((nr.rangeCurrent - nr.rangeMin) * 100f)
+                        / (nr.rangeMax - nr.rangeMin);
+            }
+        }
     }
 
     private static void applyFlagsToNodes(ArrayList<NodeRec> nodes, int flags, int onlyWindowId) {
@@ -425,6 +869,24 @@ public final class AohpUiTreeDumper {
         jw.name("selected").value(n.selected);
         jw.name("editable").value(n.editable);
         jw.name("password").value(n.password);
+        if (n.rangeMin != null && n.rangeMax != null && n.rangeCurrent != null) {
+            jw.name("range");
+            jw.beginObject();
+            if (n.rangeType != null) {
+                jw.name("type").value(n.rangeType);
+            }
+            jw.name("min").value(n.rangeMin);
+            jw.name("max").value(n.rangeMax);
+            jw.name("currentValue").value(n.rangeCurrent);
+            jw.name("currentPercent");
+            if (n.rangePercent == null || Float.isNaN(n.rangePercent)
+                    || Float.isInfinite(n.rangePercent)) {
+                jw.nullValue();
+            } else {
+                jw.value(n.rangePercent);
+            }
+            jw.endObject();
+        }
         jw.name("marks");
         jw.beginArray();
         for (int i = 0; i < n.marks.size(); i++) {
@@ -432,6 +894,52 @@ public final class AohpUiTreeDumper {
         }
         jw.endArray();
         jw.endObject();
+    }
+
+    private static String writeSetProgressSuccess(int displayId, int windowId, int nodeId,
+            float percent, float targetValue, AccessibilityNodeInfo.RangeInfo range) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(true);
+            jw.name("displayId").value(displayId);
+            jw.name("windowId").value(windowId);
+            jw.name("nodeId").value(nodeId);
+            jw.name("percent").value(percent);
+            jw.name("targetValue").value(targetValue);
+            jw.name("range");
+            jw.beginObject();
+            jw.name("min").value(range.getMin());
+            jw.name("max").value(range.getMax());
+            jw.name("currentBefore").value(range.getCurrent());
+            jw.endObject();
+            jw.name("action").value("ACTION_SET_PROGRESS");
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":true}";
+        }
+    }
+
+    private static String writeSetProgressError(int displayId, int nodeId, String code,
+            String message) {
+        try {
+            StringWriter sw = new StringWriter();
+            JsonWriter jw = new JsonWriter(sw);
+            jw.beginObject();
+            jw.name("success").value(false);
+            jw.name("error").value(code != null ? code : "error");
+            jw.name("message").value(message != null ? message : "");
+            jw.name("displayId").value(displayId);
+            jw.name("nodeId").value(nodeId);
+            jw.endObject();
+            jw.close();
+            return sw.toString();
+        } catch (IOException e) {
+            return "{\"success\":false,\"error\":\"serialize_failed\"}";
+        }
     }
 
     private static void writeNullableString(JsonWriter jw, String name, String v)
@@ -593,6 +1101,53 @@ public final class AohpUiTreeDumper {
 
         @Override
         public void setPerformAccessibilityActionResult(boolean succeeded, int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void sendTakeScreenshotOfWindowError(int errorCode, int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void sendAttachOverlayResult(int result, int interactionId) {
+            mLatch.countDown();
+        }
+    }
+
+    private static final class ActionCallback extends IAccessibilityInteractionConnectionCallback.Stub {
+        private final CountDownLatch mLatch = new CountDownLatch(1);
+        private volatile Boolean mSucceeded;
+
+        void await(long timeoutMs) throws InterruptedException {
+            mLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+        }
+
+        Boolean getResult() {
+            return mSucceeded;
+        }
+
+        @Override
+        public void setFindAccessibilityNodeInfoResult(AccessibilityNodeInfo info,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setFindAccessibilityNodeInfosResult(List<AccessibilityNodeInfo> infos,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setPrefetchAccessibilityNodeInfoResult(List<AccessibilityNodeInfo> infos,
+                int interactionId) {
+            mLatch.countDown();
+        }
+
+        @Override
+        public void setPerformAccessibilityActionResult(boolean succeeded, int interactionId) {
+            mSucceeded = succeeded;
             mLatch.countDown();
         }
 

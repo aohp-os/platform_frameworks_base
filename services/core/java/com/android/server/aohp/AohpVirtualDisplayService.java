@@ -404,6 +404,41 @@ public final class AohpVirtualDisplayService extends IAohpVirtualDisplay.Stub {
     }
 
     @Override
+    public String setNodeProgress(int displayId, int nodeId, float percent, int flags)
+            throws RemoteException {
+        enforceAohpPermission();
+        verifyCallerRegistered(displayId, Binder.getCallingUid());
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return AccessibilityManagerInternal.get().setNodeProgressForDisplay(
+                    displayId, nodeId, percent, flags);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
+    public String clearEditableText(int displayId, int nodeId, int flags) throws RemoteException {
+        return setEditableText(displayId, nodeId, "", flags);
+    }
+
+    @Override
+    public String setEditableText(int displayId, int nodeId, String text, int flags)
+            throws RemoteException {
+        enforceAohpPermission();
+        verifyCallerRegistered(displayId, Binder.getCallingUid());
+        // Accessibility ACTION_SET_TEXT is gated by MANAGE_AOHP_VIRTUAL_DISPLAY; do not apply
+        // injectText key-event policy (apps without aohp_sensitivity_manifest would be blocked).
+        final long ident = Binder.clearCallingIdentity();
+        try {
+            return AccessibilityManagerInternal.get().setEditableTextForDisplay(
+                    displayId, nodeId, text != null ? text : "", flags);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    @Override
     public void applyMultiDisplayDeveloperSettings() {
         enforceAohpPermission();
         final int uid = Binder.getCallingUid();

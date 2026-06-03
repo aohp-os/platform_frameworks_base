@@ -67,6 +67,13 @@ public final class AohpVirtualDisplayPolicy {
         }
     }
 
+    /** Last package set via AOHP {@code setFocusPackage} / session register (may be empty). */
+    public static String getFocusPackage() {
+        synchronized (sLock) {
+            return sFocusPackage;
+        }
+    }
+
     /** @deprecated Prefer {@link #isDisplayRegisteredForOwner(int, int)} */
     @Deprecated
     public static int getRegisteredDisplayId() {

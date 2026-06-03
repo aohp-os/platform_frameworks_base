@@ -32,4 +32,21 @@ interface IAohpVirtualDisplay {
 
     /** Privileged UI tree dump for any logical display (JSON). See AohpUiTreeDumper in system_server. */
     String dumpUiTree(int displayId, int flags);
+
+    /**
+     * AOHP: set SeekBar/slider progress for a node id from {@link #dumpUiTree} (JSON result).
+     */
+    String setNodeProgress(int displayId, int nodeId, float percent, int flags);
+
+    /**
+     * AOHP: clear text via accessibility {@code ACTION_SET_TEXT} (empty). {@code nodeId > 0} matches
+     * ui.tree ids; {@code nodeId <= 0} clears the focused editable on the display.
+     */
+    String clearEditableText(int displayId, int nodeId, int flags);
+
+    /**
+     * AOHP: set text via accessibility {@code ACTION_SET_TEXT}. {@code nodeId <= 0} targets the
+     * focused editable on the display.
+     */
+    String setEditableText(int displayId, int nodeId, String text, int flags);
 }

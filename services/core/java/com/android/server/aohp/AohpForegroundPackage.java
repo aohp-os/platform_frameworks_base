@@ -7,7 +7,10 @@
 
 package com.android.server.aohp;
 
+import android.text.TextUtils;
+
 import com.android.server.wm.ActivityTaskManagerService;
+import com.android.server.wm.AohpVirtualDisplayPolicy;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -44,7 +47,8 @@ final class AohpForegroundPackage {
             }
         } catch (Exception ignored) {
         }
-        return "";
+        String focus = AohpVirtualDisplayPolicy.getFocusPackage();
+        return !TextUtils.isEmpty(focus) ? focus : "";
     }
 
     private static String componentPackage(JSONObject c) {
