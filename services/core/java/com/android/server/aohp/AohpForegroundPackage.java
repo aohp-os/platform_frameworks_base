@@ -7,6 +7,7 @@
 
 package com.android.server.aohp;
 
+import android.content.ComponentName;
 import android.text.TextUtils;
 
 import com.android.server.wm.ActivityTaskManagerService;
@@ -38,12 +39,11 @@ final class AohpForegroundPackage {
                 if (d == null || d.optInt("displayId", -1) != displayId) {
                     continue;
                 }
-                String a = componentPackage(d.optJSONObject("focusedActivity"));
+                String a = activityPackage(d, "focusedActivity");
                 if (!a.isEmpty()) {
                     return a;
                 }
-                a = componentPackage(d.optJSONObject("topRunningActivity"));
-                return a != null ? a : "";
+                return activityPackage(d, "topRunningActivity");
             }
         } catch (Exception ignored) {
         }
@@ -51,10 +51,37 @@ final class AohpForegroundPackage {
         return !TextUtils.isEmpty(focus) ? focus : "";
     }
 
-    private static String componentPackage(JSONObject c) {
-        if (c == null) {
+    /**
+     * {@link ActivityTaskManagerService#buildAohpDisplayRuntimeSnapshotJson} writes
+     * focused/top activity as a flattened component string (e.g.
+     * {@code com.android.contacts/.activities.PeopleActivity}), not a JSON object.
+     */
+    private static String activityPackage(JSONObject display, String field) {
+        if (display == null || TextUtils.isEmpty(field)) {
             return "";
         }
-        return c.optString("packageName", "");
+        JSONObject component = display.optJSONObject(field);
+        if (component != null) {
+            String pkg = component.optString("packageName", "");
+            if (!TextUtils.isEmpty(pkg)) {
+                return pkg;
+            }
+        }
+        return packageFromComponentString(display.optString(field, ""));
+    }
+
+    private static String packageFromComponentString(String flattened) {
+        if (TextUtils.isEmpty(flattened)) {
+            return "";
+        }
+        ComponentName cn = ComponentName.unflattenFromString(flattened);
+        if (cn != null) {
+            return cn.getPackageName();
+        }
+        int slash = flattened.indexOf('/');
+        if (slash > 0) {
+            return flattened.substring(0, slash);
+        }
+        return flattened;
     }
 }

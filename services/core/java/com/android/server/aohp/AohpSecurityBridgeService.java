@@ -162,15 +162,28 @@ public final class AohpSecurityBridgeService extends IAohpSecurityBridge.Stub {
     public static String filterUiTreeTrusted(String rawTreeJson, String foregroundPackage,
             int displayId) {
         AohpSecurityBridgeService b = sInstance;
-        if (b == null || TextUtils.isEmpty(foregroundPackage)) {
+        if (b == null) {
             try {
                 JSONObject err = new JSONObject();
                 err.put("aohpFiltered", false);
-                err.put("aohpFilterError", "bridge_or_pkg_unavailable");
-                err.put("aohpForegroundPackage", foregroundPackage);
+                err.put("aohpFilterError", "bridge_unavailable");
+                err.put("aohpForegroundPackage", foregroundPackage != null ? foregroundPackage : "");
                 err.put("aohpDisplayId", displayId);
                 err.put("nodes", new JSONArray());
                 return err.toString();
+            } catch (Exception e) {
+                return rawTreeJson;
+            }
+        }
+        if (TextUtils.isEmpty(foregroundPackage)) {
+            // No foreground pkg → cannot apply sensitivity registry; pass tree through.
+            try {
+                JSONObject root = new JSONObject(rawTreeJson != null ? rawTreeJson : "{}");
+                root.put("aohpFiltered", false);
+                root.put("aohpFilterError", "foreground_package_unresolved");
+                root.put("aohpForegroundPackage", "");
+                root.put("aohpDisplayId", displayId);
+                return root.toString();
             } catch (Exception e) {
                 return rawTreeJson;
             }
