@@ -42,6 +42,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class AohpUiTreeDumper {
     private static final String TAG = "AohpUiTree";
 
+    /** AOHP AgentDriver benchmark overlay — excluded from privileged UI tree dumps. */
+    private static final String AOHP_AGENT_DRIVER_PACKAGE = "org.aohp.agentdriver";
+    private static final String AOHP_AGENT_OVERLAY_TITLE = "AOHP_AGENT_OVERLAY";
+
     public static final int FLAG_FILTER_DECORATIVE = 0x1;
     public static final int FLAG_INCLUDE_OFFSCREEN_MARKS = 0x2;
     public static final int FLAG_MARK_VISUAL = 0x4;
@@ -149,6 +153,10 @@ public final class AohpUiTreeDumper {
             totalRounds += rounds.get();
             if (rounds.get() >= MAX_ROUNDS || SystemClock.uptimeMillis() >= deadline) {
                 truncated = true;
+            }
+
+            if (isAohpAgentOverlayWindow(win, bySource)) {
+                continue;
             }
 
             WindowRec wr = new WindowRec();
@@ -1160,6 +1168,25 @@ public final class AohpUiTreeDumper {
         public void sendAttachOverlayResult(int result, int interactionId) {
             mLatch.countDown();
         }
+    }
+
+    private static boolean isAohpAgentOverlayWindow(AccessibilityWindowInfo win,
+            LongSparseArray<AccessibilityNodeInfo> bySource) {
+        if (win == null) {
+            return false;
+        }
+        CharSequence title = win.getTitle();
+        if (title != null && AOHP_AGENT_OVERLAY_TITLE.contentEquals(title)) {
+            return true;
+        }
+        if (win.getType() == AccessibilityWindowInfo.TYPE_APPLICATION) {
+            return false;
+        }
+        AccessibilityNodeInfo rootLike = findRootLike(bySource);
+        if (rootLike == null || rootLike.getPackageName() == null) {
+            return false;
+        }
+        return AOHP_AGENT_DRIVER_PACKAGE.contentEquals(rootLike.getPackageName());
     }
 
     private static String windowTypeToString(int type) {
