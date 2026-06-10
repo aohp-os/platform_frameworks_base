@@ -45,6 +45,18 @@ public final class AohpSecurityBridgeService extends IAohpSecurityBridge.Stub {
         return b.sanitizeEventJsonInner(eventDataJson);
     }
 
+    /**
+     * Trusted in-process hook for event stream drain: expand {@code [aohp://vault/…]} back to
+     * plaintext when the vault entry still exists.
+     */
+    public static String resolveVaultReferenceTrusted(String maybeBracketedToken) {
+        AohpSecurityBridgeService b = sInstance;
+        if (b == null) {
+            return maybeBracketedToken;
+        }
+        return b.resolveVaultReferenceInner(maybeBracketedToken);
+    }
+
     private final Context mContext;
     private final AohpVaultService mVault;
     private final AohpTaintTrackerService mTaint;
@@ -662,7 +674,11 @@ public final class AohpSecurityBridgeService extends IAohpSecurityBridge.Stub {
             }
             JSONObject root = new JSONObject(eventDataJson);
             String pkg = root.optString("packageName");
-            sanitizeStringLeaf(root, "text", pkg, "event_text");
+            // Toast events exist so automation can read ephemeral on-screen feedback.
+            // Vault tokens here only hide text the user already saw and break event.drain.
+            if (!"toast".equals(root.optString("type"))) {
+                sanitizeStringLeaf(root, "text", pkg, "event_text");
+            }
 
             JSONObject n = root.optJSONObject("notification");
             if (n != null) {
@@ -682,6 +698,21 @@ public final class AohpSecurityBridgeService extends IAohpSecurityBridge.Stub {
                 return "{\"aohpSanitizedEvent\":false}";
             }
         }
+    }
+
+    private String resolveVaultReferenceInner(String val) {
+        if (TextUtils.isEmpty(val)) {
+            return val;
+        }
+        String token = val.trim();
+        if (token.startsWith("[") && token.endsWith("]") && token.length() > 2) {
+            token = token.substring(1, token.length() - 1).trim();
+        }
+        if (!isVaultToken(token)) {
+            return val;
+        }
+        String plain = mVault.peekPlaintext(token);
+        return plain != null ? plain : val;
     }
 
     private void sanitizeStringLeaf(JSONObject parent, String key, String pkg, String auditTag)

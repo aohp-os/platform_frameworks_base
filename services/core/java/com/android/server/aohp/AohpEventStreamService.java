@@ -18,6 +18,7 @@ import android.os.HandlerThread;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Slog;
 import android.window.ScreenCaptureInternal;
@@ -136,7 +137,10 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
                     if (event.seq < session.nextSeq) {
                         continue;
                     }
-                    arr.put(event.toJson(opts.includeScreenshots, opts.inlineScreenshots));
+                    JSONObject eventJson =
+                            event.toJson(opts.includeScreenshots, opts.inlineScreenshots);
+                    resolveToastVaultText(eventJson);
+                    arr.put(eventJson);
                     next = Math.max(next, event.seq + 1);
                     count++;
                     if (opts.maxEvents > 0 && count >= opts.maxEvents) {
@@ -496,6 +500,24 @@ public final class AohpEventStreamService extends IAohpEventStream.Stub {
             return o.toString();
         } catch (JSONException e) {
             return "{\"ok\":false,\"error\":true}";
+        }
+    }
+
+    private static void resolveToastVaultText(JSONObject eventJson) {
+        if (eventJson == null || !"toast".equals(eventJson.optString("type"))) {
+            return;
+        }
+        try {
+            String text = eventJson.optString("text", "");
+            if (text.isEmpty()) {
+                return;
+            }
+            String resolved = AohpSecurityBridgeService.resolveVaultReferenceTrusted(text);
+            if (!TextUtils.equals(text, resolved)) {
+                eventJson.put("text", resolved);
+                eventJson.put("aohpVaultResolved", true);
+            }
+        } catch (JSONException ignored) {
         }
     }
 
